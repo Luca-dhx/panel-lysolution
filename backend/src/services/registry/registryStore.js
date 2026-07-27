@@ -1,42 +1,46 @@
-// Persistance du registre — Phase 2B : en mémoire.
-// L'interface est stable : la Phase 3 la réimplémente sur Mongo (bases
-// TEST/PROD du Panel) sans changer une signature — même démarche que le
-// pairingStore du projet modèle.
-const records = new Map(); // projectId -> record
+// Persistance du registre — MongoDB (bases TEST/PROD du Panel selon ENV).
+// Interface stable depuis la Phase 2B : les services manipulent des fiches
+// « plain object », le store est le seul à connaître Mongoose.
+import PanelProject from '../../models/PanelProject.model.js';
+
+const toRecord = (doc) => {
+  if (!doc) return null;
+  const { _id, ...record } = doc;
+  return record;
+};
 
 export const registryStore = {
-  insert(record) {
-    records.set(record.projectId, record);
+  async insert(record) {
+    await PanelProject.create(record);
     return record;
   },
 
-  getById(projectId) {
-    return records.get(projectId) ?? null;
+  async getById(projectId) {
+    return toRecord(await PanelProject.findOne({ projectId }).lean());
   },
 
-  getByKey(projectKey) {
-    for (const record of records.values()) {
-      if (record.projectKey === projectKey) return record;
-    }
-    return null;
+  async getByKey(projectKey) {
+    return toRecord(await PanelProject.findOne({ projectKey }).lean());
   },
 
-  list() {
-    return [...records.values()];
+  async list() {
+    return (await PanelProject.find({}).lean()).map(toRecord);
   },
 
-  save(record) {
+  async save(record) {
     record.updatedAt = new Date().toISOString();
-    records.set(record.projectId, record);
+    const { _id, ...data } = record;
+    await PanelProject.updateOne({ projectId: record.projectId }, { $set: data });
     return record;
   },
 
-  remove(projectId) {
-    return records.delete(projectId);
+  async remove(projectId) {
+    const result = await PanelProject.deleteOne({ projectId });
+    return result.deletedCount > 0;
   },
 
-  clear() {
-    records.clear();
+  async clear() {
+    await PanelProject.deleteMany({});
   },
 };
 

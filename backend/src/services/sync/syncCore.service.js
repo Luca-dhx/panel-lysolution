@@ -1,8 +1,10 @@
 // Noyau de synchronisation du Panel — docs/architecture/03_PANEL_BRIDGE.md §4.
 // Implémente les cinq règles minimales (idempotence, LWW, tombstones,
 // anti-écho, identités UUID) et RIEN au-delà.
-// Phase 2B : seul DIAGNOSTIC est appliqué ; le journal d'émission existe mais
-// reste vide tant qu'aucun domaine n'est synchronisé.
+// Persistance MongoDB : l'idempotence, l'état LWW et le journal d'émission
+// survivent à un redémarrage (une relivraison après reboot répond DUPLICATE,
+// jamais une double application).
+// Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
 import {
   ACK_STATUS,
   APPLIED_ENTITY_TYPES,
@@ -12,36 +14,28 @@ import {
   newBridgeId,
   nowIso,
 } from '../../bridge/bridgeContract.js';
+import {
+  PanelCounter,
+  PanelDiagnostic,
+  PanelSyncEntityState,
+  PanelSyncJournalEntry,
+  PanelSyncReceipt,
+} from '../../models/PanelSyncState.model.js';
 
-// Mémoire d'idempotence, par projet :
-//   seenWriteIds : Set<writeId> déjà traités (fonde l'ack DUPLICATE)
-//   lastModified : Map<'entityType/entityId', modifiedAt> (fonde l'ack IGNORED)
-const receivedByProject = new Map();
+const JOURNAL_SEQ_KEY = 'syncJournalSeq';
 
-// Journal ordonné des écritures émises côté Panel (alimente GET /sync/pull).
-const journal = [];
-let nextSeq = 1;
-
-// Écritures DIAGNOSTIC appliquées — observabilité et tests.
-const appliedDiagnostics = [];
-
-function receivedState(projectId) {
-  let state = receivedByProject.get(projectId);
-  if (!state) {
-    state = { seenWriteIds: new Set(), lastModified: new Map() };
-    receivedByProject.set(projectId, state);
-  }
-  return state;
-}
-
-function entityKey(change) {
-  return `${change.entityType}/${change.entityId}`;
+async function nextJournalSeq() {
+  const counter = await PanelCounter.findOneAndUpdate(
+    { key: JOURNAL_SEQ_KEY },
+    { $inc: { value: 1 } },
+    { new: true, upsert: true },
+  ).lean();
+  return counter.value;
 }
 
 // Applique un lot d'écritures poussé par un projet. Accusé PAR écriture —
 // jamais un échec global silencieux.
-export function applyIncoming(projectId, changes) {
-  const state = receivedState(projectId);
+export async function applyIncoming(projectId, changes) {
   const results = [];
 
   for (const change of changes) {
@@ -65,7 +59,7 @@ export function applyIncoming(projectId, changes) {
       continue;
     }
 
-    if (state.seenWriteIds.has(change.writeId)) {
+    if (await PanelSyncReceipt.exists({ projectId, writeId: change.writeId })) {
       results.push({ writeId: change.writeId, status: ACK_STATUS.DUPLICATE, code: null, message: null });
       continue;
     }
@@ -77,22 +71,29 @@ export function applyIncoming(projectId, changes) {
         writeId: change.writeId,
         status: ACK_STATUS.REJECTED,
         code: BRIDGE_ERROR_CODES.ENTITY_TYPE_UNSUPPORTED,
-        message: `entityType ${change.entityType} non synchronisé en Phase 2B.`,
+        message: `entityType ${change.entityType} non synchronisé dans cette version du Panel.`,
       });
       continue;
     }
 
-    const key = entityKey(change);
-    const known = state.lastModified.get(key);
-    if (known && new Date(change.modifiedAt).getTime() <= new Date(known).getTime()) {
-      state.seenWriteIds.add(change.writeId);
+    const known = await PanelSyncEntityState.findOne({
+      projectId,
+      entityType: change.entityType,
+      entityId: change.entityId,
+    }).lean();
+    if (known && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()) {
+      await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
       results.push({ writeId: change.writeId, status: ACK_STATUS.IGNORED, code: null, message: null });
       continue;
     }
 
-    state.seenWriteIds.add(change.writeId);
-    state.lastModified.set(key, change.modifiedAt);
-    appliedDiagnostics.push({ projectId, change, receivedAt: nowIso() });
+    await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
+    await PanelSyncEntityState.updateOne(
+      { projectId, entityType: change.entityType, entityId: change.entityId },
+      { $set: { modifiedAt: change.modifiedAt } },
+      { upsert: true },
+    );
+    await PanelDiagnostic.create({ projectId, change, receivedAt: nowIso() });
     results.push({ writeId: change.writeId, status: ACK_STATUS.APPLIED, code: null, message: null });
   }
 
@@ -102,7 +103,7 @@ export function applyIncoming(projectId, changes) {
 // Point d'émission côté Panel — utilisé par les lots de Phase 3 (et par les
 // tests, avec DIAGNOSTIC). `originProjectId` identifie l'émetteur d'ORIGINE
 // quand l'écriture rediffuse une modification arrivée d'un projet (anti-écho).
-export function emitChange({
+export async function emitChange({
   entityType,
   entityId,
   deleted = false,
@@ -113,11 +114,11 @@ export function emitChange({
   writeId = newBridgeId(),
 }) {
   const entry = {
-    seq: nextSeq++,
+    seq: await nextJournalSeq(),
     originProjectId,
     change: { writeId, entityType, entityId, deleted, payload, modifiedAt, emitter },
   };
-  journal.push(entry);
+  await PanelSyncJournalEntry.create(entry);
   return entry;
 }
 
@@ -137,29 +138,31 @@ function decodeCursor(cursor) {
 // Page ordonnée des écritures à destination d'un projet. Curseur opaque ;
 // anti-écho : les écritures dont ce projet est l'émetteur d'origine sont
 // exclues.
-export function pullForProject(projectId, { cursor, limit }) {
+export async function pullForProject(projectId, { cursor, limit }) {
   const afterSeq = decodeCursor(cursor);
-  const eligible = journal.filter(
-    (entry) => entry.seq > afterSeq && entry.originProjectId !== projectId,
-  );
-  const page = eligible.slice(0, limit);
+  const query = { seq: { $gt: afterSeq }, originProjectId: { $ne: projectId } };
+  const page = await PanelSyncJournalEntry.find(query).sort({ seq: 1 }).limit(limit).lean();
+  const eligibleCount = await PanelSyncJournalEntry.countDocuments(query);
   const lastSeq = page.length > 0 ? page[page.length - 1].seq : afterSeq;
   return {
     changes: page.map((entry) => entry.change),
     cursor: encodeCursor(lastSeq),
-    hasMore: eligible.length > page.length,
+    hasMore: eligibleCount > page.length,
   };
 }
 
 // Observabilité (fiche projet, tests).
-export function getDiagnosticsFor(projectId) {
-  return appliedDiagnostics.filter((item) => item.projectId === projectId);
+export async function getDiagnosticsFor(projectId) {
+  return PanelDiagnostic.find({ projectId }).lean();
 }
 
 // Réinitialisation complète — réservée aux tests.
-export function resetSyncCore() {
-  receivedByProject.clear();
-  journal.length = 0;
-  appliedDiagnostics.length = 0;
-  nextSeq = 1;
+export async function resetSyncCore() {
+  await Promise.all([
+    PanelSyncReceipt.deleteMany({}),
+    PanelSyncEntityState.deleteMany({}),
+    PanelSyncJournalEntry.deleteMany({}),
+    PanelDiagnostic.deleteMany({}),
+    PanelCounter.deleteMany({ key: JOURNAL_SEQ_KEY }),
+  ]);
 }

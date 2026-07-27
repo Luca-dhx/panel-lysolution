@@ -1,9 +1,20 @@
 // Surface HTTP réelle /bridge/v1 : serveur Express éphémère + fetch — le
 // cycle de vie complet du contrat PanelBridge (v1.1.0), plus l'auth de la
 // surface interne /api.
-import { check, finish, section, setTestEnv, startServer } from './helpers/harness.js';
+import {
+  check,
+  connectTestDatabase,
+  finish,
+  section,
+  setTestEnv,
+  startMemoryMongo,
+  startServer,
+  stopMemoryMongo,
+} from './helpers/harness.js';
 
 setTestEnv();
+await startMemoryMongo();
+await connectTestDatabase();
 
 const { createApp } = await import('../backend/src/app.js');
 const {
@@ -243,9 +254,9 @@ section('Sync push — POST /bridge/v1/sync/push');
 section('Sync pull — GET /bridge/v1/sync/pull (anti-écho, curseur, pagination)');
 {
   const targetEntity = uuid();
-  emitChange({ entityType: 'DIAGNOSTIC', entityId: targetEntity, payload: { n: 1 } });
-  emitChange({ entityType: 'DIAGNOSTIC', entityId: uuid(), payload: { n: 2 }, originProjectId: declared.record.projectId });
-  emitChange({ entityType: 'DIAGNOSTIC', entityId: uuid(), payload: { n: 3 } });
+  await emitChange({ entityType: 'DIAGNOSTIC', entityId: targetEntity, payload: { n: 1 } });
+  await emitChange({ entityType: 'DIAGNOSTIC', entityId: uuid(), payload: { n: 2 }, originProjectId: declared.record.projectId });
+  await emitChange({ entityType: 'DIAGNOSTIC', entityId: uuid(), payload: { n: 3 } });
 
   const page1 = await call('GET', '/bridge/v1/sync/pull?limit=1', { headers: AUTH });
   check('page 1 : une écriture, hasMore=true',
@@ -329,4 +340,5 @@ section('Surface interne /api : gardes et santé');
 }
 
 await close();
+await stopMemoryMongo();
 finish();

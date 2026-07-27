@@ -38,7 +38,7 @@ export function generatePairingCode() {
 
 // Pose un nouveau code sur une fiche non appairée. Retourne le code EN CLAIR —
 // c'est le seul moment où il existe hors hash.
-export function issuePairingCode(record) {
+export async function issuePairingCode(record) {
   if (record.pairing.status === 'PAIRED') {
     throw ApiError.conflict(
       'PANEL_PROJECT_ALREADY_PAIRED',
@@ -50,13 +50,13 @@ export function issuePairingCode(record) {
   record.pairing.status = 'DECLARED';
   record.pairing.pairingCodeHash = sha256Hex(code);
   record.pairing.pairingCodeExpiresAt = expiresAt;
-  registryStore.save(record);
+  await registryStore.save(record);
   return { code, expiresAt };
 }
 
-function findRecordByCode(code) {
+async function findRecordByCode(code) {
   const hash = sha256Hex(code);
-  for (const record of registryStore.list()) {
+  for (const record of await registryStore.list()) {
     const stored = record.pairing.pairingCodeHash;
     if (stored && timingSafeEqualHex(stored, hash)) return record;
   }
@@ -65,7 +65,7 @@ function findRecordByCode(code) {
 
 // Bootstrap — POST /bridge/v1/pairings. `dto` est déjà validé par le miroir
 // zod ; l'ordre des vérifications est contractuel (05_PAIRING.md §2).
-export function bootstrap(dto) {
+export async function bootstrap(dto) {
   if (!isContractCompatible(dto.contractVersion)) {
     throw new BridgeError(
       BRIDGE_ERROR_CODES.CONTRACT_VERSION_UNSUPPORTED,
@@ -73,7 +73,7 @@ export function bootstrap(dto) {
     );
   }
 
-  const record = findRecordByCode(dto.pairingCode);
+  const record = await findRecordByCode(dto.pairingCode);
   const codeInvalid = new BridgeError(
     BRIDGE_ERROR_CODES.PAIRING_CODE_INVALID,
     'Code d’appairage invalide ou expiré.',
@@ -130,7 +130,7 @@ export function bootstrap(dto) {
     record.manifest = bridgeManifest;
     record.manifestSource = 'BRIDGE';
   }
-  registryStore.save(record);
+  await registryStore.save(record);
 
   return {
     projectId: record.projectId,
@@ -141,10 +141,10 @@ export function bootstrap(dto) {
 
 // Authentifie une requête entrante /bridge/v1 par son Bearer. Retourne la
 // fiche du projet appelant, ou null. Comparaison en temps constant.
-export function authenticateBridgeToken(bearerToken) {
+export async function authenticateBridgeToken(bearerToken) {
   if (!bearerToken) return null;
   const hash = sha256Hex(bearerToken);
-  for (const record of registryStore.list()) {
+  for (const record of await registryStore.list()) {
     if (record.pairing.status !== 'PAIRED') continue;
     const stored = record.pairing.bridgeTokenHash;
     if (stored && timingSafeEqualHex(stored, hash)) return record;
@@ -158,30 +158,30 @@ export function getOutboundBridgeToken(record) {
   return decryptSecret(record.pairing.bridgeTokenEncrypted);
 }
 
-function eraseCredentials(record) {
+async function eraseCredentials(record) {
   record.pairing.status = 'REVOKED';
   record.pairing.bridgeTokenHash = null;
   record.pairing.bridgeTokenEncrypted = null;
   record.pairing.pairingCodeHash = null;
   record.pairing.pairingCodeExpiresAt = null;
   record.pairing.revokedAt = nowIso();
-  registryStore.save(record);
+  await registryStore.save(record);
 }
 
 // Le projet se débranche lui-même (DELETE /bridge/v1/pairings/current).
-export function unpairByProject(record) {
-  eraseCredentials(record);
+export async function unpairByProject(record) {
+  await eraseCredentials(record);
   return { unpaired: true };
 }
 
 // Révocation décidée côté Panel. Retourne le token capturé AVANT effacement,
 // pour la notification de courtoisie (best-effort) vers le projet.
-export function revokeFromPanel(record) {
+export async function revokeFromPanel(record) {
   if (record.pairing.status !== 'PAIRED') {
-    eraseCredentials(record);
+    await eraseCredentials(record);
     return { previousToken: null };
   }
   const previousToken = getOutboundBridgeToken(record);
-  eraseCredentials(record);
+  await eraseCredentials(record);
   return { previousToken };
 }

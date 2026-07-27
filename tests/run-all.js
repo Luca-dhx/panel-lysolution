@@ -12,6 +12,7 @@ const TESTS = [
   'manifest.test.js',
   'capabilities.test.js',
   'registry.test.js',
+  'persistence.test.js',
   'bridge-http.test.js',
   'bridge-conformity.test.js',
   'spec-drift.check.mjs',

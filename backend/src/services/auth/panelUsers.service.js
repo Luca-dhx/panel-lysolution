@@ -1,17 +1,16 @@
 // Utilisateurs du Panel v1 — docs/architecture/04_AUTHENTICATION.md §2.
-// Deux rôles (ADMIN, DEV superset), store en mémoire derrière une interface
-// stable, mots de passe scrypt (crypto natif). Le RBAC complet attend la
-// Phase 4+ et remplacera `role` sans toucher au reste.
+// Deux rôles (ADMIN, DEV superset), persistance MongoDB, mots de passe
+// scrypt (crypto natif). Le RBAC complet attend la Phase 4+ et remplacera
+// `role` sans toucher au reste.
 import crypto from 'node:crypto';
 import config from '../../config/env.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
+import PanelUser from '../../models/PanelUser.model.js';
 import logger from '../../utils/logger.js';
 
 export const PANEL_ROLES = Object.freeze({ ADMIN: 'ADMIN', DEV: 'DEV' });
 
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
-
-const usersByEmail = new Map();
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -25,7 +24,7 @@ function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(derived, Buffer.from(derivedHex, 'hex'));
 }
 
-export function createUser({ email, password, displayName, role }) {
+export async function createUser({ email, password, displayName, role }) {
   const normalized = String(email).trim().toLowerCase();
   const user = {
     userId: newBridgeId(),
@@ -35,22 +34,20 @@ export function createUser({ email, password, displayName, role }) {
     passwordHash: hashPassword(password),
     createdAt: nowIso(),
   };
-  usersByEmail.set(normalized, user);
+  await PanelUser.create(user);
   return toPublicUser(user);
 }
 
-export function authenticate(email, password) {
-  const user = usersByEmail.get(String(email).trim().toLowerCase());
+export async function authenticate(email, password) {
+  const user = await PanelUser.findOne({ email: String(email).trim().toLowerCase() }).lean();
   if (!user) return null;
   if (!verifyPassword(password, user.passwordHash)) return null;
   return toPublicUser(user);
 }
 
-export function getUserById(userId) {
-  for (const user of usersByEmail.values()) {
-    if (user.userId === userId) return toPublicUser(user);
-  }
-  return null;
+export async function getUserById(userId) {
+  const user = await PanelUser.findOne({ userId }).lean();
+  return user ? toPublicUser(user) : null;
 }
 
 export function toPublicUser(user) {
@@ -62,24 +59,24 @@ export function toPublicUser(user) {
   };
 }
 
-// Compte DEV seed. Sans variables seed et sans utilisateur existant, le
-// serveur démarre quand même — l'API d'auth refusera simplement toute
-// connexion (fail-closed côté accès, jamais côté démarrage).
-export function seedFromEnv() {
-  if (usersByEmail.size > 0) return;
+// Compte DEV seed — créé uniquement si AUCUN utilisateur n'existe (jamais
+// d'écrasement d'un compte réel). Les règles de robustesse PROD sont
+// appliquées en amont par config/env.js (fail-closed au démarrage).
+export async function seedFromEnv() {
+  if (await PanelUser.exists({})) return;
   if (!config.seedDevEmail || !config.seedDevPassword) {
-    logger.warn('Aucun compte seed configuré (PANEL_SEED_DEV_EMAIL/PASSWORD) : connexion impossible.');
+    logger.warn('Aucun compte seed configuré (SEED_DEV_EMAIL/PASSWORD) : connexion impossible.');
     return;
   }
-  createUser({
+  await createUser({
     email: config.seedDevEmail,
     password: config.seedDevPassword,
     displayName: 'Développeur',
     role: PANEL_ROLES.DEV,
   });
-  logger.info(`Compte DEV seed créé (${config.seedDevEmail}).`);
+  logger.info('Compte DEV seed créé.');
 }
 
-export function resetUsers() {
-  usersByEmail.clear();
+export async function resetUsers() {
+  await PanelUser.deleteMany({});
 }

@@ -17,27 +17,27 @@ export function ping(_req, res) {
   return ok(res, { status: 'ok', service: 'panel-bridge-api', time: nowIso() });
 }
 
-export function bootstrapPairing(req, res) {
+export async function bootstrapPairing(req, res) {
   const dto = parseOrThrow(bootstrapRequestSchema, req.body, 'BootstrapRequest');
-  return created(res, bootstrap(dto));
+  return created(res, await bootstrap(dto));
 }
 
-export function unpair(req, res) {
-  return ok(res, unpairByProject(req.bridgeProject));
+export async function unpair(req, res) {
+  return ok(res, await unpairByProject(req.bridgeProject));
 }
 
-export function heartbeat(req, res) {
+export async function heartbeat(req, res) {
   const dto = parseOrThrow(heartbeatSchema, req.body, 'Heartbeat');
-  recordHeartbeat(req.bridgeProject, dto);
+  await recordHeartbeat(req.bridgeProject, dto);
   return ok(res, { acknowledged: true, panelTime: nowIso() });
 }
 
-export function syncPush(req, res) {
+export async function syncPush(req, res) {
   const dto = parseOrThrow(syncPushRequestSchema, req.body, 'SyncPushRequest');
-  return ok(res, applyIncoming(req.bridgeProject.projectId, dto.changes));
+  return ok(res, await applyIncoming(req.bridgeProject.projectId, dto.changes));
 }
 
-export function syncPull(req, res) {
+export async function syncPull(req, res) {
   const query = parseOrThrow(syncPullQuerySchema, req.query, 'SyncPullQuery');
-  return ok(res, pullForProject(req.bridgeProject.projectId, query));
+  return ok(res, await pullForProject(req.bridgeProject.projectId, query));
 }

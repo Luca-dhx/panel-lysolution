@@ -11,12 +11,12 @@ const loginSchema = z
   })
   .strict();
 
-export function login(req, res) {
+export async function login(req, res) {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
     throw ApiError.badRequest('PANEL_INVALID_PAYLOAD', 'email et password sont requis.');
   }
-  const user = authenticate(parsed.data.email, parsed.data.password);
+  const user = await authenticate(parsed.data.email, parsed.data.password);
   if (!user) {
     throw ApiError.unauthorized('PANEL_INVALID_CREDENTIALS', 'Identifiants invalides.');
   }

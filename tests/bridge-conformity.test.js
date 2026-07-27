@@ -5,9 +5,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { check, finish, section, setTestEnv, startServer } from './helpers/harness.js';
+import {
+  check,
+  connectTestDatabase,
+  finish,
+  section,
+  setTestEnv,
+  startMemoryMongo,
+  startServer,
+  stopMemoryMongo,
+} from './helpers/harness.js';
 
 setTestEnv();
+await startMemoryMongo();
+await connectTestDatabase();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const panelSpec = fs.readFileSync(path.join(root, 'docs/spec/PanelBridge.openapi.yaml'), 'utf8');
@@ -217,4 +228,5 @@ section('La surface montée honore les chemins du miroir');
   await close();
 }
 
+await stopMemoryMongo();
 finish();

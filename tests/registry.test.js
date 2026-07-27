@@ -1,10 +1,21 @@
 // Le registre + l'appairage au niveau service : un projet conforme au
 // Manager Standard peut être déclaré, appairé, supervisé, révoqué, ré-appairé.
 // Contrat 1.1.0 : le Manifest officiel voyage avec le bootstrap.
-import { check, finish, rejectsWith, section, setTestEnv } from './helpers/harness.js';
+import {
+  check,
+  connectTestDatabase,
+  finish,
+  rejectsWith,
+  section,
+  setTestEnv,
+  startMemoryMongo,
+  stopMemoryMongo,
+} from './helpers/harness.js';
 
 setTestEnv();
 process.env.HEARTBEAT_INTERVAL_S = '300';
+await startMemoryMongo();
+await connectTestDatabase();
 
 const registry = await import('../backend/src/services/registry/projectRegistry.service.js');
 const pairing = await import('../backend/src/services/pairing/pairing.service.js');
@@ -222,4 +233,5 @@ section('Codes expirés et projectKey trompeur');
   ));
 }
 
+await stopMemoryMongo();
 finish();

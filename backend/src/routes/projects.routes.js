@@ -15,7 +15,7 @@ import {
 
 const router = Router();
 
-router.use(requirePanelUser);
+router.use(asyncHandler(requirePanelUser));
 
 router.get('/', asyncHandler(list));
 router.get('/:projectId', asyncHandler(detail));

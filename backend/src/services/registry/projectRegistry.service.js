@@ -31,7 +31,7 @@ function assertValidManifestOrThrow(manifestInput) {
   return validation;
 }
 
-export function declareProject({ projectKey, projectName, manifest = null }) {
+export async function declareProject({ projectKey, projectName, manifest = null }) {
   if (typeof projectKey !== 'string' || !PROJECT_KEY_RE.test(projectKey)) {
     throw ApiError.badRequest(
       'PANEL_PROJECT_KEY_INVALID',
@@ -41,7 +41,7 @@ export function declareProject({ projectKey, projectName, manifest = null }) {
   if (typeof projectName !== 'string' || projectName.trim().length === 0) {
     throw ApiError.badRequest('PANEL_PROJECT_NAME_REQUIRED', 'projectName est requis.');
   }
-  if (registryStore.getByKey(projectKey)) {
+  if (await registryStore.getByKey(projectKey)) {
     throw ApiError.conflict(
       'PANEL_PROJECT_KEY_TAKEN',
       `Un projet « ${projectKey} » existe déjà dans le registre.`,
@@ -82,14 +82,14 @@ export function declareProject({ projectKey, projectName, manifest = null }) {
     manifest: validatedManifest,
     manifestSource,
   };
-  registryStore.insert(record);
+  await registryStore.insert(record);
 
-  const { code, expiresAt } = issuePairingCode(record);
+  const { code, expiresAt } = await issuePairingCode(record);
   return { record, pairingCode: code, pairingCodeExpiresAt: expiresAt };
 }
 
-export function getProjectOrThrow(projectId) {
-  const record = registryStore.getById(projectId);
+export async function getProjectOrThrow(projectId) {
+  const record = await registryStore.getById(projectId);
   if (!record) {
     throw ApiError.notFound('PANEL_PROJECT_NOT_FOUND', 'Projet inconnu du registre.');
   }
@@ -104,8 +104,8 @@ export function listProjects() {
 // encore un contrat 1.0.x, sans transport de Manifest). Dès qu'un Manifest a
 // été reçu via le pont (bootstrap 1.1+), il fait foi : la saisie manuelle est
 // refusée pour qu'elle ne puisse jamais contredire ce que le projet déclare.
-export function updateManifest(projectId, manifestInput) {
-  const record = getProjectOrThrow(projectId);
+export async function updateManifest(projectId, manifestInput) {
+  const record = await getProjectOrThrow(projectId);
   if (record.manifestSource === 'BRIDGE') {
     throw ApiError.conflict(
       'PANEL_MANIFEST_BRIDGE_AUTHORITATIVE',
@@ -116,7 +116,7 @@ export function updateManifest(projectId, manifestInput) {
   assertManifestIdentityMatches(record, validation.manifest);
   record.manifest = validation.manifest;
   record.manifestSource = 'MANUAL';
-  registryStore.save(record);
+  await registryStore.save(record);
   return { record, unknownFeatures: validation.unknownFeatures };
 }
 
@@ -133,27 +133,27 @@ function assertManifestIdentityMatches(record, manifest) {
 
 // Manifest reçu par le PONT (bootstrap ≥ 1.1.0) — canal officiel, prioritaire
 // et définitif : il remplace toute saisie manuelle antérieure.
-export function setManifestFromBridge(record, manifest) {
+export async function setManifestFromBridge(record, manifest) {
   record.manifest = manifest;
   record.manifestSource = 'BRIDGE';
-  registryStore.save(record);
+  await registryStore.save(record);
   return record;
 }
 
-export function removeProject(projectId) {
-  const record = getProjectOrThrow(projectId);
+export async function removeProject(projectId) {
+  const record = await getProjectOrThrow(projectId);
   if (record.pairing.status === 'PAIRED') {
     throw ApiError.conflict(
       'PANEL_PROJECT_STILL_PAIRED',
       'Ce projet est encore appairé : révoquez l’appairage avant de le retirer du parc.',
     );
   }
-  registryStore.remove(projectId);
+  await registryStore.remove(projectId);
   return { removed: true };
 }
 
 // Enregistre un heartbeat (fiche déjà authentifiée par le middleware de pont).
-export function recordHeartbeat(record, heartbeat) {
+export async function recordHeartbeat(record, heartbeat) {
   record.runtime.environment = heartbeat.environment;
   record.runtime.softwareVersion = heartbeat.softwareVersion;
   record.runtime.lastHeartbeatAt = nowIso();
@@ -162,7 +162,7 @@ export function recordHeartbeat(record, heartbeat) {
     details: heartbeat.health.details ?? null,
   };
   record.runtime.bridgeStats = heartbeat.bridgeStats ?? null;
-  registryStore.save(record);
+  await registryStore.save(record);
 }
 
 // Vivacité — dérivée à la lecture, jamais stockée (06_PROJECT_LIFECYCLE §3).

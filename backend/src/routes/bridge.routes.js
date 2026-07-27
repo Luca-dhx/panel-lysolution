@@ -22,9 +22,9 @@ router.use(bridgeContractVersionGuard);
 router.get('/ping', ping);
 router.post('/pairings', asyncHandler(bootstrapPairing));
 
-router.delete('/pairings/current', requireBridgeAuth, asyncHandler(unpair));
+router.delete('/pairings/current', asyncHandler(requireBridgeAuth), asyncHandler(unpair));
 
-router.use(requireBridgeAuth);
+router.use(asyncHandler(requireBridgeAuth));
 router.post('/heartbeats', asyncHandler(heartbeat));
 router.post('/sync/push', asyncHandler(syncPush));
 router.get('/sync/pull', asyncHandler(syncPull));

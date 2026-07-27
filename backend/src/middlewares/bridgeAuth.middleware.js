@@ -4,10 +4,10 @@
 import { BRIDGE_ERROR_CODES, BridgeError } from '../bridge/bridgeContract.js';
 import { authenticateBridgeToken } from '../services/pairing/pairing.service.js';
 
-export function requireBridgeAuth(req, _res, next) {
+export async function requireBridgeAuth(req, _res, next) {
   const header = req.get('authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : null;
-  const record = token ? authenticateBridgeToken(token) : null;
+  const record = token ? await authenticateBridgeToken(token) : null;
   if (!record) {
     return next(
       new BridgeError(

@@ -4,11 +4,11 @@ import ApiError from '../utils/ApiError.js';
 import { verifyUserToken } from '../services/auth/panelToken.service.js';
 import { getUserById, PANEL_ROLES } from '../services/auth/panelUsers.service.js';
 
-export function requirePanelUser(req, _res, next) {
+export async function requirePanelUser(req, _res, next) {
   const header = req.get('authorization') ?? '';
   const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : null;
   const payload = token ? verifyUserToken(token) : null;
-  const user = payload ? getUserById(payload.sub) : null;
+  const user = payload ? await getUserById(payload.sub) : null;
   if (!user) {
     return next(ApiError.unauthorized('PANEL_UNAUTHORIZED', 'Authentification requise.'));
   }
