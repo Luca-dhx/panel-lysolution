@@ -1,0 +1,576 @@
+# =============================================================================
+# CONTRAT OFFICIEL — ProjectBridge (sens PANEL -> PROJET)
+# -----------------------------------------------------------------------------
+# Ce document décrit la surface HTTP que CHAQUE projet expose à son Panel.
+# C'est le SEUL contrat que le Panel connaît d'un projet : jamais Mongo,
+# jamais les modèles, jamais les routes internes. Le backend du projet reste
+# libre d'évoluer tant que cette surface est honorée.
+#
+# Implémentation côté projet : backend/src/routes/projectBridge.routes.js
+# (montée sous /api/project-bridge/v1, voir backend/src/routes/index.js).
+#
+# Références d'architecture :
+#   docs/panelXvitrine/02_PROJECT_CONNECTOR.md (philosophie du ProjectBridge)
+#   docs/panelXvitrine/11_DONNEES_CENTRALISEES.md §1.1 (règles de synchro)
+#   docs/panelXvitrine/spec/PanelBridge.openapi.yaml (sens inverse ; les
+#   schémas SyncChange/SyncAck/ErrorResponse sont IDENTIQUES des deux côtés)
+#
+# Authentification : le Panel s'authentifie avec le MÊME bridgeToken délivré
+# au bootstrap (un seul secret d'appairage pour les deux sens — 09 §4).
+# Révoquer l'appairage ferme donc les deux directions d'un coup.
+#
+# États :
+#   - projet NON APPAIRÉ : toute la surface (sauf /ping) répond
+#     503 BRIDGE_NOT_PAIRED — état normal de première classe, pas une erreur.
+#   - token invalide : 401 BRIDGE_UNAUTHORIZED.
+# =============================================================================
+openapi: 3.0.3
+info:
+  title: ProjectBridge API — contrat exposé par le projet
+  description: >
+    Surface consommée exclusivement par le Panel (ou le système central du
+    repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
+    d'opérations — pas de requête libre, pas d'écriture sur les données
+    locales (catégorie 1), pas de code distant.
+  version: 1.0.0
+servers:
+  - url: https://api.example-project.com
+    description: URL publique du backend du projet (déclarée au bootstrap).
+
+tags:
+  - name: discovery
+    description: Vivacité (sans authentification).
+  - name: identity
+    description: Identité et santé du projet.
+  - name: sync
+    description: >
+      Synchronisation des données de catégorie 2 : livraison temps réel des
+      écritures faites côté Panel (push) et lecture de rattrapage des
+      écritures locales du projet (pull). Mêmes règles que le sens inverse
+      (11_DONNEES_CENTRALISEES §1.1).
+  - name: operations
+    description: >
+      Catalogue fermé d'opérations invocables — exécutées par le MOTEUR LOCAL
+      du projet avec ses propres gardes (le Panel offre une seconde interface,
+      jamais un second moteur). Catalogue VIDE en Phase 1 ; il se remplira lot
+      par lot en Phase 3+ (ex. contract.cancel, integratedApi.setActiveMode).
+  - name: pairing
+    description: Notification de révocation d'appairage.
+
+paths:
+  /api/project-bridge/v1/ping:
+    get:
+      operationId: ping
+      tags: [discovery]
+      summary: Vivacité du ProjectBridge (sans authentification).
+      description: >
+        Permet au Panel (et aux sondes) de vérifier que la surface existe.
+        Expose UNIQUEMENT l'état d'appairage — aucune donnée du projet.
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Surface vivante.
+          headers:
+            X-Bridge-Contract-Version:
+              $ref: '#/components/headers/ContractVersionHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingResponse'
+
+  /api/project-bridge/v1/identity:
+    get:
+      operationId: getIdentity
+      tags: [identity]
+      summary: Identité du projet (clé, nom, versions, environnement).
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Identité.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/health:
+    get:
+      operationId: getHealth
+      tags: [identity]
+      summary: État de santé résumé du projet.
+      description: >
+        Résumé NON sensible destiné à la supervision (le détail vit dans les
+        pages locales du Manager). Complémentaire du heartbeat : ici c'est le
+        Panel qui interroge à la demande.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Santé résumée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/sync/push:
+    post:
+      operationId: deliverChanges
+      tags: [sync]
+      summary: Livraison des écritures faites côté Panel.
+      description: >
+        Optimisation de latence : le chemin de robustesse reste le pull du
+        PanelBridge (02_PROJECT_CONNECTOR §4). IDEMPOTENT par writeId ;
+        accusé PAR écriture. Le projet applique les règles LWW/tombstone/
+        anti-écho AVANT toute écriture locale ; une écriture d'un entityType
+        non encore synchronisé (Phase 1 : tout sauf DIAGNOSTIC) répond
+        REJECTED avec code BRIDGE_ENTITY_TYPE_UNSUPPORTED — jamais un 500.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncPushRequest'
+      responses:
+        '200':
+          description: Accusés de réception, un par écriture.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncPushResponseEnvelope'
+        '400': { $ref: '#/components/responses/InvalidPayload' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/ContractVersionUnsupported' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/sync/pull:
+    get:
+      operationId: readLocalChanges
+      tags: [sync]
+      summary: Lecture des écritures locales du projet (rattrapage côté Panel).
+      description: >
+        Renvoie, dans l'ordre, les SyncChange émis par le PROJET
+        (emitter=PROJECT) depuis le curseur fourni. Curseur opaque. Permet au
+        Panel de reconstruire son état même s'il a raté des push.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+      responses:
+        '200':
+          description: Page d'écritures locales.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncPullResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/operations:
+    get:
+      operationId: listOperations
+      tags: [operations]
+      summary: Catalogue fermé des opérations invocables sur ce projet.
+      description: >
+        Découverte : le Panel n'invoque QUE ce que le projet déclare ici.
+        En Phase 1 le catalogue est VIDE (operations: []). Chaque lot de la
+        Phase 3+ ajoutera ses opérations (versionnées par le contrat).
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Catalogue courant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationCatalogEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/operations/{operationId}/invoke:
+    post:
+      operationId: invokeOperation
+      tags: [operations]
+      summary: Invoque une opération du catalogue.
+      description: >
+        L'opération est exécutée par le MOTEUR LOCAL du projet, avec exactement
+        les mêmes gardes que si elle avait été déclenchée depuis le Manager
+        (11_DONNEES_CENTRALISEES §2). IDEMPOTENT par invocationId. Une
+        opération absente du catalogue répond 404 BRIDGE_OPERATION_UNKNOWN ;
+        une opération qui échoue métier répond 422 BRIDGE_OPERATION_FAILED
+        avec le code métier local en details.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: operationId
+          in: path
+          required: true
+          description: Identifiant d'opération du catalogue (ex. « contract.cancel »).
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OperationInvocation'
+      responses:
+        '200':
+          description: Résultat de l'opération.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResultEnvelope'
+        '400': { $ref: '#/components/responses/InvalidPayload' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Opération inconnue du catalogue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                code: BRIDGE_OPERATION_UNKNOWN
+                message: Opération inconnue du catalogue.
+        '422':
+          description: Refus métier du moteur local (gardes, machine à états…).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                code: BRIDGE_OPERATION_FAILED
+                message: L'opération a été refusée par le moteur local.
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/unpair:
+    post:
+      operationId: notifyUnpair
+      tags: [pairing]
+      summary: Le Panel notifie la révocation de l'appairage.
+      description: >
+        À réception, le projet efface son bridgeToken, purge son outbox et
+        passe en STANDALONE (04_STANDALONE §4.1). IDEMPOTENT. Le débranchement
+        peut aussi être fait côté projet seul (page « Connexion Panel ») —
+        cet endpoint n'est qu'une courtoisie de propagation.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Désappairé (ou l'était déjà).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnpairResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bridgeToken:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: >
+        MÊME bridgeToken que celui délivré par le Panel au bootstrap
+        (PanelBridge.openapi.yaml). Un seul secret d'appairage pour les deux
+        sens ; sa révocation ferme tout.
+
+  parameters:
+    ContractVersion:
+      name: X-Bridge-Contract-Version
+      in: header
+      required: true
+      description: Version sémantique du contrat parlée par l'appelant.
+      schema:
+        type: string
+        pattern: '^\d+\.\d+\.\d+$'
+        example: 1.0.0
+
+  headers:
+    ContractVersionHeader:
+      description: Version du contrat parlée par le projet.
+      schema:
+        type: string
+        example: 1.0.0
+
+  responses:
+    Unauthorized:
+      description: bridgeToken absent, invalide ou révoqué.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            code: BRIDGE_UNAUTHORIZED
+            message: Credentials de pont invalides ou révoqués.
+    NotPaired:
+      description: >
+        Le projet n'est appairé à aucun Panel (état UNCONFIGURED/STANDALONE —
+        normal, pas une panne).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            code: BRIDGE_NOT_PAIRED
+            message: Ce projet n'est appairé à aucun Panel.
+    InvalidPayload:
+      description: Corps de requête non conforme au contrat (DTO invalide).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            code: BRIDGE_INVALID_PAYLOAD
+            message: Payload non conforme au contrat.
+    ContractVersionUnsupported:
+      description: Version majeure du contrat non supportée.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            code: BRIDGE_CONTRACT_VERSION_UNSUPPORTED
+            message: Version majeure du contrat non supportée.
+
+  schemas:
+    ErrorResponse:
+      type: object
+      description: Enveloppe d'erreur commune (identique au sens inverse).
+      required: [success, code, message]
+      properties:
+        success: { type: boolean, enum: [false] }
+        code:
+          type: string
+          enum:
+            - BRIDGE_UNAUTHORIZED
+            - BRIDGE_PAIRING_CODE_INVALID
+            - BRIDGE_ALREADY_PAIRED
+            - BRIDGE_NOT_PAIRED
+            - BRIDGE_CONTRACT_VERSION_UNSUPPORTED
+            - BRIDGE_INVALID_PAYLOAD
+            - BRIDGE_ENTITY_TYPE_UNSUPPORTED
+            - BRIDGE_OPERATION_UNKNOWN
+            - BRIDGE_OPERATION_FAILED
+            - BRIDGE_RATE_LIMITED
+            - BRIDGE_INTERNAL
+        message: { type: string }
+        details: { description: Contexte facultatif., nullable: true }
+
+    PingResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [status, service, paired, time]
+          properties:
+            status: { type: string, enum: [ok] }
+            service: { type: string, enum: [project-bridge] }
+            paired:
+              type: boolean
+              description: true si un Panel est appairé à ce projet.
+            time: { type: string, format: date-time }
+
+    IdentityResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          $ref: '#/components/schemas/Identity'
+
+    Identity:
+      type: object
+      required: [projectKey, projectName, environment, softwareVersion, contractVersion]
+      properties:
+        projectKey: { type: string }
+        projectName: { type: string }
+        environment: { type: string, enum: [TEST, PROD] }
+        softwareVersion: { type: string }
+        contractVersion: { type: string }
+
+    HealthResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [status, time]
+          properties:
+            status: { type: string, enum: [OK, DEGRADED] }
+            details: { type: string, nullable: true }
+            time: { type: string, format: date-time }
+
+    # SyncChange / SyncAck : STRICTEMENT identiques au sens inverse
+    # (PanelBridge.openapi.yaml). Dupliqués ici pour que chaque fichier soit
+    # autoporteur — toute évolution doit être appliquée aux DEUX fichiers
+    # (verrouillé par le test de conformité bridge-conformity.test.js).
+    SyncChange:
+      type: object
+      required: [writeId, entityType, entityId, deleted, modifiedAt, emitter]
+      properties:
+        writeId: { type: string, format: uuid }
+        entityType:
+          type: string
+          enum:
+            - DIAGNOSTIC
+            - CONTRACT
+            - INVOICE
+            - PAYMENT
+            - CONTRACT_DOCUMENT
+            - DEV_COMPANY
+            - TEAM_MEMBER
+            - EMAIL_TEMPLATE
+            - INTEGRATED_API_CONFIG
+            - INTEGRATED_API_MODE
+            - EVENT
+            - MEETING
+        entityId: { type: string, format: uuid }
+        deleted: { type: boolean }
+        payload: { nullable: true }
+        modifiedAt: { type: string, format: date-time }
+        emitter: { type: string, enum: [PANEL, PROJECT] }
+
+    SyncPushRequest:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/SyncChange'
+
+    SyncAck:
+      type: object
+      required: [writeId, status]
+      properties:
+        writeId: { type: string, format: uuid }
+        status: { type: string, enum: [APPLIED, DUPLICATE, IGNORED, REJECTED] }
+        code: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+
+    SyncPushResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [results]
+          properties:
+            results:
+              type: array
+              items:
+                $ref: '#/components/schemas/SyncAck'
+
+    SyncPullResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [changes, cursor, hasMore]
+          properties:
+            changes:
+              type: array
+              items:
+                $ref: '#/components/schemas/SyncChange'
+            cursor: { type: string }
+            hasMore: { type: boolean }
+
+    OperationCatalogEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [contractVersion, operations]
+          properties:
+            contractVersion: { type: string }
+            operations:
+              type: array
+              description: VIDE en Phase 1 — se remplit lot par lot (Phase 3+).
+              items:
+                $ref: '#/components/schemas/OperationDescriptor'
+
+    OperationDescriptor:
+      type: object
+      required: [id, title, status]
+      properties:
+        id: { type: string, description: 'Ex. « contract.cancel ».' }
+        title: { type: string }
+        entityType: { type: string, nullable: true }
+        status: { type: string, enum: [AVAILABLE, RESERVED] }
+
+    OperationInvocation:
+      type: object
+      required: [invocationId, params]
+      properties:
+        invocationId:
+          type: string
+          format: uuid
+          description: Clé d'idempotence de l'invocation.
+        params:
+          type: object
+          description: Paramètres propres à l'opération (schéma par opération, Phase 3+).
+
+    OperationResultEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [invocationId, status]
+          properties:
+            invocationId: { type: string, format: uuid }
+            status: { type: string, enum: [DONE, DUPLICATE] }
+            result: { nullable: true }
+
+    UnpairResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: object
+          required: [unpaired]
+          properties:
+            unpaired: { type: boolean, enum: [true] }

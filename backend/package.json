@@ -1,0 +1,27 @@
+{
+  "name": "panel-backend",
+  "version": "0.1.0",
+  "description": "Panel L.Y Solution — backend (squelette Phase 2B) : registre, appairage, bridge, manifest, auth",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node ../tests/run-all.js",
+    "test:registry": "node ../tests/registry.test.js",
+    "test:manifest": "node ../tests/manifest.test.js",
+    "test:capabilities": "node ../tests/capabilities.test.js",
+    "test:versions": "node ../tests/version-compatibility.test.js",
+    "test:bridge-http": "node ../tests/bridge-http.test.js",
+    "test:bridge-conformity": "node ../tests/bridge-conformity.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.23.8"
+  }
+}
