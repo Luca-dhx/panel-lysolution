@@ -18,6 +18,7 @@ import {
 } from '../../utils/panelCrypto.js';
 import ApiError from '../../utils/ApiError.js';
 import registryStore from '../registry/registryStore.js';
+import { validateManifest } from '../manifest/manifest.schema.js';
 
 // Alphabet sans ambiguïté (pas de 0/O, 1/I/L) : le code est fait pour être
 // recopié à la main entre deux écrans.
@@ -85,6 +86,29 @@ export function bootstrap(dto) {
     throw new BridgeError(BRIDGE_ERROR_CODES.ALREADY_PAIRED, 'Projet déjà appairé.');
   }
 
+  // Contrat ≥ 1.1.0 : Manifest joint au bootstrap. Canal OFFICIEL — validé
+  // AVANT de consommer le code : un Manifest non conforme refuse le bootstrap
+  // sans griller le code d'appairage. La forme a déjà été vérifiée par le
+  // miroir ; on vérifie ici la majeure du format et la cohérence d'identité.
+  let bridgeManifest = null;
+  if (dto.manifest !== undefined) {
+    const validation = validateManifest(dto.manifest);
+    if (!validation.valid) {
+      throw new BridgeError(
+        BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
+        'Manifest joint au bootstrap non conforme.',
+        { issues: validation.errors },
+      );
+    }
+    if (validation.manifest.project.key !== record.projectKey) {
+      throw new BridgeError(
+        BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
+        'Le Manifest joint ne correspond pas au projet appairé (project.key).',
+      );
+    }
+    bridgeManifest = validation.manifest;
+  }
+
   // Le code est consommé quoi qu'il arrive ensuite : usage strictement unique.
   record.pairing.pairingCodeHash = null;
   record.pairing.pairingCodeExpiresAt = null;
@@ -100,6 +124,12 @@ export function bootstrap(dto) {
   record.runtime.softwareVersion = dto.softwareVersion;
   record.runtime.contractVersion = dto.contractVersion;
   record.runtime.publicBackendUrl = dto.publicBackendUrl ?? null;
+
+  // Le Manifest reçu par le pont fait foi : il remplace toute saisie manuelle.
+  if (bridgeManifest !== null) {
+    record.manifest = bridgeManifest;
+    record.manifestSource = 'BRIDGE';
+  }
   registryStore.save(record);
 
   return {

@@ -134,7 +134,7 @@ export const api = {
     request<{ removed: true }>(`/api/projects/${projectId}`, { method: 'DELETE' }),
 
   updateManifest: (projectId: string, manifest: unknown) =>
-    request<{ project: PublicProject; unknownCapabilities: string[] }>(
+    request<{ project: PublicProject; unknownFeatures: string[] }>(
       `/api/projects/${projectId}/manifest`,
       { method: 'PUT', body: { manifest } },
     ),

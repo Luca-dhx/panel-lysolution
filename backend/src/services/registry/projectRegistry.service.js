@@ -54,6 +54,7 @@ export function declareProject({ projectKey, projectName, manifest = null }) {
   }
 
   const now = nowIso();
+  const manifestSource = validatedManifest ? 'MANUAL' : null;
   const record = {
     projectId: newBridgeId(),
     projectKey,
@@ -79,6 +80,7 @@ export function declareProject({ projectKey, projectName, manifest = null }) {
       bridgeStats: null,
     },
     manifest: validatedManifest,
+    manifestSource,
   };
   registryStore.insert(record);
 
@@ -98,12 +100,44 @@ export function listProjects() {
   return registryStore.list();
 }
 
+// Saisie manuelle d'un Manifest — CANAL DE SECOURS uniquement (projet parlant
+// encore un contrat 1.0.x, sans transport de Manifest). Dès qu'un Manifest a
+// été reçu via le pont (bootstrap 1.1+), il fait foi : la saisie manuelle est
+// refusée pour qu'elle ne puisse jamais contredire ce que le projet déclare.
 export function updateManifest(projectId, manifestInput) {
   const record = getProjectOrThrow(projectId);
+  if (record.manifestSource === 'BRIDGE') {
+    throw ApiError.conflict(
+      'PANEL_MANIFEST_BRIDGE_AUTHORITATIVE',
+      'Ce projet transmet son Manifest via le pont : la saisie manuelle est désactivée.',
+    );
+  }
   const validation = assertValidManifestOrThrow(manifestInput);
+  assertManifestIdentityMatches(record, validation.manifest);
   record.manifest = validation.manifest;
+  record.manifestSource = 'MANUAL';
   registryStore.save(record);
-  return { record, unknownCapabilities: validation.unknownCapabilities };
+  return { record, unknownFeatures: validation.unknownFeatures };
+}
+
+// Une identité de Manifest qui ne correspond pas à la fiche est une erreur —
+// jamais un écrasement silencieux.
+function assertManifestIdentityMatches(record, manifest) {
+  if (manifest.project.key !== record.projectKey) {
+    throw ApiError.badRequest(
+      'PANEL_MANIFEST_IDENTITY_MISMATCH',
+      `Le Manifest déclare project.key « ${manifest.project.key} » mais la fiche est « ${record.projectKey} ».`,
+    );
+  }
+}
+
+// Manifest reçu par le PONT (bootstrap ≥ 1.1.0) — canal officiel, prioritaire
+// et définitif : il remplace toute saisie manuelle antérieure.
+export function setManifestFromBridge(record, manifest) {
+  record.manifest = manifest;
+  record.manifestSource = 'BRIDGE';
+  registryStore.save(record);
+  return record;
 }
 
 export function removeProject(projectId) {
@@ -160,10 +194,12 @@ export function toPublicProject(record, now = Date.now()) {
     liveness: deriveLiveness(record, now),
     capabilities: {
       enabled: capabilities.enabled,
+      reserved: capabilities.reserved,
       unknown: capabilities.unknown,
       panelModules: capabilities.panelModules,
     },
     manifest: record.manifest,
+    manifestSource: record.manifestSource ?? null,
   };
 }
 
@@ -173,9 +209,7 @@ export function toPublicProject(record, now = Date.now()) {
 export function describeConformity(record) {
   const manifestValid = record.manifest !== null;
   const identityConsistent =
-    !manifestValid ||
-    (record.manifest.project.projectKey === record.projectKey &&
-      record.manifest.project.projectName === record.projectName);
+    !manifestValid || record.manifest.project.key === record.projectKey;
   return {
     declared: true,
     hasManifest: manifestValid,

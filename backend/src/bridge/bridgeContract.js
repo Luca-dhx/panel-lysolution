@@ -1,17 +1,24 @@
 // ============================================================================
-// MIROIR EXÉCUTABLE des contrats OpenAPI v1.0.0 des ponts.
+// MIROIR EXÉCUTABLE des contrats OpenAPI v1.1.0 des ponts.
 //   docs/spec/PanelBridge.openapi.yaml   (le Panel SERT ce contrat)
 //   docs/spec/ProjectBridge.openapi.yaml (le Panel CONSOMME ce contrat)
 // Toute requête entrante sur /bridge/v1 est validée par ce fichier ; toute
 // évolution passe d'abord par les specs (ratifiées dans le projet modèle) —
 // tests/bridge-conformity.test.js verrouille l'accord specs ↔ miroir.
 // Ce module ne dépend de rien d'autre que zod et node:crypto.
+//
+// Historique : 1.0.0 (Phase 1) — surface initiale ; 1.1.0 (Phase 2A, ADDITIF)
+// — BootstrapRequest.manifest optionnel + GET /manifest côté ProjectBridge
+// (schéma ProjectManifest identique aux deux specs).
 // ============================================================================
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.0.0';
+export const CONTRACT_VERSION = '1.1.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
+
+// Version du FORMAT de manifeste (indépendante de la version du contrat).
+export const MANIFEST_FORMAT_VERSION = '1.0.0';
 
 export const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 
@@ -32,6 +39,7 @@ export const PROJECT_API_ROUTES = Object.freeze({
   ping: '/api/project-bridge/v1/ping',
   identity: '/api/project-bridge/v1/identity',
   health: '/api/project-bridge/v1/health',
+  manifest: '/api/project-bridge/v1/manifest',
   syncPush: '/api/project-bridge/v1/sync/push',
   syncPull: '/api/project-bridge/v1/sync/pull',
   operations: '/api/project-bridge/v1/operations',
@@ -140,6 +148,46 @@ export const ACK_STATUS = Object.freeze({
 const semver = z.string().regex(SEMVER_RE, 'version sémantique attendue (x.y.z)');
 const isoDate = z.string().datetime({ offset: true });
 
+// ProjectManifest (schéma IDENTIQUE dans les deux specs). Le Panel est un
+// LECTEUR TOLÉRANT : les champs requis par la spec sont exigés, mais les
+// propriétés additionnelles d'une mineure de format plus récente sont
+// tolérées (pas de .strict() — l'OpenAPI ne déclare pas
+// additionalProperties: false sur ces objets).
+export const projectManifestSchema = z.object({
+  manifestVersion: semver,
+  project: z.object({
+    key: z.string().min(3).max(120),
+    name: z.string().min(1),
+    environment: z.enum(['TEST', 'PROD']),
+    softwareVersion: z.string().min(1),
+  }),
+  bridge: z.object({
+    contractVersion: semver,
+    projectBridgeBasePath: z.string().min(1),
+  }),
+  contracts: z.object({
+    panelBridge: semver,
+    projectBridge: semver,
+  }),
+  sync: z.object({
+    supportedEntityTypes: z.array(z.enum(SYNC_ENTITY_TYPES)),
+    operations: z.array(z.string()),
+  }),
+  modules: z.array(
+    z.object({
+      id: z.string().min(1),
+      title: z.string().min(1),
+      status: z.enum(['ACTIVE', 'OPTIONAL']),
+    }),
+  ),
+  features: z.array(
+    z.object({
+      id: z.string().min(1),
+      status: z.enum(['AVAILABLE', 'RESERVED']),
+    }),
+  ),
+});
+
 export const bootstrapRequestSchema = z
   .object({
     contractVersion: semver,
@@ -149,6 +197,8 @@ export const bootstrapRequestSchema = z
     softwareVersion: z.string().min(1),
     publicBackendUrl: z.string().url().nullable().optional(),
     pairingCode: z.string().min(1),
+    // Contrat ≥ 1.1.0 : le projet se présente complètement dès l'appairage.
+    manifest: projectManifestSchema.optional(),
   })
   .strict();
 

@@ -13,6 +13,7 @@ const TESTS = [
   'registry.test.js',
   'bridge-http.test.js',
   'bridge-conformity.test.js',
+  'spec-drift.check.mjs',
 ];
 
 let failed = 0;

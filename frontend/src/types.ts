@@ -44,8 +44,10 @@ export interface PublicProject {
   liveness: Liveness;
   capabilities: {
     enabled: string[];
+    reserved: string[];
     unknown: string[];
     panelModules: string[];
   };
   manifest: unknown | null;
+  manifestSource: 'BRIDGE' | 'MANUAL' | null;
 }

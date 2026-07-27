@@ -16,7 +16,8 @@
     "test:capabilities": "node ../tests/capabilities.test.js",
     "test:versions": "node ../tests/version-compatibility.test.js",
     "test:bridge-http": "node ../tests/bridge-http.test.js",
-    "test:bridge-conformity": "node ../tests/bridge-conformity.test.js"
+    "test:bridge-conformity": "node ../tests/bridge-conformity.test.js",
+    "test:spec-drift": "node ../tests/spec-drift.check.mjs"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

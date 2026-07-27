@@ -1,22 +1,22 @@
-// Catalogue officiel des capacités — code-first, la référence de
-// docs/architecture/21_PROJECT_CAPABILITIES.md §2.
-// Évolution ADDITIVE uniquement : on ajoute, on ne renomme ni ne supprime.
-// `panelModules` : modules d'interface du Panel que la capacité activera
-// (Phase 3+) — vide pour les domaines de catégorie 1, jamais administrés ici.
-export const CAPABILITIES_CATALOG = Object.freeze({
-  supportsCompany: { label: 'Entreprise cliente', panelModules: [] },
-  supportsServices: { label: 'Services & prestations', panelModules: [] },
-  supportsBookings: { label: 'Réservations', panelModules: [] },
-  supportsGallery: { label: 'Galerie / avant-après / avis', panelModules: [] },
-  supportsContracts: { label: 'Contrats', panelModules: ['contracts'] },
-  supportsInvoices: { label: 'Factures', panelModules: ['invoices'] },
-  supportsPayments: { label: 'Paiements / mensualités', panelModules: ['payments'] },
-  supportsStripe: { label: 'IntegratedAPI Stripe', panelModules: ['integrated-api'] },
-  supportsBrevo: { label: 'IntegratedAPI Brevo', panelModules: ['integrated-api'] },
-  supportsYousign: { label: 'IntegratedAPI Yousign', panelModules: ['integrated-api'] },
-  supportsCRM: { label: 'CRM', panelModules: ['crm'] },
+// Catalogue officiel des features des projets vitrines — code-first, la
+// référence de docs/architecture/21_PROJECT_CAPABILITIES.md §2.
+// Les identifiants correspondent aux `features[].id` du ProjectManifest
+// (specs v1.1.0). Évolution ADDITIVE uniquement : on ajoute, on ne renomme
+// ni ne supprime.
+// `panelModules` : modules d'interface du Panel que la feature activera
+// (Phase 3+) — vide quand la feature n'a pas (encore) d'écran côté Panel.
+export const FEATURES_CATALOG = Object.freeze({
+  'sync.diagnostic': { label: 'Synchronisation — diagnostic', panelModules: [] },
+  'sync.contracts': { label: 'Synchronisation — contrats', panelModules: ['contracts'] },
+  'sync.invoicing': { label: 'Synchronisation — facturation', panelModules: ['invoices'] },
+  'sync.dev-company': { label: 'Synchronisation — société développeur', panelModules: ['dev-company'] },
+  'sync.email-templates': { label: 'Synchronisation — templates e-mails', panelModules: ['email-templates'] },
+  'sync.integrated-api-config': { label: 'Synchronisation — IntegratedAPI', panelModules: ['integrated-api'] },
+  'sync.events-meetings': { label: 'Synchronisation — événements & réunions', panelModules: ['events'] },
+  'operations.catalog': { label: 'Catalogue d’opérations invocables', panelModules: [] },
+  'manager-access-grant': { label: 'Accès Manager délégué', panelModules: [] },
 });
 
-export const KNOWN_CAPABILITIES = Object.freeze(Object.keys(CAPABILITIES_CATALOG));
+export const KNOWN_FEATURES = Object.freeze(Object.keys(FEATURES_CATALOG));
 
-export default CAPABILITIES_CATALOG;
+export default FEATURES_CATALOG;

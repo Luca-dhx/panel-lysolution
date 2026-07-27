@@ -18,6 +18,7 @@ export const PROJECT_BRIDGE_CLIENT_METHODS = Object.freeze([
   'ping',
   'getIdentity',
   'getHealth',
+  'getManifest',
   'deliverChanges',
   'readLocalChanges',
   'listOperations',
@@ -97,6 +98,11 @@ export class ProjectBridgeClient {
 
   getHealth() {
     return this.#request('GET', PROJECT_API_ROUTES.health);
+  }
+
+  // Manifeste officiel du projet (contrat ≥ 1.1.0) — relisible à tout moment.
+  getManifest() {
+    return this.#request('GET', PROJECT_API_ROUTES.manifest);
   }
 
   // -- sync ------------------------------------------------------------------

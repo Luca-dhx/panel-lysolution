@@ -1,5 +1,5 @@
 // Surface HTTP réelle /bridge/v1 : serveur Express éphémère + fetch — le
-// cycle de vie complet du contrat PanelBridge (v1.0.0), plus l'auth de la
+// cycle de vie complet du contrat PanelBridge (v1.1.0), plus l'auth de la
 // surface interne /api.
 import { check, finish, section, setTestEnv, startServer } from './helpers/harness.js';
 
@@ -11,11 +11,12 @@ const {
   CONTRACT_VERSION_HEADER,
 } = await import('../backend/src/bridge/bridgeContract.js');
 const registry = await import('../backend/src/services/registry/projectRegistry.service.js');
+const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
 const { emitChange, resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
 
-seedFromEnv();
-resetSyncCore();
+await seedFromEnv();
+await resetSyncCore();
 
 const { call, close } = await startServer(createApp());
 const H = { [CONTRACT_VERSION_HEADER]: CONTRACT_VERSION };
@@ -44,7 +45,7 @@ section('Garde de version du contrat (toutes routes, ping compris)');
 }
 
 section('Bootstrap — POST /bridge/v1/pairings');
-const declared = registry.declareProject({ projectKey: 'projet-http', projectName: 'Projet HTTP' });
+const declared = await registry.declareProject({ projectKey: 'projet-http', projectName: 'Projet HTTP' });
 let bridgeToken;
 {
   const invalid = await call('POST', '/bridge/v1/pairings', { headers: H, body: { hello: 'world' } });
@@ -78,16 +79,60 @@ let bridgeToken;
 
   // Défense en profondeur : un code encore présent sur une fiche PAIRED.
   const { sha256Hex } = await import('../backend/src/utils/panelCrypto.js');
-  declared.record.pairing.pairingCodeHash = sha256Hex('PAIR-TEST-DEJA-PAIR');
-  declared.record.pairing.pairingCodeExpiresAt = iso(60_000);
+  const pairedRecord = await registryStore.getById(declared.record.projectId);
+  pairedRecord.pairing.pairingCodeHash = sha256Hex('PAIR-TEST-DEJA-PAIR');
+  pairedRecord.pairing.pairingCodeExpiresAt = iso(60_000);
+  await registryStore.save(pairedRecord);
   const alreadyPaired = await call('POST', '/bridge/v1/pairings', {
     headers: H,
     body: { ...dto, pairingCode: 'PAIR-TEST-DEJA-PAIR' },
   });
   check('fiche déjà appairée → 409 BRIDGE_ALREADY_PAIRED',
     alreadyPaired.status === 409 && alreadyPaired.json.code === 'BRIDGE_ALREADY_PAIRED');
-  declared.record.pairing.pairingCodeHash = null;
-  declared.record.pairing.pairingCodeExpiresAt = null;
+  pairedRecord.pairing.pairingCodeHash = null;
+  pairedRecord.pairing.pairingCodeExpiresAt = null;
+  await registryStore.save(pairedRecord);
+}
+
+section('Bootstrap 1.1 avec Manifest joint');
+{
+  const withManifest = await registry.declareProject({
+    projectKey: 'projet-manifest',
+    projectName: 'Projet Manifest',
+  });
+  const manifest = {
+    manifestVersion: '1.0.0',
+    project: { key: 'projet-manifest', name: 'Projet Manifest', environment: 'TEST', softwareVersion: 'dev' },
+    bridge: { contractVersion: CONTRACT_VERSION, projectBridgeBasePath: '/api/project-bridge/v1' },
+    contracts: { panelBridge: CONTRACT_VERSION, projectBridge: CONTRACT_VERSION },
+    sync: { supportedEntityTypes: ['DIAGNOSTIC'], operations: [] },
+    modules: [{ id: 'panel-bridge', title: 'Pont Panel', status: 'ACTIVE' }],
+    features: [{ id: 'sync.diagnostic', status: 'AVAILABLE' }],
+  };
+  const dto = {
+    contractVersion: CONTRACT_VERSION,
+    projectKey: 'projet-manifest',
+    projectName: 'Projet Manifest',
+    environment: 'TEST',
+    softwareVersion: 'dev',
+    pairingCode: withManifest.pairingCode,
+    manifest,
+  };
+
+  const malformed = await call('POST', '/bridge/v1/pairings', {
+    headers: H,
+    body: { ...dto, manifest: { ...manifest, features: [{ id: 'x', status: 'ON' }] } },
+  });
+  check('manifest joint malformé → 400 BRIDGE_INVALID_PAYLOAD',
+    malformed.status === 400 && malformed.json.code === 'BRIDGE_INVALID_PAYLOAD');
+
+  const good = await call('POST', '/bridge/v1/pairings', { headers: H, body: dto });
+  check('bootstrap avec manifest → 201 (le refus précédent n’a pas grillé le code)',
+    good.status === 201 && typeof good.json.data.bridgeToken === 'string');
+
+  const stored = await registryStore.getById(withManifest.record.projectId);
+  check('Manifest reçu au bootstrap conservé', stored.manifest?.project?.key === 'projet-manifest');
+  check('source BRIDGE enregistrée', stored.manifestSource === 'BRIDGE');
 }
 
 const AUTH = { ...H, authorization: `Bearer ${bridgeToken}` };
@@ -119,10 +164,11 @@ section('Heartbeat — POST /bridge/v1/heartbeats');
   });
   check('heartbeat conforme → 200 {acknowledged, panelTime}',
     hb.status === 200 && hb.json.data.acknowledged === true && typeof hb.json.data.panelTime === 'string');
+  const afterHb = await registryStore.getById(declared.record.projectId);
   check('le registre reflète le heartbeat',
-    declared.record.runtime.softwareVersion === '1.0.1'
-    && declared.record.runtime.bridgeStats.outboxSize === 3
-    && registry.deriveLiveness(declared.record) === 'ONLINE');
+    afterHb.runtime.softwareVersion === '1.0.1'
+    && afterHb.runtime.bridgeStats.outboxSize === 3
+    && registry.deriveLiveness(afterHb) === 'ONLINE');
 }
 
 section('Sync push — POST /bridge/v1/sync/push');
@@ -225,7 +271,7 @@ section('Unpair — DELETE /bridge/v1/pairings/current');
   const unpaired = await call('DELETE', '/bridge/v1/pairings/current', { headers: AUTH });
   check('désappairage → 200 {unpaired:true}',
     unpaired.status === 200 && unpaired.json.data.unpaired === true);
-  check('fiche REVOKED', declared.record.pairing.status === 'REVOKED');
+  check('fiche REVOKED', (await registryStore.getById(declared.record.projectId)).pairing.status === 'REVOKED');
 
   const afterRevoke = await call('POST', '/bridge/v1/heartbeats', { headers: AUTH, body: {} });
   check('l’ancien token répond désormais 401', afterRevoke.status === 401);

@@ -1,45 +1,19 @@
-// Validation du Manifest « Manager Standard » —
-// docs/architecture/20_MANAGER_STANDARD.md §3.
-// Lecteur tolérant : les capacités inconnues sont acceptées et signalées,
-// jamais refusées ; seule une majeure de format inconnue est refusée.
-import { z } from 'zod';
-import { KNOWN_CAPABILITIES } from './capabilities.catalog.js';
+// Validation du Manifest officiel « ProjectManifest » — schéma IDENTIQUE aux
+// deux specs OpenAPI v1.1.0 (docs/spec/), miroir exécutable dans
+// backend/src/bridge/bridgeContract.js.
+// Lecteur tolérant : les propriétés additionnelles d'un format mineur plus
+// récent sont acceptées ; les modules/features hors catalogue sont acceptés
+// et signalés, jamais refusés ; seule une MAJEURE de format inconnue est
+// refusée.
+import { MANIFEST_FORMAT_VERSION, projectManifestSchema } from '../../bridge/bridgeContract.js';
+import { KNOWN_FEATURES } from './capabilities.catalog.js';
 
-export const MANIFEST_FORMAT_VERSION = '1.0.0';
+export { MANIFEST_FORMAT_VERSION };
 
-const SEMVER_RE = /^\d+\.\d+\.\d+$/;
-const semver = z.string().regex(SEMVER_RE, 'version sémantique attendue (x.y.z)');
-
-export const manifestSchema = z
-  .object({
-    manifestVersion: semver,
-    project: z
-      .object({
-        projectKey: z.string().min(3).max(120),
-        projectName: z.string().min(1),
-        softwareVersion: semver,
-        contractVersion: semver,
-        environment: z.enum(['TEST', 'PROD']),
-      })
-      .strict(),
-    // Booléens uniquement ; les clés hors catalogue sont tolérées (lecteur
-    // tolérant) et remontées dans `unknownCapabilities`.
-    capabilities: z.record(z.string().min(1), z.boolean()).optional(),
-    modules: z
-      .array(
-        z
-          .object({
-            id: z.string().min(1),
-            label: z.string().min(1),
-          })
-          .strict(),
-      )
-      .optional(),
-  })
-  .strict();
+export const manifestSchema = projectManifestSchema;
 
 // Valide un Manifest. Retourne toujours un objet — jamais d'exception :
-//   { valid: true,  manifest, unknownCapabilities: string[] }
+//   { valid: true,  manifest, unknownFeatures: string[] }
 //   { valid: false, errors: [{ path, code, message }] }
 export function validateManifest(input) {
   const parsed = manifestSchema.safeParse(input);
@@ -70,8 +44,8 @@ export function validateManifest(input) {
     };
   }
 
-  const unknownCapabilities = Object.keys(manifest.capabilities ?? {}).filter(
-    (name) => !KNOWN_CAPABILITIES.includes(name),
-  );
-  return { valid: true, manifest, unknownCapabilities };
+  const unknownFeatures = manifest.features
+    .map((feature) => feature.id)
+    .filter((id) => !KNOWN_FEATURES.includes(id));
+  return { valid: true, manifest, unknownFeatures };
 }

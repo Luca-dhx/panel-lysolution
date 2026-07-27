@@ -75,8 +75,8 @@ export async function revokePairing(req, res) {
 
 export function putManifest(req, res) {
   const { manifest } = req.body ?? {};
-  const { record, unknownCapabilities } = updateManifest(req.params.projectId, manifest);
-  return ok(res, { project: toPublicProject(record), unknownCapabilities });
+  const { record, unknownFeatures } = updateManifest(req.params.projectId, manifest);
+  return ok(res, { project: toPublicProject(record), unknownFeatures });
 }
 
 export function remove(req, res) {

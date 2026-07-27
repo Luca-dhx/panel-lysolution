@@ -125,7 +125,7 @@ export function ProjectsPage() {
     setSavingManifest(true);
     try {
       const res = await api.updateManifest(editor.projectId, parsed);
-      setUnknownCaps(res.unknownCapabilities);
+      setUnknownCaps(res.unknownFeatures);
       setManifestSaved(true);
       await reload();
     } catch (err) {

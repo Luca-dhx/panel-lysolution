@@ -23,6 +23,11 @@
 #   - projet NON APPAIRÉ : toute la surface (sauf /ping) répond
 #     503 BRIDGE_NOT_PAIRED — état normal de première classe, pas une erreur.
 #   - token invalide : 401 BRIDGE_UNAUTHORIZED.
+#
+# Historique des versions du contrat :
+#   1.0.0 (Phase 1)  — surface initiale.
+#   1.1.0 (Phase 2A) — ADDITIF : GET /manifest (manifeste officiel du projet,
+#     jamais déduit par le Panel). Compatible 1.0.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -32,7 +37,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -118,6 +123,34 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/manifest:
+    get:
+      operationId: getManifest
+      tags: [identity]
+      summary: Manifeste officiel du projet (contrat ≥ 1.1.0).
+      description: >
+        Carte d'identité COMPLÈTE que le Panel lit au lieu de déduire :
+        projet, pont, versions des contrats parlés, capacités de
+        synchronisation réellement actives, modules installés,
+        fonctionnalités disponibles ou réservées. Source côté projet : un
+        registre DÉCLARATIF code-first (jamais une déduction runtime) ;
+        le manifeste est validé contre son schéma avant d'être servi.
+        Également joint (optionnellement) à la requête de bootstrap
+        (PanelBridge.openapi.yaml, BootstrapRequest.manifest).
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: Manifeste courant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManifestResponseEnvelope'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/NotPaired' }
 
@@ -420,6 +453,104 @@ components:
         environment: { type: string, enum: [TEST, PROD] }
         softwareVersion: { type: string }
         contractVersion: { type: string }
+
+    ManifestResponseEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          $ref: '#/components/schemas/ProjectManifest'
+
+    # ProjectManifest : IDENTIQUE des deux côtés (joint au bootstrap dans
+    # PanelBridge.openapi.yaml). Toute évolution s'applique aux DEUX fichiers.
+    ProjectManifest:
+      type: object
+      description: >
+        Manifeste officiel du projet — le Panel ne déduit JAMAIS ces
+        informations. `manifestVersion` versionne le FORMAT du manifeste,
+        indépendamment de la version du contrat.
+      required: [manifestVersion, project, bridge, contracts, sync, modules, features]
+      properties:
+        manifestVersion:
+          type: string
+          pattern: '^\d+\.\d+\.\d+$'
+          example: 1.0.0
+        project:
+          type: object
+          required: [key, name, environment, softwareVersion]
+          properties:
+            key: { type: string, minLength: 3, maxLength: 120 }
+            name: { type: string }
+            environment: { type: string, enum: [TEST, PROD] }
+            softwareVersion: { type: string, description: SHA git court du build. }
+        bridge:
+          type: object
+          required: [contractVersion, projectBridgeBasePath]
+          properties:
+            contractVersion:
+              type: string
+              pattern: '^\d+\.\d+\.\d+$'
+              description: Version du contrat parlée par ce projet.
+            projectBridgeBasePath:
+              type: string
+              example: /api/project-bridge/v1
+        contracts:
+          type: object
+          required: [panelBridge, projectBridge]
+          properties:
+            panelBridge: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+            projectBridge: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+        sync:
+          type: object
+          description: >
+            DÉRIVÉ DU CODE (jamais du registre déclaratif) : les entityTypes
+            que ce projet applique réellement aujourd'hui, et les opérations
+            réellement invocables de son catalogue.
+          required: [supportedEntityTypes, operations]
+          properties:
+            supportedEntityTypes:
+              type: array
+              items:
+                type: string
+                enum:
+                  - DIAGNOSTIC
+                  - CONTRACT
+                  - INVOICE
+                  - PAYMENT
+                  - CONTRACT_DOCUMENT
+                  - DEV_COMPANY
+                  - TEAM_MEMBER
+                  - EMAIL_TEMPLATE
+                  - INTEGRATED_API_CONFIG
+                  - INTEGRATED_API_MODE
+                  - EVENT
+                  - MEETING
+            operations:
+              type: array
+              items: { type: string }
+        modules:
+          type: array
+          description: Modules installés dans ce produit (registre déclaratif).
+          items:
+            type: object
+            required: [id, title, status]
+            properties:
+              id: { type: string, description: 'Identifiant stable (ex. « deployment-engine »).' }
+              title: { type: string }
+              status: { type: string, enum: [ACTIVE, OPTIONAL] }
+        features:
+          type: array
+          description: >
+            Fonctionnalités exposées au Panel. AVAILABLE = utilisable
+            aujourd'hui ; RESERVED = prévue par le contrat mais lot non livré
+            (le Panel sait ce qu'il ne doit PAS tenter).
+          items:
+            type: object
+            required: [id, status]
+            properties:
+              id: { type: string, description: 'Identifiant stable (ex. « sync.contracts »).' }
+              status: { type: string, enum: [AVAILABLE, RESERVED] }
 
     HealthResponseEnvelope:
       type: object

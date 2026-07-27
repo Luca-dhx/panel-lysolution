@@ -22,6 +22,13 @@
 #   - succès : { "success": true,  "data": ... }
 #   - erreur : { "success": false, "code": "...", "message": "...", "details"? }
 #   (identiques aux conventions du backend du projet — voir ErrorResponse).
+#
+# Historique des versions du contrat :
+#   1.0.0 (Phase 1)  — surface initiale.
+#   1.1.0 (Phase 2A) — ADDITIF : BootstrapRequest.manifest (optionnel) — le
+#     projet se présente complètement dès l'appairage via son manifeste
+#     officiel (schéma ProjectManifest, identique aux deux specs).
+#     Compatible 1.0.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -31,7 +38,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -409,6 +416,95 @@ components:
         pairingCode:
           type: string
           description: Code d'appairage à usage unique, obtenu hors-bande.
+        manifest:
+          allOf:
+            - $ref: '#/components/schemas/ProjectManifest'
+          description: >
+            OPTIONNEL (contrat ≥ 1.1.0) : le manifeste officiel du projet,
+            joint dès l'appairage pour que le Panel n'ait RIEN à déduire.
+            Le Panel peut aussi le (re)lire à tout moment via
+            GET /api/project-bridge/v1/manifest (ProjectBridge.openapi.yaml).
+
+    # ProjectManifest : IDENTIQUE des deux côtés (servi par GET /manifest du
+    # ProjectBridge). Toute évolution s'applique aux DEUX fichiers — verrouillé
+    # par bridge-conformity.test.js.
+    ProjectManifest:
+      type: object
+      description: >
+        Manifeste officiel du projet — le Panel ne déduit JAMAIS ces
+        informations. `manifestVersion` versionne le FORMAT du manifeste,
+        indépendamment de la version du contrat.
+      required: [manifestVersion, project, bridge, contracts, sync, modules, features]
+      properties:
+        manifestVersion:
+          type: string
+          pattern: '^\d+\.\d+\.\d+$'
+          example: 1.0.0
+        project:
+          type: object
+          required: [key, name, environment, softwareVersion]
+          properties:
+            key: { type: string, minLength: 3, maxLength: 120 }
+            name: { type: string }
+            environment: { type: string, enum: [TEST, PROD] }
+            softwareVersion: { type: string, description: SHA git court du build. }
+        bridge:
+          type: object
+          required: [contractVersion, projectBridgeBasePath]
+          properties:
+            contractVersion:
+              type: string
+              pattern: '^\d+\.\d+\.\d+$'
+            projectBridgeBasePath:
+              type: string
+              example: /api/project-bridge/v1
+        contracts:
+          type: object
+          required: [panelBridge, projectBridge]
+          properties:
+            panelBridge: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+            projectBridge: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+        sync:
+          type: object
+          required: [supportedEntityTypes, operations]
+          properties:
+            supportedEntityTypes:
+              type: array
+              items:
+                type: string
+                enum:
+                  - DIAGNOSTIC
+                  - CONTRACT
+                  - INVOICE
+                  - PAYMENT
+                  - CONTRACT_DOCUMENT
+                  - DEV_COMPANY
+                  - TEAM_MEMBER
+                  - EMAIL_TEMPLATE
+                  - INTEGRATED_API_CONFIG
+                  - INTEGRATED_API_MODE
+                  - EVENT
+                  - MEETING
+            operations:
+              type: array
+              items: { type: string }
+        modules:
+          type: array
+          items:
+            type: object
+            required: [id, title, status]
+            properties:
+              id: { type: string }
+              title: { type: string }
+              status: { type: string, enum: [ACTIVE, OPTIONAL] }
+        features:
+          type: array
+          items:
+            type: object
+            required: [id, status]
+            properties:
+              id: { type: string }
+              status: { type: string, enum: [AVAILABLE, RESERVED] }
 
     BootstrapResponseEnvelope:
       type: object

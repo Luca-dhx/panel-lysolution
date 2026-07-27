@@ -44,8 +44,9 @@ section('Chemins du contrat ProjectBridge (consommés par le Panel)');
 {
   const inSpec = specPaths(projectSpec, /^ {2}(\/api\/project-bridge\/v1\/[^\s:]+):\s*$/gm).sort();
   const inMirror = Object.values(contract.PROJECT_API_ROUTES).sort();
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 8);
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 9);
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
+  check('GET /manifest présent (ajout 1.1.0)', inMirror.includes('/api/project-bridge/v1/manifest'));
 }
 
 section('Catalogues d’erreurs BRIDGE_*');
@@ -107,9 +108,47 @@ section('DTO du miroir : mêmes exigences que les specs');
     }).success);
 }
 
+section('ProjectManifest (ajout 1.1.0) : identique aux deux specs, miroir conforme');
+{
+  check('schéma ProjectManifest présent dans les DEUX specs',
+    panelSpec.includes('ProjectManifest:') && projectSpec.includes('ProjectManifest:'));
+  check('BootstrapRequest.manifest documenté dans la spec PanelBridge',
+    panelSpec.includes('manifest:'));
+  check('GET /manifest documenté dans la spec ProjectBridge',
+    projectSpec.includes('/api/project-bridge/v1/manifest:'));
+  check('historique de version 1.1.0 documenté dans les deux specs',
+    panelSpec.includes('1.1.0') && projectSpec.includes('1.1.0'));
+
+  const canonicalManifest = {
+    manifestVersion: contract.MANIFEST_FORMAT_VERSION,
+    project: { key: 'sb-auto-06', name: 'SB Auto 06', environment: 'TEST', softwareVersion: 'abc1234' },
+    bridge: { contractVersion: contract.CONTRACT_VERSION, projectBridgeBasePath: '/api/project-bridge/v1' },
+    contracts: { panelBridge: contract.CONTRACT_VERSION, projectBridge: contract.CONTRACT_VERSION },
+    sync: { supportedEntityTypes: ['DIAGNOSTIC'], operations: [] },
+    modules: [{ id: 'panel-bridge', title: 'Pont Panel', status: 'ACTIVE' }],
+    features: [{ id: 'sync.diagnostic', status: 'AVAILABLE' }, { id: 'sync.contracts', status: 'RESERVED' }],
+  };
+  check('manifeste canonique accepté par le miroir',
+    contract.projectManifestSchema.safeParse(canonicalManifest).success);
+  check('les 7 champs racine sont requis',
+    ['manifestVersion', 'project', 'bridge', 'contracts', 'sync', 'modules', 'features'].every((field) => {
+      const clone = { ...canonicalManifest };
+      delete clone[field];
+      return !contract.projectManifestSchema.safeParse(clone).success;
+    }));
+  check('bootstrap AVEC manifeste accepté (champ optionnel ≥ 1.1.0)',
+    contract.bootstrapRequestSchema.safeParse({
+      contractVersion: contract.CONTRACT_VERSION, projectKey: 'sb-auto-06', projectName: 'SB Auto 06',
+      environment: 'TEST', softwareVersion: 'abc1234', pairingCode: 'X',
+      manifest: canonicalManifest,
+    }).success);
+  check('statuts de modules/features conformes aux enums de la spec',
+    panelSpec.includes('[ACTIVE, OPTIONAL]') && panelSpec.includes('[AVAILABLE, RESERVED]'));
+}
+
 section('Client sortant : une méthode par opération du contrat');
 {
-  check('8 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 8);
+  check('9 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 9);
   const client = new ProjectBridgeClient({ baseUrl: 'https://exemple.invalid', bridgeToken: 'x' });
   check('chaque méthode existe sur le client',
     PROJECT_BRIDGE_CLIENT_METHODS.every((m) => typeof client[m] === 'function'));
