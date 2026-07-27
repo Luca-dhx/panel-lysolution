@@ -61,10 +61,10 @@ dépôt, répondent à ce besoin :
   le squelette officiel qu'un projet compatible expose — surfaces, domaines,
   comptes, bridge. Le Panel se repose sur ce standard, jamais sur une
   connaissance implicite d'un projet particulier ;
-- les **Capabilities** ([21_PROJECT_CAPABILITIES.md](21_PROJECT_CAPABILITIES.md)) :
-  chaque projet déclare ce qu'il supporte (`supportsContracts`,
-  `supportsBookings`…) via son **Manifest** ; le Panel adapte son interface à
-  cette déclaration, automatiquement.
+- les **capacités** ([21_PROJECT_CAPABILITIES.md](21_PROJECT_CAPABILITIES.md)) :
+  chaque projet déclare ce qu'il sait faire (`features` et `modules`
+  du **Manifest** officiel) ; le Panel adapte son interface à cette
+  déclaration, automatiquement.
 
 > Règle : si le Panel a besoin d'une information sur un projet, elle vient du
 > Manifest, du contrat de pont, ou du registre — jamais d'un `if (projet ===
@@ -108,7 +108,7 @@ mis sous synchronisation avant la Phase 3.
 | Inclus | Exclu (Phase 3+) |
 |---|---|
 | Registre des projets + appairage complet | Persistance Mongo (stores en RAM derrière des interfaces stables) |
-| Serveur PanelBridge v1.0.0 (ping, pairing, heartbeat, sync DIAGNOSTIC) | Synchronisation des domaines métier (lots C1–C5) |
+| Serveur PanelBridge v1.1.0 (ping, pairing, heartbeat, sync DIAGNOSTIC) | Synchronisation des domaines métier (lots C1–C5) |
 | Client ProjectBridge (driver unique) | Supervision riche, statistiques |
 | Manifest + Capabilities (validation, interprétation) | Transport du Manifest par le contrat de pont (ratification 1.1) |
 | Auth Panel v1 (ADMIN/DEV, JWT, seed) | RBAC complet, émission `{admin, dev}` vers les Managers |

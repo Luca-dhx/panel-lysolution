@@ -44,7 +44,7 @@ l'état de référence de l'écosystème, pas une anomalie.
 ## 3. L'axe de vivacité (état observé, dérivé — jamais stocké)
 
 Pour une fiche PAIRED, le Panel dérive la joignabilité des heartbeats reçus
-(intervalle attendu : `PANEL_HEARTBEAT_INTERVAL_S`, 300 s par défaut) :
+(intervalle attendu : `HEARTBEAT_INTERVAL_S`, 300 s par défaut) :
 
 | État | Condition | Lecture |
 |---|---|---|

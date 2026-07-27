@@ -1,8 +1,8 @@
 # 01 — Architecture technique du Panel
 
 > Prérequis : [00_VISION.md](00_VISION.md).
-> Ce document décrit le squelette livré en Phase 2B — chaque dossier cité
-> existe dans ce dépôt.
+> Ce document décrit l'architecture livrée en Phase 2C — chaque dossier cité
+> existe dans ce dépôt. Voir aussi [23_PANEL_STANDARD.md](23_PANEL_STANDARD.md).
 
 ---
 
@@ -25,7 +25,7 @@ Le backend expose deux surfaces strictement séparées :
    │                                                                  │
    │  /bridge/v1/*            SURFACE PUBLIQUE DE PONT                │
    │  ─────────────           consommée par le PanelBridge des        │
-   │  ping · pairings ·       projets. Contrat OpenAPI v1.0.0,        │
+   │  ping · pairings ·       projets. Contrat OpenAPI v1.1.0,        │
    │  heartbeats ·            auth par bridgeToken, erreurs BRIDGE_*  │
    │  sync/push · sync/pull                                           │
    │                                                                  │
@@ -53,10 +53,16 @@ Règles de séparation :
 
 ```
 backend/src/
-├── server.js                  démarrage (jamais bloquant, port PANEL_PORT)
-├── app.js                     assemblage Express (routes, erreurs, 404)
+├── server.js                  démarrage : Mongo, seed, CORS, écoute, arrêt propre
+├── app.js                     assemblage Express (CORS, routes, erreurs, 404)
+├── ecosystem.config.cjs       PM2 (aucun domaine ni port figé)
+├── scripts/
+│   └── set-network-configuration.mjs  propagation du domaine (déploiement)
 ├── config/
-│   └── env.js                 lecture .env — SEUL fichier qui lit process.env
+│   ├── env.js                 lecture .env — SEUL fichier qui lit process.env
+│   └── db.js                  connexion Mongoose (dbName selon ENV)
+├── models/                    schémas Mongoose (projets, utilisateurs,
+│                              configuration système, état de synchronisation)
 ├── bridge/
 │   ├── bridgeContract.js      MIROIR EXÉCUTABLE des deux specs OpenAPI :
 │   │                          version, routes, codes d'erreur, entityTypes,
@@ -66,16 +72,18 @@ backend/src/
 │                              (côté client du contrat ProjectBridge)
 ├── services/
 │   ├── registry/              registre des projets (catégorie 3)
-│   │   ├── registryStore.js   persistance (RAM en 2B, interface stable)
+│   │   ├── registryStore.js   persistance MongoDB, interface stable
 │   │   └── projectRegistry.service.js
 │   ├── pairing/
 │   │   └── pairing.service.js codes d'appairage, bootstrap, révocation
 │   ├── sync/
 │   │   └── syncCore.service.js  idempotence, LWW, anti-écho, journal, acks
 │   ├── manifest/
-│   │   ├── capabilities.catalog.js  catalogue officiel des capacités
-│   │   ├── manifest.schema.js       validation du Manifest (zod)
+│   │   ├── capabilities.catalog.js  catalogue officiel des features
+│   │   ├── manifest.schema.js       validation du ProjectManifest (zod)
 │   │   └── capabilities.service.js  interprétation → modules d'interface
+│   ├── network/
+│   │   └── networkConfig.service.js  SEUL résolveur d'URL (domaines, CORS)
 │   ├── versioning/
 │   │   └── versionCompatibility.js  semver, compatibilité de contrat, dérive
 │   ├── auth/
@@ -88,34 +96,40 @@ backend/src/
 │   ├── apiResponse.js         enveloppes ok()/created()
 │   ├── asyncHandler.js
 │   ├── logger.js              journalisation sans dépendance
-│   └── panelCrypto.js         AES-256-GCM (PANEL_ENCRYPTION_KEY) + SHA-256
+│   ├── normalizeAppUrl.js     une URL d'app est une ORIGINE
+│   └── panelCrypto.js         AES-256-GCM (BRIDGE_ENCRYPTION_KEY) + SHA-256
 ├── middlewares/
 │   ├── bridgeContractVersion.middleware.js  X-Bridge-Contract-Version
 │   ├── bridgeAuth.middleware.js             bridgeToken → projet appairé
 │   ├── panelAuth.middleware.js              JWT → utilisateur du Panel
+│   ├── cors.middleware.js                   origines dérivées des URLs
 │   └── error.middleware.js                  enveloppes d'erreur, 404
 ├── controllers/
 │   ├── bridge.controller.js
 │   ├── auth.controller.js
 │   ├── projects.controller.js
+│   ├── network.controller.js
 │   └── meta.controller.js
 └── routes/
     ├── bridge.routes.js       /bridge/v1
     ├── auth.routes.js         /api/auth
     ├── projects.routes.js     /api/projects
+    ├── network.routes.js      /api/system-configuration
     └── meta.routes.js         /health, /api/version
 ```
 
 ## 4. Choix techniques
 
-| Sujet | Choix Phase 2B | Pourquoi |
+| Sujet | Choix | Pourquoi |
 |---|---|---|
 | Runtime | Node ≥ 20, ESM, `fetch` natif | conventions de l'écosystème, zéro dépendance de transport |
 | Serveur | Express 4 | convention des projets |
+| Base de données | MongoDB + Mongoose 8, `ENV` sélectionne `DB_TEST`/`DB_PROD` | convention des projets ([24](24_ENVIRONMENT_AND_DOMAINS.md)) |
+| Configuration | `config/env.js`, seul lecteur de `process.env`, fail-closed | convention des projets, verrouillée par test |
 | Validation | zod — schémas stricts dans `bridgeContract.js` et `manifest.schema.js` | même patron que le miroir exécutable du projet modèle |
 | Auth interne | JWT (`jsonwebtoken`), mots de passe scrypt (crypto natif) | pas de dépendance native, discipline standard |
-| Secrets de pont | bridgeToken aléatoire 256 bits ; **hash SHA-256** pour vérifier les requêtes entrantes (comparaison en temps constant) + **copie chiffrée AES-256-GCM** (`PANEL_ENCRYPTION_KEY`) pour les appels sortants du `ProjectBridgeClient` ; jamais exposé par une API | le même secret authentifie les deux sens du pont ; un projet compromis ne compromet pas les autres |
-| Persistance | **stores en mémoire** derrière des interfaces stables (`registryStore.js`) | le squelette n'impose pas Mongo ; la Phase 3 remplace le store sans changer son API — même démarche que la Phase 1 côté projet (`pairingStore.js` RAM) |
+| Secrets de pont | bridgeToken aléatoire 256 bits ; **hash SHA-256** pour vérifier les requêtes entrantes (comparaison en temps constant) + **copie chiffrée AES-256-GCM** (`BRIDGE_ENCRYPTION_KEY`) pour les appels sortants du `ProjectBridgeClient` ; jamais exposé par une API | le même secret authentifie les deux sens du pont ; un projet compromis ne compromet pas les autres |
+| Persistance | **MongoDB** derrière des interfaces de store stables (`registryStore.js`) : registre, utilisateurs, appairages, manifestes, idempotence et journal de synchronisation | tout état nécessaire après redémarrage est persisté ; les services ne connaissent pas Mongoose — même démarche que la persistance d'appairage du projet modèle |
 | Journalisation | jamais un secret en clair (token, code d'appairage, mot de passe) | discipline de masquage de l'écosystème |
 
 ## 5. Frontend

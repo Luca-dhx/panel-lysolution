@@ -96,7 +96,7 @@ Surface `/api` (utilisateurs du Panel uniquement — [04](04_AUTHENTICATION.md))
 | `POST /api/projects` | **déclarer** un projet (`projectKey`, `projectName`, `manifest?`) → fiche + code d'appairage (affiché une seule fois) | DEV |
 | `POST /api/projects/:projectId/pairing-code` | regénérer un code (DECLARED/REVOKED uniquement) | DEV |
 | `DELETE /api/projects/:projectId/pairing` | révoquer l'appairage côté Panel | DEV |
-| `PUT /api/projects/:projectId/manifest` | déclarer/mettre à jour le Manifest (canal Phase 2B — voir [20](20_MANAGER_STANDARD.md) §6) | DEV |
+| `PUT /api/projects/:projectId/manifest` | déclarer/mettre à jour le Manifest — **canal de secours** : refusé dès qu'un Manifest est arrivé par le pont (voir [20](20_MANAGER_STANDARD.md) §4) | DEV |
 | `DELETE /api/projects/:projectId` | retirer un projet du registre (vente, erreur de saisie) — n'affecte en RIEN le projet lui-même | DEV |
 
 ## 5. Ce que le registre interdit
@@ -110,8 +110,14 @@ Surface `/api` (utilisateurs du Panel uniquement — [04](04_AUTHENTICATION.md))
 
 ## 6. Persistance
 
-Phase 2B : store en mémoire (`registryStore.js`) derrière une interface
-stable (get/list/insert/update/remove). Phase 3 : adaptateur Mongo (bases
-TEST/PROD du Panel) branché sur la même interface — même démarche que la
-persistance d'appairage du projet modèle (`pairingStore.js` → adaptateur
-Mongo, API inchangée).
+**MongoDB** (collection `panelprojects`, base sélectionnée par `ENV`), via
+`registryStore.js` qui conserve son interface stable
+(get/list/insert/save/remove) : les services ne connaissent pas Mongoose.
+
+Ce qui survit à un redémarrage : la fiche, son statut d'appairage, les hashs
+et la copie chiffrée du bridgeToken, le Manifest et sa source, le dernier
+heartbeat. Une suppression et une révocation sont définitives. Vérifié par un
+test de redémarrage simulé (`tests/persistence.test.js`).
+
+Ce qui n'est **jamais** stocké : la vivacité et les capacités interprétées —
+ce sont des fonctions pures, recalculées à la lecture.

@@ -47,11 +47,31 @@ synchronisation utilisent le bridgeToken.
 | 3 | Le code correspond à une fiche du registre (hash), non expiré, non consommé | `401 BRIDGE_PAIRING_CODE_INVALID` |
 | 4 | Le `projectKey` présenté est celui de la fiche liée au code | `401 BRIDGE_PAIRING_CODE_INVALID` (le refus ne précise pas lequel des deux est faux) |
 | 5 | La fiche n'est pas déjà PAIRED | `409 BRIDGE_ALREADY_PAIRED` |
+| 6 | Si un `manifest` est joint (contrat ≥ 1.1.0) : format valide **et** `project.key` = `projectKey` de la fiche | `400 BRIDGE_INVALID_PAYLOAD` |
+
+L'étape 6 est délibérément placée **avant** la consommation du code : un
+Manifest non conforme refuse le bootstrap sans griller le code d'appairage,
+et le projet peut corriger puis réessayer.
 
 Succès : le code est **consommé** (même en cas d'échec ultérieur du projet à
 stocker son token — regénérer un code est trivial, réutiliser un code ne
 l'est jamais), la fiche enregistre `runtime` (ENV, versions, URL publique
-éventuelle) et passe PAIRED.
+éventuelle), enregistre le Manifest reçu avec la source `BRIDGE`, et passe
+PAIRED.
+
+### 2.1 Le Manifest joint au bootstrap
+
+Depuis le contrat **1.1.0**, le projet se présente complètement dès
+l'appairage : le Panel n'a plus rien à déduire ni à ressaisir.
+
+| Source du Manifest | Autorité | Conséquence |
+|---|---|---|
+| `BRIDGE` (bootstrap, ou `GET /manifest`) | **fait foi** | la saisie manuelle est ensuite **refusée** (`PANEL_MANIFEST_BRIDGE_AUTHORITATIVE`) |
+| `MANUAL` (`PUT /api/projects/:id/manifest`) | secours | remplacée dès qu'un Manifest arrive par le pont |
+
+Le champ `manifest` reste **optionnel** : un projet parlant encore un contrat
+`1.0.x` s'appaire exactement comme avant, et son Manifest passe par le canal
+manuel. Voir [20_MANAGER_STANDARD.md](20_MANAGER_STANDARD.md) §4.
 
 ## 3. Le code d'appairage
 
@@ -93,7 +113,44 @@ Le projet reçoit un **nouveau** bridgeToken ; l'ancien reste mort. La fiche,
 son historique et son Manifest sont conservés — le ré-appairage n'est pas une
 re-création.
 
-## 6. Invariants
+## 6. Stockage des secrets d'appairage
+
+Deux représentations, deux usages, jamais de valeur en clair au repos :
+
+| Représentation | Usage | Algorithme |
+|---|---|---|
+| **Hash** (`bridgeTokenHash`, `pairingCodeHash`) | vérification des requêtes **entrantes** | SHA-256, comparaison en **temps constant** |
+| **Copie chiffrée** (`bridgeTokenEncrypted`) | appels **sortants** vers le projet | AES-256-GCM (`iv.tag.données`), clé maître `BRIDGE_ENCRYPTION_KEY` |
+
+Règles vérifiées par `tests/persistence.test.js` et
+`tests/architecture.test.js` :
+
+1. le document Mongo ne contient **jamais** le token ni le code en clair ;
+2. aucune API ne restitue un hash ni une valeur chiffrée — la projection
+   publique d'un projet est nettoyée ;
+3. le déchiffrement a **un seul point d'entrée nommé**
+   (`getOutboundBridgeToken`), réservé au `ProjectBridgeClient` ;
+4. la clé maître vient **exclusivement de l'environnement** — elle n'est
+   jamais stockée en base, et le démarrage échoue si elle est absente,
+   malformée, ou égale à `JWT_SECRET` ;
+5. la révocation efface hash **et** copie chiffrée, de façon persistante.
+
+Une rotation de `BRIDGE_ENCRYPTION_KEY` rend les copies chiffrées illisibles
+et impose un ré-appairage du parc : procédure dans
+[24_ENVIRONMENT_AND_DOMAINS.md](24_ENVIRONMENT_AND_DOMAINS.md) §8. La
+rotation du bridgeToken lui-même (avec fenêtre de transition, comme le
+`pairingStore` du projet modèle) reste un lot de Phase 3 ; la structure de
+stockage actuelle ne s'y oppose pas.
+
+## 7. Persistance
+
+L'appairage est intégralement persisté en MongoDB (collection
+`panelprojects`) : un code émis avant un redémarrage reste utilisable, un
+bridgeToken continue d'authentifier, une révocation et une suppression
+survivent. Le Panel ne repart jamais avec un parc vide après un
+redémarrage — c'est vérifié par un test de redémarrage simulé.
+
+## 8. Invariants
 
 1. Un code = un projet = un usage. Jamais de code « générique ».
 2. Le Panel ne peut réafficher ni un code (hash seul) ni un token (hash +

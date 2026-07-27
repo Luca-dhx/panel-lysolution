@@ -28,7 +28,7 @@ ProjectBridge (il appelle les projets). Ce document décrit les deux rôles.
 Un seul secret d'appairage — le **bridgeToken** — authentifie les deux sens.
 Le révoquer ferme tout, d'un coup.
 
-## 2. Le serveur `/bridge/v1` (contrat PanelBridge, v1.0.0)
+## 2. Le serveur `/bridge/v1` (contrat PanelBridge, **v1.1.0**)
 
 ### 2.1 Chaîne de gardes
 
@@ -53,7 +53,7 @@ Dans l'ordre, sur tout le routeur :
 | Endpoint | Comportement Panel |
 |---|---|
 | `GET /ping` | `{status:'ok', service:'panel-bridge-api', time}` — ne divulgue rien (ni le nombre de projets, ni les versions du parc) |
-| `POST /pairings` | bootstrap — voir [05_PAIRING.md](05_PAIRING.md) |
+| `POST /pairings` | bootstrap — accepte le **Manifest officiel** joint par le projet (champ optionnel `manifest`, contrat ≥ 1.1.0) ; voir [05_PAIRING.md](05_PAIRING.md) |
 | `DELETE /pairings/current` | révoque le token du projet appelant, `pairing.status → REVOKED`, répond `{unpaired:true}` ; l'ancien token répond ensuite 401 |
 | `POST /heartbeats` | enregistre `runtime` (version, ENV, santé, bridgeStats) + horodate `lastHeartbeatAt` ; répond `{acknowledged:true, panelTime}` |
 | `POST /sync/push` | accusé **par écriture** via le noyau de synchronisation (§4) — jamais d'échec global silencieux |
@@ -62,12 +62,44 @@ Dans l'ordre, sur tout le routeur :
 ### 2.3 Le miroir exécutable
 
 `backend/src/bridge/bridgeContract.js` est le miroir code des deux specs :
-version (`CONTRACT_VERSION = '1.0.0'`), en-tête, routes, catalogues d'erreurs
-`BRIDGE_*`, `entityTypes`, statuts d'accusé, schémas zod `.strict()` de chaque
-DTO. Toute requête entrante est validée par ce miroir ; toute réponse sortante
-est construite par lui. `tests/bridge-conformity.test.js` vérifie que miroir
-et specs YAML racontent la même chose — le contrat ne peut pas dériver
-silencieusement.
+version (`CONTRACT_VERSION = '1.1.0'`), en-tête, routes, catalogues d'erreurs
+`BRIDGE_*`, `entityTypes`, statuts d'accusé, schéma `ProjectManifest`, et
+schémas zod de chaque DTO (`.strict()` sur les DTO de transport ; le
+`ProjectManifest` reste tolérant aux propriétés additives, conformément à
+l'OpenAPI qui ne l'interdit pas). Toute requête entrante est validée par ce
+miroir ; toute réponse sortante est construite par lui.
+
+Deux contrôles automatiques, complémentaires :
+
+| Contrôle | Ce qu'il compare | Fichier |
+|---|---|---|
+| Conformité | copies des specs ↔ miroir exécutable ↔ surface réellement montée | `tests/bridge-conformity.test.js` |
+| Dérive | copies du Panel ↔ specs **maîtresses** du projet modèle (octets, puis diagnostic sémantique) | `tests/spec-drift.check.mjs` |
+
+Le contrôle de dérive est un **outil d'atelier** : il ne tourne que si le
+dépôt voisin est présent dans le workspace et se retire proprement (SKIP)
+sinon. Aucun fichier applicatif n'accède au dépôt voisin — c'est vérifié par
+`tests/architecture.test.js`.
+
+### 2.4 Gouvernance des contrats
+
+La référence canonique est le dossier `docs/panelXvitrine/spec/` du projet
+modèle. Le processus d'évolution, en quatre temps :
+
+1. la proposition est **ratifiée dans le projet modèle** (les specs
+   maîtresses y sont modifiées) ;
+2. les copies du Panel sont **recopiées verbatim** — jamais éditées
+   localement ;
+3. le miroir exécutable est mis à jour, puis les implémentations des deux
+   côtés ;
+4. `spec-drift.check.mjs` confirme l'absence d'écart, `bridge-conformity`
+   confirme l'accord specs ↔ code.
+
+Toute évolution est **additive** (version mineure). La compatibilité est
+vérifiée sur la **majeure** : un client et un serveur qui partagent la même
+majeure se parlent ; une mineure supérieure côté serveur est acceptable.
+Une rupture exigerait une majeure et une période de double-service — à éviter
+par conception. Voir [../spec/README.md](../spec/README.md).
 
 ## 3. Le client `ProjectBridgeClient` (contrat ProjectBridge)
 
@@ -75,9 +107,9 @@ silencieusement.
 qui parle réseau à un projet** — le symétrique exact du `PanelClient.js` du
 projet modèle.
 
-- Une méthode par opération du contrat : `ping`, `getIdentity`, `getHealth`,
-  `deliverChanges`, `readLocalChanges`, `listOperations`, `invokeOperation`,
-  `notifyUnpair`.
+- Une méthode par opération du contrat (9 méthodes = 9 chemins) : `ping`,
+  `getIdentity`, `getHealth`, **`getManifest`**, `deliverChanges`,
+  `readLocalChanges`, `listOperations`, `invokeOperation`, `notifyUnpair`.
 - Chaque appel : en-tête de version de contrat + Bearer bridgeToken, timeout
   10 s (AbortController), déballage de l'enveloppe `{success, data}`, erreurs
   mappées vers `BridgeError` (dont `PANEL_LOCAL_ERROR` `PROJECT_UNREACHABLE`
@@ -87,7 +119,7 @@ projet modèle.
   registre (heartbeats reçus) ; l'interrogation directe d'un projet est une
   action explicite de supervision.
 
-En Phase 2B, ce client sert au ping/identité/santé à la demande. La livraison
+Ce client sert au ping/identité/santé/manifeste à la demande. La livraison
 temps réel (`deliverChanges`) et le catalogue d'opérations attendront la
 Phase 3 — les méthodes existent, conformes au contrat, mais rien ne les
 appelle en tâche de fond.
@@ -104,11 +136,17 @@ Le Panel applique les cinq règles minimales de l'écosystème — et rien au-de
 | **Anti-écho** | le pull exclut les écritures dont le projet appelant est l'émetteur d'origine |
 | **Identités UUID** | `entityId` généré par le côté créateur, jamais réattribué |
 
-En Phase 2B, seul le type `DIAGNOSTIC` est appliqué (échange de test sans
-effet métier). Tout autre `entityType` — réservé aux lots de la Phase 3 —
-reçoit un ack `REJECTED` avec le code `BRIDGE_ENTITY_TYPE_UNSUPPORTED` :
-propre, jamais un 500. Le journal des écritures émises côté Panel existe (il
-alimente `sync/pull`) mais reste vide tant qu'aucun domaine n'est synchronisé.
+Seul le type `DIAGNOSTIC` est appliqué (échange de test sans effet métier).
+Tout autre `entityType` — réservé aux lots de la Phase 3 — reçoit un ack
+`REJECTED` avec le code `BRIDGE_ENTITY_TYPE_UNSUPPORTED` : propre, jamais un
+500. Le journal des écritures émises côté Panel existe (il alimente
+`sync/pull`) mais reste vide tant qu'aucun domaine n'est synchronisé.
+
+**Depuis la Phase 2C, cet état est persisté en MongoDB** : réceptions
+(idempotence par `writeId`), état par entité (LWW), journal ordonné et son
+compteur de séquence. Une relivraison après redémarrage répond donc
+`DUPLICATE` — elle n'est jamais réappliquée. Un curseur de pull reste valide
+de part et d'autre d'un redémarrage.
 
 ## 5. Ce que les ponts s'interdisent côté Panel
 

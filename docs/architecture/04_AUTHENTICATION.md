@@ -29,23 +29,31 @@ secret.
 
 ## 2. Plan 1 — Les utilisateurs du Panel (v1)
 
-Phase 2B, volontairement minimal :
+Volontairement minimal — le RBAC complet reste en Phase 4+ :
 
 - **Deux rôles internes** : `ADMIN` et `DEV`. `DEV` est un superset (même
   principe que dans les Managers). Les gardes : `requirePanelUser` puis
   `requirePanelDev` pour les actions sensibles (déclarer un projet, générer
   un code, révoquer, éditer un Manifest).
 - **Compte seed** : au démarrage, un compte `DEV` est créé depuis
-  `PANEL_SEED_DEV_EMAIL` / `PANEL_SEED_DEV_PASSWORD` (fail-closed : sans ces
-  variables et sans utilisateur existant, l'API d'auth refuse toute
-  connexion ; le serveur démarre quand même).
+  `SEED_DEV_EMAIL` / `SEED_DEV_PASSWORD`, **uniquement si la base ne contient
+  aucun utilisateur** (un compte réel n'est jamais écrasé). Sans ces
+  variables, le serveur démarre mais l'API d'auth refuse toute connexion.
+  En **PROD**, des identifiants par défaut connus ou un mot de passe de moins
+  de 12 caractères **empêchent le démarrage** — aucune combinaison de
+  développement ne peut devenir une valeur de production
+  ([24_ENVIRONMENT_AND_DOMAINS.md](24_ENVIRONMENT_AND_DOMAINS.md) §6).
 - **Mots de passe** : scrypt (crypto natif Node), jamais en clair, jamais
-  journalisés.
-- **Jetons** : JWT signé `PANEL_JWT_SECRET`, durée courte (12 h), porté en
+  journalisés ; la projection publique d'un utilisateur ne contient pas le
+  hash.
+- **Jetons** : JWT HS256 signé `JWT_SECRET`, durée `JWT_EXPIRES_IN`, porté en
   `Authorization: Bearer` par le frontend. `POST /api/auth/login`,
-  `GET /api/auth/me`.
-- **Store en mémoire** derrière une interface stable — la Phase 3 apportera
-  la persistance et la gestion des collaborateurs.
+  `GET /api/auth/me`. Le secret est validé au démarrage (placeholder ou
+  secret de moins de 32 caractères refusés) ; le changer invalide toutes les
+  sessions en cours.
+- **Persistance MongoDB** (collection `panelusers`) : les comptes survivent
+  au redémarrage et le seed est idempotent. La gestion des collaborateurs
+  (invitation, désactivation) reste un lot de Phase 3.
 
 ### Le futur : RBAC
 
@@ -62,7 +70,7 @@ pas une contrainte.
   aléatoires, montrés une seule fois, au projet uniquement.
 - Côté Panel, deux formes au repos, aucune en clair : le **hash SHA-256**
   (vérification en temps constant des requêtes entrantes du projet) et une
-  **copie chiffrée AES-256-GCM** (`PANEL_ENCRYPTION_KEY`), déchiffrée
+  **copie chiffrée AES-256-GCM** (`BRIDGE_ENCRYPTION_KEY`), déchiffrée
   uniquement par `ProjectBridgeClient` pour s'authentifier auprès du
   ProjectBridge — le même secret sert les deux sens, comme côté projet.
   Aucune API du Panel ne peut réafficher un token — c'est une propriété, pas
