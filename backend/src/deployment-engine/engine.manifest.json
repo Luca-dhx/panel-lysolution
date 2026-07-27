@@ -1,0 +1,29 @@
+{
+  "engine": "deployment-engine",
+  "version": "1.0.0",
+  "compatibleProjects": [
+    "panel"
+  ],
+  "contractVersion": "1.1.0",
+  "lastStandardization": "2026-07-27",
+  "description": "Moteur de déploiement standard de l'écosystème L.Y Solution, embarqué dans le Panel. Cœur générique IDENTIQUE à celui des projets vitrines : préflight, build d'artefact, releases, Nginx, HTTPS, PM2, health checks, rollback, sauvegardes, rapports. La topologie du Panel (frontend + backend, sans sous-domaine Manager) est décrite dans config/project.profile.js — le cœur n'est jamais forké.",
+  "layout": {
+    "core": "fichiers à la racine du moteur + dns/ + report/ — identiques dans tous les projets",
+    "config": "config/project.profile.js — le seul fichier spécifique au projet",
+    "adapters": "transport/ — SSH réel, transports de test",
+    "templates": "templates/ — rendus Nginx et fichiers générés"
+  },
+  "capabilities": [
+    "preflight",
+    "artifact-build",
+    "releases",
+    "nginx",
+    "https-certbot",
+    "pm2",
+    "health-check",
+    "rollback",
+    "backup-restore",
+    "dns",
+    "reports"
+  ]
+}

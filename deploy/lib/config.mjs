@@ -39,14 +39,23 @@ export function deriveUrls(host) {
   };
 }
 
-export function loadDeployConfig(configPath, overrides = {}) {
+/**
+ * @param {string|null} configPath  chemin du fichier de configuration
+ * @param {object} overrides        valeurs de ligne de commande (prioritaires)
+ * @param {boolean} [required]      `true` quand le chemin a été demandé
+ *   explicitement (`--config`) : son absence est alors une erreur. Le fichier
+ *   PAR DÉFAUT (`deploy/deploy.config.json`) n'est pas versionné — son
+ *   absence est normale tant que tout est fourni en ligne de commande.
+ */
+export function loadDeployConfig(configPath, overrides = {}, required = false) {
   let fromFile = {};
   if (configPath) {
     const resolved = path.resolve(configPath);
     if (!fs.existsSync(resolved)) {
-      throw new Error(`Fichier de configuration introuvable : ${resolved}`);
+      if (required) throw new Error(`Fichier de configuration introuvable : ${resolved}`);
+    } else {
+      fromFile = JSON.parse(fs.readFileSync(resolved, 'utf8'));
     }
-    fromFile = JSON.parse(fs.readFileSync(resolved, 'utf8'));
   }
   const merged = { ...fromFile, ...Object.fromEntries(
     Object.entries(overrides).filter(([, value]) => value !== undefined),

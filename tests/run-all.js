@@ -19,6 +19,7 @@ const TESTS = [
   'architecture.test.js',
   'deploy.test.js',
   'spec-drift.check.mjs',
+  'engine-drift.check.mjs',
 ];
 
 let failed = 0;

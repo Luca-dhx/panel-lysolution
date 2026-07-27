@@ -1,0 +1,25 @@
+{
+  "engine": "duplication-engine",
+  "version": "1.0.0",
+  "compatibleProjects": [
+    "panel"
+  ],
+  "contractVersion": "1.1.0",
+  "lastStandardization": "2026-07-27",
+  "description": "Moteur de duplication standard de l'écosystème L.Y Solution, embarqué dans le Panel. Crée un nouveau Panel complet : bases TEST/PROD, secrets REGÉNÉRÉS (JWT_SECRET, BRIDGE_ENCRYPTION_KEY), .env, configuration système, seeds. Ne déploie jamais lui-même — il prépare, puis passe la main au deployment-engine.",
+  "layout": {
+    "core": "duplication.js — logique générique de duplication",
+    "config": "config/duplication.profile.js — secrets et variables propres au projet",
+    "dependsOn": [
+      "deployment-engine"
+    ]
+  },
+  "capabilities": [
+    "validate-input",
+    "create-databases",
+    "copy-project",
+    "generate-secrets",
+    "rewrite-env",
+    "seed"
+  ]
+}

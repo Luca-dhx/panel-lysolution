@@ -194,6 +194,9 @@ section('Exclusivité architecturale : un seul fichier parle réseau aux projets
       if (entry.isDirectory()) walkEnv(full);
       else if (entry.name.endsWith('.js')) {
         const content = fs.readFileSync(full, 'utf8');
+        const relFromSrc = path.relative(srcDir, full).split(path.sep)[0];
+        // Moteurs standards embarqués : hors du périmètre applicatif.
+        if (relFromSrc === 'deployment-engine' || relFromSrc === 'duplication-engine') continue;
         if (/process\.env[.[]/.test(content) && !full.endsWith(path.join('config', 'env.js'))) {
           envReaders.push(path.relative(srcDir, full));
         }

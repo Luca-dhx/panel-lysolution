@@ -27,7 +27,19 @@ function sourceFiles(dir, extensions) {
   return files;
 }
 
-const backendFiles = sourceFiles(backendSrc, ['.js']);
+// Les MOTEURS STANDARDS (deployment-engine, duplication-engine) sont un
+// composant vendu avec le projet, dont le cœur est identique dans tous les
+// projets de l'écosystème (Phase 2D). Les leur appliquer les invariants du
+// code APPLICATIF du Panel forcerait un fork de ce cœur — exactement ce que
+// le standard interdit. Ils ont leurs propres invariants (§ Moteurs standards)
+// et leur propre contrôle de dérive (tests/engine-drift.check.mjs).
+const ENGINE_DIRS = ['deployment-engine', 'duplication-engine'];
+const isEngineFile = (file) =>
+  ENGINE_DIRS.some((dir) => path.relative(backendSrc, file).split(path.sep)[0] === dir);
+
+const allBackendFiles = sourceFiles(backendSrc, ['.js']);
+const backendFiles = allBackendFiles.filter((file) => !isEngineFile(file));
+const engineFiles = allBackendFiles.filter(isEngineFile);
 const frontendFiles = sourceFiles(frontendSrc, ['.ts', '.tsx']);
 const deployFiles = sourceFiles(path.join(root, 'deploy'), ['.mjs']);
 const testFiles = sourceFiles(path.join(root, 'tests'), ['.js', '.mjs']);
@@ -153,6 +165,49 @@ section('Les secrets ne sortent jamais par une API');
     read(path.join(backendSrc, 'services', 'auth', 'panelUsers.service.js'))
       .slice(users.indexOf('export function toPublicUser'))
       .includes('passwordHash') === false);
+}
+
+section('Moteurs standards : embarqués, autonomes, personnalisés par configuration');
+{
+  check('les deux moteurs sont présents dans le projet',
+    ENGINE_DIRS.every((dir) => fs.existsSync(path.join(backendSrc, dir))));
+
+  for (const dir of ENGINE_DIRS) {
+    const manifestPath = path.join(backendSrc, dir, 'engine.manifest.json');
+    check(`${dir} déclare sa version (engine.manifest.json)`, fs.existsSync(manifestPath));
+    if (!fs.existsSync(manifestPath)) continue;
+    const manifest = JSON.parse(read(manifestPath));
+    check(`${dir} : manifeste complet`,
+      manifest.engine === dir
+      && /^\d+\.\d+\.\d+$/.test(manifest.version)
+      && Array.isArray(manifest.compatibleProjects)
+      && typeof manifest.description === 'string'
+      && typeof manifest.lastStandardization === 'string');
+  }
+
+  // Un moteur embarqué ne doit dépendre QUE de lui-même, de l'autre moteur et
+  // de node/npm : jamais d'un service du projet hôte, sans quoi il ne serait
+  // plus duplicable tel quel.
+  const forbidden = engineFiles.filter((file) => {
+    return importsOf(file).some((src) => {
+      if (!src.startsWith('.')) return false; // paquets npm : autorisés
+      const resolved = path.resolve(path.dirname(file), src);
+      const rel = path.relative(backendSrc, resolved).split(path.sep)[0];
+      // `utils/` est toléré : ce sont des primitives pures, dupliquées avec le moteur.
+      return !ENGINE_DIRS.includes(rel) && rel !== 'utils';
+    });
+  });
+  check(`aucun moteur ne dépend d'un service du projet hôte${forbidden.length ? ` — ${forbidden.map(rel)}` : ''}`,
+    forbidden.length === 0);
+
+  // Tout ce qui est propre au projet vit dans config/ — jamais dans le cœur.
+  const profile = path.join(backendSrc, 'deployment-engine', 'config', 'project.profile.js');
+  check('le profil de projet existe', fs.existsSync(profile));
+  check('le profil porte le slug de CE projet', read(profile).includes("PROJECT_SLUG = 'panel'"));
+  const coreFiles = engineFiles.filter((f) => !f.includes(`${path.sep}config${path.sep}`));
+  const slugInCore = coreFiles.filter((f) => /PROJECT_SLUG\s*=\s*'/.test(code(f)));
+  check(`le slug n'est jamais redéfini dans le cœur${slugInCore.length ? ` — ${slugInCore.map(rel)}` : ''}`,
+    slugInCore.length === 0);
 }
 
 section('Le miroir de contrat reste autonome');

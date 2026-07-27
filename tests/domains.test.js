@@ -125,6 +125,10 @@ section('Aucun domaine codé en dur dans le code applicatif');
     path.join('services', 'network', 'networkConfig.service.js'),
     path.join('utils', 'normalizeAppUrl.js'),
   ];
+  // Les moteurs standards sont exclus : leur cœur est identique dans tous les
+  // projets, et leurs valeurs par défaut (bases wildcard) vivent dans leur
+  // profil — vérifié par tests/architecture.test.js et engine-drift.check.mjs.
+  const ENGINE_DIRS = ['deployment-engine', 'duplication-engine'];
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -133,6 +137,7 @@ section('Aucun domaine codé en dur dans le code applicatif');
       else if (entry.name.endsWith('.js')) {
         const content = fs.readFileSync(full, 'utf8');
         const rel = path.relative(path.join(root, 'backend', 'src'), full);
+        if (ENGINE_DIRS.includes(rel.split(path.sep)[0])) continue;
         if (/ly-solution\.com|sb-?auto|sbauto/i.test(content)) {
           offenders.push(`${rel} (domaine public ou projet nommé)`);
         }
