@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import config from '../config/env.js';
 
-const KEY = Buffer.from(config.encryptionKey, 'hex');
+const KEY = Buffer.from(config.bridgeEncryptionKey, 'hex');
 
 export function sha256Hex(value) {
   return crypto.createHash('sha256').update(String(value), 'utf8').digest('hex');

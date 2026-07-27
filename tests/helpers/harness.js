@@ -25,11 +25,16 @@ export function finish() {
 }
 
 export function setTestEnv() {
-  process.env.PANEL_ENV = 'TEST';
-  process.env.PANEL_JWT_SECRET = 'panel-test-jwt-secret';
-  process.env.PANEL_ENCRYPTION_KEY = 'a'.repeat(64);
-  process.env.PANEL_SEED_DEV_EMAIL = 'dev@panel.test';
-  process.env.PANEL_SEED_DEV_PASSWORD = 'motdepasse-test';
+  process.env.PANEL_SKIP_DOTENV = '1'; // jamais le .env local dans les tests
+  process.env.ENV = 'TEST';
+  process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017'; // jamais contactée sans memory server
+  process.env.DB_TEST = 'panel_test';
+  process.env.DB_PROD = 'panel_prod';
+  process.env.JWT_SECRET = 'panel-test-jwt-secret-0123456789abcdef0123456789abcdef';
+  process.env.JWT_EXPIRES_IN = '12h';
+  process.env.BRIDGE_ENCRYPTION_KEY = 'a'.repeat(64);
+  process.env.SEED_DEV_EMAIL = 'dev@panel.test';
+  process.env.SEED_DEV_PASSWORD = 'motdepasse-test';
   process.env.PANEL_NAME = 'Panel L.Y Solution (test)';
 }
 
