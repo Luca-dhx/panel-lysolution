@@ -1,0 +1,9 @@
+{
+  "host": "panel.exemple.com",
+  "environment": "PROD",
+  "sshHost": "203.0.113.10",
+  "sshUser": "root",
+  "backendPort": 4100,
+  "remoteRoot": "/var/www",
+  "keepReleases": 5
+}

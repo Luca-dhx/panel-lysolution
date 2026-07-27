@@ -5,6 +5,6 @@ export function health(_req, res) {
   return ok(res, buildHealth());
 }
 
-export function version(_req, res) {
-  return ok(res, buildVersion());
+export async function version(_req, res) {
+  return ok(res, await buildVersion());
 }

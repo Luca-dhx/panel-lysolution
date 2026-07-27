@@ -337,6 +337,53 @@ section('Surface interne /api : gardes et santé');
     body: {},
   });
   check('un JWT utilisateur n’ouvre RIEN sur /bridge/v1', jwtOnBridge.status === 401);
+
+  check('GET /api/version expose les URLs résolues et leur source',
+    typeof version.json.data.urls.backendUrl === 'string'
+    && typeof version.json.data.urls.backendUrlSource === 'string');
+  check('GET /health rapporte l’état de la base',
+    health.json.data.database === 'connected' && health.json.data.env === 'TEST');
+
+  const network = await call('GET', '/api/system-configuration/network', {
+    headers: { authorization: `Bearer ${jwt}` },
+  });
+  check('configuration réseau lisible avec JWT',
+    network.status === 200 && 'resolved' in network.json.data);
+  check('configuration réseau inaccessible sans JWT',
+    (await call('GET', '/api/system-configuration/network')).status === 401);
+
+  const badUrl = await call('PUT', '/api/system-configuration/network', {
+    headers: { authorization: `Bearer ${jwt}` },
+    body: { backendUrl: 'pas-une-url' },
+  });
+  check('URL invalide refusée par l’API',
+    badUrl.status === 400 && badUrl.json.code === 'PANEL_NETWORK_URL_INVALID');
+
+  const goodUrl = await call('PUT', '/api/system-configuration/network', {
+    headers: { authorization: `Bearer ${jwt}` },
+    body: { backendUrl: 'https://panel-recette.exemple.net' },
+  });
+  check('écriture du domaine par un compte DEV',
+    goodUrl.status === 200
+    && goodUrl.json.data.resolved.backendUrl.url === 'https://panel-recette.exemple.net'
+    && goodUrl.json.data.resolved.backendUrl.source === 'SYSTEM_CONFIGURATION');
+  check('le CORS est rafraîchi dans la foulée',
+    goodUrl.json.data.corsOrigins.includes('https://panel-recette.exemple.net'));
+
+  const versionAfter = await call('GET', '/api/version');
+  check('la page version reflète le nouveau domaine',
+    versionAfter.json.data.urls.backendUrl === 'https://panel-recette.exemple.net');
+
+  const corsProbe = await call('GET', '/api/version', {
+    headers: { origin: 'https://panel-recette.exemple.net' },
+  });
+  check('origine autorisée : en-tête CORS émis',
+    corsProbe.headers.get('access-control-allow-origin') === 'https://panel-recette.exemple.net');
+  const corsRejected = await call('GET', '/api/version', {
+    headers: { origin: 'https://pirate.exemple.com' },
+  });
+  check('origine inconnue : aucun en-tête CORS',
+    corsRejected.headers.get('access-control-allow-origin') === null);
 }
 
 await close();

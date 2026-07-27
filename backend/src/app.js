@@ -3,15 +3,19 @@
 //   /api        surface interne (frontend, JWT utilisateur, erreurs PANEL_*)
 //   /health     vivacité publique
 import express from 'express';
+import corsMiddleware from './middlewares/cors.middleware.js';
 import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
+import networkRoutes from './routes/network.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
 
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  app.use(corsMiddleware);
   app.use(express.json({ limit: '1mb' }));
 
   app.use('/health', healthRouter);
@@ -19,6 +23,7 @@ export function createApp() {
   app.use('/bridge/v1', bridgeRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectsRoutes);
+  app.use('/api/system-configuration', networkRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

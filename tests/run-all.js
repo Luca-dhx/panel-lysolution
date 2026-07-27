@@ -12,9 +12,12 @@ const TESTS = [
   'manifest.test.js',
   'capabilities.test.js',
   'registry.test.js',
+  'domains.test.js',
   'persistence.test.js',
   'bridge-http.test.js',
   'bridge-conformity.test.js',
+  'architecture.test.js',
+  'deploy.test.js',
   'spec-drift.check.mjs',
 ];
 

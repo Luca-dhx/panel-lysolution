@@ -6,15 +6,21 @@ import { connectDatabase, disconnectDatabase } from './config/db.js';
 import createApp from './app.js';
 import logger from './utils/logger.js';
 import { seedFromEnv } from './services/auth/panelUsers.service.js';
+import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
+import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 
 async function start() {
   await connectDatabase();
   await seedFromEnv();
+  await refreshAllowedOrigins();
+
+  const backend = await resolveBackendUrl();
+  logger.info(`URL publique du Panel : ${backend.url ?? '(non configurée)'} [source ${backend.source}]`);
 
   const app = createApp();
   const server = app.listen(config.port, () => {
     logger.success(
-      `${config.panelName} — backend démarré (ENV ${config.env}) sur http://localhost:${config.port}`,
+      `${config.panelName} — backend démarré (ENV ${config.env}) sur le port ${config.port}`,
     );
   });
 
