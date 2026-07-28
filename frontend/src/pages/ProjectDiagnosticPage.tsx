@@ -114,12 +114,22 @@ export function ProjectDiagnosticPage() {
                 {rec.reasons.map((reason, index) => (
                   <Why key={index}>{reason.justification}</Why>
                 ))}
+                {/* Phase 3C : la recommandation ouvre le WORKFLOW d'exécution,
+                    elle ne lance rien. L'écran suivant prépare l'action et
+                    vérifie ses conditions avant de proposer quoi que ce soit. */}
+                <p className="recommendation-link">
+                  <Link to={`/supervision/${projectId}/actions?futureAction=${rec.futureAction}`}>
+                    Préparer cette action →
+                  </Link>
+                </p>
               </li>
             ))}
           </ul>
         )}
         <p className="muted read-only-note">
-          Ces recommandations décrivent une action ; le Panel ne l’exécute pas.
+          Ces recommandations décrivent une action ; le Panel ne l’exécute jamais
+          directement. « Préparer » ouvre le moteur d’exécution, qui vérifie les
+          conditions et explique tout refus avant d’agir.
         </p>
       </Card>
 

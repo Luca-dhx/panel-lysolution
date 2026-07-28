@@ -67,6 +67,11 @@ export function ProjectSupervisionPage() {
           <Link to={`/supervision/${projectId}/diagnostic`} className="tab-link">
             Voir le diagnostic complet →
           </Link>
+          {/* Phase 3C : le pilotage part d'ici, mais rien ne se déclenche au
+              clic — l'écran suivant prépare et vérifie avant de proposer. */}
+          <Link to={`/supervision/${projectId}/actions`} className="tab-link">
+            Piloter ce projet →
+          </Link>
         </p>
         <div className="header-badges">
           <LivenessBadge value={health.liveness} />

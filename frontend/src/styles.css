@@ -962,3 +962,138 @@ textarea:focus {
   font-size: 14px;
 }
 .tab-link:hover { border-color: var(--accent); }
+
+/* ---------- Pilotage (Phase 3C) ---------- */
+
+/* Un refus n'est jamais muet : le bloc porte toutes ses causes. */
+.denial-block {
+  background: var(--danger-bg);
+  border: 1px solid rgba(217, 83, 79, 0.45);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.denial-title { margin: 0 0 8px; font-weight: 600; color: #f4a9a7; font-size: 14px; }
+.denial-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.denial-list li { display: flex; flex-direction: column; gap: 3px; }
+.denial-message { font-size: 14px; line-height: 1.45; }
+.denial-code { font-size: 11px; color: var(--text-muted); }
+
+.check-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.check-list li {
+  display: grid;
+  grid-template-columns: 18px 180px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+.check-mark { font-weight: 700; }
+.check-ok .check-mark { color: var(--ok); }
+.check-ko .check-mark { color: var(--danger); }
+.check-label { color: var(--text-muted); }
+.check-message { line-height: 1.4; }
+
+.plan-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; }
+.plan-step {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-right: 8px;
+  font-size: 12px;
+}
+
+/* Le journal est la pièce d'audit : lisible tel quel, exportable tel quel. */
+.log-view {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  display: grid;
+  gap: 3px;
+}
+.log-view li {
+  display: grid;
+  grid-template-columns: 68px 120px 1fr;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+.log-at { color: var(--text-muted); }
+.log-phase { color: var(--accent); }
+.log-message { white-space: pre-wrap; word-break: break-word; }
+.log-warning { background: var(--warn-bg); }
+.log-error { background: var(--danger-bg); }
+
+.mode-notice {
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  font-size: 14px;
+  margin: 0 0 16px;
+  border: 1px solid transparent;
+}
+.mode-simulation {
+  background: rgba(79, 124, 255, 0.12);
+  border-color: rgba(79, 124, 255, 0.4);
+}
+.mode-execution {
+  background: var(--warn-bg);
+  border-color: rgba(217, 154, 43, 0.45);
+  color: #f0cd8f;
+}
+
+.action-catalogue { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.action-catalogue li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.action-catalogue li.action-selected { border-color: var(--accent); background: var(--bg-input); }
+.action-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.action-choice:hover .action-label { color: var(--accent-hover); }
+.action-description { margin: 6px 0 4px; font-size: 13px; }
+.action-policy { margin: 0; font-size: 12px; }
+
+.action-buttons { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+.parameter-form { display: grid; gap: 14px; max-width: 460px; }
+.field-required { color: var(--warn); font-weight: 400; }
+.field-hint { font-size: 12px; }
+.field select {
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 14px;
+}
+
+.execution-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+
+.confirmation-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.confirmation-list li { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 13px; }
+.confirmation-comment { font-style: italic; color: var(--text-muted); }
+
+.state-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.state-history li { display: grid; grid-template-columns: 260px 200px 1fr; gap: 10px; }
+.state-transition { font-weight: 600; }
+.state-reason { color: var(--text-muted); }
+
+.recommendation-link { margin: 8px 0 0; font-size: 14px; }
+
+@media (max-width: 900px) {
+  .check-list li,
+  .log-view li,
+  .state-history li { grid-template-columns: 1fr; }
+}

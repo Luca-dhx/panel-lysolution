@@ -1,10 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from '@/auth/RequireAuth';
 import { Layout } from '@/components/Layout';
+import { ActionsPage } from '@/pages/ActionsPage';
 import { BridgesPage } from '@/pages/BridgesPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { OverviewPage } from '@/pages/OverviewPage';
+import { ExecutionPage } from '@/pages/ExecutionPage';
+import { ProjectActionsPage } from '@/pages/ProjectActionsPage';
 import { ProjectDiagnosticPage } from '@/pages/ProjectDiagnosticPage';
 import { ProjectSupervisionPage } from '@/pages/ProjectSupervisionPage';
 import { LoginPage } from '@/pages/LoginPage';
@@ -28,6 +31,10 @@ export default function App() {
         <Route path="/supervision" element={<FleetPage />} />
         <Route path="/supervision/:projectId" element={<ProjectSupervisionPage />} />
         <Route path="/supervision/:projectId/diagnostic" element={<ProjectDiagnosticPage />} />
+        {/* Pilotage : on observe les exécutions ici, on en prépare une depuis un projet. */}
+        <Route path="/supervision/:projectId/actions" element={<ProjectActionsPage />} />
+        <Route path="/actions" element={<ActionsPage />} />
+        <Route path="/actions/:executionId" element={<ExecutionPage />} />
         <Route path="/panel" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/bridges" element={<BridgesPage />} />

@@ -4,6 +4,9 @@ import type {
   HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
 } from '@/types.supervision';
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
+import type {
+  ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
+} from '@/types.execution';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -205,6 +208,64 @@ export const diagnostic = {
 
   /** Le catalogue de règles — rend le moteur auditable depuis l'interface. */
   catalog: () => request<unknown>('/api/diagnostic/catalog'),
+};
+
+/**
+ * PILOTAGE — la seule surface d'écriture du Panel vers les projets (Phase 3C).
+ *
+ * Il n'existe volontairement AUCUNE fonction « exécuter directement » : on
+ * prépare, on crée une exécution, on confirme. C'est la traduction côté
+ * client de la règle du moteur — aucune action ne le contourne.
+ */
+export const executions = {
+  /** Le catalogue d'actions : l'interface n'en code aucune en dur. */
+  actions: () => request<{ items: ActionDescriptor[] }>('/api/executions/actions'),
+
+  /** Compteurs — niveau 0. */
+  stats: () => request<ExecutionStats>('/api/executions/stats'),
+
+  /** Ce qui attend, ce qui tourne — niveau 1. */
+  queue: () => request<{ items: ExecutionRow[] }>('/api/executions/queue'),
+
+  /** L'historique, filtrable — niveau 1. */
+  history: (filters: Record<string, string> = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) params.set(key, value);
+    }
+    const query = params.toString();
+    return request<{ items: ExecutionRow[] }>(`/api/executions${query ? `?${query}` : ''}`);
+  },
+
+  /** Le détail complet, journal compris — niveaux 2 et 3. */
+  detail: (executionId: string) => request<Execution>(`/api/executions/${executionId}`),
+
+  /**
+   * PRÉPARE : évalue les politiques sans rien créer. C'est ce qui permet à
+   * l'écran d'expliquer un refus AVANT de proposer le moindre bouton.
+   */
+  prepare: (body: { type: string; projectId?: string | null; parameters?: Record<string, unknown> }) =>
+    request<ActionPreparation>('/api/executions/prepare', { method: 'POST', body }),
+
+  /** Crée une exécution — SIMULATION par défaut, comme le backend. */
+  create: (body: {
+    type: string;
+    projectId?: string | null;
+    parameters?: Record<string, unknown>;
+    mode?: 'SIMULATION' | 'EXECUTION';
+  }) => request<Execution>('/api/executions', { method: 'POST', body: { mode: 'SIMULATION', ...body } }),
+
+  confirm: (executionId: string, decision: 'APPROVED' | 'REJECTED', comment?: string) =>
+    request<Execution>(`/api/executions/${executionId}/confirm`, {
+      method: 'POST',
+      body: { decision, comment: comment ?? null },
+    }),
+
+  cancel: (executionId: string, reason?: string) =>
+    request<Execution>(`/api/executions/${executionId}/cancel`, {
+      method: 'POST',
+      body: { reason: reason ?? null },
+    }),
 };
 
 export function errorMessage(err: unknown, fallback: string): string {
