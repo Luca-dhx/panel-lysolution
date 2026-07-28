@@ -68,12 +68,28 @@ section('Le transport réseau vers les projets est exclusif');
     if (file.endsWith('ProjectBridgeClient.js')) return false;
     return importsOf(file).some((source) => source.includes('ProjectBridgeClient'));
   });
-  // Seuls les contrôleurs orchestrent un appel sortant : aucun service
-  // métier ne doit tenir un client de pont.
-  const allowed = ['backend/src/controllers/projects.controller.js'];
+  // La liste des détenteurs légitimes du client est COURTE et explicite.
+  //
+  // Elle a changé de nature en Phase 3C : jusque-là seul un contrôleur
+  // orchestrait un appel sortant. Depuis le moteur d'exécution, c'est
+  // l'inverse qui protège l'écosystème — c'est le MOTEUR qui fabrique le
+  // client et l'injecte, pour qu'aucune action ne puisse joindre un projet
+  // sans être validée, confirmée, tracée et historisée.
+  const allowed = [
+    'backend/src/controllers/projects.controller.js',        // désappairage, best-effort
+    'backend/src/services/execution/execution.service.js',   // moteur d'exécution (3C)
+  ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
-  check(`seuls les contrôleurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,
+  check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,
     unexpected.length === 0);
+
+  // Corollaire du LOT 10 : un exécuteur reçoit son client, il ne le fabrique
+  // jamais. Sans cela, une action pourrait contourner le moteur.
+  const executorsWithClient = clientImporters
+    .map(rel)
+    .filter((file) => file.includes('/execution/executors/'));
+  check(`aucun exécuteur ne fabrique son propre client${executorsWithClient.length ? ` — ${executorsWithClient}` : ''}`,
+    executorsWithClient.length === 0);
 }
 
 section('Une seule porte pour l’environnement');
