@@ -1,4 +1,8 @@
 import type { PanelUser, PanelVersion, PublicProject } from '@/types';
+import type {
+  Dashboard, FleetResult, ProjectOverview, ProjectTechnical,
+  HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
+} from '@/types.supervision';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -137,6 +141,50 @@ export const api = {
     request<{ project: PublicProject; unknownFeatures: string[] }>(
       `/api/projects/${projectId}/manifest`,
       { method: 'PUT', body: { manifest } },
+    ),
+};
+
+/**
+ * SUPERVISION — surface strictement en LECTURE (Phase 3A).
+ *
+ * Organisée en niveaux de divulgation progressive : on ne charge le détail
+ * technique d'un projet que si l'utilisateur va le chercher. Un parc de
+ * plusieurs centaines de projets ne coûte donc pas plus cher à afficher
+ * qu'un parc de trois.
+ */
+export const supervision = {
+  /** Niveau 0 — quelques indicateurs. */
+  dashboard: () => request<Dashboard>('/api/supervision/dashboard'),
+
+  /** Niveau 1 — le parc, filtrable. */
+  fleet: (criteria: Record<string, string> = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(criteria)) {
+      if (value) params.set(key, value);
+    }
+    const query = params.toString();
+    return request<FleetResult>(`/api/supervision/fleet${query ? `?${query}` : ''}`);
+  },
+
+  facets: () => request<SearchFacets>('/api/supervision/facets'),
+
+  events: (limit = 50) => request<{ items: TimelineEvent[] }>(`/api/supervision/events?limit=${limit}`),
+
+  /** Niveau 2 — la fiche projet. */
+  project: (projectId: string) => request<ProjectOverview>(`/api/supervision/projects/${projectId}`),
+
+  /** Niveau 3 — détails techniques, à la demande. */
+  technical: (projectId: string) =>
+    request<ProjectTechnical>(`/api/supervision/projects/${projectId}/technical`),
+
+  heartbeats: (projectId: string, limit = 50) =>
+    request<{ stats: HeartbeatStats; items: HeartbeatRow[] }>(
+      `/api/supervision/projects/${projectId}/heartbeats?limit=${limit}`,
+    ),
+
+  projectEvents: (projectId: string, limit = 50) =>
+    request<{ items: TimelineEvent[] }>(
+      `/api/supervision/projects/${projectId}/events?limit=${limit}`,
     ),
 };
 

@@ -136,6 +136,17 @@ export const config = {
   seedDevPassword,
   heartbeatIntervalS: positiveInt('HEARTBEAT_INTERVAL_S', 300),
   pairingCodeTtlS: positiveInt('PAIRING_CODE_TTL_S', 900),
+  // Supervision (Phase 3A) — seuils de vivacité, exprimés en MULTIPLES de
+  // l intervalle de heartbeat attendu. Configurables : un parc de projets
+  // lents ou distants n a pas les memes tolerances qu un parc local.
+  livenessStaleFactor: positiveInt('LIVENESS_STALE_FACTOR', 2),
+  livenessOfflineFactor: positiveInt('LIVENESS_OFFLINE_FACTOR', 6),
+  // Retention de l historique de heartbeats, par projet.
+  heartbeatHistorySize: positiveInt('HEARTBEAT_HISTORY_SIZE', 200),
+  // Retention de la chronologie, par projet.
+  timelineHistorySize: positiveInt('TIMELINE_HISTORY_SIZE', 300),
+  // Certificat : seuil d alerte avant expiration, en jours.
+  certificateWarningDays: positiveInt('CERTIFICATE_WARNING_DAYS', 21),
   debug: process.env.PANEL_DEBUG === '1',
 };
 

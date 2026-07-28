@@ -632,3 +632,213 @@ textarea:focus {
     padding: 1.5rem 1rem;
   }
 }
+
+/* ==========================================================================
+   SUPERVISION (Phase 3A) — divulgation progressive
+   Mêmes jetons de design que le reste du Panel : aucune couleur nouvelle,
+   aucune police nouvelle. Le niveau 0 reste visuellement calme quand tout
+   va bien ; seule une anomalie colore.
+   ========================================================================== */
+
+/* ---------- Indicateurs (niveau 0) ---------- */
+.metric-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.metric-row-secondary { opacity: 0.85; }
+
+.metric {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.metric-value { font-size: 30px; font-weight: 600; line-height: 1.1; }
+.metric-label { color: var(--text-muted); font-size: 13px; }
+.metric-hint { color: var(--text-muted); font-size: 11px; }
+
+.metric-ok { border-color: var(--ok); }
+.metric-ok .metric-value { color: var(--ok); }
+.metric-warn { border-color: var(--warn); }
+.metric-warn .metric-value { color: var(--warn); }
+.metric-danger { border-color: var(--danger); }
+.metric-danger .metric-value { color: var(--danger); }
+
+/* ---------- Grille de cartes ---------- */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+/* ---------- Listes de supervision ---------- */
+.attention-list,
+.alert-list,
+.component-list,
+.timeline,
+.distribution {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attention-list li,
+.alert-list li,
+.component-list li,
+.timeline li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.attention-list li:last-child,
+.alert-list li:last-child,
+.component-list li:last-child,
+.timeline li:last-child { border-bottom: none; }
+
+.attention-name { font-weight: 500; }
+.attention-badges { display: flex; gap: 6px; }
+
+.component-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  min-width: 140px;
+}
+.component-detail { flex: 1; min-width: 220px; }
+.component-source { font-size: 12px; }
+
+.timeline time {
+  color: var(--text-muted);
+  font-size: 12px;
+  min-width: 150px;
+}
+.timeline-summary { flex: 1; min-width: 220px; }
+.timeline-source { font-size: 12px; }
+
+.distribution li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.distribution li:last-child { border-bottom: none; }
+.distribution-count {
+  background: var(--bg-input);
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.card-footer-link { margin: 12px 0 0; font-size: 14px; }
+
+/* ---------- Recherche et filtres (niveau 1) ---------- */
+.search-input {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.search-input:focus { outline: none; border-color: var(--accent); }
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-top: 14px;
+}
+.filter { display: flex; flex-direction: column; gap: 4px; }
+.filter-label { color: var(--text-muted); font-size: 12px; }
+.filter select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+/* ---------- Tableau du parc ---------- */
+.table-scroll { overflow-x: auto; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.data-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.row-attention { background: rgba(217, 154, 43, 0.05); }
+
+.project-link { font-weight: 500; }
+.project-slug { display: block; font-size: 12px; }
+
+/* ---------- Blocs dépliables (niveau 3) ---------- */
+.disclosure {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.disclosure-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 14px 16px;
+  cursor: pointer;
+  font-size: 15px;
+  text-align: left;
+}
+.disclosure-header:hover { background: var(--bg-input); }
+.disclosure-chevron { color: var(--text-muted); font-size: 12px; }
+.disclosure-title { font-weight: 500; }
+.disclosure-hint { color: var(--text-muted); font-size: 13px; }
+.disclosure-body { padding: 0 16px 16px; border-top: 1px solid var(--border); padding-top: 14px; }
+
+.subsection-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+}
+.code-block {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 420px;
+}
+
+.breadcrumb { margin: 0 0 8px; font-size: 14px; }
+.header-badges { display: flex; gap: 8px; margin-top: 10px; }
+.read-only-note { font-size: 13px; text-align: center; margin-top: 24px; }

@@ -29,6 +29,11 @@
 #     projet se présente complètement dès l'appairage via son manifeste
 #     officiel (schéma ProjectManifest, identique aux deux specs).
 #     Compatible 1.0.x.
+#   1.2.0 (Phase 3A) — ADDITIF, SUPERVISION EN LECTURE SEULE :
+#     Heartbeat.runtime (uptime, charge, composants), Heartbeat.engines,
+#     ProjectManifest.engines / .network / .descriptor. Tous OPTIONNELS :
+#     un projet qui ne les publie pas reste pleinement conforme.
+#     Compatible 1.0.x et 1.1.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -38,7 +43,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.1.0
+  version: 1.2.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -505,6 +510,33 @@ components:
             properties:
               id: { type: string }
               status: { type: string, enum: [AVAILABLE, RESERVED] }
+        engines:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : versions des moteurs standards
+            embarques par ce projet.
+          properties:
+            deployment: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+            duplication: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+        network:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : identite reseau publique du projet,
+            telle que LUI la connait. Le Panel l'affiche, ne la modifie jamais.
+          properties:
+            primaryDomain: { type: string, nullable: true }
+            urls:
+              type: object
+              additionalProperties: { type: string }
+        descriptor:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : carte de visite du projet pour la
+            supervision (type de produit, description courte, layout).
+          properties:
+            type: { type: string, description: 'Ex. vitrine, panel, api.' }
+            description: { type: string }
+            layout: { type: string, description: 'Topologie declaree par le profil du moteur.' }
 
     BootstrapResponseEnvelope:
       type: object
@@ -567,6 +599,42 @@ components:
           properties:
             outboxSize: { type: integer, minimum: 0 }
             lastSyncAt: { type: string, format: date-time, nullable: true }
+        runtime:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : observabilite passive du projet, pour
+            la supervision en LECTURE SEULE du Panel. Aucun de ces champs n'est
+            requis ; un projet qui ne les publie pas reste pleinement conforme.
+          properties:
+            uptimeSeconds:
+              type: integer
+              minimum: 0
+              description: Duree depuis le dernier demarrage du backend.
+            startedAt: { type: string, format: date-time, nullable: true }
+            load:
+              type: object
+              description: Charge instantanee, telle que le projet la mesure.
+              properties:
+                cpuPercent: { type: number, minimum: 0 }
+                memoryUsedMb: { type: number, minimum: 0 }
+                memoryTotalMb: { type: number, minimum: 0 }
+            components:
+              type: object
+              description: >
+                Etat des composants internes tels que le projet les constate.
+                Le Panel ne les DEDUIT jamais : il les recoit ou les ignore.
+              additionalProperties:
+                type: string
+                enum: [OK, WARNING, ERROR, UNKNOWN]
+        engines:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : versions des moteurs standards
+            embarques par le projet. Permet au Panel de detecter une derive de
+            version sans jamais lire le code du projet.
+          properties:
+            deployment: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+            duplication: { type: string, pattern: '^\d+\.\d+\.\d+$' }
 
     HeartbeatAckEnvelope:
       type: object

@@ -3,6 +3,9 @@ import { RequireAuth } from '@/auth/RequireAuth';
 import { Layout } from '@/components/Layout';
 import { BridgesPage } from '@/pages/BridgesPage';
 import { DashboardPage } from '@/pages/DashboardPage';
+import { FleetPage } from '@/pages/FleetPage';
+import { OverviewPage } from '@/pages/OverviewPage';
+import { ProjectSupervisionPage } from '@/pages/ProjectSupervisionPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { PairingsPage } from '@/pages/PairingsPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
@@ -19,7 +22,11 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route path="/" element={<DashboardPage />} />
+        {/* Divulgation progressive : vue globale → parc → fiche projet. */}
+        <Route path="/" element={<OverviewPage />} />
+        <Route path="/supervision" element={<FleetPage />} />
+        <Route path="/supervision/:projectId" element={<ProjectSupervisionPage />} />
+        <Route path="/panel" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/bridges" element={<BridgesPage />} />
         <Route path="/versions" element={<VersionsPage />} />

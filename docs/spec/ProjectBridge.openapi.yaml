@@ -37,7 +37,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.1.0
+  version: 1.2.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -551,6 +551,33 @@ components:
             properties:
               id: { type: string, description: 'Identifiant stable (ex. « sync.contracts »).' }
               status: { type: string, enum: [AVAILABLE, RESERVED] }
+        engines:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : versions des moteurs standards
+            embarques par ce projet.
+          properties:
+            deployment: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+            duplication: { type: string, pattern: '^\d+\.\d+\.\d+$' }
+        network:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : identite reseau publique du projet,
+            telle que LUI la connait. Le Panel l'affiche, ne la modifie jamais.
+          properties:
+            primaryDomain: { type: string, nullable: true }
+            urls:
+              type: object
+              additionalProperties: { type: string }
+        descriptor:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.2.0) : carte de visite du projet pour la
+            supervision (type de produit, description courte, layout).
+          properties:
+            type: { type: string, description: 'Ex. vitrine, panel, api.' }
+            description: { type: string }
+            layout: { type: string, description: 'Topologie declaree par le profil du moteur.' }
 
     HealthResponseEnvelope:
       type: object

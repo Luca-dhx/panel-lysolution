@@ -19,6 +19,7 @@ import {
 import ApiError from '../../utils/ApiError.js';
 import registryStore from '../registry/registryStore.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
+import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 
 // Alphabet sans ambiguïté (pas de 0/O, 1/I/L) : le code est fait pour être
 // recopié à la main entre deux écrans.
@@ -129,8 +130,25 @@ export async function bootstrap(dto) {
   if (bridgeManifest !== null) {
     record.manifest = bridgeManifest;
     record.manifestSource = 'BRIDGE';
+    record.manifestUpdatedAt = nowIso();
   }
   await registryStore.save(record);
+
+  await recordEvent({
+    projectId: record.projectId,
+    type: EVENT_TYPES.PROJECT_PAIRED,
+    source: 'PROJECT',
+    summary: `Appairage établi (${dto.environment}, version ${dto.softwareVersion}).`,
+    data: { environment: dto.environment, softwareVersion: dto.softwareVersion, contractVersion: dto.contractVersion },
+  });
+  if (bridgeManifest !== null) {
+    await recordEvent({
+      projectId: record.projectId,
+      type: EVENT_TYPES.MANIFEST_UPDATED,
+      source: 'PROJECT',
+      summary: 'Manifest transmis par le pont au bootstrap.',
+    });
+  }
 
   return {
     projectId: record.projectId,
@@ -166,6 +184,13 @@ async function eraseCredentials(record) {
   record.pairing.pairingCodeExpiresAt = null;
   record.pairing.revokedAt = nowIso();
   await registryStore.save(record);
+  await recordEvent({
+    projectId: record.projectId,
+    type: EVENT_TYPES.PROJECT_UNPAIRED,
+    source: 'PANEL_OBSERVATION',
+    severity: 'WARNING',
+    summary: 'Appairage révoqué : les credentials de pont ont été effacés.',
+  });
 }
 
 // Le projet se débranche lui-même (DELETE /bridge/v1/pairings/current).

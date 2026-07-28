@@ -2,22 +2,21 @@
 // Catégorie 3 : cette donnée n'existe que dans le Panel et ne transite jamais
 // vers un projet.
 import config from '../../config/env.js';
+import { deriveLiveness, LIVENESS, secondsSinceLastHeartbeat } from '../supervision/liveness.service.js';
+import { buildProjectHealth } from '../supervision/health.service.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
 import registryStore from './registryStore.js';
 import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
+import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 
 const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]{1,118}[a-z0-9]$/;
 
-export const LIVENESS = Object.freeze({
-  NOT_PAIRED: 'NOT_PAIRED',
-  NEVER_SEEN: 'NEVER_SEEN',
-  ONLINE: 'ONLINE',
-  STALE: 'STALE',
-  OFFLINE: 'OFFLINE',
-});
+// La vivacité et la santé vivent dans les services de supervision : le
+// registre les EXPOSE, il ne les recalcule pas (une seule implémentation).
+export { LIVENESS, deriveLiveness };
 
 function assertValidManifestOrThrow(manifestInput) {
   const validation = validateManifest(manifestInput);
@@ -83,6 +82,14 @@ export async function declareProject({ projectKey, projectName, manifest = null 
     manifestSource,
   };
   await registryStore.insert(record);
+
+  await recordEvent({
+    projectId: record.projectId,
+    type: EVENT_TYPES.PROJECT_DECLARED,
+    source: 'PANEL_OBSERVATION',
+    summary: `Projet « ${record.projectName} » déclaré dans le registre.`,
+    occurredAt: now,
+  });
 
   const { code, expiresAt } = await issuePairingCode(record);
   return { record, pairingCode: code, pairingCodeExpiresAt: expiresAt };
@@ -162,18 +169,22 @@ export async function recordHeartbeat(record, heartbeat) {
     details: heartbeat.health.details ?? null,
   };
   record.runtime.bridgeStats = heartbeat.bridgeStats ?? null;
+  // Contrat >= 1.2.0 — supervision. Absent ⇒ on n'écrase pas ce qu'on savait
+  // déjà : un projet peut publier ces champs par intermittence.
+  if (heartbeat.runtime?.uptimeSeconds !== undefined) {
+    record.runtime.uptimeSeconds = heartbeat.runtime.uptimeSeconds;
+  }
+  if (heartbeat.runtime?.startedAt !== undefined) {
+    record.runtime.startedAt = heartbeat.runtime.startedAt;
+  }
+  if (heartbeat.runtime?.load !== undefined) record.runtime.load = heartbeat.runtime.load;
+  if (heartbeat.runtime?.components !== undefined) {
+    record.runtime.components = heartbeat.runtime.components;
+  }
+  if (heartbeat.engines !== undefined) record.runtime.engines = heartbeat.engines;
   await registryStore.save(record);
 }
 
-// Vivacité — dérivée à la lecture, jamais stockée (06_PROJECT_LIFECYCLE §3).
-export function deriveLiveness(record, now = Date.now()) {
-  if (record.pairing.status !== 'PAIRED') return LIVENESS.NOT_PAIRED;
-  if (!record.runtime.lastHeartbeatAt) return LIVENESS.NEVER_SEEN;
-  const elapsedS = (now - new Date(record.runtime.lastHeartbeatAt).getTime()) / 1000;
-  if (elapsedS < 2 * config.heartbeatIntervalS) return LIVENESS.ONLINE;
-  if (elapsedS < 6 * config.heartbeatIntervalS) return LIVENESS.STALE;
-  return LIVENESS.OFFLINE;
-}
 
 // Projection publique d'une fiche : jamais un hash, jamais un secret chiffré.
 export function toPublicProject(record, now = Date.now()) {
@@ -192,6 +203,10 @@ export function toPublicProject(record, now = Date.now()) {
     },
     runtime: { ...record.runtime },
     liveness: deriveLiveness(record, now),
+    secondsSinceLastHeartbeat: secondsSinceLastHeartbeat(record, now),
+    // Identité de supervision : entièrement DÉRIVÉE du Manifest publié par le
+    // projet. Rien n'est ressaisi côté Panel (20_MANAGER_STANDARD §4).
+    descriptor: describeProject(record),
     capabilities: {
       enabled: capabilities.enabled,
       reserved: capabilities.reserved,
@@ -200,7 +215,61 @@ export function toPublicProject(record, now = Date.now()) {
     },
     manifest: record.manifest,
     manifestSource: record.manifestSource ?? null,
+    manifestUpdatedAt: record.manifestUpdatedAt ?? null,
+    note: record.note ?? null,
   };
+}
+
+/**
+ * DESCRIPTEUR de supervision — la carte de visite d'un projet, telle que le
+ * Panel peut l'afficher.
+ *
+ * Toutes les valeurs viennent du Manifest ou des heartbeats. Aucune n'est
+ * saisie : c'est la règle « le Manifest reste l'autorité ». Ce que le projet
+ * ne publie pas vaut `null`, et l'interface affiche « inconnu ».
+ */
+export function describeProject(record) {
+  const manifest = record.manifest ?? null;
+  const runtime = record.runtime ?? {};
+  return {
+    slug: record.projectKey,
+    name: manifest?.project?.name ?? record.projectName,
+    type: manifest?.descriptor?.type ?? null,
+    description: manifest?.descriptor?.description ?? null,
+    layout: manifest?.descriptor?.layout ?? null,
+    environment: runtime.environment ?? manifest?.project?.environment ?? null,
+    primaryDomain: manifest?.network?.primaryDomain ?? domainFromUrl(runtime.publicBackendUrl),
+    urls: manifest?.network?.urls ?? (runtime.publicBackendUrl ? { backend: runtime.publicBackendUrl } : null),
+    versions: {
+      software: runtime.softwareVersion ?? manifest?.project?.softwareVersion ?? null,
+      contract: runtime.contractVersion ?? manifest?.bridge?.contractVersion ?? null,
+      manifestFormat: manifest?.manifestVersion ?? null,
+      deploymentEngine: runtime.engines?.deployment ?? manifest?.engines?.deployment ?? null,
+      duplicationEngine: runtime.engines?.duplication ?? manifest?.engines?.duplication ?? null,
+    },
+    dates: {
+      createdAt: record.createdAt,
+      pairedAt: record.pairing?.pairedAt ?? null,
+      lastHeartbeatAt: runtime.lastHeartbeatAt ?? null,
+      lastActivityAt: runtime.lastHeartbeatAt ?? record.updatedAt,
+      manifestUpdatedAt: record.manifestUpdatedAt ?? null,
+    },
+  };
+}
+
+/** Domaine extrait d'une URL, sans jamais lever. */
+function domainFromUrl(url) {
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Santé détaillée d'un projet — déléguée au service de supervision. */
+export function projectHealth(record, context = {}) {
+  return buildProjectHealth(record, context);
 }
 
 // Checklist de conformité Manager Standard (20_MANAGER_STANDARD §5) — états

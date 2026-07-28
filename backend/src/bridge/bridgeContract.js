@@ -1,5 +1,5 @@
 // ============================================================================
-// MIROIR EXÉCUTABLE des contrats OpenAPI v1.1.0 des ponts.
+// MIROIR EXÉCUTABLE des contrats OpenAPI v1.2.0 des ponts.
 //   docs/spec/PanelBridge.openapi.yaml   (le Panel SERT ce contrat)
 //   docs/spec/ProjectBridge.openapi.yaml (le Panel CONSOMME ce contrat)
 // Toute requête entrante sur /bridge/v1 est validée par ce fichier ; toute
@@ -9,12 +9,15 @@
 //
 // Historique : 1.0.0 (Phase 1) — surface initiale ; 1.1.0 (Phase 2A, ADDITIF)
 // — BootstrapRequest.manifest optionnel + GET /manifest côté ProjectBridge
-// (schéma ProjectManifest identique aux deux specs).
+// (schéma ProjectManifest identique aux deux specs) ; 1.2.0 (Phase 3A,
+// ADDITIF) — supervision en LECTURE SEULE : Heartbeat.runtime (uptime,
+// charge, composants), Heartbeat.engines, ProjectManifest.engines /
+// .network / .descriptor. Tous OPTIONNELS.
 // ============================================================================
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.1.0';
+export const CONTRACT_VERSION = '1.2.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -186,6 +189,21 @@ export const projectManifestSchema = z.object({
       status: z.enum(['AVAILABLE', 'RESERVED']),
     }),
   ),
+  // Contrat >= 1.2.0 — supervision en lecture seule : tous optionnels.
+  engines: z.object({ deployment: semver.optional(), duplication: semver.optional() }).optional(),
+  network: z
+    .object({
+      primaryDomain: z.string().nullable().optional(),
+      urls: z.record(z.string().min(1), z.string()).optional(),
+    })
+    .optional(),
+  descriptor: z
+    .object({
+      type: z.string().optional(),
+      description: z.string().optional(),
+      layout: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const bootstrapRequestSchema = z
@@ -218,6 +236,28 @@ export const heartbeatSchema = z
         outboxSize: z.number().int().min(0).optional(),
         lastSyncAt: isoDate.nullable().optional(),
       })
+      .strict()
+      .optional(),
+    // Contrat >= 1.2.0 — SUPERVISION EN LECTURE SEULE. Tous optionnels : un
+    // projet qui ne les publie pas reste pleinement conforme.
+    runtime: z
+      .object({
+        uptimeSeconds: z.number().int().min(0).optional(),
+        startedAt: isoDate.nullable().optional(),
+        load: z
+          .object({
+            cpuPercent: z.number().min(0).optional(),
+            memoryUsedMb: z.number().min(0).optional(),
+            memoryTotalMb: z.number().min(0).optional(),
+          })
+          .strict()
+          .optional(),
+        components: z.record(z.string().min(1), z.enum(['OK', 'WARNING', 'ERROR', 'UNKNOWN'])).optional(),
+      })
+      .strict()
+      .optional(),
+    engines: z
+      .object({ deployment: semver.optional(), duplication: semver.optional() })
       .strict()
       .optional(),
   })

@@ -8,6 +8,7 @@ import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import networkRoutes from './routes/network.routes.js';
+import supervisionRoutes from './routes/supervision.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
 
@@ -24,6 +25,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectsRoutes);
   app.use('/api/system-configuration', networkRoutes);
+  app.use('/api/supervision', supervisionRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

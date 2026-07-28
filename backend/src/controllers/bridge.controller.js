@@ -11,6 +11,7 @@ import {
 import { created, ok } from '../utils/apiResponse.js';
 import { bootstrap, unpairByProject } from '../services/pairing/pairing.service.js';
 import { recordHeartbeat } from '../services/registry/projectRegistry.service.js';
+import { archiveHeartbeat } from '../services/supervision/heartbeat.service.js';
 import { applyIncoming, pullForProject } from '../services/sync/syncCore.service.js';
 
 export function ping(_req, res) {
@@ -28,6 +29,10 @@ export async function unpair(req, res) {
 
 export async function heartbeat(req, res) {
   const dto = parseOrThrow(heartbeatSchema, req.body, 'Heartbeat');
+  // ORDRE IMPORTANT : l'archivage compare le heartbeat à l'état PRÉCÉDENT
+  // pour en déduire les changements (version, santé, redémarrage). Il doit
+  // donc s'exécuter AVANT que la fiche ne soit mise à jour.
+  await archiveHeartbeat(req.bridgeProject, dto);
   await recordHeartbeat(req.bridgeProject, dto);
   return ok(res, { acknowledged: true, panelTime: nowIso() });
 }
