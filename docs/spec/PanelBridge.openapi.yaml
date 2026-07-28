@@ -34,6 +34,13 @@
 #     ProjectManifest.engines / .network / .descriptor. Tous OPTIONNELS :
 #     un projet qui ne les publie pas reste pleinement conforme.
 #     Compatible 1.0.x et 1.1.x.
+#   1.3.0 (Phase 4) — ADDITIF, DÉCOUVERTE DESCENDANTE :
+#     BootstrapResponse.company (CompanyProfile), .integratedApis
+#     (IntegratedApiConfig[]) et .syncCursor. Le projet repart de l'appairage
+#     en sachant qui il représente et avec quels accès, sans attendre un
+#     premier pull. Tous OPTIONNELS : un Panel qui ne les sert pas reste
+#     conforme, un projet qui les ignore aussi.
+#     Compatible 1.0.x, 1.1.x et 1.2.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -43,7 +50,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.2.0
+  version: 1.3.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -567,6 +574,143 @@ components:
           properties:
             name: { type: string, description: Nom d'affichage du Panel. }
             contractVersion: { type: string, description: Version du contrat parlée par le Panel. }
+        # --------------------------------------------------------- >= 1.3.0
+        # DÉCOUVERTE DESCENDANTE. Le projet repart de l'appairage en sachant
+        # qui il représente et avec quels accès — sans attendre un premier
+        # pull. OPTIONNELS : un Panel qui ne les sert pas reste conforme, et
+        # un projet qui les ignore aussi.
+        company:
+          allOf:
+            - $ref: '#/components/schemas/CompanyProfile'
+          nullable: true
+          description: >
+            Configuration PUBLIÉE de l'entreprise que le Panel représente.
+            `null` si aucune configuration n'a encore été publiée — saisir
+            n'est pas publier.
+        integratedApis:
+          type: array
+          description: >
+            APIs intégrées auxquelles CE projet est autorisé, dans le mode
+            correspondant à SON environnement. Un projet en TEST ne reçoit
+            jamais d'identifiants PROD. Liste vide si aucune autorisation.
+          items:
+            $ref: '#/components/schemas/IntegratedApiConfig'
+        syncCursor:
+          type: string
+          nullable: true
+          description: >
+            Curseur de synchronisation à utiliser pour le premier
+            GET /bridge/v1/sync/pull. Il positionne le projet APRÈS les
+            écritures déjà livrées dans cette réponse, ce qui évite de
+            réappliquer la configuration au premier pull.
+
+    # ------------------------------------------------------ entreprise >=1.3.0
+    CompanyProfile:
+      type: object
+      description: >
+        Identité publique de l'entreprise propriétaire du projet. Tout ce qui
+        y figure est destiné à être affiché par un site vitrine : aucun secret
+        n'y transite.
+      required: [companyId, slug, environment, identity]
+      properties:
+        companyId: { type: string, format: uuid }
+        slug: { type: string, description: Identifiant lisible et stable. }
+        environment: { type: string, enum: [TEST, PROD] }
+        version:
+          type: integer
+          description: >
+            Numéro de version de la configuration publiée. Monotone. Permet au
+            projet de savoir s'il est à jour, et au Panel de constater un retard.
+        identity:
+          type: object
+          required: [name]
+          properties:
+            name: { type: string }
+            legalName: { type: string, nullable: true }
+            tagline: { type: string, nullable: true }
+            description: { type: string, nullable: true }
+        branding:
+          type: object
+          properties:
+            logoUrl: { type: string, nullable: true }
+            logoDarkUrl: { type: string, nullable: true }
+            faviconUrl: { type: string, nullable: true }
+            primaryColor: { type: string, nullable: true }
+            secondaryColor: { type: string, nullable: true }
+            accentColor: { type: string, nullable: true }
+            fontFamily: { type: string, nullable: true }
+        domains:
+          type: object
+          properties:
+            primaryDomain: { type: string, nullable: true }
+            websiteUrl: { type: string, nullable: true }
+            wildcardBases: { type: array, items: { type: string } }
+        contacts:
+          type: object
+          properties:
+            email: { type: string, nullable: true }
+            phone: { type: string, nullable: true }
+            supportEmail: { type: string, nullable: true }
+            address:
+              type: object
+              properties:
+                line1: { type: string, nullable: true }
+                line2: { type: string, nullable: true }
+                postalCode: { type: string, nullable: true }
+                city: { type: string, nullable: true }
+                country: { type: string, nullable: true }
+        legal:
+          type: object
+          properties:
+            legalForm: { type: string, nullable: true }
+            siret: { type: string, nullable: true }
+            vatNumber: { type: string, nullable: true }
+            rcs: { type: string, nullable: true }
+            shareCapital: { type: string, nullable: true }
+            legalRepresentative: { type: string, nullable: true }
+            hostingProvider: { type: string, nullable: true }
+            privacyPolicyUrl: { type: string, nullable: true }
+            termsUrl: { type: string, nullable: true }
+        settings:
+          type: object
+          properties:
+            locale: { type: string }
+            timezone: { type: string }
+            currency: { type: string }
+
+    IntegratedApiConfig:
+      type: object
+      description: >
+        Accès à un service tiers, délivré par le Panel à un projet AUTORISÉ.
+        Le champ `credentials` porte des valeurs en clair : cette charge utile
+        ne transite que sur HTTPS, vers un projet nommément autorisé, et n'est
+        jamais journalisée en clair de part ni d'autre.
+      required: [apiId, key, provider, mode, credentials]
+      properties:
+        apiId: { type: string, format: uuid }
+        key: { type: string, description: Identifiant stable et lisible de l'API. }
+        label: { type: string }
+        provider: { type: string, description: 'Fournisseur (STRIPE, BREVO, ...).' }
+        category: { type: string }
+        enabled: { type: boolean }
+        mode:
+          type: string
+          enum: [TEST, PROD]
+          description: >
+            Mode EFFECTIVEMENT servi, déduit de l'environnement du projet.
+            Le projet doit refuser une charge utile dont le mode ne correspond
+            pas au sien.
+        settings:
+          type: object
+          additionalProperties: true
+          description: Paramètres non secrets (URL de base, région, compte...).
+        credentials:
+          type: object
+          additionalProperties: { type: string }
+          description: >
+            Identifiants, restreints aux clés accordées à ce projet. Un projet
+            peut recevoir une clé publique sans la clé secrète.
+        updatedAt: { type: string, format: date-time }
 
     UnpairResponseEnvelope:
       type: object

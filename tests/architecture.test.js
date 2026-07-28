@@ -78,6 +78,12 @@ section('Le transport réseau vers les projets est exclusif');
   const allowed = [
     'backend/src/controllers/projects.controller.js',        // désappairage, best-effort
     'backend/src/services/execution/execution.service.js',   // moteur d'exécution (3C)
+    // Phase 4 — SONDE D'URL, exception étroite et justifiée : elle s'exécute
+    // AVANT tout appairage, donc avant qu'un projet existe au registre. Le
+    // moteur d'exécution ne peut structurellement pas la porter (il exige une
+    // fiche projet). Elle n'appelle que /ping, sans authentification, et
+    // n'écrit rien.
+    'backend/src/services/registry/probe.service.js',
   ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
   check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,

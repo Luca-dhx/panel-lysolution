@@ -14,6 +14,9 @@ import {
   PROJECT_API_ROUTES,
 } from './bridgeContract.js';
 
+// UNE méthode par chemin du contrat — la conformité l'exige et le vérifie.
+// `probe()` n'y figure donc PAS : ce n'est pas un chemin de plus, c'est une
+// variante de `ping()` qui conserve l'en-tête de version.
 export const PROJECT_BRIDGE_CLIENT_METHODS = Object.freeze([
   'ping',
   'getIdentity',
@@ -89,6 +92,54 @@ export class ProjectBridgeClient {
   // -- discovery -------------------------------------------------------------
   ping() {
     return this.#request('GET', PROJECT_API_ROUTES.ping, { authenticated: false });
+  }
+
+  /**
+   * SONDE — ping + version de contrat annoncée.
+   *
+   * La version voyage dans l'EN-TÊTE `X-Bridge-Contract-Version`, pas dans le
+   * corps : `ping()` la perd donc. Avant d'appairer, c'est précisément ce
+   * qu'on veut savoir — d'où cette variante, qui reste dans le seul fichier
+   * autorisé à parler réseau.
+   */
+  async probe() {
+    const url = new URL(this.baseUrl + PROJECT_API_ROUTES.ping);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: 'GET',
+        headers: { [CONTRACT_VERSION_HEADER]: CONTRACT_VERSION },
+        signal: controller.signal,
+      });
+    } catch {
+      throw new BridgeError(
+        LOCAL_ERROR_CODES.PROJECT_UNREACHABLE,
+        'Le projet ne répond pas (réseau, timeout ou service arrêté).',
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+
+    let json = null;
+    try {
+      json = await response.json();
+    } catch {
+      json = null;
+    }
+    const contractVersion = response.headers?.get?.(CONTRACT_VERSION_HEADER) ?? null;
+
+    // Un 409 sur le ping est INFORMATIF, pas un échec de sonde : il signifie
+    // « je t'entends, mais nos majeures divergent » — et l'en-tête porte
+    // alors la version du projet, qui est exactement ce qu'on cherche.
+    if (!response.ok && response.status !== 409) {
+      throw new BridgeError(
+        json?.code ?? BRIDGE_ERROR_CODES.INTERNAL,
+        json?.message ?? `Réponse inattendue du projet (HTTP ${response.status}).`,
+      );
+    }
+    return { data: json?.data ?? null, contractVersion, status: response.status };
   }
 
   // -- identity --------------------------------------------------------------

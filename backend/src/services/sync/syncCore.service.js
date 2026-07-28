@@ -111,11 +111,15 @@ export async function emitChange({
   modifiedAt = nowIso(),
   emitter = EMITTERS.PANEL,
   originProjectId = null,
+  // Destinataire — null = tout le parc, sinon un projectId. Une écriture
+  // portant des identifiants doit TOUJOURS nommer son destinataire.
+  audience = null,
   writeId = newBridgeId(),
 }) {
   const entry = {
     seq: await nextJournalSeq(),
     originProjectId,
+    audience,
     change: { writeId, entityType, entityId, deleted, payload, modifiedAt, emitter },
   };
   await PanelSyncJournalEntry.create(entry);
@@ -138,9 +142,18 @@ function decodeCursor(cursor) {
 // Page ordonnée des écritures à destination d'un projet. Curseur opaque ;
 // anti-écho : les écritures dont ce projet est l'émetteur d'origine sont
 // exclues.
+//
+// FILTRE DE DESTINATAIRE (Phase 4) : un projet reçoit les écritures diffusées
+// (`audience: null`) et celles qui lui sont nommément destinées. Jamais celles
+// d'un autre projet — c'est ce qui rend l'autorisation des IntegratedAPI
+// effective plutôt que déclarative.
 export async function pullForProject(projectId, { cursor, limit }) {
   const afterSeq = decodeCursor(cursor);
-  const query = { seq: { $gt: afterSeq }, originProjectId: { $ne: projectId } };
+  const query = {
+    seq: { $gt: afterSeq },
+    originProjectId: { $ne: projectId },
+    $or: [{ audience: null }, { audience: projectId }],
+  };
   const page = await PanelSyncJournalEntry.find(query).sort({ seq: 1 }).limit(limit).lean();
   const eligibleCount = await PanelSyncJournalEntry.countDocuments(query);
   const lastSeq = page.length > 0 ? page[page.length - 1].seq : afterSeq;
@@ -149,6 +162,16 @@ export async function pullForProject(projectId, { cursor, limit }) {
     cursor: encodeCursor(lastSeq),
     hasMore: eligibleCount > page.length,
   };
+}
+
+/**
+ * Curseur de la TÊTE du journal — joint au bootstrap (contrat >= 1.3.0) pour
+ * qu'un projet fraîchement appairé ne rejoue pas la configuration qu'il vient
+ * de recevoir dans la réponse.
+ */
+export async function currentCursor() {
+  const last = await PanelSyncJournalEntry.findOne().sort({ seq: -1 }).select('seq').lean();
+  return encodeCursor(last?.seq ?? 0);
 }
 
 // Observabilité (fiche projet, tests).

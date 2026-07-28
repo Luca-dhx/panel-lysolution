@@ -1,5 +1,5 @@
 // ============================================================================
-// MIROIR EXÉCUTABLE des contrats OpenAPI v1.2.0 des ponts.
+// MIROIR EXÉCUTABLE des contrats OpenAPI v1.3.0 des ponts.
 //   docs/spec/PanelBridge.openapi.yaml   (le Panel SERT ce contrat)
 //   docs/spec/ProjectBridge.openapi.yaml (le Panel CONSOMME ce contrat)
 // Toute requête entrante sur /bridge/v1 est validée par ce fichier ; toute
@@ -12,12 +12,15 @@
 // (schéma ProjectManifest identique aux deux specs) ; 1.2.0 (Phase 3A,
 // ADDITIF) — supervision en LECTURE SEULE : Heartbeat.runtime (uptime,
 // charge, composants), Heartbeat.engines, ProjectManifest.engines /
-// .network / .descriptor. Tous OPTIONNELS.
+// .network / .descriptor. Tous OPTIONNELS ; 1.3.0 (Phase 4, ADDITIF) —
+// DÉCOUVERTE DESCENDANTE : BootstrapResponse.company / .integratedApis /
+// .syncCursor, et Identity.appliedConfiguration côté ProjectBridge (ce que le
+// projet a réellement appliqué). Tous OPTIONNELS.
 // ============================================================================
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.2.0';
+export const CONTRACT_VERSION = '1.3.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -287,6 +290,78 @@ export const syncPullQuerySchema = z
     limit: z.coerce.number().int().min(1).max(500).default(100),
   })
   .strict();
+
+// ------------------------------------------------- découverte (>= 1.3.0) ----
+// Le Panel SERT ces charges utiles ; il ne les reçoit jamais. Les valider ici
+// n'est donc pas une garde d'entrée mais une garantie de SORTIE : ce que le
+// Panel promet dans sa spec est ce qu'il envoie réellement.
+
+export const companyProfileSchema = z
+  .object({
+    companyId: z.string().uuid(),
+    slug: z.string().min(2),
+    environment: z.enum(['TEST', 'PROD']),
+    version: z.number().int().positive().optional(),
+    identity: z.object({
+      name: z.string().min(1),
+      legalName: z.string().nullable().optional(),
+      tagline: z.string().nullable().optional(),
+      description: z.string().nullable().optional(),
+    }),
+    branding: z.record(z.string(), z.any()).optional(),
+    domains: z.record(z.string(), z.any()).optional(),
+    contacts: z.record(z.string(), z.any()).optional(),
+    legal: z.record(z.string(), z.any()).optional(),
+    settings: z.record(z.string(), z.any()).optional(),
+  })
+  .passthrough();
+
+export const integratedApiConfigSchema = z
+  .object({
+    apiId: z.string().uuid(),
+    key: z.string().min(1),
+    label: z.string().optional(),
+    provider: z.string().min(1),
+    category: z.string().optional(),
+    enabled: z.boolean().optional(),
+    mode: z.enum(['TEST', 'PROD']),
+    settings: z.record(z.string(), z.any()).optional(),
+    credentials: z.record(z.string(), z.string()),
+    updatedAt: z.string().optional(),
+  })
+  .passthrough();
+
+/**
+ * Ce que le Panel renvoie au bootstrap. Les trois derniers champs sont
+ * additifs 1.3.0 : un projet 1.2.x les ignore sans rien casser.
+ */
+export const bootstrapResponseSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    bridgeToken: z.string().min(16),
+    panel: z.object({ name: z.string(), contractVersion: semver }),
+    company: companyProfileSchema.nullable().optional(),
+    integratedApis: z.array(integratedApiConfigSchema).optional(),
+    syncCursor: z.string().nullable().optional(),
+  })
+  .strict();
+
+/**
+ * Ce qu'un projet déclare avoir APPLIQUÉ (ProjectBridge >= 1.3.0). Le Panel
+ * le CONSOMME : ce schéma est donc, lui, une vraie garde d'entrée — mais
+ * tolérante, un projet plus récent pouvant en dire davantage.
+ */
+export const appliedConfigurationSchema = z
+  .object({
+    companyId: z.string().nullable().optional(),
+    companySlug: z.string().nullable().optional(),
+    companyVersion: z.number().int().nullable().optional(),
+    companyAppliedAt: z.string().nullable().optional(),
+    integratedApiCount: z.number().int().min(0).optional(),
+    integratedApiKeys: z.array(z.string()).optional(),
+    lastSyncAt: z.string().nullable().optional(),
+  })
+  .passthrough();
 
 // ------------------------------------------------------------- utilitaires --
 export function parseOrThrow(schema, value, label) {

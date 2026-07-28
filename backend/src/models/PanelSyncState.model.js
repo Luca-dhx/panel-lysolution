@@ -31,10 +31,19 @@ const journalEntrySchema = new mongoose.Schema(
   {
     seq: { type: Number, required: true, unique: true },
     originProjectId: { type: String, default: null },
+    // DESTINATAIRE (Phase 4). `null` = diffusion à tout le parc ; un
+    // projectId = écriture réservée à CE projet.
+    //
+    // Sans ce champ, un projet tirerait tout le journal — donc les
+    // identifiants d'API destinés à un autre. L'autorisation ne peut pas
+    // être un filtre appliqué à la lecture par le projet : elle doit être
+    // portée par l'écriture, côté Panel.
+    audience: { type: String, default: null },
     change: { type: mongoose.Schema.Types.Mixed, required: true },
   },
   { minimize: false, versionKey: false },
 );
+journalEntrySchema.index({ audience: 1, seq: 1 });
 
 const counterSchema = new mongoose.Schema(
   {

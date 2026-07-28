@@ -16,6 +16,7 @@ import {
   revokeFromPanel,
 } from '../services/pairing/pairing.service.js';
 import ProjectBridgeClient from '../bridge/ProjectBridgeClient.js';
+import { probeProjectUrl } from '../services/registry/probe.service.js';
 
 export async function list(_req, res) {
   const now = Date.now();
@@ -82,4 +83,21 @@ export async function putManifest(req, res) {
 
 export async function remove(req, res) {
   return ok(res, await removeProject(req.params.projectId));
+}
+
+/**
+ * SONDE d'une URL de projet — avant tout appairage.
+ *
+ * Ne cree rien, ne modifie rien. Evite les trois echecs les plus courants
+ * d'un premier appairage : mauvaise URL, contrat majeur incompatible, projet
+ * deja appaire ailleurs. La decouverte complete vient apres, par l'action
+ * DISCOVER_PROJECT — quand le Panel a le droit de la demander.
+ */
+export async function probe(req, res) {
+  const url = req.body?.url ?? req.query?.url ?? null;
+  if (!url) {
+    throw ApiError.badRequest('PANEL_PROBE_URL_REQUIRED',
+      'Sonde impossible parce qu’aucune URL n’a ete fournie.');
+  }
+  return ok(res, await probeProjectUrl(url));
 }

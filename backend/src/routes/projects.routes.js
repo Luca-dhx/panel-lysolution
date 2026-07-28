@@ -7,6 +7,7 @@ import {
   declare,
   detail,
   list,
+  probe,
   putManifest,
   regeneratePairingCode,
   remove,
@@ -19,6 +20,10 @@ router.use(asyncHandler(requirePanelUser));
 
 router.get('/', asyncHandler(list));
 router.get('/:projectId', asyncHandler(detail));
+
+// Sonde d'URL — POST par commodité de corps, mais AUCUNE écriture : elle
+// interroge une adresse et rend un constat.
+router.post('/probe', requirePanelDev, asyncHandler(probe));
 
 router.post('/', requirePanelDev, asyncHandler(declare));
 router.post('/:projectId/pairing-code', requirePanelDev, asyncHandler(regeneratePairingCode));

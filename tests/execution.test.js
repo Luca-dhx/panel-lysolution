@@ -94,9 +94,12 @@ section('LOT 4 — Registre déclaratif des actions');
   check('le registre est complet et cohérent', validation.valid === true);
   if (!validation.valid) console.error('   ', validation.errors.join(' · '));
 
-  check('8 actions déclarées', registrySvc.listActions().length === 8);
-  check('aucun type dupliqué',
-    new Set(registrySvc.listActions().map((a) => a.type)).size === 8);
+  // Le NOMBRE d'actions n'est pas un invariant — le registre est fait pour
+  // grandir, et une assertion sur un compte échouerait à chaque ajout
+  // légitime. Ce qui est invariant : chaque type est unique.
+  const declared = registrySvc.listActions();
+  check('le registre déclare des actions', declared.length >= 8);
+  check('aucun type dupliqué', new Set(declared.map((a) => a.type)).size === declared.length);
 
   const withExecutors = await Promise.all(
     registrySvc.listActions().map(async (a) => executorSvc.executorExists(a.executor)),
@@ -116,6 +119,15 @@ section('LOT 4 — Registre déclaratif des actions');
   const updEngines = registrySvc.listActions().filter((a) => a.executor === 'update-engine');
   check('deux actions partagent le même exécuteur (extensibilité par descripteur)',
     updEngines.length === 2);
+
+  // PHASE 4 — la vérification en conditions réelles : DISCOVER_PROJECT a été
+  // ajoutée après coup, sans toucher au cœur. Si l'ajout avait exigé une
+  // modification du moteur, les tests du LOT 10 l'auraient signalé.
+  const discover = registrySvc.getAction('DISCOVER_PROJECT');
+  check('une action ajoutée en Phase 4 est présente et complète',
+    discover !== null && discover.executor === 'discover-project');
+  check('…et n’exige aucune confirmation (lecture seule côté projet)',
+    discover.policy.requiresConfirmation === false);
 
   const rotate = registrySvc.getAction('ROTATE_SECRETS');
   check('ROTATE_SECRETS est coté CRITICAL', rotate.policy.risk === RISK.CRITICAL);
@@ -674,7 +686,9 @@ section('Surface /api/executions');
   const id = declared.record.projectId;
 
   const actions = await call('GET', '/api/executions/actions', { headers: auth });
-  check('GET /actions expose le catalogue', actions.status === 200 && actions.json.data.items.length === 8);
+  check('GET /actions expose le catalogue en entier',
+    actions.status === 200
+    && actions.json.data.items.length === registrySvc.listActions().length);
   check('…sans exposer les fonctions de prérequis',
     actions.json.data.items.every((a) => a.policy.prerequisites.every((p) => p.id && p.label && !p.check)));
 

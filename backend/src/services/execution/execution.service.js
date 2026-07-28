@@ -27,7 +27,11 @@ import { CONTRACT_VERSION, nowIso } from '../../bridge/bridgeContract.js';
 import logger from '../../utils/logger.js';
 
 import { getOutboundBridgeToken } from '../pairing/pairing.service.js';
-import { getProjectOrThrow, setManifestFromBridge } from '../registry/projectRegistry.service.js';
+import {
+  getProjectOrThrow,
+  recordAppliedConfiguration,
+  setManifestFromBridge,
+} from '../registry/projectRegistry.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { expectedEngineVersions } from '../supervision/fleet.service.js';
 import { buildProjectHealth } from '../supervision/health.service.js';
@@ -436,6 +440,7 @@ function buildServices() {
     planEngineMigration: plans.planEngineMigration,
     validateManifest,
     setManifestFromBridge,
+    recordAppliedConfiguration,
     panelContractVersion: CONTRACT_VERSION,
     panelEngineVersions: expectedEngineVersions(),
   };

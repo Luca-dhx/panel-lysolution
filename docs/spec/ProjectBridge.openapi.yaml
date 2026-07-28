@@ -28,6 +28,15 @@
 #   1.0.0 (Phase 1)  — surface initiale.
 #   1.1.0 (Phase 2A) — ADDITIF : GET /manifest (manifeste officiel du projet,
 #     jamais déduit par le Panel). Compatible 1.0.x.
+#   1.2.0 (Phase 3A) — ADDITIF : ProjectManifest.engines / .network /
+#     .descriptor, alimentant la supervision. Tous OPTIONNELS.
+#     Compatible 1.0.x et 1.1.x.
+#   1.3.0 (Phase 4) — ADDITIF, CONVERGENCE : Identity.appliedConfiguration —
+#     le projet déclare quelle version de configuration d'entreprise il a
+#     RÉELLEMENT appliquée et combien d'APIs intégrées il a reçues (jamais
+#     leurs valeurs). Sans cela le Panel ne saurait que ce qu'il a émis, pas
+#     ce qui a pris effet. OPTIONNEL.
+#     Compatible 1.0.x, 1.1.x et 1.2.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -37,7 +46,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.2.0
+  version: 1.3.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -453,6 +462,31 @@ components:
         environment: { type: string, enum: [TEST, PROD] }
         softwareVersion: { type: string }
         contractVersion: { type: string }
+        # --------------------------------------------------------- >= 1.3.0
+        # CONVERGENCE. Ce que le projet a RÉELLEMENT appliqué de ce que le
+        # Panel lui a envoyé. Sans cela, le Panel ne saurait dire que
+        # « la version 4 a été émise » — jamais qu'elle a été appliquée.
+        # OPTIONNEL : un projet qui ne consomme aucune configuration reste
+        # pleinement conforme.
+        appliedConfiguration:
+          type: object
+          nullable: true
+          properties:
+            companyId: { type: string, nullable: true }
+            companySlug: { type: string, nullable: true }
+            companyVersion:
+              type: integer
+              nullable: true
+              description: Version de configuration d'entreprise appliquée localement.
+            companyAppliedAt: { type: string, format: date-time, nullable: true }
+            integratedApiCount:
+              type: integer
+              description: Nombre d'APIs intégrées reçues du Panel et actives.
+            integratedApiKeys:
+              type: array
+              items: { type: string }
+              description: Identifiants des APIs reçues — jamais leurs valeurs.
+            lastSyncAt: { type: string, format: date-time, nullable: true }
 
     ManifestResponseEnvelope:
       type: object

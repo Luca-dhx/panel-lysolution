@@ -17,6 +17,7 @@ import {
   timingSafeEqualHex,
 } from '../../utils/panelCrypto.js';
 import ApiError from '../../utils/ApiError.js';
+import logger from '../../utils/logger.js';
 import registryStore from '../registry/registryStore.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
@@ -150,11 +151,54 @@ export async function bootstrap(dto) {
     });
   }
 
+  // ── DÉCOUVERTE DESCENDANTE (contrat >= 1.3.0) ───────────────────────────
+  // Le projet repart d'ici en sachant qui il représente et avec quels accès.
+  // Sans cela, il resterait aveugle jusqu'à son premier pull — et afficherait
+  // entre-temps un site sans identité.
+  //
+  // Best-effort ASSUMÉ : si l'entreprise n'est pas configurée, ou si la
+  // lecture échoue, l'appairage aboutit quand même. Refuser un appairage
+  // parce qu'un logo manque serait disproportionné, et le projet rattrapera
+  // la configuration au premier pull.
+  const discovery = await buildDiscoveryPayload(record);
+
   return {
     projectId: record.projectId,
     bridgeToken,
     panel: { name: config.panelName, contractVersion: CONTRACT_VERSION },
+    ...discovery,
   };
+}
+
+/**
+ * Charge utile de découverte jointe au bootstrap.
+ *
+ * `syncCursor` positionne le projet APRÈS les écritures déjà livrées ici :
+ * sans lui, son premier pull rejouerait la configuration qu'il vient de
+ * recevoir. Ce n'est pas incorrect — la synchronisation est idempotente —
+ * mais c'est du travail inutile et un journal trompeur.
+ */
+async function buildDiscoveryPayload(record) {
+  try {
+    const [{ getActiveCompany, getPublishedConfiguration }, { apisForProject }, { currentCursor }] =
+      await Promise.all([
+        import('../company/company.service.js'),
+        import('../company/integratedApi.service.js'),
+        import('../sync/syncCore.service.js'),
+      ]);
+
+    const company = await getActiveCompany();
+    const published = company ? await getPublishedConfiguration(company.companyId) : null;
+
+    return {
+      company: published?.payload ?? null,
+      integratedApis: await apisForProject(record),
+      syncCursor: await currentCursor(),
+    };
+  } catch (err) {
+    logger.warn(`Découverte non jointe à l’appairage de ${record.projectKey} : ${err.message}`);
+    return {};
+  }
 }
 
 // Authentifie une requête entrante /bridge/v1 par son Bearer. Retourne la

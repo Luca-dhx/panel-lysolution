@@ -43,13 +43,17 @@ heartbeatSchema.index({ projectId: 1, receivedAt: -1 });
  */
 const eventSchema = new mongoose.Schema(
   {
-    projectId: { type: String, required: true },
+    // `null` depuis la Phase 4 : un événement peut concerner le Panel
+    // lui-même (publication d'une configuration d'entreprise) et non un
+    // projet. Le distinguer d'un projet inconnu importe — d'où null plutôt
+    // qu'une valeur sentinelle.
+    projectId: { type: String, default: null },
     occurredAt: { type: String, required: true },
     type: { type: String, required: true },
     // PROJECT : le projet l'a déclaré · PANEL_OBSERVATION : constat du Panel
-    // en comparant deux publications. Jamais « PANEL_ACTION » : le Panel
-    // n'agit pas sur les projets dans cette phase.
-    source: { type: String, enum: ['PROJECT', 'PANEL_OBSERVATION'], required: true },
+    // en comparant deux publications · PANEL : acte délibéré d'un opérateur
+    // du Panel (Phase 4 — le Panel agit désormais).
+    source: { type: String, enum: ['PROJECT', 'PANEL_OBSERVATION', 'PANEL'], required: true },
     severity: { type: String, enum: ['INFO', 'WARNING', 'ERROR'], default: 'INFO' },
     summary: { type: String, required: true },
     data: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -74,6 +78,13 @@ export const EVENT_TYPES = Object.freeze({
   HEALTH_CHANGED: 'HEALTH_CHANGED',
   MANIFEST_UPDATED: 'MANIFEST_UPDATED',
   ENVIRONMENT_CHANGED: 'ENVIRONMENT_CHANGED',
+  // Phase 4 — l'entreprise et sa configuration.
+  COMPANY_CREATED: 'COMPANY_CREATED',
+  COMPANY_PUBLISHED: 'COMPANY_PUBLISHED',
+  INTEGRATED_API_GRANTED: 'INTEGRATED_API_GRANTED',
+  INTEGRATED_API_REVOKED: 'INTEGRATED_API_REVOKED',
+  INTEGRATED_API_PUBLISHED: 'INTEGRATED_API_PUBLISHED',
+  PROJECT_DISCOVERED: 'PROJECT_DISCOVERED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

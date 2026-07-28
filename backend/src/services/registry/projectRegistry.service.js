@@ -147,6 +147,30 @@ export async function setManifestFromBridge(record, manifest) {
   return record;
 }
 
+/**
+ * CONVERGENCE (Phase 4, contrat >= 1.3.0) — ce que le projet déclare avoir
+ * réellement appliqué.
+ *
+ * C'est la seule information de tout le registre que le Panel ne peut pas
+ * déduire : il sait ce qu'il a ÉMIS, il ne saurait pas ce qui a PRIS EFFET.
+ * Sans ce constat, « configuration publiée » et « configuration appliquée »
+ * seraient confondues, et un projet resté en retard passerait inaperçu.
+ */
+export async function recordAppliedConfiguration(record, applied) {
+  record.appliedConfiguration = {
+    companyId: applied.companyId ?? null,
+    companySlug: applied.companySlug ?? null,
+    companyVersion: applied.companyVersion ?? null,
+    companyAppliedAt: applied.companyAppliedAt ?? null,
+    integratedApiCount: applied.integratedApiCount ?? 0,
+    integratedApiKeys: applied.integratedApiKeys ?? [],
+    lastSyncAt: applied.lastSyncAt ?? null,
+    observedAt: nowIso(),
+  };
+  await registryStore.save(record);
+  return record;
+}
+
 export async function removeProject(projectId) {
   const record = await getProjectOrThrow(projectId);
   if (record.pairing.status === 'PAIRED') {

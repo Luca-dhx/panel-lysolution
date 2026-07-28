@@ -153,6 +153,34 @@ export const ACTIONS = Object.freeze([
     },
   },
   {
+    // PHASE 4 — ajoutée sans toucher une seule ligne du cœur du moteur.
+    // C'est la vérification, en conditions réelles, du contrat
+    // d'extensibilité annoncé en Phase 3C : un descripteur, un exécuteur.
+    type: 'DISCOVER_PROJECT',
+    label: 'Découvrir le projet',
+    description: 'Interroge le projet sur son identité, son Manifest, sa santé, ses opérations et ce qu’il a réellement appliqué.',
+    category: 'DIAGNOSTIC',
+    target: 'PROJECT',
+    executor: 'discover-project',
+    simulatable: true,
+    futureActions: ['FETCH_MANIFEST', 'DIAGNOSE_REMOTE'],
+    parameters: {},
+    policy: {
+      // Lecture seule côté projet : aucune confirmation.
+      requiresConfirmation: false,
+      allowedEnvironments: ['TEST', 'PROD'],
+      risk: RISK.LOW,
+      rollbackable: false,
+      timeoutMs: 60_000,
+      exclusive: false,
+      exclusivityScope: 'PROJECT',
+      requiredReadiness: null,
+      blockOnDiagnostics: [],
+      prerequisites: [PREREQUISITES.PAIRED, PREREQUISITES.REACHABLE],
+      confirmationsRequired: 0,
+    },
+  },
+  {
     type: 'DEPLOY',
     label: 'Déployer',
     description: 'Construit un artefact et le met en ligne sur la cible, via le moteur de déploiement du projet.',

@@ -54,6 +54,12 @@ const panelProjectSchema = new mongoose.Schema(
     manifest: { type: mongoose.Schema.Types.Mixed, default: null },
     manifestSource: { type: String, enum: ['BRIDGE', 'MANUAL', null], default: null },
     manifestUpdatedAt: { type: String, default: null },
+    // CONVERGENCE (Phase 4) — ce que le projet déclare avoir APPLIQUÉ de ce
+    // que le Panel lui a envoyé. Relevé lors d'une découverte, jamais déduit.
+    // `null` tant qu'aucune découverte n'a eu lieu : « inconnu » et « rien
+    // appliqué » ne doivent pas se confondre.
+    appliedConfiguration: { type: mongoose.Schema.Types.Mixed, default: null },
+
     // Note de supervision libre, saisie côté Panel. C'est la SEULE donnée du
     // registre qui n'est pas dérivée du projet — elle ne lui est jamais
     // transmise et n'influence aucun calcul.
