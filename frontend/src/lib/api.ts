@@ -3,6 +3,7 @@ import type {
   Dashboard, FleetResult, ProjectOverview, ProjectTechnical,
   HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
 } from '@/types.supervision';
+import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -186,6 +187,24 @@ export const supervision = {
     request<{ items: TimelineEvent[] }>(
       `/api/supervision/projects/${projectId}/events?limit=${limit}`,
     ),
+};
+
+/**
+ * DIAGNOSTIC — surface d'ANALYSE, strictement en lecture (Phase 3B).
+ *
+ * La supervision restitue ce qui a été observé ; le diagnostic explique ce
+ * qui a été observé. Ni l'une ni l'autre ne contacte un projet.
+ */
+export const diagnostic = {
+  /** Analyse du parc : readiness moyenne, compatibilité croisée, top risques. */
+  fleet: () => request<FleetDiagnostic>('/api/diagnostic/fleet'),
+
+  /** Analyse complète d'un projet. */
+  project: (projectId: string) =>
+    request<ProjectDiagnostic>(`/api/diagnostic/projects/${projectId}`),
+
+  /** Le catalogue de règles — rend le moteur auditable depuis l'interface. */
+  catalog: () => request<unknown>('/api/diagnostic/catalog'),
 };
 
 export function errorMessage(err: unknown, fallback: string): string {

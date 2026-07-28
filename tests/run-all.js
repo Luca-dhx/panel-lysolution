@@ -19,6 +19,7 @@ const TESTS = [
   'architecture.test.js',
   'deploy.test.js',
   'supervision.test.js',
+  'diagnostic.test.js',
   'spec-drift.check.mjs',
   'deployment-rollback.test.js',
   'engine-governance.test.js',

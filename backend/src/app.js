@@ -9,6 +9,7 @@ import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import networkRoutes from './routes/network.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
+import diagnosticRoutes from './routes/diagnostic.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
 
@@ -26,6 +27,7 @@ export function createApp() {
   app.use('/api/projects', projectsRoutes);
   app.use('/api/system-configuration', networkRoutes);
   app.use('/api/supervision', supervisionRoutes);
+  app.use('/api/diagnostic', diagnosticRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

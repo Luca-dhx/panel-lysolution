@@ -5,6 +5,7 @@ import { BridgesPage } from '@/pages/BridgesPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { OverviewPage } from '@/pages/OverviewPage';
+import { ProjectDiagnosticPage } from '@/pages/ProjectDiagnosticPage';
 import { ProjectSupervisionPage } from '@/pages/ProjectSupervisionPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { PairingsPage } from '@/pages/PairingsPage';
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/" element={<OverviewPage />} />
         <Route path="/supervision" element={<FleetPage />} />
         <Route path="/supervision/:projectId" element={<ProjectSupervisionPage />} />
+        <Route path="/supervision/:projectId/diagnostic" element={<ProjectDiagnosticPage />} />
         <Route path="/panel" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/bridges" element={<BridgesPage />} />

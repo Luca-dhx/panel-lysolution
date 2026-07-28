@@ -63,6 +63,11 @@ export function ProjectSupervisionPage() {
           <code>{descriptor.slug}</code>
           {descriptor.description ? ` · ${descriptor.description}` : null}
         </p>
+        <p className="tab-links">
+          <Link to={`/supervision/${projectId}/diagnostic`} className="tab-link">
+            Voir le diagnostic complet →
+          </Link>
+        </p>
         <div className="header-badges">
           <LivenessBadge value={health.liveness} />
           <HealthBadge value={health.status} />

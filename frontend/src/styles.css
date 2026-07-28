@@ -842,3 +842,123 @@ textarea:focus {
 .breadcrumb { margin: 0 0 8px; font-size: 14px; }
 .header-badges { display: flex; gap: 8px; margin-top: 10px; }
 .read-only-note { font-size: 13px; text-align: center; margin-top: 24px; }
+
+/* ==========================================================================
+   DIAGNOSTIC (Phase 3B) — analyse et explications
+   Aucune couleur nouvelle : mêmes jetons que la supervision. Un projet sans
+   écart reste visuellement calme.
+   ========================================================================== */
+
+/* ---------- Jauge de préparation ---------- */
+.readiness-gauge { display: flex; flex-direction: column; gap: 10px; }
+.readiness-head { display: flex; align-items: baseline; gap: 12px; }
+.readiness-score { font-size: 34px; font-weight: 600; line-height: 1; }
+.readiness-unit { font-size: 18px; font-weight: 400; }
+.readiness-ok { color: var(--ok); }
+.readiness-warn { color: var(--warn); }
+.readiness-danger { color: var(--danger); }
+.readiness-muted { color: var(--text-muted); }
+
+.readiness-bar {
+  height: 8px;
+  background: var(--bg-input);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.readiness-fill { height: 100%; border-radius: 4px; }
+.readiness-fill-ok { background: var(--ok); }
+.readiness-fill-warn { background: var(--warn); }
+.readiness-fill-danger { background: var(--danger); }
+.readiness-fill-muted { background: var(--border-strong); }
+.readiness-hint { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+/* ---------- Bloc « pourquoi » ---------- */
+.why {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--bg-input);
+  border-left: 2px solid var(--border-strong);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13px;
+}
+.why-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.why-text { flex: 1; }
+
+/* ---------- Recommandations ---------- */
+.recommendation-list, .risk-list, .diagnostic-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.recommendation-list > li,
+.risk-list > li,
+.diagnostic-list > li {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border);
+}
+.recommendation-list > li:last-child,
+.risk-list > li:last-child,
+.diagnostic-list > li:last-child { border-bottom: none; }
+
+.recommendation-list-compact > li { padding: 10px 0; }
+
+.recommendation-head, .risk-head, .diagnostic-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.recommendation-action, .risk-title, .diagnostic-title {
+  font-weight: 500;
+  flex: 1;
+  min-width: 220px;
+}
+.risk-score { font-size: 12px; }
+.risk-exposure { margin: 0 0 8px; font-size: 14px; }
+.diagnostic-id { font-size: 11px; color: var(--text-muted); }
+
+.effort-tag {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* ---------- Divers ---------- */
+.priority-counts { list-style: none; margin: 0; padding: 0; }
+.priority-counts li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.priority-counts li:last-child { border-bottom: none; }
+
+.verdict-line { margin: 0 0 8px; }
+.axis-reason { font-size: 13px; color: var(--text-muted); max-width: 420px; }
+.disclosure-lead { margin: 0 0 14px; font-size: 14px; color: var(--text-muted); }
+
+.tab-links { margin: 10px 0 0; }
+.tab-link {
+  display: inline-block;
+  padding: 5px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.tab-link:hover { border-color: var(--accent); }

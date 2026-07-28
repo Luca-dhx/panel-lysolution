@@ -16,6 +16,7 @@
     "test:persistence": "node ../tests/persistence.test.js",
     "test:domains": "node ../tests/domains.test.js",
     "test:deploy": "node ../tests/deploy.test.js",
+    "test:diagnostic": "node ../tests/diagnostic.test.js",
     "test:supervision": "node ../tests/supervision.test.js",
     "test:architecture": "node ../tests/architecture.test.js",
     "test:manifest": "node ../tests/manifest.test.js",
