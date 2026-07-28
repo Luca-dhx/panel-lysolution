@@ -1,15 +1,27 @@
 /**
  * Génération & application de la configuration Nginx d'une cible.
  *
- * Le site déployé se compose de :
- *   - la vitrine (statique, servie à la racine) ;
- *   - le manager (statique, servi sous /manager) ;
- *   - le backend Node (proxy_pass sur le port PM2 local, sous /api, /uploads, /health).
+ * ── ENTIÈREMENT PILOTÉ PAR LE PROFIL (Phase 2E) ────────────────────────────
+ * Ce fichier ne connaît AUCUN nom d'application : ni « vitrine », ni
+ * une application nommée. Il ne connaît que `APPS` et le
+ * `nginxRole` que chaque application déclare dans
+ * `config/project.profile.js`.
  *
- * La config est générée de façon déterministe à partir de l'hôte et du port
- * backend local. Le certificat TLS est référencé selon le cas (wildcard partagé
- * ou cert dédié Let's Encrypt) — voir certbot.js.
+ * Rôles reconnus :
+ *   web            application statique servie sur l'hôte PRINCIPAL
+ *   web-subdomain  application statique servie sur `<subdomain>.<host>`
+ *   api            reverse proxy PUR vers le backend, sur un hôte dédié
+ *   static         contenu statique seul (aucun proxy backend)
+ *   proxy          reverse proxy seul, sans racine statique
+ *   server         backend Node : fournit le port ; N'A PAS de bloc serveur
+ *
+ * Un projet à 3 applications et un projet à 2 produisent donc la même
+ * configuration par le même code : seule la liste `APPS` change.
+ *
+ * Le certificat TLS est référencé selon le cas (wildcard partagé pour un
+ * sous-domaine géré, ou certificat dédié Let's Encrypt) — voir certbot.js.
  */
+import { API_SUBDOMAIN, APPS } from './config/project.profile.js';
 
 /** Chemin du fichier de conf sites-available pour un hôte. */
 export function nginxConfigPath(host) {
@@ -43,15 +55,25 @@ export function certPaths(target) {
   };
 }
 
-/** Emplacement du certificat DÉDIÉ du Manager (jamais couvert par un wildcard 1 niveau). */
-export function managerCertPaths(managerHost) {
+/**
+ * Emplacement d'un certificat DÉDIÉ pour un hôte dérivé.
+ * Un wildcard `*.base` ne couvrant qu'UN niveau, tout hôte dérivé
+ * (`<sub>.<host>`) exige son propre certificat.
+ */
+export function dedicatedCertPaths(host) {
   return {
-    fullchain: `/etc/letsencrypt/live/${managerHost}/fullchain.pem`,
-    privkey: `/etc/letsencrypt/live/${managerHost}/privkey.pem`,
-    certName: managerHost,
+    fullchain: `/etc/letsencrypt/live/${host}/fullchain.pem`,
+    privkey: `/etc/letsencrypt/live/${host}/privkey.pem`,
+    certName: host,
     shared: false,
   };
 }
+
+/**
+ * Alias de compatibilité — ancien nom de `dedicatedCertPaths`, conservé pour
+ * les appelants antérieurs à la Phase 2E. Ne PAS utiliser dans du code neuf.
+ */
+export const legacyDedicatedCertPaths = dedicatedCertPaths;
 
 /** Bloc proxy commun (API + uploads + health) vers le backend PM2. */
 function backendProxy(backendPort) {
@@ -82,10 +104,10 @@ function apiProxyAll(backendPort) {
 /**
  * Blocs `location` d'un site statique (SPA) avec politique de cache CORRECTE.
  *
- * Sans cela, `index.html` était servi SANS `Cache-Control` : le navigateur lui
- * appliquait un cache heuristique et continuait d'afficher un ANCIEN index.html
- * (pointant vers d'anciens hash d'assets) même après un déploiement réussi —
- * exactement le symptôme « la vitrine affiche encore une ancienne version ».
+ * Sans cela, `index.html` serait servi SANS `Cache-Control` : le navigateur lui
+ * appliquerait un cache heuristique et continuerait d'afficher un ANCIEN
+ * index.html (pointant vers d'anciens hash d'assets) même après un déploiement
+ * réussi.
  *
  * Règles :
  *  - `index.html` + manifestes de version → `no-cache` : TOUJOURS revalider, donc
@@ -112,91 +134,174 @@ function staticSiteLocations() {
 
 /** Hostname API dédié dérivé de l'hôte du site (sauf fourni explicitement). */
 export function deriveApiHost(host, apiHost) {
-  return (apiHost || `api.${host}`).toLowerCase();
+  return (apiHost || `${API_SUBDOMAIN}.${host}`).toLowerCase();
 }
 
 /**
- * Rend le contenu Nginx : DEUX sites servis ensemble — la vitrine sur `host` et
- * le Manager sur `managerHost` (= manager.<host>). La vitrine réutilise le
- * certificat (wildcard pour un sous-domaine géré, ou dédié pour un domaine
- * client) ; le Manager a TOUJOURS un certificat dédié (un wildcard *.base à un
- * niveau ne couvre pas manager.<host>).
- *
- * @param {object} target   Résultat de parseTargetUrl.
- * @param {object} opts
- * @param {string} opts.webRoot     Racine statique de la vitrine.
- * @param {string} opts.managerRoot Racine statique du Manager.
- * @param {number} opts.backendPort Port local du backend Node (PM2).
- * @param {string} opts.managerHost Hostname du Manager (dérivé).
+ * Rôle Nginx d'une application, dérivé du profil.
+ * `nginxRole` explicite s'il est déclaré ; sinon déduit de `role` (les profils
+ * antérieurs à la Phase 2E ne déclarent que `role`).
  */
-export function renderNginxConfig(target, { webRoot, managerRoot, backendPort, managerHost, apiHost }) {
-  const { fullchain, privkey } = certPaths(target);
-  const host = target.host;
-  const mHost = managerHost || `manager.${host}`;
-  const aHost = deriveApiHost(host, apiHost);
-  const mCert = managerCertPaths(mHost);
-  const aCert = managerCertPaths(aHost); // API : certificat dédié
-  const proxy = backendProxy(backendPort);
-  return `# Généré par DeploymentEngine — cible ${host} (+ Manager ${mHost} + API ${aHost})
-# NE PAS éditer à la main : régénéré à chaque déploiement.
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ${host} ${mHost} ${aHost};
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 301 https://$host$request_uri; }
+function nginxRoleOf(app) {
+  if (app.nginxRole) return app.nginxRole;
+  if (app.role === 'web') return 'web';
+  if (app.role === 'web-sub') return 'web-subdomain';
+  return 'server';
 }
 
-# --- Vitrine ---
+/**
+ * PLAN DES SITES à servir, dérivé du profil et de la cible.
+ *
+ * Retourne une liste de descripteurs, dans l'ordre de rendu :
+ *   { id, host, kind: 'static'|'proxy', root|null, withBackendProxy, cert, dedicatedCert }
+ *
+ * C'est LA fonction qui remplace les anciens blocs codés en dur. Elle est
+ * exportée : les tests la vérifient directement, sans lire du texte Nginx.
+ *
+ * @param {object} target  Résultat de parseTargetUrl.
+ * @param {object} opts
+ * @param {Record<string,string>} [opts.roots]  racine statique par identifiant d'application
+ * @param {string} [opts.webRoot]     compat : racine de l'application `web`
+ * @param {string} [opts.subRoot]     compat : racine de la première `web-subdomain`
+ * @param {string} [opts.apiHost]     hôte API explicite
+ * @param {Record<string,string>} [opts.hosts] hôte explicite par identifiant d'application
+ */
+export function planSites(target, opts = {}) {
+  const host = target.host;
+  const roots = { ...(opts.roots ?? {}) };
+  const sites = [];
+
+  const webApps = APPS.filter((app) => nginxRoleOf(app) === 'web');
+  const subApps = APPS.filter((app) => nginxRoleOf(app) === 'web-subdomain');
+
+  // Compatibilité ascendante : `webRoot` désigne la première application
+  // `web`, `subRoot` (ex-`managerRoot`) la première `web-subdomain`.
+  const legacySubRoot = opts.subRoot ?? opts.managerRoot;
+  if (opts.webRoot && webApps[0] && roots[webApps[0].id] === undefined) roots[webApps[0].id] = opts.webRoot;
+  if (legacySubRoot && subApps[0] && roots[subApps[0].id] === undefined) roots[subApps[0].id] = legacySubRoot;
+
+  for (const app of APPS) {
+    const role = nginxRoleOf(app);
+    if (role === 'server') continue; // le backend ne produit pas de bloc serveur
+
+    const explicitHost = opts.hosts?.[app.id];
+    if (role === 'web') {
+      sites.push({
+        id: app.id,
+        host: explicitHost ?? host,
+        kind: 'static',
+        root: roots[app.id] ?? null,
+        withBackendProxy: app.backendProxy !== false,
+        cert: certPaths(target),
+      });
+    } else if (role === 'web-subdomain') {
+      const subHost = (explicitHost ?? `${app.subdomain}.${host}`).toLowerCase();
+      sites.push({
+        id: app.id,
+        host: subHost,
+        kind: 'static',
+        root: roots[app.id] ?? null,
+        withBackendProxy: app.backendProxy !== false,
+        // Un hôte dérivé n'est jamais couvert par un wildcard à un niveau.
+        cert: dedicatedCertPaths(subHost),
+      });
+    } else if (role === 'static') {
+      const subHost = (explicitHost ?? (app.subdomain ? `${app.subdomain}.${host}` : host)).toLowerCase();
+      sites.push({
+        id: app.id,
+        host: subHost,
+        kind: 'static',
+        root: roots[app.id] ?? null,
+        withBackendProxy: false,
+        cert: subHost === host ? certPaths(target) : dedicatedCertPaths(subHost),
+      });
+    } else if (role === 'proxy') {
+      const subHost = (explicitHost ?? `${app.subdomain}.${host}`).toLowerCase();
+      sites.push({
+        id: app.id, host: subHost, kind: 'proxy', root: null,
+        withBackendProxy: true, cert: dedicatedCertPaths(subHost),
+      });
+    }
+  }
+
+  // Hôte API dédié : déclaré par une application de rôle `api`, sinon dérivé
+  // du sous-domaine d'API du profil (comportement historique).
+  const apiApp = APPS.find((app) => nginxRoleOf(app) === 'api');
+  const apiHost = deriveApiHost(host, opts.apiHost ?? (apiApp?.subdomain ? `${apiApp.subdomain}.${host}` : undefined));
+  sites.push({
+    id: apiApp?.id ?? 'api',
+    host: apiHost,
+    kind: 'proxy',
+    root: null,
+    withBackendProxy: true,
+    cert: dedicatedCertPaths(apiHost),
+  });
+
+  return sites;
+}
+
+/** Tous les hostnames servis par la configuration (ordre stable). */
+export function servedHosts(target, opts = {}) {
+  return [...new Set(planSites(target, opts).map((site) => site.host))];
+}
+
+/**
+ * Rend la configuration Nginx HTTPS complète — un bloc serveur par site du
+ * plan, plus la redirection HTTP → HTTPS commune.
+ *
+ * @param {object} target Résultat de parseTargetUrl.
+ * @param {object} opts   Voir planSites().
+ */
+export function renderNginxConfig(target, opts) {
+  const { backendPort } = opts;
+  const sites = planSites(target, opts);
+  const proxy = backendProxy(backendPort);
+  const hosts = sites.map((site) => site.host);
+
+  const blocks = sites.map((site) => {
+    const header = `server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${site.host};
+
+    ssl_certificate ${site.cert.fullchain};
+    ssl_certificate_key ${site.cert.privkey};`;
+
+    if (site.kind === 'proxy') {
+      return `# --- ${site.id} (reverse proxy pur vers le backend interne) ---
+${header}
+
+${apiProxyAll(backendPort)}
+}`;
+    }
+    return `# --- ${site.id} ---
+${header}
+
+    root ${site.root};
+    index index.html;
+
+${staticSiteLocations()}
+${site.withBackendProxy ? `\n${proxy}\n` : ''}}`;
+  });
+
+  return `# Généré par DeploymentEngine — cible ${target.host}
+# Sites servis : ${hosts.join(', ')}
+# NE PAS éditer à la main : régénéré à chaque déploiement.
+#
 # HTTP/2 activé SUR la directive listen (« listen … ssl http2 ») : compatible de
 # nginx 1.9.5 à aujourd'hui. La directive autonome « http2 on; » n'existe qu'à
 # partir de nginx 1.25.1 et fait échouer les serveurs plus anciens (Ubuntu 20.04/
 # 22.04 → nginx 1.18) avec [emerg] unknown directive "http2". Sur 1.25.1+, la
 # forme « listen … http2 » n'émet qu'un [warn] (nginx -t reste « successful »).
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${host};
-
-    ssl_certificate ${fullchain};
-    ssl_certificate_key ${privkey};
-
-    root ${webRoot};
-    index index.html;
-
-${staticSiteLocations()}
-
-${proxy}
+    listen 80;
+    listen [::]:80;
+    server_name ${hosts.join(' ')};
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
 }
 
-# --- Manager (hostname dédié) ---
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${mHost};
-
-    ssl_certificate ${mCert.fullchain};
-    ssl_certificate_key ${mCert.privkey};
-
-    root ${managerRoot};
-    index index.html;
-
-${staticSiteLocations()}
-
-${proxy}
-}
-
-# --- API (domaine dédié, reverse proxy pur vers le backend interne) ---
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name ${aHost};
-
-    ssl_certificate ${aCert.fullchain};
-    ssl_certificate_key ${aCert.privkey};
-
-${apiProxyAll(backendPort)}
-}
+${blocks.join('\n\n')}
 `;
 }
 
@@ -207,48 +312,46 @@ ${apiProxyAll(backendPort)}
  * N'EXISTENT PAS encore au premier déploiement (émis par certbot juste après).
  * Appliquer d'emblée la config HTTPS ferait échouer `nginx -t` (« cannot load
  * certificate »), et le challenge ACME HTTP-01 ne serait jamais servi (Nginx ne
- * démarrant pas). On sert donc d'abord le site + le challenge en HTTP, on émet
+ * démarrant pas). On sert donc d'abord les sites + le challenge en HTTP, on émet
  * les certificats, PUIS on bascule sur la config HTTPS complète.
  */
-export function renderNginxHttpOnly(target, { webRoot, managerRoot, backendPort, managerHost, apiHost }) {
-  const host = target.host;
-  const mHost = managerHost || `manager.${host}`;
-  const aHost = deriveApiHost(host, apiHost);
+export function renderNginxHttpOnly(target, opts) {
+  const { backendPort } = opts;
+  const sites = planSites(target, opts);
   const proxy = backendProxy(backendPort);
-  const block = (serverName, root) => `server {
+
+  const blocks = sites.map((site) => {
+    const header = `server {
     listen 80;
     listen [::]:80;
-    server_name ${serverName};
+    server_name ${site.host};
 
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }`;
 
-    root ${root};
+    if (site.kind === 'proxy') {
+      return `# --- ${site.id} (HTTP, pré-certificat) ---
+${header}
+
+${apiProxyAll(backendPort)}
+}`;
+    }
+    return `# --- ${site.id} (HTTP, pré-certificat) ---
+${header}
+
+    root ${site.root};
     index index.html;
     location / {
         try_files $uri $uri/ /index.html;
     }
+${site.withBackendProxy ? `\n${proxy}\n` : ''}}`;
+  });
 
-${proxy}
-}`;
-  // Bloc API en HTTP : sert le challenge ACME + proxifie déjà le backend.
-  const apiBlock = `server {
-    listen 80;
-    listen [::]:80;
-    server_name ${aHost};
-
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-
-${apiProxyAll(backendPort)}
-}`;
-  return `# Généré par DeploymentEngine — cible ${host} (+ Manager ${mHost} + API ${aHost}) — PHASE HTTP (pré-certificat)
+  return `# Généré par DeploymentEngine — cible ${target.host} — PHASE HTTP (pré-certificat)
+# Sites servis : ${sites.map((s) => s.host).join(', ')}
 # NE PAS éditer à la main : régénéré à chaque déploiement.
-# Temporaire : sert le challenge ACME (HTTP-01) et le site en HTTP le temps de
+# Temporaire : sert le challenge ACME (HTTP-01) et les sites en HTTP le temps de
 # l'émission des certificats. Remplacée juste après par la config HTTPS complète.
-${block(host, webRoot)}
-
-${block(mHost, managerRoot)}
-
-${apiBlock}
+${blocks.join('\n\n')}
 `;
 }
 
@@ -306,4 +409,14 @@ export async function applyNginxConfig(transport, target, opts) {
   return { configPath, mode: 'https', reloaded: true };
 }
 
-export default { renderNginxConfig, renderNginxHttpOnly, applyNginxConfig, applyNginxHttpOnly, nginxConfigPath, certPaths };
+export default {
+  renderNginxConfig,
+  renderNginxHttpOnly,
+  applyNginxConfig,
+  applyNginxHttpOnly,
+  nginxConfigPath,
+  certPaths,
+  dedicatedCertPaths,
+  planSites,
+  servedHosts,
+};

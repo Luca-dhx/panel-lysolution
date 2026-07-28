@@ -23,7 +23,10 @@
     "test:bridge-http": "node ../tests/bridge-http.test.js",
     "test:bridge-conformity": "node ../tests/bridge-conformity.test.js",
     "test:spec-drift": "node ../tests/spec-drift.check.mjs",
-    "test:engine-drift": "node ../tests/engine-drift.check.mjs"
+    "test:engine-drift": "node ../tests/engine-drift.check.mjs",
+    "test:engine-governance": "node ../tests/engine-governance.test.js",
+    "test:rollback": "node ../tests/deployment-rollback.test.js",
+    "test:duplication-e2e": "node ../tests/duplication-e2e.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

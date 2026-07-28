@@ -1,6 +1,6 @@
 {
   "engine": "duplication-engine",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "compatibleProjects": [
     "panel"
   ],
@@ -18,8 +18,34 @@
     "validate-input",
     "create-databases",
     "copy-project",
-    "generate-secrets",
+    "regenerate-secrets",
     "rewrite-env",
-    "seed"
+    "seed",
+    "engine-introspection"
+  ],
+  "engineApiVersion": "1",
+  "minimumCompatibleVersion": "1.0.0",
+  "layoutVersion": "2",
+  "releaseDate": "2026-07-27",
+  "supportedProfiles": [
+    "sbauto",
+    "panel"
+  ],
+  "breakingChanges": [],
+  "history": [
+    {
+      "version": "1.1.0",
+      "date": "2026-07-27",
+      "type": "MINOR",
+      "summary": "Manifeste étendu (introspection, compatibilité) ; alignement sur la gouvernance des moteurs.",
+      "breaking": false
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-07-27",
+      "type": "MAJOR",
+      "summary": "Standardisation initiale : profil de duplication, régénération des secrets.",
+      "breaking": false
+    }
   ]
 }

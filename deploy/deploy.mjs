@@ -108,23 +108,28 @@ async function execute(deployConfig, { mode, targetReleaseId }) {
 
   try {
     if (mode === 'rollback') {
-      console.log(`\n▸ rollback vers ${targetReleaseId}`);
-      const result = await engine.rollback?.({
+      // Aucune logique de rollback ici : le CLI ne fait que déléguer et
+      // afficher. Toute la mécanique (vérification d'intégrité, bascule
+      // atomique, relance du service, contrôle de santé, restauration en cas
+      // d'échec) appartient au moteur — voir deployment-engine/rollback.js.
+      const { current, releases } = await engine.listReleases({
+        url: deployConfig.urls.backendUrl, sessionId, remoteRoot: deployConfig.remoteRoot,
+      });
+      console.log(`\n▸ releases disponibles (${releases.length}) — active : ${current ?? 'aucune'}`);
+      for (const id of releases) console.log(`  ${id === current ? '▸' : ' '} ${id}`);
+
+      const result = await engine.rollback({
         url: deployConfig.urls.backendUrl,
         sessionId,
         releaseId: targetReleaseId,
-        options: { remoteRoot: deployConfig.remoteRoot, backendPort: deployConfig.backendPort, env: deployConfig.environment },
+        options: {
+          remoteRoot: deployConfig.remoteRoot,
+          backendPort: deployConfig.backendPort,
+          env: deployConfig.environment,
+        },
         onStep,
       });
-      if (!result) {
-        console.error('\n✗ Le moteur ne propose pas encore de rollback piloté.');
-        console.error('  Repointer manuellement le lien « current » puis relancer le service :');
-        for (const phase of buildRollbackPlan(deployConfig, { targetReleaseId })) {
-          for (const command of phase.commands) console.error(`    $ ${command}`);
-        }
-        process.exit(2);
-      }
-      console.log('\n✓ Rollback terminé.\n');
+      console.log(`\n✓ Rollback terminé — ${result.from ?? 'aucune'} → ${result.to} (santé confirmée).\n`);
       return;
     }
 

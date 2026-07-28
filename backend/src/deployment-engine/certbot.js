@@ -10,7 +10,7 @@
  * *.base à un seul niveau ne couvre pas `manager.<host>` (deux niveaux). Il est
  * émis/réutilisé via HTTP-01 (le DNS wildcard résout bien plusieurs niveaux).
  */
-import { certPaths, managerCertPaths } from './nginx.js';
+import { certPaths, legacyDedicatedCertPaths } from './nginx.js';
 
 /** Réutilise un certificat s'il existe, sinon l'émet via webroot (HTTP-01). */
 async function ensureHostCert(transport, host, { email, webroot }) {
@@ -62,13 +62,13 @@ export async function ensureCertificate(transport, target, { email, webroot = '/
   // Manager : certificat dédié (émis ou réutilisé).
   let manager = null;
   if (managerHost) {
-    manager = { ...(await ensureHostCert(transport, managerHost, { email, webroot })), certName: managerCertPaths(managerHost).certName };
+    manager = { ...(await ensureHostCert(transport, managerHost, { email, webroot })), certName: legacyDedicatedCertPaths(managerHost).certName };
   }
 
   // API : certificat dédié (domaine `api.<host>`, jamais couvert par un wildcard 1 niveau).
   let api = null;
   if (apiHost) {
-    api = { ...(await ensureHostCert(transport, apiHost, { email, webroot })), certName: managerCertPaths(apiHost).certName };
+    api = { ...(await ensureHostCert(transport, apiHost, { email, webroot })), certName: legacyDedicatedCertPaths(apiHost).certName };
   }
 
   return { obtained: vitrine.obtained, reused: vitrine.reused, certName: vitrine.certName, vitrine, manager, api };

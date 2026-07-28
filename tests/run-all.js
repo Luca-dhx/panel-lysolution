@@ -19,6 +19,9 @@ const TESTS = [
   'architecture.test.js',
   'deploy.test.js',
   'spec-drift.check.mjs',
+  'deployment-rollback.test.js',
+  'engine-governance.test.js',
+  'duplication-e2e.test.js',
   'engine-drift.check.mjs',
 ];
 

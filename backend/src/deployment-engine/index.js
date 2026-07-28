@@ -20,6 +20,8 @@ export { renderNginxConfig, applyNginxConfig } from './nginx.js';
 export { ensureCertificate } from './certbot.js';
 export { restartBackend, pm2AppName } from './pm2.js';
 export { checkLocalHealth, checkPublicHealth } from './health.js';
+export { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
+export { planSites, servedHosts } from './nginx.js';
 export { Transport, execOrThrow } from './transport/Transport.js';
 export { FakeTransport } from './transport/FakeTransport.js';
 export { SshTransport } from './transport/SshTransport.js';

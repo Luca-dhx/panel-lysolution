@@ -28,6 +28,7 @@ import { toCanonical, canonicalStep, CANONICAL_ORDER } from './steps.js';
 import { deriveManagerHost, deriveManagerUrl, isCoveredByWildcard } from './hostnames.js';
 import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
+import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
 
 /**
  * Regroupement des contrôles préflight en étapes canoniques. La vérification DNS
@@ -52,6 +53,68 @@ export class DeploymentEngine {
     this.transportFactory = deps.transportFactory || defaultTransportFactory;
     this.mongoUri = deps.mongoUri || process.env.MONGODB_URI;
     this.wildcardBases = deps.wildcardBases || wildcardBasesFromEnv();
+  }
+
+  /**
+   * RELEASES présentes sur une cible, de la plus récente à la plus ancienne.
+   * @param {{url:string, sessionId:string, remoteRoot?:string, transport?:object}} args
+   */
+  async listReleases({ url, sessionId, remoteRoot, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      const releases = await listReleases(tx, { host: target.host, remoteRoot });
+      const current = await currentRelease(tx, { host: target.host, remoteRoot });
+      return { host: target.host, current, releases };
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * INTÉGRITÉ d'une release, sans rien modifier — utile avant de décider.
+   */
+  async verifyRelease({ url, sessionId, releaseId, remoteRoot, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await verifyReleaseIntegrity(tx, { host: target.host, remoteRoot, releaseId });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * ROLLBACK vers une release précédente.
+   *
+   * Toute la logique appartient au moteur (`rollback.js`) : vérification
+   * d'intégrité AVANT bascule, repointage atomique de `current`, relance du
+   * service, contrôle de santé, et restauration automatique de la release
+   * d'origine si la bascule échoue.
+   *
+   * @param {object} args
+   * @param {string} args.url
+   * @param {string} args.sessionId
+   * @param {string} [args.releaseId]  cible ; par défaut la release précédente
+   * @param {object} [args.options]    { remoteRoot, backendPort, env }
+   * @param {(evt:object)=>void} [args.onStep]
+   */
+  async rollback({ url, sessionId, releaseId, options = {}, onStep = () => {}, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await rollbackToRelease({
+        transport: tx,
+        host: target.host,
+        backendPort: options.backendPort,
+        releaseId,
+        remoteRoot: options.remoteRoot,
+        env: options.env || 'PROD',
+        onStep,
+      });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
   }
 
   /** Analyse une URL de cible (déduction sous-domaine / domaine, wildcard…). */

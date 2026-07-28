@@ -28,6 +28,10 @@ export const PROJECT_ID = 'panel-lysolution';
  *   - `web-sub`  application front servie sur un sous-domaine dérivé ;
  *   - `server`   backend Node (jamais buildé, jamais servi en statique).
  *
+ * `nginxRole` décrit, lui, ce que le moteur Nginx doit produire :
+ *   `web` · `web-subdomain` · `api` · `static` · `proxy` · `server`.
+ * Le générateur Nginx ne connaît QUE ces rôles — jamais un nom d'application.
+ *
  * Le Panel n'a AUCUNE application `web-sub` : son interface est servie à la
  * racine de son domaine. Aucun sous-domaine `manager.` n'est donc dérivé.
  */
@@ -36,6 +40,7 @@ export const APPS = Object.freeze([
     id: 'frontend',
     dir: 'frontend',
     role: 'web',
+    nginxRole: 'web',
     remoteDir: 'frontend',
     installPhase: 'install_frontend',
     buildPhase: 'build_frontend',
@@ -49,6 +54,7 @@ export const APPS = Object.freeze([
     id: 'backend',
     dir: 'backend',
     role: 'server',
+    nginxRole: 'server',
     remoteDir: 'backend',
   }),
 ]);
