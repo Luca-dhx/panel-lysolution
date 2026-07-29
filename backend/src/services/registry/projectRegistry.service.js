@@ -240,6 +240,9 @@ export function toPublicProject(record, now = Date.now()) {
     manifest: record.manifest,
     manifestSource: record.manifestSource ?? null,
     manifestUpdatedAt: record.manifestUpdatedAt ?? null,
+    // CONVERGENCE (Phase 4) — relevée lors d'une découverte. `null` signifie
+    // « jamais constatée », ce qui n'est pas « rien appliqué ».
+    appliedConfiguration: record.appliedConfiguration ?? null,
     note: record.note ?? null,
   };
 }

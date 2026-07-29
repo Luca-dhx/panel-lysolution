@@ -15,6 +15,7 @@ import { buildDashboard, searchFleet, searchFacets, supervisionContext } from '.
 import { heartbeatHistory, heartbeatStats } from '../services/supervision/heartbeat.service.js';
 import { projectTimeline, parkTimeline } from '../services/supervision/timeline.service.js';
 import { interpretCapabilities } from '../services/manifest/capabilities.service.js';
+import { getActiveCompany } from '../services/company/company.service.js';
 
 /** Niveau 0 — tableau de bord du parc. */
 export async function dashboard(_req, res) {
@@ -63,9 +64,58 @@ export async function projectOverview(req, res) {
       sync: capabilities.sync,
     },
     manifestSource: record.manifestSource ?? null,
+    // CONVERGENCE (Phase 4) — ce que le projet a déclaré avoir APPLIQUÉ, et
+    // ce que le Panel a PUBLIÉ. Les deux côte à côte : c'est leur écart qui
+    // renseigne, pas chacun pris isolément.
+    convergence: await describeConvergence(record),
     // Aperçu court : les 5 derniers événements suffisent sur la fiche.
     recentEvents: await projectTimeline(record.projectId, { limit: 5 }),
   });
+}
+
+/**
+ * Écart entre ce que le Panel a publié et ce que le projet applique.
+ *
+ * Le verdict est CALCULÉ, jamais stocké : une configuration publiée après le
+ * dernier relevé rendrait immédiatement obsolète un statut figé.
+ */
+async function describeConvergence(record) {
+  const applied = record.appliedConfiguration ?? null;
+  const company = await getActiveCompany();
+  const publishedVersion = company?.publishedVersion ?? null;
+
+  if (!applied) {
+    return {
+      status: 'UNKNOWN',
+      publishedVersion,
+      appliedVersion: null,
+      integratedApiKeys: [],
+      observedAt: null,
+      reason: 'Aucune découverte n’a encore eu lieu : le Panel ne sait pas ce que ce projet applique. Lancez « Découvrir le projet ».',
+    };
+  }
+  if (publishedVersion === null) {
+    return {
+      status: 'NOTHING_PUBLISHED',
+      publishedVersion: null,
+      appliedVersion: applied.companyVersion ?? null,
+      integratedApiKeys: applied.integratedApiKeys ?? [],
+      observedAt: applied.observedAt ?? null,
+      reason: 'Aucune configuration d’entreprise n’a été publiée : il n’y a rien à appliquer.',
+    };
+  }
+  const appliedVersion = applied.companyVersion ?? null;
+  const converged = appliedVersion === publishedVersion;
+  return {
+    status: converged ? 'CONVERGED' : 'BEHIND',
+    publishedVersion,
+    appliedVersion,
+    integratedApiKeys: applied.integratedApiKeys ?? [],
+    observedAt: applied.observedAt ?? null,
+    reason: converged
+      ? `Le projet applique la version ${appliedVersion}, celle qui est publiée.`
+      : `Le projet applique la version ${appliedVersion ?? 'aucune'} alors que la version ${publishedVersion} est publiée : il n’a pas encore rattrapé.`,
+  };
 }
 
 /** Niveau 3 — détails techniques, chargés seulement si l'on creuse. */

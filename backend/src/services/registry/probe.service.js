@@ -19,7 +19,11 @@
 // appairé ailleurs. La découverte COMPLÈTE vient après, par l'action
 // DISCOVER_PROJECT — quand le Panel a le droit de la demander.
 import ProjectBridgeClient from '../../bridge/ProjectBridgeClient.js';
-import { CONTRACT_VERSION, isContractCompatible } from '../../bridge/bridgeContract.js';
+import {
+  CONTRACT_VERSION,
+  LOCAL_ERROR_CODES,
+  isContractCompatible,
+} from '../../bridge/bridgeContract.js';
 
 const majorOf = (version) => String(version ?? '').split('.')[0] || '?';
 
@@ -55,7 +59,7 @@ export async function probeProjectUrl(url, { timeoutMs = 8_000, fetchImpl } = {}
   } catch (err) {
     // On distingue « rien au bout du fil » de « quelque chose répond, mais
     // ce n'est pas un pont » : les deux se corrigent différemment.
-    const unreachable = err.code === 'BRIDGE_PROJECT_UNREACHABLE';
+    const unreachable = err.code === LOCAL_ERROR_CODES.PROJECT_UNREACHABLE;
     return {
       ...base,
       reachable: !unreachable,

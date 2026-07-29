@@ -134,6 +134,36 @@ export function ProjectSupervisionPage() {
         </Card>
       </div>
 
+      {/* — Convergence ————————————————————————————————————————
+          Ce que le Panel a PUBLIÉ face à ce que le projet a APPLIQUÉ. Sans
+          cette confrontation, le Panel ne saurait que ce qu'il a émis. */}
+      <Card title="Configuration d’entreprise">
+        <p className={`mode-notice ${overview.convergence.status === 'CONVERGED' ? 'mode-simulation' : 'mode-execution'}`}>
+          {overview.convergence.reason}
+        </p>
+        <DetailList
+          items={[
+            ['Version publiée par le Panel',
+              overview.convergence.publishedVersion ?? <span className="muted">aucune</span>],
+            ['Version appliquée par le projet',
+              overview.convergence.appliedVersion ?? <span className="muted">inconnue</span>],
+            ['API intégrées reçues',
+              overview.convergence.integratedApiKeys.length > 0
+                ? overview.convergence.integratedApiKeys.join(' · ')
+                : <span className="muted">aucune</span>],
+            ['Constaté le',
+              overview.convergence.observedAt ?? <span className="muted">jamais</span>],
+          ]}
+        />
+        {overview.convergence.status === 'UNKNOWN' ? (
+          <p className="muted">
+            <Link to={`/supervision/${projectId}/actions?futureAction=FETCH_MANIFEST`}>
+              Découvrir le projet →
+            </Link>
+          </p>
+        ) : null}
+      </Card>
+
       {/* — Santé par composant ————————————————————————————————— */}
       <Card title="Santé par composant">
         <ul className="component-list">

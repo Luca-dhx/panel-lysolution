@@ -137,6 +137,19 @@ export interface ProjectOverview {
     sync: { supportedEntityTypes: string[]; operations: string[] };
   };
   manifestSource: 'BRIDGE' | 'MANUAL' | null;
+  /**
+   * CONVERGENCE (Phase 4) — écart entre ce que le Panel a PUBLIÉ et ce que le
+   * projet a déclaré APPLIQUER. Calculé à chaque lecture : un statut figé
+   * serait périmé dès la publication suivante.
+   */
+  convergence: {
+    status: 'CONVERGED' | 'BEHIND' | 'UNKNOWN' | 'NOTHING_PUBLISHED';
+    publishedVersion: number | null;
+    appliedVersion: number | null;
+    integratedApiKeys: string[];
+    observedAt: string | null;
+    reason: string;
+  };
   recentEvents: TimelineEvent[];
 }
 
