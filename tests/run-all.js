@@ -26,6 +26,8 @@ const TESTS = [
   'engine-governance.test.js',
   'duplication-e2e.test.js',
   'engine-drift.check.mjs',
+  // Écosystème complet — SAUTÉ proprement si SB Auto 06 n'est pas à côté.
+  'ecosystem-e2e.test.js',
 ];
 
 let failed = 0;
