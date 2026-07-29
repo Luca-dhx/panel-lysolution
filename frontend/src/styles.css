@@ -1097,3 +1097,79 @@ textarea:focus {
   .log-view li,
   .state-history li { grid-template-columns: 1fr; }
 }
+
+/* ---------- Entreprise et API intégrées (Phase 4) ---------- */
+
+.colour-preview { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.colour-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 92px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Le texte doit rester lisible sur une couleur arbitraire saisie par
+     l'opérateur : contour plutôt que pari sur la luminosité. */
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.85);
+}
+
+.version-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.version-list li {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.version-list li.version-current { border-left-color: var(--ok); background: var(--bg-input); }
+.version-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.version-number { font-weight: 700; font-size: 15px; }
+.version-reason { margin: 8px 0 4px; font-size: 14px; }
+
+/* Une empreinte, jamais une valeur : c'est tout ce que l'API renvoie. */
+.credential-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.credential-list li {
+  display: grid;
+  grid-template-columns: 180px 90px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.credential-name { font-weight: 600; font-size: 14px; }
+.credential-fingerprint {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.credential-list input[type='password'] {
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 9px;
+  font-size: 13px;
+}
+
+.grant-list { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.grant-list li { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 14px; }
+.grant-project { font-weight: 600; }
+
+.key-selection {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+.key-option { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+
+@media (max-width: 900px) {
+  .credential-list li { grid-template-columns: 1fr; }
+}

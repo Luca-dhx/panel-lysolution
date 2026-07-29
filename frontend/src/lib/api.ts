@@ -7,6 +7,10 @@ import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
+import type {
+  Company, CompanyState, IntegratedApi, ProbeResult, PublishResult,
+  VersionDetail, VersionRow,
+} from '@/types.company';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -267,6 +271,80 @@ export const executions = {
       body: { reason: reason ?? null },
     }),
 };
+
+/**
+ * ENTREPRISE et API INTÉGRÉES — Phase 4.
+ *
+ * `update` et `publish` sont deux appels distincts, et c'est délibéré :
+ * modifier ne diffuse rien, publier fige une version et l'envoie au parc.
+ * Fusionner les deux ferait partir une configuration à chaque frappe.
+ */
+export const company = {
+  current: () => request<CompanyState>('/api/company'),
+
+  create: (body: Partial<Company>) =>
+    request<Company>('/api/company', { method: 'POST', body }),
+
+  /** Modifie le BROUILLON. Rien n'est diffusé. */
+  update: (body: Record<string, unknown>) =>
+    request<Company>('/api/company', { method: 'PATCH', body }),
+
+  /** Fige une version et la diffuse. Une raison est exigée. */
+  publish: (reason: string) =>
+    request<PublishResult>('/api/company/publish', { method: 'POST', body: { reason } }),
+
+  versions: () =>
+    request<{ currentVersion: number | null; items: VersionRow[] }>('/api/company/versions'),
+
+  version: (version: number) =>
+    request<VersionDetail>(`/api/company/versions/${version}`),
+
+  restore: (version: number) =>
+    request<PublishResult>(`/api/company/versions/${version}/restore`, { method: 'POST' }),
+
+  apis: () => request<{ items: IntegratedApi[] }>('/api/company/integrated-apis'),
+
+  createApi: (body: { key: string; label: string; provider: string; category?: string }) =>
+    request<IntegratedApi>('/api/company/integrated-apis', { method: 'POST', body }),
+
+  updateApi: (apiId: string, body: Record<string, unknown>) =>
+    request<IntegratedApi>(`/api/company/integrated-apis/${apiId}`, { method: 'PATCH', body }),
+
+  deleteApi: (apiId: string) =>
+    request<{ deleted: true; revoked: number }>(`/api/company/integrated-apis/${apiId}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Enregistre des identifiants. Seul appel du Panel qui transporte des
+   * secrets en clair — inévitable, il faut bien les saisir. Ils sont chiffrés
+   * à réception et ne ressortent jamais.
+   */
+  setCredentials: (apiId: string, mode: 'TEST' | 'PROD', values: Record<string, string>, remove: string[] = []) =>
+    request<IntegratedApi>(`/api/company/integrated-apis/${apiId}/credentials/${mode}`, {
+      method: 'PUT',
+      body: { values, remove },
+    }),
+
+  grant: (apiId: string, projectId: string, keys: string[] = []) =>
+    request<IntegratedApi>(`/api/company/integrated-apis/${apiId}/grants`, {
+      method: 'POST',
+      body: { projectId, keys },
+    }),
+
+  revoke: (apiId: string, projectId: string) =>
+    request<IntegratedApi>(`/api/company/integrated-apis/${apiId}/grants/${projectId}`, {
+      method: 'DELETE',
+    }),
+};
+
+/**
+ * SONDE d'une URL de projet, avant appairage. N'écrit rien : elle constate
+ * qu'une adresse répond, que c'est bien un ProjectBridge, et que les contrats
+ * sont compatibles.
+ */
+export const probeProject = (url: string) =>
+  request<ProbeResult>('/api/projects/probe', { method: 'POST', body: { url } });
 
 export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {

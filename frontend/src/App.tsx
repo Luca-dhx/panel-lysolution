@@ -3,6 +3,8 @@ import { RequireAuth } from '@/auth/RequireAuth';
 import { Layout } from '@/components/Layout';
 import { ActionsPage } from '@/pages/ActionsPage';
 import { BridgesPage } from '@/pages/BridgesPage';
+import { CompanyPage } from '@/pages/CompanyPage';
+import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { OverviewPage } from '@/pages/OverviewPage';
@@ -33,6 +35,8 @@ export default function App() {
         <Route path="/supervision/:projectId/diagnostic" element={<ProjectDiagnosticPage />} />
         {/* Pilotage : on observe les exécutions ici, on en prépare une depuis un projet. */}
         <Route path="/supervision/:projectId/actions" element={<ProjectActionsPage />} />
+        <Route path="/company" element={<CompanyPage />} />
+        <Route path="/integrated-apis" element={<IntegratedApisPage />} />
         <Route path="/actions" element={<ActionsPage />} />
         <Route path="/actions/:executionId" element={<ExecutionPage />} />
         <Route path="/panel" element={<DashboardPage />} />
