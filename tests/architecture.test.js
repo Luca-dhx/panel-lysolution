@@ -183,10 +183,19 @@ section('Les secrets ne sortent jamais par une API');
     && pairing.includes('export function getOutboundBridgeToken'));
 
   const users = read(path.join(backendSrc, 'services', 'auth', 'panelUsers.service.js'));
+  // On isole le CORPS de la projection, pas « tout ce qui suit » : le
+  // service contient légitimement `passwordHash` ailleurs (création,
+  // vérification, réinitialisation). Découper à la fin de la fonction rend
+  // l'invariant exact — et le garde valide quand du code s'ajoute après.
+  const projectionStart = users.indexOf('export function toPublicUser');
+  const projectionBody = users.slice(projectionStart, users.indexOf('\n}', projectionStart));
+  check('la projection utilisateur existe', projectionStart !== -1);
   check('la projection utilisateur n’expose pas le hash du mot de passe',
-    read(path.join(backendSrc, 'services', 'auth', 'panelUsers.service.js'))
-      .slice(users.indexOf('export function toPublicUser'))
-      .includes('passwordHash') === false);
+    !projectionBody.includes('passwordHash'));
+  // Le hash ne doit sortir d'AUCUNE projection : on vérifie aussi qu'aucune
+  // fonction exportée ne le retourne tel quel.
+  check('aucune fonction du service ne rend le hash',
+    !/return\s+\{[^}]*passwordHash/s.test(users));
 }
 
 section('Moteurs standards : embarqués, autonomes, personnalisés par configuration');

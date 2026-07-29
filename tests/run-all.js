@@ -8,6 +8,7 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 
 const TESTS = [
   'config.test.js',
+  'auth.test.js',
   'version-compatibility.test.js',
   'manifest.test.js',
   'capabilities.test.js',
