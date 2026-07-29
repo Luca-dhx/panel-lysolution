@@ -3,17 +3,17 @@
 > **Recette à exécuter sur une cible réelle.** Elle n'a **pas** été exécutée :
 > aucune cible n'a été fournie. Rien de ce document n'est un résultat — tout
 > y est une vérification à faire.
-> Établi en Phase 2E (LOT 7).
+> Établi en Phase 2E (LOT 7). Statut réexaminé en Phase 4 (LOT 7).
 
 ---
 
 ## 1. Statut
 
-| | |
-|---|---|
-| Cible fournie | ❌ aucune |
-| Recette exécutée | ❌ non |
-| Environnement autorisé | **TEST uniquement** — jamais PROD en première recette |
+| | Phase 2E | Phase 4 |
+|---|---|---|
+| Cible fournie | ❌ aucune | ❌ aucune |
+| Recette exécutée | ❌ non | ❌ non |
+| Environnement autorisé | **TEST uniquement** | **TEST uniquement** |
 
 Le moteur est prêt et testé hors ligne (transports simulés, MongoDB en
 mémoire, duplication réelle). Ce qui reste non prouvé, c'est le
@@ -21,6 +21,22 @@ comportement face à un **vrai serveur** : SSH, certbot, PM2, DNS, pare-feu.
 
 Ces éléments dépendent d'une infrastructure, pas du code. Ils ne peuvent pas
 être « validés par anticipation », et ce document ne le prétend pas.
+
+### 1.1 Ce que la Phase 4 a changé — et ce qu'elle n'a pas changé
+
+La Phase 4 a établi que le **protocole** fonctionne réellement : deux
+backends distincts, deux bases, appairage, découverte, synchronisation
+bidirectionnelle, convergence et reconnexion après coupure, le tout par HTTP
+réel (`58_END_TO_END_TESTS.md`).
+
+Cela **ne déplace pas** le statut de cette recette. Le test d'écosystème
+tourne sur `127.0.0.1` : il n'établit rien sur le DNS, les certificats,
+nginx, PM2 ou un pare-feu. Un protocole prouvé et un hébergement prouvé sont
+deux choses différentes, et confondre les deux serait exactement l'erreur que
+ce document existe pour empêcher.
+
+**La recette reste donc ouverte.** Elle le restera tant qu'une cible réelle
+n'aura pas été fournie.
 
 ## 2. Prérequis à fournir
 
