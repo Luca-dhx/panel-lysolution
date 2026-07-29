@@ -74,7 +74,64 @@ export async function seedFromEnv() {
     displayName: 'Développeur',
     role: PANEL_ROLES.DEV,
   });
-  logger.info('Compte DEV seed créé.');
+
+  // Le journal doit permettre de se connecter sans lire le code. En TEST
+  // avec le repli, on affiche l'adresse ET le mot de passe : il est public,
+  // il figure dans ce dépôt, le masquer n'aurait aucune valeur de sécurité
+  // et coûterait l'usage. Avec un mot de passe fourni, on ne l'affiche pas.
+  if (config.seedDevIsDefault) {
+    logger.warn(
+      `Compte DEV de développement créé — ${config.seedDevEmail} / ${config.seedDevPassword}. `
+      + 'Identifiants PUBLICS, valables en ENV=TEST uniquement. '
+      + 'Définissez SEED_DEV_EMAIL et SEED_DEV_PASSWORD pour les vôtres.',
+    );
+  } else {
+    logger.info(`Compte DEV créé : ${config.seedDevEmail} (mot de passe : SEED_DEV_PASSWORD).`);
+  }
+}
+
+/**
+ * CRÉE OU RÉINITIALISE le compte de développement — TEST uniquement.
+ *
+ * `seedFromEnv()` ne s'exécute que sur une base VIERGE : c'est ce qui
+ * garantit qu'il n'écrase jamais un compte réel. La contrepartie est qu'un
+ * développeur ayant oublié son mot de passe se retrouve enfermé dehors,
+ * avec pour seule issue de vider la collection à la main.
+ *
+ * Cette fonction est cette issue, rendue explicite et bornée : elle refuse
+ * de s'exécuter en PROD, où réinitialiser un mot de passe par une commande
+ * locale serait une porte dérobée.
+ */
+export async function ensureDevAccount({ email, password } = {}) {
+  if (config.isProd) {
+    throw new Error(
+      'Réinitialisation refusée parce que ENV=PROD : cette commande est réservée au développement.',
+    );
+  }
+  const targetEmail = String(email ?? config.seedDevEmail ?? '').trim().toLowerCase();
+  const targetPassword = password ?? config.seedDevPassword;
+  if (!targetEmail || !targetPassword) {
+    throw new Error(
+      'Réinitialisation impossible parce qu’aucun identifiant n’est disponible : '
+      + 'renseignez SEED_DEV_EMAIL et SEED_DEV_PASSWORD, ou passez-les en arguments.',
+    );
+  }
+
+  const existing = await PanelUser.findOne({ email: targetEmail }).lean();
+  if (existing) {
+    await PanelUser.updateOne(
+      { email: targetEmail },
+      { $set: { passwordHash: hashPassword(targetPassword), role: PANEL_ROLES.DEV } },
+    );
+    return { email: targetEmail, created: false, reset: true };
+  }
+  await createUser({
+    email: targetEmail,
+    password: targetPassword,
+    displayName: 'Développeur',
+    role: PANEL_ROLES.DEV,
+  });
+  return { email: targetEmail, created: true, reset: false };
 }
 
 export async function resetUsers() {

@@ -92,8 +92,31 @@ if (bridgeEncryptionKey === jwtSecret) {
 // PROD : identifiants par défaut ou faibles REFUSÉS au démarrage.
 const KNOWN_SEED_EMAILS = new Set(['dev@mail.com', 'admin@mail.com', 'dev@panel.test']);
 const KNOWN_SEED_PASSWORDS = new Set(['123dev', '123admin', 'motdepasse-test', 'password', 'changeme']);
-const seedDevEmail = (process.env.SEED_DEV_EMAIL ?? '').trim() || null;
-const seedDevPassword = process.env.SEED_DEV_PASSWORD || null;
+
+/**
+ * IDENTIFIANTS DE DÉVELOPPEMENT PAR DÉFAUT — TEST uniquement.
+ *
+ * Sans eux, un clone neuf démarrait, avertissait dans les journaux, et
+ * n'offrait AUCUN moyen de se connecter : il fallait lire le code pour
+ * comprendre qu'il manquait deux variables. Un outil d'administration qu'on
+ * ne peut pas ouvrir n'est pas utilisable.
+ *
+ * Ces valeurs ne peuvent PAS fuir en production : elles ne sont appliquées
+ * qu'en `ENV=TEST`, et la liste des identifiants refusés en PROD les
+ * contient explicitement — un déploiement qui les recopierait serait arrêté
+ * au démarrage.
+ */
+const DEV_FALLBACK_EMAIL = 'dev@panel.local';
+const DEV_FALLBACK_PASSWORD = 'panel-dev-local';
+
+const seedDevEmail = (process.env.SEED_DEV_EMAIL ?? '').trim()
+  || (isProd ? null : DEV_FALLBACK_EMAIL);
+const seedDevPassword = process.env.SEED_DEV_PASSWORD
+  || (isProd ? null : DEV_FALLBACK_PASSWORD);
+// Le repli de développement est lui-même interdit en PROD : la garde
+// ci-dessous s'applique aussi à lui si quelqu'un le recopiait dans un .env.
+KNOWN_SEED_EMAILS.add(DEV_FALLBACK_EMAIL);
+KNOWN_SEED_PASSWORDS.add(DEV_FALLBACK_PASSWORD);
 if (isProd && (seedDevEmail || seedDevPassword)) {
   if (!seedDevEmail || KNOWN_SEED_EMAILS.has(seedDevEmail.toLowerCase())) {
     fail('SEED_DEV_EMAIL en PROD : adresse réelle requise (les adresses seed de développement sont refusées).');
@@ -134,6 +157,10 @@ export const config = {
   corsOrigins,
   seedDevEmail,
   seedDevPassword,
+  // Vrai quand le compte de développement vient du repli et non du .env.
+  // Le serveur l'annonce au démarrage : un opérateur doit savoir qu'il se
+  // connecte avec des identifiants publics, pas avec les siens.
+  seedDevIsDefault: !isProd && !process.env.SEED_DEV_PASSWORD,
   heartbeatIntervalS: positiveInt('HEARTBEAT_INTERVAL_S', 300),
   pairingCodeTtlS: positiveInt('PAIRING_CODE_TTL_S', 900),
   // Supervision (Phase 3A) — seuils de vivacité, exprimés en MULTIPLES de

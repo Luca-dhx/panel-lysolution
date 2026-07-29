@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "dev:account": "node src/scripts/dev-account.js",
     "test": "node ../tests/run-all.js",
     "test:config": "node ../tests/config.test.js",
     "test:registry": "node ../tests/registry.test.js",
