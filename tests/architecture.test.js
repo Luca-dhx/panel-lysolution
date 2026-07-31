@@ -100,9 +100,22 @@ section('Le transport réseau vers les projets est exclusif');
 
 section('Une seule porte pour l’environnement');
 {
-  const offenders = backendFiles.filter(
-    (file) => /process\.env[.[]/.test(read(file)) && !file.endsWith(path.join('config', 'env.js')),
-  );
+  // EXCEPTION ÉTROITE (Phase 4) : `deploy-worker.js` est un POINT D'ENTRÉE
+  // détaché. Il ne lit pas de CONFIGURATION — celle-ci passe bien par
+  // config/env.js, qu'il importe — mais ses PARAMÈTRES D'INVOCATION : quel
+  // run, quelle destination, quel mot de passe.
+  //
+  // Ces paramètres transitent par l'environnement plutôt que par `argv`
+  // précisément pour la sécurité : les arguments d'un processus sont
+  // lisibles par tout utilisateur de la machine (`ps aux`), son environnement
+  // ne l'est pas. Les interdire ici pousserait le secret vers argv.
+  const ENV_ENTRY_POINTS = [path.join('scripts', 'deploy-worker.js')];
+
+  const offenders = backendFiles.filter((file) => {
+    if (!/process\.env[.[]/.test(read(file))) return false;
+    if (file.endsWith(path.join('config', 'env.js'))) return false;
+    return !ENV_ENTRY_POINTS.some((entry) => file.endsWith(entry));
+  });
   check(`seul config/env.js lit process.env${offenders.length ? ` — ${offenders.map(rel)}` : ''}`,
     offenders.length === 0);
 }
@@ -163,7 +176,17 @@ section('Le frontend passe par le client d’API centralisé');
   check(`aucun fetch hors lib/api.ts${offenders.length ? ` — ${offenders.map(rel)}` : ''}`,
     offenders.length === 0);
 
-  const hardcoded = frontendFiles.filter((file) => /https?:\/\/(?!localhost)/.test(read(file)));
+  // Ce que la règle interdit : qu'une URL absolue soit UTILISÉE. Un
+  // `placeholder=` n'est jamais appelé — c'est un exemple montré dans un
+  // champ vide, et le retirer rendrait un formulaire de saisie de domaine
+  // moins clair sans rien sécuriser. On l'écarte donc explicitement plutôt
+  // que d'affaiblir la règle sur le reste.
+  const hardcoded = frontendFiles.filter((file) => {
+    const source = read(file)
+      .replace(/placeholder=(["'])(?:(?!\1).)*\1/g, '')
+      .replace(/placeholder=\{`[^`]*`\}/g, '');
+    return /https?:\/\/(?!localhost)/.test(source);
+  });
   check(`aucune URL absolue codée en dur dans le frontend${hardcoded.length ? ` — ${hardcoded.map(rel)}` : ''}`,
     hardcoded.length === 0);
 }

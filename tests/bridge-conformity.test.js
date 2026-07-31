@@ -197,7 +197,14 @@ section('Exclusivité architecturale : un seul fichier parle réseau aux projets
         const relFromSrc = path.relative(srcDir, full).split(path.sep)[0];
         // Moteurs standards embarqués : hors du périmètre applicatif.
         if (relFromSrc === 'deployment-engine' || relFromSrc === 'duplication-engine') continue;
-        if (/process\.env[.[]/.test(content) && !full.endsWith(path.join('config', 'env.js'))) {
+        // `deploy-worker.js` est un point d'entrée détaché : il lit ses
+        // PARAMÈTRES D'INVOCATION dans l'environnement (jamais dans argv,
+        // qui exposerait le mot de passe SSH à `ps aux`). Sa configuration,
+        // elle, passe bien par config/env.js. Voir architecture.test.js.
+        const isEntryPoint = full.endsWith(path.join('scripts', 'deploy-worker.js'));
+        if (/process\.env[.[]/.test(content)
+          && !full.endsWith(path.join('config', 'env.js'))
+          && !isEntryPoint) {
           envReaders.push(path.relative(srcDir, full));
         }
       }
