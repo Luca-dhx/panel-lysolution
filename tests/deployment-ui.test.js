@@ -343,15 +343,75 @@ section('Surface /api/deployment');
     self.status === 200 && self.json.data.projectSlug === 'panel');
   check('…avec ses deux composants', self.json.data.apps.length === 2);
 
+  // ── LE PAYLOAD EXACT DU FORMULAIRE, EN HTTP RÉEL ─────────────────────
+  // Quatre champs, rien d'autre. C'est ce que l'écran envoie réellement, et
+  // c'est ce qui doit suffire.
   const created = await call('POST', '/api/deployment/targets', {
     headers: auth,
     body: {
-      name: 'Recette HTTP', url: 'https://panel-http.exemple.com', environment: 'TEST',
-      sshHost: '203.0.113.20', backendPort: 4300,
+      name: 'Recette HTTP',
+      url: 'https://panel-http.exemple.com',
+      environment: 'TEST',
+      sshHost: '203.0.113.20',
     },
   });
-  check('POST /targets crée une destination', created.status === 201);
+  check('POST /targets avec le payload MINIMAL du formulaire → 201', created.status === 201);
   const targetId = created.json.data.targetId;
+
+  check('…la destination est persistée',
+    (await PanelDeploymentTarget.findOne({ targetId }).lean()) !== null);
+  check('…un port lui est attribué automatiquement',
+    Number.isInteger(created.json.data.backendPort) && created.json.data.backendPort >= 5100);
+  check('…les valeurs techniques sont déduites',
+    created.json.data.remoteRoot === profile.DEFAULT_REMOTE_ROOT
+    && created.json.data.sshPort === 22
+    && created.json.data.sshUser === 'root');
+  check('…l’hôte est extrait de l’URL',
+    created.json.data.host === 'panel-http.exemple.com');
+  check('…la base est déduite de l’environnement',
+    created.json.data.requiredRemoteEnv.includes('DB_TEST'));
+  check('…et l’origine de chaque déduction est fournie',
+    created.json.data.derived.length >= 8);
+
+  // Elle doit apparaître dans la liste que charge l'interface.
+  const listed = await call('GET', '/api/deployment', { headers: auth });
+  check('…elle est visible dans la vue d’ensemble',
+    listed.json.data.targets.some((t) => t.targetId === targetId));
+
+  // Et sur sa propre fiche, avec sa configuration déduite.
+  const fiche = await call('GET', `/api/deployment/targets/${targetId}`, { headers: auth });
+  check('…et sur sa fiche, avec sa configuration déduite',
+    fiche.status === 200 && fiche.json.data.target.derived.length >= 8);
+
+  // ── AUCUNE SAISIE INVALIDE NE DOIT PRODUIRE UN 500 ───────────────────
+  // Une URL sans schéma est le cas le plus courant de saisie humaine : elle
+  // doit être ACCEPTÉE, le moteur la complète. La refuser serait une rigidité
+  // gratuite envers un utilisateur non technique.
+  const sansSchema = await call('POST', '/api/deployment/targets', {
+    headers: auth,
+    body: { name: 'Sans schéma', url: 'panel-brut.exemple.com', environment: 'TEST', sshHost: '1.2.3.4' },
+  });
+  check('une URL sans « https:// » est acceptée et complétée',
+    sansSchema.status === 201 && sansSchema.json.data.host === 'panel-brut.exemple.com');
+
+  const invalides = [
+    ['corps vide', {}],
+    ['url avec port explicite', { name: 'Avec port', url: 'https://x.exemple.fr:8443', environment: 'TEST', sshHost: '1.2.3.4' }],
+    ['url illisible', { name: 'Illisible', url: 'pas une url du tout', environment: 'TEST', sshHost: '1.2.3.4' }],
+    ['environnement inventé', { name: 'Env', url: 'https://env.exemple.fr', environment: 'RECETTE', sshHost: '1.2.3.4' }],
+    ['serveur manquant', { name: 'Sans serveur', url: 'https://ss.exemple.fr', environment: 'TEST' }],
+    ['champs null', { name: null, url: null, environment: null, sshHost: null }],
+    ['types inattendus', { name: 12, url: { a: 1 }, environment: ['TEST'], sshHost: true }],
+  ];
+  for (const [label, body] of invalides) {
+    const res = await call('POST', '/api/deployment/targets', { headers: auth, body });
+    check(`« ${label} » → 4xx, jamais 500`, res.status >= 400 && res.status < 500);
+  }
+  // Une URL sans schéma est ACCEPTÉE (le moteur la complète) : on nettoie.
+  const extra = await call('GET', '/api/deployment', { headers: auth });
+  for (const t of extra.json.data.targets) {
+    if (t.targetId !== targetId) await call('DELETE', `/api/deployment/targets/${t.targetId}`, { headers: auth });
+  }
 
   const noPassword = await call('POST', `/api/deployment/targets/${targetId}/deploy`, {
     headers: auth, body: {},
@@ -390,6 +450,37 @@ section('Surface /api/deployment');
   check('un run inconnu → 404 propre', unknownRun.status === 404);
 
   await close();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Base injoignable : un 503 qui EXPLIQUE, jamais un 500 opaque');
+{
+  // Le défaut réellement rencontré : MongoDB tombe pendant que le serveur
+  // tourne. Mongoose met l'opération en tampon, elle expire au bout de dix
+  // secondes, et l'opérateur voyait « Erreur interne » — indiscernable d'un
+  // bogue applicatif, sans aucune piste pour corriger.
+  const middleware = read('middlewares', 'error.middleware.js');
+
+  check('une panne de base est reconnue et distinguée',
+    /PANEL_DATABASE_UNAVAILABLE/.test(middleware));
+  check('…rendue en 503, pas en 500', /status\(503\)/.test(middleware));
+  check('…le tampon expiré de Mongoose est reconnu',
+    /buffering timed out/i.test(middleware));
+  check('…la sélection de serveur aussi',
+    /ServerSelectionError/.test(middleware));
+  check('…comme le refus de connexion', /ECONNREFUSED/.test(middleware));
+  check('le message dit à l’opérateur QUOI vérifier',
+    /MONGODB_URI/.test(middleware) && /MongoDB est démarré/.test(middleware));
+  check('…et qu’il n’a rien fait de mal',
+    /saisie n’est pas en cause/.test(middleware));
+  check('la stack complète part dans les JOURNAUX, jamais dans la réponse',
+    /logger\.error\(err\.stack\)/.test(middleware)
+    && !/stack/.test(middleware.slice(middleware.indexOf('status(500)'))));
+
+  // /health doit permettre de diagnostiquer sans deviner.
+  const healthService = read('services', 'health', 'health.service.js');
+  check('/health rapporte l’état de la base',
+    /database: dbReady \? 'connected' : 'disconnected'/.test(healthService));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
