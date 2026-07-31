@@ -28,6 +28,75 @@ Panel en arguments du moteur, et les événements du moteur en étapes de run.
 Un test le verrouille — l'exécuteur ne doit contenir ni commande SSH ni
 configuration nginx.
 
+## 2 bis. Le frontend décrit une intention, le backend construit la configuration
+
+C'est la règle qui structure toute cette surface, et elle a fait l'objet
+d'une correction : la première version demandait dix champs, dont le port
+PM2, la racine des déploiements et le port SSH. C'était une régression par
+rapport à SB Auto 06, et une faute d'ergonomie — faire porter à l'opérateur
+une décision qui appartient au moteur, et lui donner l'occasion de se
+tromper sur un détail dont il ne peut pas juger.
+
+### Ce qui est demandé
+
+| Champ | Pourquoi lui, et pas le backend |
+|---|---|
+| **Nom** | un choix humain, sans effet technique |
+| **Adresse complète** | l'intention même : où ce Panel doit répondre |
+| **Environnement** | TEST ou PROD — un choix de gouvernance, pas de technique |
+| **Adresse du serveur** | le Panel ne peut pas deviner votre hébergeur |
+
+Sous « Options avancées », repliées :
+
+| Champ | Pourquoi il reste modifiable |
+|---|---|
+| Utilisateur du serveur | pré-rempli à `root` ; certains hébergeurs ne l'ouvrent pas |
+| Nom de la base | le Panel ne peut pas deviner qu'une base existante doit être réutilisée |
+
+### Ce qui est déduit
+
+| Valeur | Origine |
+|---|---|
+| hôte, type, domaine enregistrable, sous-domaine | `parseTargetUrl()` — le moteur fait autorité |
+| base wildcard / certificat dédié | bases wildcard du profil |
+| **port local du backend** | attribué : plus haut port utilisé + 1, à partir de 5100 |
+| nom du service PM2 | `serviceName(host)` du profil → `panel-<hôte>` |
+| chemin sur le serveur | `<remoteRoot>/<hôte>` |
+| racine des déploiements | `DEFAULT_REMOTE_ROOT` du profil |
+| port SSH | 22, standard du transport |
+| contact Let's Encrypt | **contacts de l'entreprise** — le Panel les détient déjà |
+| base de données | `DB_TEST` / `DB_PROD` selon l'environnement |
+| variables du `.env` distant | construites par le moteur depuis le `.env` local |
+
+Ces valeurs **ne peuvent pas être imposées par le frontend** : un client qui
+enverrait `backendPort: 9999` le verrait ignoré. Un test le vérifie.
+
+### La déduction est montrée, pas cachée
+
+La fiche d'une destination affiche « Configuration déterminée
+automatiquement » : chaque valeur, et **l'origine** de chaque valeur. Sans
+cela, la déduction ressemblerait à de la magie, et le jour où quelque chose
+cloche l'opérateur n'aurait aucune prise.
+
+### Le port n'est attribué qu'une fois
+
+Modifier une destination ne réattribue pas son port : le changer casserait
+le service PM2 et la configuration nginx déjà en place. Un port libéré n'est
+pas non plus réutilisé — un ancien service oublié capterait le trafic d'une
+nouvelle destination.
+
+### Authentification : mot de passe seulement
+
+Le transport SSH du moteur (`SshTransport`) exige `host`, `username` et
+`password`. **Il ne sait pas utiliser de clé privée.** L'interface n'offre
+donc pas ce choix : un menu déroulant dont une option échoue à l'exécution
+serait pire que pas de menu.
+
+Ajouter le support des clés est une évolution du **cœur du moteur**, qui doit
+rester identique dans tous les projets (`29_ENGINE_GOVERNANCE.md`) : elle
+devrait donc être portée dans les deux dépôts, avec sa version de moteur.
+Ce n'est pas fait.
+
 ## 3. Architecture
 
 ```text

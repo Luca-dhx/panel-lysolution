@@ -72,20 +72,67 @@ section('Le Panel possède un profil de déploiement complet');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
+section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite');
 {
   await PanelDeploymentTarget.deleteMany({});
 
+  // Ce que l'écran envoie réellement : quatre champs. Rien de technique.
   const created = await targets.createTarget({
     name: 'Recette',
     url: 'https://panel-test.exemple.com',
     environment: 'TEST',
     sshHost: '203.0.113.10',
-    sshUser: 'root',
-    backendPort: 4100,
   }, { userId: 'u-1' });
 
-  check('une destination se crée', created.targetId !== undefined);
+  check('une destination se crée avec la seule INTENTION', created.targetId !== undefined);
+
+  // ── LES DÉDUCTIONS ────────────────────────────────────────────────────
+  check('le port du backend est ATTRIBUÉ, pas demandé',
+    Number.isInteger(created.backendPort) && created.backendPort >= 5100);
+  check('la racine distante vient du profil',
+    created.remoteRoot === profile.DEFAULT_REMOTE_ROOT);
+  check('le port SSH est la convention standard', created.sshPort === 22);
+  check('l’utilisateur du serveur est pré-rempli', created.sshUser === 'root');
+
+  // Deuxième destination : le port suivant, jamais le même.
+  const second = await targets.createTarget({
+    name: 'Production', url: 'https://panel.exemple.com', environment: 'PROD',
+    sshHost: '203.0.113.11',
+  });
+  check('deux destinations n’ont JAMAIS le même port',
+    second.backendPort === created.backendPort + 1);
+
+  // L'origine de chaque valeur est affichable : la déduction n'est pas magique.
+  const labels = created.derived.map((d) => d.label);
+  for (const label of ['Port local du backend', 'Service PM2', 'Chemin sur le serveur', 'Certificat TLS']) {
+    check(`la déduction « ${label} » est expliquée`, labels.includes(label));
+  }
+  check('…chaque valeur déduite nomme son ORIGINE',
+    created.derived.every((d) => typeof d.from === 'string' && d.from.length > 0));
+  check('le service PM2 suit la convention du profil',
+    created.derived.find((d) => d.label === 'Service PM2').value === profile.serviceName(created.host));
+
+  // ── CE QUE LE FRONTEND NE PEUT PLUS IMPOSER ──────────────────────────
+  const forced = await targets.createTarget({
+    name: 'Tentative', url: 'https://tentative.exemple.com', environment: 'TEST',
+    sshHost: '203.0.113.12',
+    // Un frontend obsolète (ou malveillant) enverrait ceci :
+    backendPort: 9999, sshPort: 2222, remoteRoot: '/tmp/ailleurs',
+    certbotEmail: 'injecte@exemple.com', extraEnv: { INJECTE: 'oui' },
+  });
+  check('un port imposé par le frontend est IGNORÉ', forced.backendPort !== 9999);
+  check('…un port SSH imposé aussi', forced.sshPort === 22);
+  check('…une racine imposée aussi', forced.remoteRoot === profile.DEFAULT_REMOTE_ROOT);
+  check('…et aucune variable technique ne passe',
+    Object.keys(forced.extraEnv ?? {}).length === 0);
+
+  await targets.deleteTarget(second.targetId);
+  await targets.deleteTarget(forced.targetId);
+}
+
+section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
+{
+  const created = (await targets.listTargets())[0];
   check('…l’hôte est DÉDUIT de l’URL, pas saisi', created.host === 'panel-test.exemple.com');
   check('…le type aussi', created.type === 'subdomain' || created.type === 'domain');
   check('…et elle naît « jamais déployée »', created.state === 'NEW');
@@ -108,15 +155,23 @@ section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
     }), 'PANEL_TARGET_HOST_TAKEN'));
 
   const bad = await captureError(() => targets.createTarget({
-    name: 'x', url: 'pas une url', environment: 'RECETTE', sshHost: '', backendPort: 42,
+    name: 'x', url: 'pas une url', environment: 'RECETTE', sshHost: '',
   }));
   check('une saisie invalide est refusée', bad?.code === 'PANEL_TARGET_INVALID');
+  // Seuls les champs RÉELLEMENT saisis peuvent être fautifs. Un port ou une
+  // racine ne figurent plus ici : ils ne sont plus demandés.
   check('…en NOMMANT chaque champ fautif',
-    ['name', 'environment', 'sshHost', 'backendPort'].every(
+    ['name', 'environment', 'sshHost'].every(
       (field) => bad.details.errors.some((e) => e.startsWith(field))));
+  check('…et aucun champ technique n’apparaît dans les refus',
+    !bad.details.errors.some((e) => /backendPort|remoteRoot|sshPort|certbot/.test(e)));
 
-  const updated = await targets.updateTarget(created.targetId, { backendPort: 4110 });
-  check('une destination se modifie', updated.backendPort === 4110);
+  const updated = await targets.updateTarget(created.targetId, { name: 'Recette renommée' });
+  check('une destination se modifie', updated.name === 'Recette renommée');
+  // Le port survit à une modification : le changer casserait le service PM2
+  // et la configuration nginx déjà en place sur le serveur.
+  check('…sans que son port attribué ne change',
+    updated.backendPort === created.backendPort);
 
   await targets.deleteTarget(created.targetId);
   check('…et se supprime', (await targets.listTargets()).length === 0);
@@ -360,6 +415,26 @@ section('L’interface ne contourne rien et n’expose aucun secret');
     /setPassword\(''\)/.test(targetPage));
   check('…et n’est jamais rangé dans localStorage',
     !/localStorage|sessionStorage/.test(targetPage));
+
+  // ── LE FORMULAIRE NE DOIT PAS REDEVENIR TECHNIQUE ────────────────────
+  // C'est la régression qu'on empêche de revenir : un champ technique
+  // ajouté « pour être complet » ferait porter à l'opérateur une décision
+  // qui appartient au moteur.
+  const listPage = fs.readFileSync(path.join(front, 'pages', 'DeploymentPage.tsx'), 'utf8');
+  const form = listPage.slice(listPage.indexOf('function TargetForm'));
+  const inputs = [...form.matchAll(/set\('(\w+)'/g)].map((m) => m[1]);
+  const allowed = ['name', 'url', 'environment', 'sshHost', 'sshUser', 'dbName'];
+  const technical = inputs.filter((field) => !allowed.includes(field));
+  check(`le formulaire ne demande QUE l’intention${technical.length ? ` — ${[...new Set(technical)]}` : ''}`,
+    technical.length === 0);
+
+  for (const field of ['backendPort', 'remoteRoot', 'sshPort', 'certbotEmail', 'extraEnv']) {
+    check(`« ${field} » n’est plus un champ de saisie`, !new RegExp(`set\\('${field}'`).test(form));
+  }
+
+  const targetPageSource = fs.readFileSync(path.join(front, 'pages', 'DeploymentTargetPage.tsx'), 'utf8');
+  check('la configuration déduite est MONTRÉE, avec l’origine de chaque valeur',
+    /derived\.map/.test(targetPageSource) && /derived-from/.test(targetPageSource));
 
   const runPage = fs.readFileSync(path.join(front, 'pages', 'DeploymentRunPage.tsx'), 'utf8');
   check('le suivi SONDE au lieu d’ouvrir un flux',
