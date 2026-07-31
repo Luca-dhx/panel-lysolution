@@ -1,11 +1,22 @@
 // FICHE D'UNE DESTINATION — Phase 4.
 //
-// Le parcours complet, dans l'ordre où il doit être suivi :
-//   Tester la connexion → Vérifier les prérequis → Simuler → Déployer
+// ── UNE INTENTION, PAS UN PARCOURS TECHNIQUE ────────────────────────────────
+// L'opérateur clique sur « Déployer ». C'est tout. Le moteur enchaîne ensuite
+// connexion, prérequis, sécurité de la destination, build, transfert, nginx,
+// TLS, services, contrôle de santé et vérification publique.
 //
-// Chaque bouton demande le mot de passe SSH. Ce n'est pas une négligence
-// d'ergonomie : le Panel n'en conserve aucun, nulle part. Le saisir à chaque
-// fois est le prix de ne jamais l'avoir en base.
+// Une version antérieure exposait ces phases comme quatre boutons numérotés.
+// C'était une erreur : la connexion et les prérequis ne sont pas des
+// DÉCISIONS que l'opérateur prend, ce sont des ÉTAPES du déploiement. Les lui
+// faire déclencher revenait à lui faire piloter le moteur à la main, et à
+// transformer l'écran en panneau d'administration SSH.
+//
+// Les trois opérations de diagnostic subsistent, repliées : elles gardent une
+// utilité propre — examiner un serveur sans rien engager — mais ne sont plus
+// des préalables.
+//
+// Le mot de passe SSH est demandé à chaque opération. Ce n'est pas une
+// négligence d'ergonomie : le Panel n'en conserve aucun, nulle part.
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Card } from '@/components/ui';
@@ -13,6 +24,9 @@ import { DetailList, Disclosure } from '@/components/supervision';
 import { deployment as api, errorMessage } from '@/lib/api';
 import type { ReleaseList, TargetDetail } from '@/types.deployment';
 import { RunBadge, StateBadge, operationLabel } from '@/pages/DeploymentPage';
+
+/** Nombre d'étapes du moteur — annoncé à l'opérateur avant qu'il ne lance. */
+const STEP_COUNT = 20;
 
 export function DeploymentTargetPage() {
   const { targetId = '' } = useParams();
@@ -157,20 +171,27 @@ export function DeploymentTargetPage() {
         </Disclosure>
       </Disclosure>
 
-      {/* — Le parcours ————————————————————————————————— */}
-      <Card title="Opérations">
+      {/* — L'ACTION ————————————————————————————————————
+          UNE seule. L'opérateur exprime une intention ; le moteur enchaîne
+          connexion, prérequis, sécurité de la destination, build, transfert,
+          nginx, TLS, services, contrôle de santé et vérification publique.
+          Aucun bouton technique : ce ne sont pas des décisions à prendre,
+          ce sont des étapes de CETTE opération. */}
+      <Card title="Déployer">
         <p className="muted">
-          Dans l’ordre : tester la connexion, vérifier les prérequis, simuler,
-          puis déployer. Chaque étape est indépendante et peut être relancée.
+          Le déploiement enchaîne automatiquement les {STEP_COUNT} étapes du
+          moteur — connexion, prérequis, transfert, configuration web, HTTPS,
+          services et vérifications finales. Vous suivez son avancement en
+          direct, et obtenez un rapport complet à la fin.
         </p>
 
         <label className="field">
-          <span className="field-label">Mot de passe SSH</span>
+          <span className="field-label">Mot de passe SSH du serveur</span>
           <input
             type="password"
             value={password}
             autoComplete="off"
-            placeholder="demandé à chaque opération"
+            placeholder="demandé à chaque déploiement"
             onChange={(e) => setPassword(e.target.value)}
           />
           <span className="field-hint muted">
@@ -178,23 +199,6 @@ export function DeploymentTargetPage() {
             qu’en mémoire, le temps de l’opération.
           </span>
         </label>
-
-        <div className="action-buttons">
-          <button type="button" className="btn" disabled={busy || locked}
-            onClick={() => start('Test de connexion', () => api.testConnection(targetId, password))}>
-            1 · Tester la connexion
-          </button>
-          <button type="button" className="btn" disabled={busy || locked}
-            onClick={() => start('Prérequis', () => api.preflight(targetId, password))}>
-            2 · Vérifier les prérequis
-          </button>
-          <button type="button" className="btn" disabled={busy || locked}
-            onClick={() => start('Simulation', () => api.simulate(targetId, password))}>
-            3 · Simuler
-          </button>
-        </div>
-
-        <hr className="separator" />
 
         {t.environment === 'PROD' ? (
           <label className="key-option confirm-prod">
@@ -205,17 +209,44 @@ export function DeploymentTargetPage() {
 
         <div className="action-buttons">
           <button
-            type="button" className="btn btn-danger"
+            type="button" className="btn btn-primary btn-deploy"
             disabled={busy || locked || (t.environment === 'PROD' && !confirmProd)}
             onClick={() => start('Déploiement', () => api.deploy(targetId, password, confirmProd))}
           >
-            4 · Déployer réellement
+            Déployer
           </button>
         </div>
         {locked ? (
-          <p className="muted">Les opérations sont suspendues tant qu’une exécution est en cours.</p>
+          <p className="muted">Un déploiement est déjà en cours sur cette destination.</p>
         ) : null}
       </Card>
+
+      {/* — OUTILS DE DIAGNOSTIC, hors parcours ————————————
+          Ces trois opérations ne sont PLUS des étapes à déclencher : le
+          déploiement les exécute lui-même. Elles gardent une utilité propre —
+          examiner un serveur sans rien engager — d'où leur conservation, mais
+          repliées et nommées comme ce qu'elles sont. */}
+      <Disclosure title="Outils de diagnostic" hint="facultatif — le déploiement fait déjà tout cela">
+        <p className="muted">
+          À utiliser pour examiner un serveur <em>avant</em> de préparer un
+          déploiement. Aucune de ces opérations ne modifie quoi que ce soit,
+          et aucune n’est nécessaire : le déploiement les enchaîne lui-même.
+        </p>
+        <div className="action-buttons">
+          <button type="button" className="btn btn-small" disabled={busy || locked || !password}
+            onClick={() => start('Test de connexion', () => api.testConnection(targetId, password))}>
+            Tester la connexion
+          </button>
+          <button type="button" className="btn btn-small" disabled={busy || locked || !password}
+            onClick={() => start('Prérequis', () => api.preflight(targetId, password))}>
+            Vérifier les prérequis
+          </button>
+          <button type="button" className="btn btn-small" disabled={busy || locked || !password}
+            onClick={() => start('Simulation', () => api.simulate(targetId, password))}>
+            Simuler
+          </button>
+        </div>
+      </Disclosure>
 
       {/* — Releases et retour arrière ————————————————————— */}
       <Card title="Releases">

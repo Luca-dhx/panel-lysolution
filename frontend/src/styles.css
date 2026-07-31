@@ -1279,3 +1279,50 @@ textarea:focus {
 @media (max-width: 900px) {
   .derived-list li { grid-template-columns: 1fr; gap: 3px; }
 }
+
+/* Progression d'un déploiement — l'étape en cours doit sauter aux yeux. */
+.deploy-progress { margin-bottom: 16px; }
+.deploy-progress-bar {
+  height: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.deploy-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 500ms ease;
+}
+.deploy-fill-running { background: var(--accent); }
+.deploy-fill-ok { background: var(--ok); }
+.deploy-fill-warning { background: var(--warn); }
+.deploy-fill-error,
+.deploy-fill-interrupted { background: var(--danger); }
+.deploy-progress-label { margin: 8px 0 0; font-size: 14px; }
+
+/* Rotation continue : signale que quelque chose se passe même quand une
+   étape est longue et silencieuse. */
+.deploy-spinner { display: inline-block; animation: deploy-spin 1.2s linear infinite; }
+@keyframes deploy-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .deploy-spinner { animation: none; }
+  .deploy-progress-fill { transition: none; }
+}
+
+.btn-deploy { font-size: 15px; padding: 10px 22px; }
+
+.deploy-report {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-top: 14px;
+  max-height: 560px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

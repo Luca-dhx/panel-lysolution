@@ -1,30 +1,34 @@
-// SUIVI D'UNE EXÉCUTION — Phase 4.
+// SUIVI D'UN DÉPLOIEMENT — Phase 4.
 //
-// ── POURQUOI DU SONDAGE, ET PAS UN FLUX TEMPS RÉEL ──────────────────────────
-// Un flux HTTP ouvert (SSE, NDJSON) serait plus élégant. Il serait aussi
-// FAUX ici : quand le Panel se déploie lui-même, son backend redémarre, et le
-// flux se coupe au moment le plus intéressant — l'opérateur verrait une
-// erreur réseau alors que sa mise en ligne se termine normalement.
+// L'écran que l'opérateur regarde pendant que ça se passe, puis relit après.
+// Trois choses, dans cet ordre : où on en est, ce qui a été fait, le rapport.
 //
-// L'exécution vit dans un processus détaché qui écrit son avancement en base.
-// Cet écran interroge donc ce document en boucle. Quand le backend redémarre,
-// une requête échoue, la suivante réussit, et l'affichage reprend là où il en
-// était. C'est ce que le sondage donne gratuitement et qu'un flux ne donne
-// pas.
+// ── POURQUOI DU SONDAGE, ET PAS UN FLUX ─────────────────────────────────────
+// SB Auto 06 diffuse ses étapes en NDJSON sur une connexion ouverte. C'est
+// plus élégant, et ce serait FAUX ici : le Panel peut se déployer LUI-MÊME,
+// et le flux se couperait au moment précis où il redémarre — c'est-à-dire
+// juste avant le contrôle de santé et la vérification publique, les deux
+// étapes qu'on attend le plus.
+//
+// L'exécution vit donc dans un processus détaché qui écrit son avancement en
+// base ; cet écran relit ce document. Une requête échoue pendant le
+// redémarrage, la suivante réussit, l'affichage reprend. C'est ce que le
+// sondage donne gratuitement et qu'un flux ne donne pas.
+//
+// Divergence assumée avec SB Auto 06, et documentée en 60_PANEL_DEPLOYMENT.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card } from '@/components/ui';
-import { DetailList } from '@/components/supervision';
+import { DetailList, Disclosure } from '@/components/supervision';
 import { deployment as api, errorMessage } from '@/lib/api';
-import type { DeploymentRun } from '@/types.deployment';
+import type { DeploymentRun, RunStep } from '@/types.deployment';
 import { RunBadge, operationLabel } from '@/pages/DeploymentPage';
 
 /** Cadence de sondage pendant qu'une opération tourne. */
 const POLL_MS = 2000;
 
-/** Marqueur d'étape — table exhaustive, repli explicite pour « en attente ». */
 const STEP_MARKS: Record<string, string> = {
-  pending: '·', running: '…', ok: '✓', warning: '!', error: '✗', skipped: '–',
+  pending: '·', running: '⟳', ok: '✓', warning: '!', error: '✗', skipped: '–',
 };
 const stepMark = (status: string) => STEP_MARKS[status] ?? '·';
 
@@ -35,7 +39,9 @@ export function DeploymentRunPage() {
   // Une coupure momentanée n'est PAS une erreur quand le Panel se déploie
   // lui-même : c'est le symptôme attendu. On la distingue d'un vrai échec.
   const [unreachable, setUnreachable] = useState(false);
-  const logEnd = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+  const currentRef = useRef<HTMLLIElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -43,14 +49,10 @@ export function DeploymentRunPage() {
       setRun(data);
       setUnreachable(false);
       setError(null);
-      return data;
     } catch (err) {
-      // 404 = le run n'existe pas : c'est une vraie erreur.
-      // Réseau = le backend redémarre probablement : on patiente.
       const message = errorMessage(err, '');
       if (/introuvable|inconnue/i.test(message)) setError(message);
       else setUnreachable(true);
-      return null;
     }
   }, [runId]);
 
@@ -65,12 +67,26 @@ export function DeploymentRunPage() {
     return () => clearInterval(timer);
   }, [run, unreachable, load]);
 
-  // Le journal suit l'avancement : on reste en bas tant que ça défile.
+  // L'étape en cours reste visible : sur dix-huit lignes, elle sortirait de
+  // l'écran au bout de quelques minutes.
   useEffect(() => {
-    if (run?.status === 'running') logEnd.current?.scrollIntoView({ block: 'nearest' });
-  }, [run?.log.length, run?.status]);
+    currentRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [run?.steps.filter((s) => s.status === 'running')[0]?.id]);
 
-  if (error) {
+  const copyReport = async () => {
+    if (!run?.markdownReport) return;
+    try {
+      await navigator.clipboard.writeText(run.markdownReport);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Presse-papiers refusé (contexte non sécurisé) : le rapport reste
+      // affiché et sélectionnable à la main.
+      setError('Copie automatique refusée par le navigateur. Le rapport reste sélectionnable ci-dessous.');
+    }
+  };
+
+  if (error && !run) {
     return (
       <div className="page">
         <div className="alert alert-error">{error}</div>
@@ -94,6 +110,7 @@ export function DeploymentRunPage() {
   }
 
   const running = run.status === 'running';
+  const current = run.steps.find((s) => s.status === 'running') ?? null;
 
   return (
     <div className="page">
@@ -107,13 +124,13 @@ export function DeploymentRunPage() {
         <h1>{operationLabel(run.operationType)}</h1>
         <div className="execution-head">
           <RunBadge status={run.status} />
-          <span className={`badge badge-${run.environment === 'PROD' ? 'danger' : 'neutral'}`}>{run.environment}</span>
+          <span className={`badge badge-${run.environment === 'PROD' ? 'danger' : 'neutral'}`}>
+            {run.environment}
+          </span>
           {run.selfDeployment ? <span className="badge badge-warn">auto-déploiement</span> : null}
-          {running ? <span className="muted">actualisation automatique…</span> : null}
         </div>
       </header>
 
-      {/* Le backend est absent : on rassure au lieu d'alarmer. */}
       {unreachable ? (
         <p className="mode-notice mode-execution">
           Le backend ne répond pas actuellement.{' '}
@@ -131,22 +148,108 @@ export function DeploymentRunPage() {
         </p>
       ) : null}
 
-      {/* — Le dénouement, en haut : c'est ce qu'on vient chercher ————— */}
-      <Card title="Résultat">
-        {running ? (
-          <p className="muted">Opération en cours…</p>
-        ) : (
+      {/* — OÙ ON EN EST ————————————————————————————————— */}
+      <Card title={running ? 'Déploiement en cours' : 'Résultat'}>
+        <div className="deploy-progress">
+          <div className="deploy-progress-bar" role="img"
+            aria-label={`Avancement : ${run.progress.percent} %`}>
+            <div
+              className={`deploy-progress-fill deploy-fill-${run.status}`}
+              style={{ width: `${Math.max(2, run.progress.percent)}%` }}
+            />
+          </div>
+          <p className="deploy-progress-label">
+            {running ? (
+              <>
+                <span className="deploy-spinner" aria-hidden>⟳</span>{' '}
+                {current ? current.label : 'Préparation…'}
+                <span className="muted"> — {run.progress.done}/{run.progress.total} étapes</span>
+              </>
+            ) : (
+              <>{run.progress.done}/{run.progress.total} étapes · {run.progress.percent} %</>
+            )}
+          </p>
+        </div>
+
+        {!running ? (
           <>
             <p className={`mode-notice ${run.status === 'ok' ? 'mode-simulation' : 'mode-execution'}`}>
               {run.summary ?? 'Aucun résumé.'}
             </p>
-            {run.error ? (
-              <p className="muted">Code : <code>{run.error.code}</code>{run.error.step ? ` · étape « ${run.error.step} »` : ''}</p>
+            {run.status === 'ok' && run.deployedUrl ? (
+              <p>
+                <a href={run.deployedUrl} target="_blank" rel="noreferrer" className="btn">
+                  Ouvrir {run.deployedUrl} ↗
+                </a>
+              </p>
             ) : null}
           </>
-        )}
+        ) : null}
+      </Card>
+
+      {/* — LA CHECKLIST ————————————————————————————————— */}
+      <Card title={`Étapes (${run.steps.length})`}>
+        <ol className="deploy-steps">
+          {run.steps.map((step) => (
+            <li
+              key={step.id}
+              ref={step.status === 'running' ? currentRef : null}
+              className={`deploy-step deploy-${step.status}`}
+            >
+              <span className={`deploy-step-mark${step.status === 'running' ? ' deploy-spinner' : ''}`} aria-hidden>
+                {stepMark(step.status)}
+              </span>
+              <span className="deploy-step-label">{step.label}</span>
+              <span className="deploy-step-message">{step.message ?? ''}</span>
+              <span className="deploy-step-duration muted">
+                {step.durationMs !== null ? `${(step.durationMs / 1000).toFixed(1)} s` : ''}
+              </span>
+            </li>
+          ))}
+        </ol>
+        <p className="muted read-only-note">
+          Ces étapes sont celles du moteur de déploiement — les mêmes que pour
+          un projet vitrine. Aucune n’est déclenchée à la main : le déploiement
+          les enchaîne.
+        </p>
+      </Card>
+
+      {/* — LE RAPPORT ————————————————————————————————— */}
+      {run.markdownReport ? (
+        <Card title="Rapport complet">
+          <p className="muted">
+            Identité, configuration déduite, checklist détaillée, journaux,
+            validations finales et verdict. Les secrets y sont masqués : il
+            peut être transmis tel quel.
+          </p>
+          <div className="action-buttons">
+            <button type="button" className="btn" onClick={() => void copyReport()}>
+              {copied ? 'Rapport copié ✓' : 'Copier le rapport complet'}
+            </button>
+            <button type="button" className="btn btn-small" onClick={() => setShowDetails(!showDetails)}>
+              {showDetails ? 'Masquer le rapport' : 'Afficher le rapport'}
+            </button>
+          </div>
+          {error ? <div className="alert alert-warning">{error}</div> : null}
+          {showDetails ? (
+            <pre className="deploy-report">{run.markdownReport}</pre>
+          ) : null}
+        </Card>
+      ) : running ? null : (
+        <Card title="Rapport complet">
+          <p className="muted">
+            Aucun rapport : cette opération n’en produit pas, ou s’est
+            interrompue avant sa génération. Le journal ci-dessous reste
+            disponible.
+          </p>
+        </Card>
+      )}
+
+      {/* — LE DÉTAIL, replié ——————————————————————————— */}
+      <Disclosure title="Détails de l’exécution">
         <DetailList
           items={[
+            ['Identifiant', <code key="id">{run.runId}</code>],
             ['Destination', run.targetName ?? '—'],
             ['URL', run.deployedUrl ?? run.url ?? '—'],
             ['Version', run.version ?? <span className="muted">—</span>],
@@ -157,37 +260,18 @@ export function DeploymentRunPage() {
             ['Lancée par', run.user ?? '—'],
           ]}
         />
-        {run.status === 'ok' && run.deployedUrl ? (
-          <p>
-            <a href={run.deployedUrl} target="_blank" rel="noreferrer" className="btn btn-small">
-              Ouvrir {run.deployedUrl} ↗
-            </a>
-          </p>
+        {run.error ? (
+          <>
+            <div className="alert alert-error">{run.error.message}</div>
+            <p className="muted">
+              Code : <code>{run.error.code}</code>
+              {run.error.step ? ` · étape « ${stepLabel(run.steps, run.error.step)} »` : ''}
+            </p>
+          </>
         ) : null}
-      </Card>
+      </Disclosure>
 
-      {/* — Les étapes ——————————————————————————————————— */}
-      <Card title={`Étapes (${run.steps.length})`}>
-        {run.steps.length === 0 ? (
-          <p className="muted">Aucune étape encore enregistrée.</p>
-        ) : (
-          <ol className="deploy-steps">
-            {run.steps.map((step) => (
-              <li key={step.id} className={`deploy-step deploy-${step.status}`}>
-                <span className="deploy-step-mark" aria-hidden>{stepMark(step.status)}</span>
-                <span className="deploy-step-label">{step.label}</span>
-                <span className="deploy-step-message">{step.message ?? ''}</span>
-                <span className="deploy-step-duration muted">
-                  {step.durationMs !== null ? `${(step.durationMs / 1000).toFixed(1)} s` : ''}
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </Card>
-
-      {/* — Le journal ———————————————————————————————————— */}
-      <Card title={`Journal (${run.log.length} lignes)`}>
+      <Disclosure title={`Journal technique (${run.log.length} lignes)`}>
         {run.log.length === 0 ? (
           <p className="muted">Aucune ligne de journal.</p>
         ) : (
@@ -198,15 +282,19 @@ export function DeploymentRunPage() {
                 <span className="log-message">{entry.message}</span>
               </div>
             ))}
-            <div ref={logEnd} />
           </div>
         )}
         <p className="muted read-only-note">
           Ce journal est écrit en base par le processus de déploiement, pas
           diffusé par une connexion ouverte : il survit au redémarrage du
-          Panel, et reste consultable des semaines plus tard.
+          Panel et reste consultable des semaines plus tard.
         </p>
-      </Card>
+      </Disclosure>
     </div>
   );
+}
+
+/** Libellé métier d'une étape à partir de son identifiant. */
+function stepLabel(steps: RunStep[], id: string): string {
+  return steps.find((s) => s.id === id)?.label ?? id;
 }

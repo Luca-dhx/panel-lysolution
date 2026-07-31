@@ -98,6 +98,11 @@ export interface DeploymentRun {
   user: string | null;
   selfDeployment: boolean;
   workerHeartbeatAt: string | null;
+  /** Rapport produit par le moteur — structuré et markdown, secrets masqués. */
+  structuredReport: Record<string, unknown> | null;
+  markdownReport: string | null;
+  /** Avancement calculé à la lecture. */
+  progress: { done: number; total: number; percent: number };
 }
 
 export interface RunRow {
@@ -149,6 +154,9 @@ export interface PanelSelfInfo {
 
 export interface StartedOperation {
   runId: string;
+  /** Même valeur que runId — nom attendu par le contrat 202. */
+  executionId: string;
+  status: string;
   operationType: OperationType;
   selfDeployment: boolean;
   notice: string | null;
