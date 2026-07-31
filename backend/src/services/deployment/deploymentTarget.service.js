@@ -12,7 +12,11 @@ import ApiError from '../../utils/ApiError.js';
 import config from '../../config/env.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { parseTargetUrl, wildcardBasesFromEnv } from '../../deployment-engine/url.js';
-import { REQUIRED_REMOTE_ENV, DEFAULT_REMOTE_ROOT } from '../../deployment-engine/config/project.profile.js';
+import {
+  DEFAULT_REMOTE_ROOT,
+  REQUIRED_REMOTE_ENV,
+  serviceName,
+} from '../../deployment-engine/config/project.profile.js';
 import { resolveBackendUrl } from '../network/networkConfig.service.js';
 
 /* -------------------------------------------------------------------------- */
@@ -66,7 +70,61 @@ export function describeTarget(target) {
     // Ce que le serveur exigera dans son .env — affiché pour que l'opérateur
     // les prépare, pas pour qu'il les saisisse ici.
     requiredRemoteEnv: requiredEnvFor(target.environment),
+    // CE QUE LE BACKEND A DÉDUIT. Affiché en clair : l'opérateur n'a pas à
+    // saisir ces valeurs, mais il a le droit de les voir — sans quoi la
+    // déduction ressemblerait à de la magie, et le jour où quelque chose
+    // cloche il n'aurait aucune prise.
+    derived: describeDerivation(target),
   };
+}
+
+/** Origine de chaque valeur calculée — pour l'écran « ce qui a été déduit ». */
+export function describeDerivation(target) {
+  return [
+    { label: 'Hôte', value: target.host, from: 'analyse de l’URL par le moteur' },
+    {
+      label: 'Type d’adresse',
+      value: target.type === 'subdomain' ? 'sous-domaine' : 'domaine',
+      from: 'analyse de l’URL par le moteur',
+    },
+    {
+      label: 'Certificat TLS',
+      value: target.wildcardBase
+        ? `wildcard *.${target.wildcardBase} réutilisé`
+        : 'certificat dédié émis par Let’s Encrypt',
+      from: 'bases wildcard du profil de déploiement',
+    },
+    {
+      label: 'Port local du backend',
+      value: String(target.backendPort),
+      from: 'attribué automatiquement (plus haut port utilisé + 1)',
+    },
+    {
+      label: 'Service PM2',
+      value: serviceName(target.host),
+      from: 'convention du profil : <slug>-<hôte>',
+    },
+    {
+      label: 'Chemin sur le serveur',
+      value: `${target.remoteRoot}/${target.host}`,
+      from: 'racine par défaut du profil',
+    },
+    {
+      label: 'Port SSH',
+      value: String(target.sshPort ?? 22),
+      from: 'standard',
+    },
+    {
+      label: 'Contact Let’s Encrypt',
+      value: target.certbotEmail ?? 'aucun — renseignez les contacts de l’entreprise',
+      from: 'contacts de l’entreprise',
+    },
+    {
+      label: 'Base de données',
+      value: target.environment === 'PROD' ? 'DB_PROD' : 'DB_TEST',
+      from: 'environnement de la destination',
+    },
+  ];
 }
 
 /** Les variables obligatoires, `__DB_FOR_ENV__` résolue pour cet ENV. */
@@ -79,12 +137,75 @@ export function requiredEnvFor(environment) {
 /*  ÉCRITURE                                                                  */
 /* -------------------------------------------------------------------------- */
 
-const PORT_MIN = 1024;
-const PORT_MAX = 65535;
+/* -------------------------------------------------------------------------- */
+/*  CONVENTIONS — ce que le Panel DÉDUIT au lieu de le demander               */
+/* -------------------------------------------------------------------------- */
+//
+// L'écran décrit une INTENTION : « publier ce Panel, à cette adresse, sur ce
+// serveur ». C'est le backend qui construit la configuration réelle, à partir
+// du profil de déploiement et des conventions du moteur.
+//
+// Demander un port PM2 ou une racine de déploiement à l'opérateur, c'est lui
+// faire porter une décision qui appartient au moteur — et lui donner
+// l'occasion de se tromper sur un détail dont il ne peut pas juger.
+
+/** Port SSH : le standard. Le transport du moteur l'utilise par défaut. */
+const SSH_PORT = 22;
+
+/** Utilisateur par défaut. Modifiable, parce que certains hébergeurs diffèrent. */
+const DEFAULT_SSH_USER = 'root';
 
 /**
- * Valide et normalise une saisie. Refuse en NOMMANT le champ — même
- * discipline que le reste du Panel depuis la Phase 3B.
+ * Premier port applicatif attribué. Au-dessus des ports réservés, et
+ * au-dessus du 4100 utilisé en développement local — pour qu'une destination
+ * ne réserve jamais le port du Panel de l'opérateur.
+ */
+const BASE_BACKEND_PORT = 5100;
+
+/**
+ * ALLOCATION DU PORT — même convention que SB Auto 06 : le plus haut déjà
+ * attribué, plus un.
+ *
+ * C'est volontairement simple et monotone : deux destinations n'ont jamais
+ * le même port, et un port libéré n'est pas réattribué. Réutiliser un port
+ * libéré ferait qu'un ancien service PM2 oublié capterait le trafic d'une
+ * nouvelle destination.
+ */
+async function allocateBackendPort() {
+  const highest = await PanelDeploymentTarget.findOne()
+    .sort({ backendPort: -1 })
+    .select('backendPort')
+    .lean();
+  return highest ? highest.backendPort + 1 : BASE_BACKEND_PORT;
+}
+
+/**
+ * Contact Let's Encrypt — pris sur l'ENTREPRISE, jamais demandé.
+ *
+ * Le Panel sait déjà qui il représente : redemander une adresse de contact
+ * pour un certificat serait lui faire ressaisir ce qu'il détient. On préfère
+ * le support à l'adresse générale : c'est lui qui doit recevoir une alerte
+ * d'expiration.
+ */
+async function resolveCertbotEmail() {
+  try {
+    const { getActiveCompany } = await import('../company/company.service.js');
+    const company = await getActiveCompany();
+    return company?.contacts?.supportEmail ?? company?.contacts?.email ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Valide l'INTENTION et construit la configuration. Refuse en nommant le
+ * champ — même discipline que le reste du Panel depuis la Phase 3B.
+ *
+ * Les champs acceptés sont volontairement peu nombreux :
+ *   name · environment · url · sshHost   (requis)
+ *   sshUser · dbName                     (facultatifs, « options avancées »)
+ *
+ * Tout le reste est DÉDUIT et ne peut pas être envoyé par le frontend.
  */
 async function normalize(input, { existing = null } = {}) {
   const errors = [];
@@ -106,25 +227,8 @@ async function normalize(input, { existing = null } = {}) {
     errors.push(`url : ${err.message}`);
   }
 
-  const backendPort = Number(input.backendPort ?? existing?.backendPort);
-  if (!Number.isInteger(backendPort) || backendPort < PORT_MIN || backendPort > PORT_MAX) {
-    errors.push(`backendPort : entier entre ${PORT_MIN} et ${PORT_MAX} attendu.`);
-  }
-  const sshPort = Number(input.sshPort ?? existing?.sshPort ?? 22);
-  if (!Number.isInteger(sshPort) || sshPort < 1 || sshPort > PORT_MAX) {
-    errors.push('sshPort : entier entre 1 et 65535 attendu.');
-  }
-
   const sshHost = String(input.sshHost ?? existing?.sshHost ?? '').trim();
   if (!sshHost) errors.push('sshHost : adresse du serveur requise (IP ou nom).');
-
-  const remoteRoot = String(input.remoteRoot ?? existing?.remoteRoot ?? DEFAULT_REMOTE_ROOT).trim();
-  if (!remoteRoot.startsWith('/')) errors.push('remoteRoot : chemin absolu attendu.');
-
-  const certbotEmail = (input.certbotEmail ?? existing?.certbotEmail ?? '').trim() || null;
-  if (certbotEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(certbotEmail)) {
-    errors.push('certbotEmail : adresse e-mail attendue.');
-  }
 
   if (errors.length > 0) {
     throw ApiError.badRequest('PANEL_TARGET_INVALID',
@@ -133,22 +237,34 @@ async function normalize(input, { existing = null } = {}) {
   }
 
   return {
+    // ── INTENTION : ce que l'opérateur a exprimé ────────────────────────
     name,
+    environment,
+    sshHost,
+    // Modifiable, mais pré-rempli : certains hébergeurs n'ouvrent pas root.
+    sshUser: String(input.sshUser ?? existing?.sshUser ?? DEFAULT_SSH_USER).trim() || DEFAULT_SSH_USER,
+    // Modifiable : le Panel ne peut pas deviner un nom de base déjà en place.
+    dbName: String(input.dbName ?? existing?.dbName ?? '').trim() || null,
+
+    // ── DÉDUIT de l'URL par le moteur ───────────────────────────────────
     url: parsed.canonicalUrl ?? url,
     host: parsed.host,
     type: parsed.type,
     registrableDomain: parsed.registrableDomain ?? null,
     subdomain: parsed.subdomain ?? null,
     wildcardBase: parsed.wildcardBase ?? null,
-    environment,
-    sshHost,
-    sshUser: String(input.sshUser ?? existing?.sshUser ?? 'root').trim() || 'root',
-    sshPort,
-    backendPort,
-    remoteRoot,
-    dbName: (input.dbName ?? existing?.dbName ?? '').trim() || null,
-    certbotEmail,
-    extraEnv: input.extraEnv ?? existing?.extraEnv ?? {},
+
+    // ── CONVENTIONS ─────────────────────────────────────────────────────
+    sshPort: SSH_PORT,
+    remoteRoot: existing?.remoteRoot ?? DEFAULT_REMOTE_ROOT,
+    // Le port n'est alloué qu'à la création : le modifier casserait le
+    // service PM2 et la configuration nginx déjà en place.
+    backendPort: existing?.backendPort ?? await allocateBackendPort(),
+    certbotEmail: existing?.certbotEmail ?? await resolveCertbotEmail(),
+    // Aucune variable technique ne vient du frontend : le profil déclare ce
+    // qui est obligatoire, et le moteur construit le .env distant.
+    extraEnv: {},
+
     selfHosted: await detectSelfHosted(parsed.host),
   };
 }
@@ -290,7 +406,7 @@ export async function deploymentSummary() {
 }
 
 export default {
-  listTargets, getTargetOrThrow, describeTarget, requiredEnvFor,
+  listTargets, getTargetOrThrow, describeTarget, describeDerivation, requiredEnvFor,
   createTarget, updateTarget, deleteTarget,
   markDeploying, recordDeployment, deploymentSummary,
 };
