@@ -6,6 +6,7 @@ import { connectDatabase, disconnectDatabase } from './config/db.js';
 import createApp from './app.js';
 import logger from './utils/logger.js';
 import { seedFromEnv } from './services/auth/panelUsers.service.js';
+import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 
@@ -13,6 +14,14 @@ async function start() {
   await connectDatabase();
   await seedFromEnv();
   await refreshAllowedOrigins();
+
+  // AUTO-DÉPLOIEMENT : si ce démarrage est celui provoqué par une mise en
+  // ligne du Panel par lui-même, un run peut être resté « en cours ». On ne
+  // le déclare ni réussi ni échoué — son issue est INCONNUE.
+  const orphans = await finalizeOrphanRuns().catch(() => 0);
+  if (orphans) {
+    logger.warn(`${orphans} exécution(s) de déploiement interrompue(s) — issue inconnue, à vérifier.`);
+  }
 
   const backend = await resolveBackendUrl();
   logger.info(`URL publique du Panel : ${backend.url ?? '(non configurée)'} [source ${backend.source}]`);
