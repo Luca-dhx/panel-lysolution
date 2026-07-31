@@ -1173,3 +1173,83 @@ textarea:focus {
 @media (max-width: 900px) {
   .credential-list li { grid-template-columns: 1fr; }
 }
+
+/* ---------- Déploiement (Phase 4) ---------- */
+
+.target-list { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 14px; }
+.target-list li {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.target-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.target-name { font-size: 16px; font-weight: 600; }
+.target-url { margin: 8px 0 4px; font-size: 13px; }
+.target-meta { margin: 0; font-size: 12px; }
+
+.env-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.env-list li code {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.release-list { list-style: none; margin: 14px 0; padding: 0; display: grid; gap: 8px; }
+.release-list li { display: flex; gap: 12px; align-items: center; }
+.release-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  min-width: 220px;
+}
+
+.separator { border: none; border-top: 1px solid var(--border); margin: 18px 0; }
+.confirm-prod { margin: 4px 0 12px; font-size: 14px; }
+
+/* Checklist d'un déploiement — lisible d'un coup d'œil, statut en tête. */
+.deploy-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.deploy-step {
+  display: grid;
+  grid-template-columns: 22px 200px 1fr 70px;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.deploy-step-mark { font-weight: 700; text-align: center; }
+.deploy-step-label { font-weight: 600; }
+.deploy-step-message { color: var(--text-muted); }
+.deploy-step-duration { text-align: right; font-size: 12px; }
+.deploy-ok .deploy-step-mark { color: var(--ok); }
+.deploy-error { background: var(--danger-bg); }
+.deploy-error .deploy-step-mark { color: var(--danger); }
+.deploy-warning { background: var(--warn-bg); }
+.deploy-warning .deploy-step-mark { color: var(--warn); }
+.deploy-running { background: rgba(79, 124, 255, 0.1); }
+.deploy-running .deploy-step-mark { color: var(--accent); }
+.deploy-skipped .deploy-step-mark,
+.deploy-skipped .deploy-step-label { color: var(--text-muted); }
+
+.deploy-log {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: grid;
+  gap: 2px;
+}
+.deploy-log > div { display: grid; grid-template-columns: 66px 1fr; gap: 10px; }
+.deploy-log .log-message { white-space: pre-wrap; word-break: break-word; }
+
+@media (max-width: 900px) {
+  .deploy-step { grid-template-columns: 22px 1fr; }
+  .deploy-step-duration { display: none; }
+  .deploy-log > div { grid-template-columns: 1fr; }
+}

@@ -12,5 +12,6 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/bridges', label: 'Bridges' },
   { to: '/versions', label: 'Versions' },
   { to: '/pairings', label: 'Appairages' },
+  { to: '/deployment', label: 'Déploiement' },
   { to: '/panel', label: 'Panel' },
 ];

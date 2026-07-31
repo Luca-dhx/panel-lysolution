@@ -4,6 +4,9 @@ import { Layout } from '@/components/Layout';
 import { ActionsPage } from '@/pages/ActionsPage';
 import { BridgesPage } from '@/pages/BridgesPage';
 import { CompanyPage } from '@/pages/CompanyPage';
+import { DeploymentPage } from '@/pages/DeploymentPage';
+import { DeploymentRunPage } from '@/pages/DeploymentRunPage';
+import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
 import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FleetPage } from '@/pages/FleetPage';
@@ -36,6 +39,10 @@ export default function App() {
         {/* Pilotage : on observe les exécutions ici, on en prépare une depuis un projet. */}
         <Route path="/supervision/:projectId/actions" element={<ProjectActionsPage />} />
         <Route path="/company" element={<CompanyPage />} />
+        {/* Déploiement : destinations → fiche → suivi d'une exécution. */}
+        <Route path="/deployment" element={<DeploymentPage />} />
+        <Route path="/deployment/runs/:runId" element={<DeploymentRunPage />} />
+        <Route path="/deployment/:targetId" element={<DeploymentTargetPage />} />
         <Route path="/integrated-apis" element={<IntegratedApisPage />} />
         <Route path="/actions" element={<ActionsPage />} />
         <Route path="/actions/:executionId" element={<ExecutionPage />} />

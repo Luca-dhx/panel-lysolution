@@ -11,6 +11,10 @@ import type {
   Company, CompanyState, IntegratedApi, ProbeResult, PublishResult,
   VersionDetail, VersionRow,
 } from '@/types.company';
+import type {
+  DeploymentOverview, DeploymentRun, DeploymentTarget, PanelSelfInfo,
+  ReleaseList, RunRow, StartedOperation, TargetDetail,
+} from '@/types.deployment';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -345,6 +349,74 @@ export const company = {
  */
 export const probeProject = (url: string) =>
   request<ProbeResult>('/api/projects/probe', { method: 'POST', body: { url } });
+
+/**
+ * DÉPLOIEMENT — Phase 4.
+ *
+ * Le mot de passe SSH figure dans les CORPS de requête et dans aucun type de
+ * réponse : il monte, il ne redescend jamais. Il n'est pas non plus conservé
+ * côté navigateur — chaque opération le redemande.
+ *
+ * Aucune fonction ne « lance et attend » : toutes rendent un `runId`, et
+ * l'état s'obtient en interrogeant `run()`. C'est ce qui permet au Panel de
+ * se déployer lui-même sans qu'une requête coupée fasse perdre le résultat.
+ */
+export const deployment = {
+  overview: () => request<DeploymentOverview>('/api/deployment'),
+
+  /** Ce que le Panel sait de lui-même — à consulter avant de configurer. */
+  self: () => request<PanelSelfInfo>('/api/deployment/self'),
+
+  target: (targetId: string) => request<TargetDetail>(`/api/deployment/targets/${targetId}`),
+
+  createTarget: (body: Partial<DeploymentTarget>) =>
+    request<DeploymentTarget>('/api/deployment/targets', { method: 'POST', body }),
+
+  updateTarget: (targetId: string, body: Partial<DeploymentTarget>) =>
+    request<DeploymentTarget>(`/api/deployment/targets/${targetId}`, { method: 'PATCH', body }),
+
+  deleteTarget: (targetId: string) =>
+    request<{ deleted: true }>(`/api/deployment/targets/${targetId}`, { method: 'DELETE' }),
+
+  // — Opérations : toutes rendent un runId ---------------------------------
+  testConnection: (targetId: string, sshPassword: string) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/test-connection`, {
+      method: 'POST', body: { sshPassword },
+    }),
+
+  preflight: (targetId: string, sshPassword: string) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/preflight`, {
+      method: 'POST', body: { sshPassword },
+    }),
+
+  simulate: (targetId: string, sshPassword: string) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/simulate`, {
+      method: 'POST', body: { sshPassword },
+    }),
+
+  deploy: (targetId: string, sshPassword: string, confirmProduction = false) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/deploy`, {
+      method: 'POST', body: { sshPassword, confirmProduction },
+    }),
+
+  rollback: (targetId: string, sshPassword: string, releaseId: string) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/rollback`, {
+      method: 'POST', body: { sshPassword, releaseId },
+    }),
+
+  releases: (targetId: string, sshPassword: string) =>
+    request<ReleaseList>(`/api/deployment/targets/${targetId}/releases`, {
+      method: 'POST', body: { sshPassword },
+    }),
+
+  // — Suivi ----------------------------------------------------------------
+  run: (runId: string) => request<DeploymentRun>(`/api/deployment/runs/${runId}`),
+
+  runs: (targetId?: string) =>
+    request<{ items: RunRow[] }>(
+      `/api/deployment/runs${targetId ? `?targetId=${targetId}` : ''}`,
+    ),
+};
 
 export function errorMessage(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
