@@ -97,6 +97,94 @@ rester identique dans tous les projets (`29_ENGINE_GOVERNANCE.md`) : elle
 devrait donc être portée dans les deux dépôts, avec sa version de moteur.
 Ce n'est pas fait.
 
+## 2 ter. Une intention, pas un parcours technique
+
+Seconde correction d'ergonomie, du même ordre que la précédente. La première
+version exposait quatre boutons numérotés : *Tester la connexion*,
+*Vérifier les prérequis*, *Simuler*, *Déployer*.
+
+C'était une erreur de nature. La connexion et les prérequis ne sont pas des
+**décisions** que prend l'opérateur : ce sont des **étapes** du déploiement.
+Les lui faire déclencher revenait à lui faire piloter le moteur à la main, et
+à transformer l'écran en panneau d'administration SSH.
+
+### Ce que fait le bouton unique
+
+`POST /api/deployment/targets/:id/deploy` répond **202 ACCEPTED** avec un
+`executionId`, puis le moteur enchaîne ses 20 étapes canoniques :
+
+```text
+Préparation du déploiement · Détection du domaine · Connexion au gestionnaire
+de domaine · Lecture de la configuration · Connexion sécurisée au serveur ·
+Vérification des prérequis du serveur · Vérification de sécurité de la
+destination · Préparation des adresses · Vérification de disponibilité ·
+Préparation de la nouvelle version · Transfert du projet · Installation &
+configuration · Configuration du routage web · Activation HTTPS · Démarrage
+des services · Vérification des services · Synchronisation réseau ·
+Vérification publique finale · Finalisation
+```
+
+**202 et non 201** : rien n'est créé au sens REST — une exécution est
+*acceptée* et se poursuivra ailleurs. Le client reçoit de quoi la suivre, pas
+son résultat.
+
+### L'orchestration est celle du MOTEUR
+
+Le Panel appelle `engine.deployWithReport()`, qui possède déjà tout :
+préflight, sécurité de la destination, build, transfert, nginx, TLS, PM2,
+contrôle de santé, vérification publique — en émettant des étapes canoniques
+et en produisant un rapport structuré.
+
+Composer ces appels nous-mêmes aurait réécrit l'orchestration du moteur dans
+le Panel, où elle aurait divergé de SB Auto 06 à la première correction.
+L'exécuteur du Panel ne fait que **déclencher** et **transcrire**.
+
+### La checklist est posée avant le départ
+
+Les 20 étapes sont inscrites en `pending` **à la création du run**, avant que
+le worker ne démarre. L'écran affiche donc la liste complète immédiatement.
+Une page vide qui se remplit peu à peu laisse croire que rien ne commence.
+
+À la conclusion, les étapes restées `pending` deviennent `skipped` : un
+déploiement qui échoue à nginx n'a pas « en attente » ses étapes suivantes —
+elles n'auront jamais lieu.
+
+### Les outils de diagnostic subsistent, hors parcours
+
+*Tester la connexion*, *Vérifier les prérequis* et *Simuler* restent
+accessibles, repliés sous « Outils de diagnostic », annoncés comme
+facultatifs. Ils gardent une utilité propre — examiner un serveur **avant**
+de préparer un déploiement, sans rien engager — mais ne sont plus des
+préalables.
+
+### Le rapport
+
+Produit par le moteur (`report/RunRecorder` + `report/markdown`), persisté
+avec le run, copiable d'un bouton. Le Panel n'a aucune raison d'avoir sa
+propre idée de ce qu'est un rapport de déploiement.
+
+**Masquage.** Le redacteur du moteur amorce sur `JWT_SECRET`, `MONGODB_URI`
+et `INTEGRATED_API_ENCRYPTION_KEY` — les secrets d'un projet vitrine. Le
+Panel en a un de plus, `BRIDGE_ENCRYPTION_KEY`, que le moteur ne connaît pas.
+Une seconde passe est donc appliquée côté Panel, sur le markdown **et** sur
+le rapport structuré. On ne modifie pas le moteur pour autant : son cœur doit
+rester identique dans les deux dépôts.
+
+### Divergence assumée : sondage, pas flux
+
+SB Auto 06 diffuse ses étapes en **NDJSON** sur une connexion ouverte
+(`POST /deployment/deploy/stream`, `fetch` + `getReader()`). C'est plus
+élégant.
+
+Ce serait **faux ici** : le Panel peut se déployer lui-même, et le flux se
+couperait au moment précis où son backend redémarre — c'est-à-dire juste
+avant le contrôle de santé et la vérification publique, les deux étapes qu'on
+attend le plus.
+
+Le Panel sonde donc le run persisté toutes les 2 secondes. Une requête échoue
+pendant le redémarrage, la suivante réussit, l'affichage reprend. C'est ce
+que le sondage donne gratuitement et qu'un flux ne donne pas.
+
 ## 3. Architecture
 
 ```text

@@ -31,6 +31,7 @@ const runs = await import('../backend/src/services/deployment/deploymentRun.serv
 const worker = await import('../backend/src/services/deployment/deploymentWorker.service.js');
 const executor = await import('../backend/src/services/deployment/deploymentExecutor.service.js');
 const profile = await import('../backend/src/deployment-engine/config/project.profile.js');
+const { CANONICAL_STEPS } = await import('../backend/src/deployment-engine/steps.js');
 const PanelDeploymentRun = (await import('../backend/src/models/PanelDeploymentRun.model.js')).default;
 const PanelDeploymentTarget = (await import('../backend/src/models/PanelDeploymentTarget.model.js')).default;
 
@@ -449,7 +450,175 @@ section('Surface /api/deployment');
   const unknownRun = await call('GET', '/api/deployment/runs/inexistant', { headers: auth });
   check('un run inconnu → 404 propre', unknownRun.status === 404);
 
+  // ── LA ROUTE UNIQUE : 202 + executionId ─────────────────────────────
+  const solo = await call('POST', '/api/deployment/targets', {
+    headers: auth,
+    body: {
+      name: 'Route unique', url: 'https://unique.exemple.com',
+      environment: 'TEST', sshHost: '203.0.113.50',
+    },
+  });
+  const soloId = solo.json.data.targetId;
+
+  const launched = await call('POST', `/api/deployment/targets/${soloId}/deploy`, {
+    headers: auth, body: { sshPassword: 'x' },
+  });
+  check('POST /deploy répond 202 ACCEPTED, pas 201', launched.status === 202);
+  check('…avec un executionId', typeof launched.json.data.executionId === 'string');
+  check('…et un statut « queued »', launched.json.data.status === 'queued');
+  check('…sans attendre le résultat (rien n’est encore conclu)',
+    launched.json.data.summary === undefined);
+
+  // IDEMPOTENCE : un double clic ne lance pas deux déploiements.
+  const doubleClick = await call('POST', `/api/deployment/targets/${soloId}/deploy`, {
+    headers: auth, body: { sshPassword: 'x' },
+  });
+  check('un second clic est REFUSÉ, pas mis en file',
+    doubleClick.status === 409 && doubleClick.json.code === 'PANEL_DEPLOY_ALREADY_RUNNING');
+  check('…en nommant l’exécution qui occupe la place',
+    typeof doubleClick.json.details?.runId === 'string');
+
+  // La checklist est consultable IMMÉDIATEMENT, avant tout avancement.
+  const immediate = await call('GET', `/api/deployment/runs/${launched.json.data.executionId}`, { headers: auth });
+  check('la checklist est lisible dès le lancement',
+    immediate.status === 200 && immediate.json.data.steps.length === CANONICAL_STEPS.length);
+  check('…avec l’avancement à 0', immediate.json.data.progress.percent === 0);
+
+  // REPRISE : une exécution en cours est retrouvée depuis la fiche.
+  const reprise = await call('GET', `/api/deployment/targets/${soloId}`, { headers: auth });
+  check('un rechargement retrouve l’exécution en cours',
+    reprise.json.data.activeRun?.runId === launched.json.data.executionId);
+
+  // HISTORIQUE : l'exécution y figure.
+  const historique = await call('GET', `/api/deployment/runs?targetId=${soloId}`, { headers: auth });
+  check('l’exécution apparaît à l’historique de la destination',
+    historique.json.data.items.some((r) => r.runId === launched.json.data.executionId));
+
   await close();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('UNE INTENTION, PAS UN PARCOURS — l’orchestration est au backend');
+{
+  await PanelDeploymentTarget.deleteMany({});
+  await PanelDeploymentRun.deleteMany({});
+  const target = await targets.createTarget({
+    name: 'Orchestration', url: 'https://orch.exemple.com', environment: 'TEST',
+    sshHost: '203.0.113.40',
+  });
+
+  // ── LA CHECKLIST EXISTE AVANT QUE RIEN NE COMMENCE ──────────────────
+  // L'écran doit montrer d'emblée ce qui va se passer, pas une page vide
+  // qui se remplit et laisse croire que rien ne démarre.
+  const runId = await runs.createRun({
+    target, operationType: 'DEPLOYMENT', user: 'dev@panel.test',
+  });
+  const fresh = await runs.getRunOrThrow(runId);
+  check('la checklist est posée DÈS la création', fresh.steps.length === CANONICAL_STEPS.length);
+  check('…toutes les étapes en attente', fresh.steps.every((s) => s.status === 'pending'));
+  check('…dans l’ordre du moteur',
+    fresh.steps.map((s) => s.id).join() === CANONICAL_STEPS.map((s) => s.id).join());
+  check('…avec des libellés MÉTIER, jamais des identifiants bruts',
+    fresh.steps.every((s) => s.label && s.label !== s.id && !/\./.test(s.label)));
+  check('l’avancement démarre à 0 %', fresh.progress.percent === 0);
+
+  // ── LA CHECKLIST AVANCE ──────────────────────────────────────────────
+  await runs.recordStep(runId, { id: 'deployment.initialize', status: 'ok', message: 'Prêt.' });
+  await runs.recordStep(runId, { id: 'ssh.connect', status: 'running' });
+  const midway = await runs.getRunOrThrow(runId);
+  check('une étape terminée fait progresser l’avancement', midway.progress.done === 1);
+  check('…et l’étape en cours est identifiable',
+    midway.steps.find((s) => s.status === 'running')?.id === 'ssh.connect');
+  check('…sans jamais dupliquer une étape', midway.steps.length === CANONICAL_STEPS.length);
+
+  // ── ÉCHEC : LA SUITE EST « IGNORÉE », PAS « EN ATTENTE » ────────────
+  await runs.recordStep(runId, { id: 'ssh.connect', status: 'error', errorCode: 'SSH_FAILED' });
+  await runs.finalizeRun(runId, {
+    status: 'error',
+    summary: 'Déploiement échoué à l’étape « Connexion sécurisée au serveur ».',
+    error: { code: 'SSH_FAILED', message: 'Authentification refusée.', step: 'ssh.connect' },
+    markdownReport: '# Rapport\n\nVERDICT : ÉCHEC',
+    structuredReport: { verdict: 'ÉCHEC' },
+  });
+  const failed = await runs.getRunOrThrow(runId);
+  check('l’étape fautive reste en échec',
+    failed.steps.find((s) => s.id === 'ssh.connect').status === 'error');
+  check('les étapes jamais exécutées passent en IGNORÉES, pas en attente',
+    failed.steps.filter((s) => s.status === 'pending').length === 0
+    && failed.steps.filter((s) => s.status === 'skipped').length > 10);
+  check('un rapport est produit MÊME en échec', failed.markdownReport.includes('VERDICT'));
+  check('…et l’avancement est complet (plus rien n’adviendra)',
+    failed.progress.percent === 100);
+
+  await PanelDeploymentTarget.deleteMany({});
+  await PanelDeploymentRun.deleteMany({});
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Le rapport vient du MOTEUR, et les secrets du Panel y sont masqués');
+{
+  const source = read('services', 'deployment', 'deploymentExecutor.service.js');
+
+  check('le déploiement passe par deployWithReport du moteur',
+    /engine\.deployWithReport\(/.test(source));
+  check('…et non par une orchestration réécrite dans le Panel',
+    !/await engine\.preflight\([\s\S]{0,200}await engine\.deploy\(/.test(source));
+  check('les événements du moteur alimentent la checklist',
+    /onEvent:/.test(source) && /evt\.stepId/.test(source));
+  check('les libellés d’étape viennent du catalogue canonique',
+    /canonicalStep\(/.test(source));
+
+  // Le redacteur du moteur amorce sur les secrets d'un projet vitrine. Le
+  // Panel en a un de plus : BRIDGE_ENCRYPTION_KEY.
+  check('un masquage complémentaire couvre les secrets propres au Panel',
+    /buildPanelRedactor/.test(source) && /bridgeEncryptionKey/.test(source));
+  check('…appliqué au markdown ET au rapport structuré',
+    /redactPanelSecrets\(result\.markdownReport/.test(source)
+    && /redactStructured\(/.test(source));
+  check('…sans forker le cœur du moteur',
+    /29_ENGINE_GOVERNANCE|identique dans les deux dépôts/.test(source));
+
+  // Vérification EFFECTIVE du masquage, pas seulement de sa présence.
+  const executor = await import('../backend/src/services/deployment/deploymentExecutor.service.js');
+  const cfg = (await import('../backend/src/config/env.js')).default;
+  const fakeEngine = {
+    parseUrl: (url) => ({ host: new URL(url).hostname, canonicalUrl: url }),
+    deployWithReport: async ({ onEvent }) => {
+      onEvent({ type: 'step.started', stepId: 'artifact.build', label: 'Préparation', status: 'running' });
+      onEvent({ type: 'step.succeeded', stepId: 'artifact.build', label: 'Préparation', status: 'ok' });
+      return {
+        ok: true, status: 'ok', version: 'abc1234',
+        markdownReport: `# Rapport\nclé=${cfg.bridgeEncryptionKey}\nuri=${cfg.mongoUri}\n`,
+        structuredReport: { secret: cfg.bridgeEncryptionKey, mongo: cfg.mongoUri },
+      };
+    },
+  };
+
+  const captured = [];
+  const outcome = await executor.executeOperation({
+    operationType: 'DEPLOYMENT',
+    target: {
+      targetId: 't', name: 'T', url: 'https://masquage.exemple.com', host: 'masquage.exemple.com',
+      environment: 'TEST', sshHost: '1.2.3.4', sshUser: 'root', backendPort: 5100,
+      remoteRoot: '/var/www', extraEnv: {},
+    },
+    sshPassword: 'secret-ssh',
+    user: 'dev@panel.test',
+    engine: fakeEngine,
+    onStep: (s) => captured.push(s),
+  });
+
+  check('les étapes du moteur sont transcrites', captured.length === 2);
+  check('la clé de chiffrement du pont est MASQUÉE dans le markdown',
+    !outcome.markdownReport.includes(cfg.bridgeEncryptionKey));
+  check('…et dans le rapport structuré',
+    !JSON.stringify(outcome.structuredReport).includes(cfg.bridgeEncryptionKey));
+  check('l’URI Mongo est masquée aussi',
+    !outcome.markdownReport.includes(cfg.mongoUri));
+  check('…et le mot de passe SSH n’apparaît nulle part',
+    !JSON.stringify(outcome).includes('secret-ssh'));
+  check('le rapport reste lisible après masquage',
+    outcome.markdownReport.includes('# Rapport') && outcome.markdownReport.includes('«redacted»'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -527,9 +696,53 @@ section('L’interface ne contourne rien et n’expose aucun secret');
   check('la configuration déduite est MONTRÉE, avec l’origine de chaque valeur',
     /derived\.map/.test(targetPageSource) && /derived-from/.test(targetPageSource));
 
+  // ── UN SEUL BOUTON DANS LE PARCOURS ─────────────────────────────────
+  // C'est l'exigence centrale : l'opérateur exprime une intention, il ne
+  // pilote pas le moteur étape par étape.
+  const deployCard = targetPageSource.slice(
+    targetPageSource.indexOf('<Card title="Déployer">'),
+    targetPageSource.indexOf('Outils de diagnostic'),
+  );
+  // On COMPTE les boutons plutôt que d'extraire leurs libellés : un
+  // gestionnaire `onClick` contient des accolades et des flèches qui rendent
+  // toute extraction de texte fragile. Le nombre, lui, est sans ambiguïté.
+  const buttonCount = (deployCard.match(/<button/g) ?? []).length;
+  check(`le parcours principal n’expose qu’UN bouton (${buttonCount} trouvé(s))`,
+    buttonCount === 1);
+  check('…et ce bouton dit « Déployer »', />\s*Déployer\s*</.test(deployCard));
+
+  check('les opérations techniques sont hors du parcours, repliées',
+    /Disclosure title="Outils de diagnostic"/.test(targetPageSource));
+  check('…et présentées comme facultatives',
+    /le déploiement fait déjà tout cela/.test(targetPageSource));
+  check('l’écran annonce que le déploiement enchaîne les étapes lui-même',
+    /enchaîne automatiquement/.test(targetPageSource));
+
   const runPage = fs.readFileSync(path.join(front, 'pages', 'DeploymentRunPage.tsx'), 'utf8');
+
+  // ── CHECKLIST, PROGRESSION, RAPPORT ─────────────────────────────────
+  check('la checklist affiche chaque étape avec son état',
+    /deploy-step deploy-\$\{step\.status\}/.test(runPage));
+  check('…et distingue les six états',
+    ['pending', 'running', 'ok', 'warning', 'error', 'skipped']
+      .every((s) => new RegExp(`${s}:`).test(runPage)));
+  check('une barre de progression est affichée', /deploy-progress-fill/.test(runPage));
+  check('…animée tant que ça tourne', /deploy-spinner/.test(runPage));
+  check('l’étape en cours reste visible à l’écran', /scrollIntoView/.test(runPage));
+
+  check('un bouton copie le rapport COMPLET',
+    /Copier le rapport complet/.test(runPage) && /clipboard\.writeText\(run\.markdownReport\)/.test(runPage));
+  check('…et l’échec de copie ne perd pas le rapport',
+    /sélectionnable/.test(runPage));
+
+  const styles = fs.readFileSync(path.join(front, 'styles.css'), 'utf8');
+  check('l’animation respecte prefers-reduced-motion',
+    /prefers-reduced-motion[\s\S]{0,200}deploy-spinner/.test(styles));
+
   check('le suivi SONDE au lieu d’ouvrir un flux',
     /setInterval/.test(runPage) && !/EventSource|WebSocket/.test(runPage));
+  check('…et la divergence avec SB Auto 06 est JUSTIFIÉE dans le code',
+    /Divergence assumée/.test(runPage) && /NDJSON/.test(runPage));
   check('…et distingue « backend absent » d’une vraie erreur',
     /unreachable/.test(runPage));
   check('…en expliquant que c’est attendu pendant un auto-déploiement',
