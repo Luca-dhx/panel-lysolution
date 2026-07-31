@@ -105,24 +105,46 @@ export function DeploymentTargetPage() {
         </div>
       ) : null}
 
-      {/* — Configuration ————————————————————————————————— */}
-      <Card title="Configuration">
+      {/* — Ce que VOUS avez saisi ————————————————————————— */}
+      <Card title="Votre destination">
         <DetailList
           items={[
-            ['Hôte déduit', <code key="h">{t.host}</code>],
-            ['Type', t.type === 'subdomain' ? 'sous-domaine' : 'domaine'],
-            ['Base wildcard', t.wildcardBase
-              ? <><code>*.{t.wildcardBase}</code> — certificat existant réutilisé</>
-              : <span className="muted">aucune — un certificat dédié sera émis</span>],
-            ['Serveur', `${t.sshUser}@${t.sshHost}:${t.sshPort}`],
-            ['Port local du backend', t.backendPort],
-            ['Racine distante', <code key="r">{t.remoteRoot}</code>],
-            ['Base MongoDB', t.dbName ?? <span className="muted">non renseignée</span>],
-            ['Let’s Encrypt', t.certbotEmail ?? <span className="muted">non renseigné</span>],
+            ['Nom', t.name],
+            ['Adresse', <code key="u">{t.url}</code>],
+            ['Environnement', t.environment],
+            ['Serveur', `${t.sshUser}@${t.sshHost}`],
+            ['Base de données', t.dbName ?? <span className="muted">déduite de l’environnement</span>],
             ['Version en ligne', t.currentVersion ?? <span className="muted">aucune</span>],
             ['Dernier déploiement', t.lastDeployedAt ?? <span className="muted">jamais</span>],
           ]}
         />
+      </Card>
+
+      {/* — Ce que le BACKEND a déduit ————————————————————
+          Affiché en clair : l'opérateur n'a pas à saisir ces valeurs, mais il
+          a le droit de les voir. Sans cela, la déduction ressemblerait à de
+          la magie, et le jour où quelque chose cloche il n'aurait aucune
+          prise sur le problème. */}
+      <Disclosure
+        title="Configuration déterminée automatiquement"
+        hint={`${t.derived.length} valeurs`}
+      >
+        <ul className="derived-list">
+          {t.derived.map((item) => (
+            <li key={item.label}>
+              <span className="derived-label">{item.label}</span>
+              <code className="derived-value">{item.value}</code>
+              <span className="derived-from muted">{item.from}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="muted read-only-note">
+          Ces valeurs viennent du profil de déploiement du Panel et des
+          conventions du moteur — le même moteur que celui des projets
+          vitrines. Elles ne sont pas saisissables : les modifier casserait la
+          correspondance entre nginx, PM2 et les chemins sur le serveur.
+        </p>
+
         <Disclosure title={`Variables exigées sur le serveur (${t.requiredRemoteEnv.length})`}>
           <ul className="env-list">
             {t.requiredRemoteEnv.map((name) => <li key={name}><code>{name}</code></li>)}
@@ -133,7 +155,7 @@ export function DeploymentTargetPage() {
             partir du <code>.env</code> local de ce Panel.
           </p>
         </Disclosure>
-      </Card>
+      </Disclosure>
 
       {/* — Le parcours ————————————————————————————————— */}
       <Card title="Opérations">

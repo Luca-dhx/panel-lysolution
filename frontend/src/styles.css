@@ -1253,3 +1253,29 @@ textarea:focus {
   .deploy-step-duration { display: none; }
   .deploy-log > div { grid-template-columns: 1fr; }
 }
+
+/* Ce que le backend a déduit — l'opérateur ne le saisit pas, mais le voit. */
+.derived-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.derived-list li {
+  display: grid;
+  grid-template-columns: 190px minmax(160px, auto) 1fr;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+}
+.derived-list li:last-child { border-bottom: none; }
+.derived-label { color: var(--text-muted); }
+.derived-value {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.derived-from { font-size: 12px; font-style: italic; }
+
+@media (max-width: 900px) {
+  .derived-list li { grid-template-columns: 1fr; gap: 3px; }
+}

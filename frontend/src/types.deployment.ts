@@ -48,6 +48,12 @@ export interface DeploymentTarget {
   updatedAt: string;
   /** Variables que le serveur exigera dans son .env. */
   requiredRemoteEnv: string[];
+  /**
+   * Ce que le backend a DÉDUIT, avec l'origine de chaque valeur. Affiché
+   * pour que la déduction ne ressemble pas à de la magie — l'opérateur ne
+   * les saisit pas, mais il a le droit de les voir.
+   */
+  derived: Array<{ label: string; value: string; from: string }>;
 }
 
 export interface RunStep {

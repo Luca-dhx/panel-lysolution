@@ -177,10 +177,19 @@ export function DeploymentPage() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Formulaire de destination.
+ * Formulaire de destination — L'INTENTION, PAS LA CONFIGURATION.
  *
- * Il ne demande PAS l'hôte, le type ni le domaine : le moteur les déduit de
- * l'URL. Deux champs qui peuvent se contredire sont deux champs de trop.
+ * L'écran demande ce que seul l'opérateur peut savoir : comment il appelle
+ * cette destination, à quelle adresse elle doit répondre, sur quel serveur,
+ * et si c'est de la recette ou de la production.
+ *
+ * Tout le reste — hôte, type de domaine, certificat, port d'écoute, service
+ * PM2, chemins sur le serveur — est déterminé par le backend à partir du
+ * profil de déploiement et des conventions du moteur.
+ *
+ * Demander un port PM2 ou une racine de déploiement, c'est faire porter à
+ * l'opérateur une décision qui appartient au moteur, et lui donner
+ * l'occasion de se tromper sur un détail dont il ne peut pas juger.
  */
 function TargetForm({ target, defaults, onCancel, onSaved, onError }: {
   target: DeploymentTarget | null;
@@ -194,12 +203,9 @@ function TargetForm({ target, defaults, onCancel, onSaved, onError }: {
     url: target?.url ?? '',
     environment: target?.environment ?? 'TEST',
     sshHost: target?.sshHost ?? '',
+    // Options avancées — pré-remplies, rarement touchées.
     sshUser: target?.sshUser ?? 'root',
-    sshPort: String(target?.sshPort ?? 22),
-    backendPort: String(target?.backendPort ?? 4100),
-    remoteRoot: target?.remoteRoot ?? defaults.defaultRemoteRoot,
     dbName: target?.dbName ?? '',
-    certbotEmail: target?.certbotEmail ?? '',
   });
   const [busy, setBusy] = useState(false);
 
@@ -208,17 +214,16 @@ function TargetForm({ target, defaults, onCancel, onSaved, onError }: {
   const submit = async () => {
     setBusy(true);
     try {
-      const body = {
-        ...form,
-        sshPort: Number(form.sshPort),
-        backendPort: Number(form.backendPort),
-      } as unknown as Partial<DeploymentTarget>;
+      const body = form as unknown as Partial<DeploymentTarget>;
       if (target) {
         await api.updateTarget(target.targetId, body);
         onSaved(`Destination « ${form.name} » modifiée.`);
       } else {
-        await api.createTarget(body);
-        onSaved(`Destination « ${form.name} » créée. Testez la connexion avant de déployer.`);
+        const saved = await api.createTarget(body);
+        onSaved(
+          `Destination « ${form.name} » créée. Port ${saved.backendPort} attribué, `
+          + 'configuration serveur déduite. Testez la connexion avant de déployer.',
+        );
       }
     } catch (err) {
       onError(errorMessage(err, 'Enregistrement refusé.'));
@@ -229,75 +234,77 @@ function TargetForm({ target, defaults, onCancel, onSaved, onError }: {
 
   return (
     <Card title={target ? `Modifier « ${target.name} »` : 'Nouvelle destination'}>
+      <p className="muted">
+        Quatre informations suffisent. Le reste — certificat, port d’écoute,
+        service, chemins sur le serveur — est déterminé automatiquement.
+      </p>
+
       <div className="parameter-form">
         <label className="field">
           <span className="field-label">Nom</span>
-          <input type="text" value={form.name} placeholder="Recette" onChange={(e) => set('name', e.target.value)} />
-          <span className="field-hint muted">Pour vous repérer — n’a aucun effet technique.</span>
+          <input type="text" value={form.name} placeholder="Recette, Production…" onChange={(e) => set('name', e.target.value)} />
+          <span className="field-hint muted">Pour vous repérer — aucun effet technique.</span>
         </label>
 
         <label className="field">
-          <span className="field-label">URL complète</span>
-          <input type="text" value={form.url} placeholder="https://panel-test.exemple.com" onChange={(e) => set('url', e.target.value)} />
+          <span className="field-label">Adresse complète du Panel</span>
+          <input
+            type="text"
+            value={form.url}
+            placeholder="https://panel.mon-domaine.fr"
+            onChange={(e) => set('url', e.target.value)}
+          />
           <span className="field-hint muted">
-            C’est la SEULE saisie de domaine. Le moteur en déduit l’hôte, le
-            type et la base wildcard.
+            Saisissez simplement l’adresse web complète. Nous en déduisons
+            l’hôte, le type de domaine et le certificat à utiliser.
           </span>
         </label>
 
         <label className="field">
           <span className="field-label">Environnement</span>
           <select value={form.environment} onChange={(e) => set('environment', e.target.value)}>
-            <option value="TEST">TEST</option>
-            <option value="PROD">PROD</option>
+            <option value="TEST">TEST — recette</option>
+            <option value="PROD">PROD — production</option>
           </select>
           <span className="field-hint muted">
-            Décide de la base écrite dans le .env distant : DB_TEST ou DB_PROD.
+            Détermine la base de données utilisée sur le serveur, et impose une
+            confirmation supplémentaire avant toute mise en production.
           </span>
         </label>
 
         <label className="field">
-          <span className="field-label">Serveur (IP ou nom)</span>
+          <span className="field-label">Adresse du serveur</span>
           <input type="text" value={form.sshHost} placeholder="203.0.113.10" onChange={(e) => set('sshHost', e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span className="field-label">Utilisateur SSH</span>
-          <input type="text" value={form.sshUser} onChange={(e) => set('sshUser', e.target.value)} />
-          <span className="field-hint muted">Doit pouvoir exécuter sudo sans mot de passe interactif.</span>
-        </label>
-
-        <label className="field">
-          <span className="field-label">Port SSH</span>
-          <input type="text" value={form.sshPort} onChange={(e) => set('sshPort', e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span className="field-label">Port local du backend</span>
-          <input type="text" value={form.backendPort} onChange={(e) => set('backendPort', e.target.value)} />
           <span className="field-hint muted">
-            Port d’écoute derrière nginx. Deux destinations sur un même serveur
-            doivent en avoir deux différents.
+            L’IP ou le nom de votre serveur, tel que votre hébergeur vous l’a
+            communiqué.
           </span>
-        </label>
-
-        <label className="field">
-          <span className="field-label">Racine des déploiements</span>
-          <input type="text" value={form.remoteRoot} onChange={(e) => set('remoteRoot', e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span className="field-label">Base MongoDB (facultatif)</span>
-          <input type="text" value={form.dbName} onChange={(e) => set('dbName', e.target.value)} />
-          <span className="field-hint muted">Pour les sauvegardes et le diagnostic.</span>
-        </label>
-
-        <label className="field">
-          <span className="field-label">E-mail Let’s Encrypt</span>
-          <input type="text" value={form.certbotEmail} onChange={(e) => set('certbotEmail', e.target.value)} />
-          <span className="field-hint muted">Contact d’expiration du certificat.</span>
         </label>
       </div>
+
+      {/* Deux réglages que le Panel ne peut PAS deviner — repliés. */}
+      <Disclosure title="Options avancées" hint="rarement nécessaires">
+        <div className="parameter-form">
+          <label className="field">
+            <span className="field-label">Utilisateur du serveur</span>
+            <input type="text" value={form.sshUser} onChange={(e) => set('sshUser', e.target.value)} />
+            <span className="field-hint muted">
+              Laissez « root » sauf indication contraire de votre hébergeur.
+              Cet utilisateur doit pouvoir exécuter sudo sans mot de passe
+              interactif.
+            </span>
+          </label>
+
+          <label className="field">
+            <span className="field-label">Nom de la base de données</span>
+            <input type="text" value={form.dbName} placeholder="panel_prod" onChange={(e) => set('dbName', e.target.value)} />
+            <span className="field-hint muted">
+              Uniquement si une base existante doit être réutilisée. Sans cela,
+              le nom vient de l’environnement choisi.
+            </span>
+          </label>
+        </div>
+      </Disclosure>
 
       <p className="mode-notice mode-simulation">
         Le mot de passe SSH n’est <strong>pas</strong> demandé ici, et n’est
@@ -311,6 +318,7 @@ function TargetForm({ target, defaults, onCancel, onSaved, onError }: {
         </button>
         <button type="button" className="btn btn-small" onClick={onCancel}>Annuler</button>
       </div>
+      {void defaults}
     </Card>
   );
 }
