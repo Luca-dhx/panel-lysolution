@@ -39,14 +39,60 @@ const isProd = env === 'PROD';
 const isTest = env === 'TEST';
 
 // ----------------------------------------------------------------- Mongo ----
+//
+// UNE SEULE PORTE : `MONGODB_URI`. Aucun repli, aucune valeur par défaut,
+// aucune adresse locale devinée. Le Panel se connecte à ce qui est écrit
+// dans le `.env`, ou il refuse de démarrer.
+//
+// C'est délibéré : une application qui se rabat silencieusement sur
+// `localhost` quand sa configuration est absente donne l'illusion de
+// fonctionner, puis échoue à la première écriture — sans que rien n'indique
+// que la mauvaise base a été contactée.
 const mongoUri = (process.env.MONGODB_URI ?? '').trim();
 if (!mongoUri) {
-  fail('MONGODB_URI est requise (URI commune, le nom de base varie par ENV).');
+  fail(
+    'MONGODB_URI est requise et n’a aucune valeur par défaut. '
+    + 'Renseignez-la dans backend/.env — par exemple '
+    + 'mongodb+srv://<utilisateur>:<motdepasse>@<cluster>.mongodb.net/ pour Atlas, '
+    + 'ou mongodb://<hôte>:27017 pour une instance auto-hébergée. '
+    + 'Le Panel ne se rabat JAMAIS sur une base locale.',
+  );
 }
+// La forme est vérifiée : une URI mal préfixée produirait sinon une erreur de
+// pilote illisible dix secondes plus tard.
+if (!/^mongodb(\+srv)?:\/\//.test(mongoUri)) {
+  fail(
+    `MONGODB_URI doit commencer par « mongodb:// » ou « mongodb+srv:// » (reçue : « ${mongoUri.slice(0, 24)}… »).`,
+  );
+}
+
+/**
+ * Le nom de la base — et LUI SEUL — change selon l'ENV. L'URI, elle, est
+ * commune : un même cluster héberge la recette et la production, dans deux
+ * bases distinctes. Encoder le nom de base dans l'URI ferait diverger les
+ * deux environnements sans qu'on puisse le constater.
+ */
 const dbName = (isProd ? process.env.DB_PROD : process.env.DB_TEST)?.trim() ?? '';
 if (!dbName) {
   fail(`Nom de base manquant pour ENV=${env} : renseigner ${isProd ? 'DB_PROD' : 'DB_TEST'}.`);
 }
+
+/** Hôte de l'URI, SANS identifiants — pour les journaux et le diagnostic. */
+function describeMongoHost(uri) {
+  try {
+    // Le pilote accepte plusieurs hôtes séparés par des virgules : `URL` n'en
+    // lit qu'un. On se contente donc d'un découpage, suffisant pour informer.
+    const withoutScheme = uri.replace(/^mongodb(\+srv)?:\/\//, '');
+    const afterCredentials = withoutScheme.includes('@')
+      ? withoutScheme.slice(withoutScheme.indexOf('@') + 1)
+      : withoutScheme;
+    return afterCredentials.split(/[/?]/)[0] || 'hôte inconnu';
+  } catch {
+    return 'hôte inconnu';
+  }
+}
+const mongoHost = describeMongoHost(mongoUri);
+const mongoIsLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:|$)/.test(mongoHost);
 
 // ------------------------------------------------------------------- JWT ----
 // Placeholders et valeurs d'exemple connus — refusés en toute circonstance.
@@ -149,6 +195,9 @@ export const config = {
   isTest,
   port: positiveInt('PORT', 4100),
   mongoUri,
+  // Hôte sans identifiants — journalisable sans rien divulguer.
+  mongoHost,
+  mongoIsLocal,
   dbName,
   jwt: { secret: jwtSecret, expiresIn: jwtExpiresIn },
   bridgeEncryptionKey,
