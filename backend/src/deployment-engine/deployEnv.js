@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DeploymentError } from './errors.js';
+import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** `.env` du backend de contrôle (même emplacement que celui lu par config/env.js). */
@@ -90,11 +91,27 @@ export function buildRemoteEnv(target, { env = 'PROD', sourceEnvPath = DEFAULT_S
 
   // La base utilisée dépend de l'ENV visé : PROD -> DB_PROD, TEST -> DB_TEST.
   const dbKey = targetEnv === 'PROD' ? 'DB_PROD' : 'DB_TEST';
+
+  // ── LA LISTE VIENT DU PROFIL, PAS D'UNE CONSTANTE ─────────────────────
+  // Cette vérification codait en dur les secrets d'un projet VITRINE
+  // (INTEGRATED_API_ENCRYPTION_KEY). Le Panel, qui n'a pas d'IntegratedAPI
+  // mais exige BRIDGE_ENCRYPTION_KEY, échouait donc systématiquement à
+  // l'étape de build — le moteur lui réclamait une variable qui n'a aucun
+  // sens pour lui, et ignorait celle qui compte.
+  //
+  // Le profil de chaque projet déclare déjà `REQUIRED_REMOTE_ENV` : c'est
+  // la source de vérité. Le cœur reste ainsi identique partout, et la
+  // divergence passe par `config/` — la règle d'or des moteurs (2E).
+  //
+  // `__DB_FOR_ENV__` est le marqueur du profil pour « la base de cet ENV ».
   const missing = [];
-  if (!src.MONGODB_URI) missing.push('MONGODB_URI');
-  if (!src[dbKey]) missing.push(dbKey);
-  if (!src.JWT_SECRET) missing.push('JWT_SECRET');
-  if (!src.INTEGRATED_API_ENCRYPTION_KEY) missing.push('INTEGRATED_API_ENCRYPTION_KEY');
+  for (const name of REQUIRED_REMOTE_ENV) {
+    const key = name === '__DB_FOR_ENV__' ? dbKey : name;
+    // PORT et ENV sont posés par le moteur lui-même plus bas : les exiger
+    // du .env source serait faux.
+    if (key === 'PORT' || key === 'ENV') continue;
+    if (!src[key]) missing.push(key);
+  }
   if (missing.length) {
     throw new DeploymentError(
       'DEPLOY_ENV_INCOMPLETE',
