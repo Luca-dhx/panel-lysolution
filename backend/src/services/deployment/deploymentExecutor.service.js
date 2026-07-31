@@ -13,6 +13,7 @@
 import { DeploymentEngine } from '../../deployment-engine/DeploymentEngine.js';
 import { openSession, closeSession } from '../../deployment-engine/passwordVault.js';
 import { buildRemoteEnv } from '../../deployment-engine/deployEnv.js';
+import { canonicalStep } from '../../deployment-engine/steps.js';
 import config from '../../config/env.js';
 
 /** Opérations que le Panel sait exécuter sur une destination. */
@@ -31,12 +32,13 @@ export const OPERATIONS = Object.freeze({
  * @param {string} args.operationType  une valeur d'OPERATIONS
  * @param {object} args.target         destination (projection `describeTarget`)
  * @param {string} args.sshPassword    mot de passe — jamais persisté, jamais journalisé
+ * @param {string} args.user           qui a lancé — figure au rapport
  * @param {Function} args.onStep       (step) => void — appelé à chaque étape
  * @param {Function} args.onLog        (message, level) => void
  * @returns {Promise<{status, summary, error, version?, releaseId?, deployedUrl?, steps?}>}
  */
 export async function executeOperation({
-  operationType, target, sshPassword, releaseId = null,
+  operationType, target, sshPassword, releaseId = null, user = null,
   onStep = () => {}, onLog = () => {}, engine: injectedEngine = null,
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
@@ -69,7 +71,7 @@ export async function executeOperation({
       case OPERATIONS.SIMULATION:
         return await simulation({ engine, target, sessionId, step, log });
       case OPERATIONS.DEPLOYMENT:
-        return await deployment({ engine, target, sessionId, step, log, steps });
+        return await deployWithFullReport({ engine, target, sessionId, step, log, user });
       case OPERATIONS.ROLLBACK:
         return await rollback({ engine, target, sessionId, releaseId, step, log });
       default:
@@ -195,7 +197,131 @@ async function simulation({ engine, target, sessionId, step, log }) {
   };
 }
 
-/** Le déploiement réel. C'est le moteur qui fait tout le travail. */
+/**
+ * LE DÉPLOIEMENT — une seule opération, orchestrée par le MOTEUR.
+ *
+ * ── POURQUOI `deployWithReport` ET PAS `deploy` ─────────────────────────────
+ * Le moteur possède déjà l'orchestration complète : préflight, sécurité de la
+ * destination, build, transfert, nginx, TLS, PM2, contrôle de santé,
+ * vérification publique — le tout émettant des étapes CANONIQUES et
+ * produisant un rapport structuré + markdown, secrets masqués.
+ *
+ * Composer nous-mêmes ces appels reviendrait à réécrire l'orchestration du
+ * moteur dans le Panel : elle divergerait de SB Auto 06 à la première
+ * correction. L'orchestrateur du Panel ne fait donc que **déclencher** et
+ * **transcrire**.
+ *
+ * C'est aussi ce qui supprime les boutons intermédiaires : la connexion et
+ * les prérequis ne sont plus des actions de l'opérateur, ce sont des étapes
+ * de CETTE opération.
+ */
+async function deployWithFullReport({ engine, target, sessionId, step, log, user }) {
+  const parsedTarget = engine.parseUrl(target.url);
+  const remoteEnv = {
+    ...buildRemoteEnv(parsedTarget, { env: target.environment }),
+    PORT: String(target.backendPort),
+    ...(target.extraEnv ?? {}),
+  };
+
+  log(`Déploiement de ${target.url} en ${target.environment} (port ${target.backendPort}).`);
+
+  const result = await engine.deployWithReport({
+    url: target.url,
+    sessionId,
+    user,
+    options: {
+      remoteRoot: target.remoteRoot,
+      backendPort: target.backendPort,
+      env: target.environment,
+      email: target.certbotEmail ?? undefined,
+      remoteEnv,
+      targetId: target.targetId,
+      targetName: target.name,
+      sshHost: target.sshHost,
+      sshUser: target.sshUser,
+      operationType: 'DEPLOYMENT',
+    },
+    // Le moteur émet un évènement par transition d'étape. On le transcrit
+    // dans le run persisté — c'est ce que l'interface relit.
+    onEvent: (evt) => {
+      if (evt.stepId && evt.status) {
+        step({
+          id: evt.stepId,
+          label: evt.label ?? evt.stepId,
+          status: evt.status,
+          message: evt.publicMessage ?? null,
+          errorCode: evt.errorCode ?? null,
+        });
+      }
+      const line = evt.publicMessage ?? evt.technicalMessage ?? null;
+      if (line) {
+        log(`[${evt.stepId ?? evt.type}] ${line}`,
+          evt.status === 'error' ? 'ERROR' : evt.status === 'warning' ? 'WARNING' : 'INFO');
+      }
+    },
+  });
+
+  // MASQUAGE COMPLÉMENTAIRE. Le redacteur du moteur amorce sur JWT_SECRET,
+  // MONGODB_URI et INTEGRATED_API_ENCRYPTION_KEY — les secrets d'un projet
+  // vitrine. Le Panel en a un de plus, BRIDGE_ENCRYPTION_KEY, que le moteur
+  // ne connaît pas.
+  //
+  // On ne modifie pas le moteur pour autant : son cœur doit rester identique
+  // dans les deux dépôts (29_ENGINE_GOVERNANCE). On repasse donc une couche
+  // côté Panel — défense en profondeur, et aucun fork.
+  const redactPanelSecrets = buildPanelRedactor();
+
+  return {
+    status: result.ok ? 'ok' : (result.status === 'warning' ? 'warning' : 'error'),
+    summary: result.ok
+      ? `Version ${result.version} déployée sur ${target.url}.`
+      : `Déploiement échoué à l’étape « ${describeStep(result.finalStepId)} ».`,
+    error: result.ok ? null : {
+      code: result.errorSummary?.code ?? 'DEPLOYMENT_FAILED',
+      message: redactPanelSecrets(result.errorSummary?.message ?? 'Échec du déploiement.'),
+      step: result.finalStepId ?? null,
+    },
+    version: result.version ?? null,
+    releaseId: result.releaseId ?? result.version ?? null,
+    deployedUrl: result.ok ? target.url : null,
+    structuredReport: redactStructured(result.structuredReport, redactPanelSecrets),
+    markdownReport: redactPanelSecrets(result.markdownReport ?? ''),
+  };
+}
+
+/** Libellé métier d'une étape canonique — jamais son identifiant brut. */
+function describeStep(stepId) {
+  if (!stepId) return 'inconnue';
+  return canonicalStep(stepId).label ?? stepId;
+}
+
+/**
+ * Masque les secrets propres au PANEL, que le moteur ne connaît pas.
+ * Construit à l'appel : une clé tournée entre deux déploiements doit être
+ * masquée dans le second.
+ */
+function buildPanelRedactor() {
+  const secrets = [config.bridgeEncryptionKey, config.jwt?.secret, config.mongoUri]
+    .filter((s) => typeof s === 'string' && s.length >= 8);
+
+  return (text) => {
+    if (typeof text !== 'string' || text.length === 0) return text;
+    let out = text;
+    for (const secret of secrets) out = out.split(secret).join('«redacted»');
+    // Une URI Mongo complète peut apparaître sous une forme reconstruite :
+    // on masque aussi le motif, pas seulement la valeur exacte connue.
+    out = out.replace(/mongodb(\+srv)?:\/\/[^\s"'`]*@[^\s"'`]*/gi, 'mongodb://«redacted»');
+    return out;
+  };
+}
+
+/** Applique le masquage à toutes les chaînes d'un rapport structuré. */
+function redactStructured(report, redact) {
+  if (report === null || report === undefined) return null;
+  return JSON.parse(redact(JSON.stringify(report)));
+}
+
+/** @deprecated Chemin historique — conservé pour le rollback et les tests. */
 async function deployment({ engine, target, sessionId, step, log, steps }) {
   // Le `.env` distant est construit par le MOTEUR à partir du `.env` local du
   // Panel : c'est lui qui sait quelles variables sont obligatoires (le profil

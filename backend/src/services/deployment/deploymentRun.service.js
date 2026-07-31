@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import PanelDeploymentRun from '../../models/PanelDeploymentRun.model.js';
 import ApiError from '../../utils/ApiError.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
+import { CANONICAL_STEPS } from '../../deployment-engine/steps.js';
 
 /** Un journal ne doit pas faire exploser la limite BSON de 16 Mo. */
 const MAX_LOG_ENTRIES = 2000;
@@ -31,10 +32,36 @@ export const HEARTBEAT_TIMEOUT_MS = 90_000;
 /*  CYCLE DE VIE                                                              */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Crée un run, checklist DÉJÀ POSÉE.
+ *
+ * Les étapes canoniques sont inscrites en `pending` dès la création, avant
+ * même que le worker ne démarre. L'interface affiche donc la liste complète
+ * immédiatement, et l'opérateur voit d'emblée ce qui va se passer — plutôt
+ * qu'une page vide qui se remplit peu à peu et laisse croire que rien ne
+ * commence.
+ *
+ * La liste vient du MOTEUR (`deployment-engine/steps.js`), pas d'une copie :
+ * si le pipeline gagne une étape, elle apparaît ici le jour même.
+ */
 export async function createRun({
   target, operationType, user = null, selfDeployment = false,
 }) {
   const runId = randomUUID();
+  const checklist = operationType === 'DEPLOYMENT'
+    ? CANONICAL_STEPS.map((step, order) => ({
+      id: step.id,
+      label: step.label,
+      order,
+      status: 'pending',
+      startedAt: null,
+      finishedAt: null,
+      durationMs: null,
+      message: null,
+      errorCode: null,
+    }))
+    : [];
+
   await PanelDeploymentRun.create({
     runId,
     targetId: target.targetId,
@@ -44,6 +71,7 @@ export async function createRun({
     environment: target.environment,
     operationType,
     status: 'running',
+    steps: checklist,
     startedAt: nowIso(),
     user,
     selfDeployment,
@@ -130,13 +158,28 @@ export async function appendLog(runId, message, level = 'INFO') {
   });
 }
 
-/** Conclut un run. Après cet appel, plus rien ne doit l'écrire. */
+/**
+ * Conclut un run. Après cet appel, plus rien ne doit l'écrire.
+ *
+ * Les étapes restées `pending` deviennent `skipped` : un déploiement qui
+ * échoue à la configuration nginx n'a pas « en attente » ses étapes
+ * suivantes — elles n'auront jamais lieu. Les laisser en attente
+ * laisserait croire que quelque chose peut encore se produire.
+ */
 export async function finalizeRun(runId, {
   status, summary = null, error = null, version = null, releaseId = null, deployedUrl = null,
+  structuredReport = null, markdownReport = null,
 }) {
-  const doc = await PanelDeploymentRun.findOne({ runId }).select('startedAt').lean();
+  const doc = await PanelDeploymentRun.findOne({ runId }).select('startedAt steps').lean();
   if (!doc) return null;
   const at = nowIso();
+
+  const steps = (doc.steps ?? []).map((step) => (
+    step.status === 'pending' || step.status === 'running'
+      ? { ...step, status: step.status === 'running' ? 'error' : 'skipped', finishedAt: at }
+      : step
+  ));
+
   await PanelDeploymentRun.updateOne({ runId }, {
     $set: {
       status,
@@ -145,6 +188,9 @@ export async function finalizeRun(runId, {
       version,
       releaseId,
       deployedUrl,
+      steps,
+      structuredReport,
+      markdownReport,
       finishedAt: at,
       durationMs: Date.parse(at) - Date.parse(doc.startedAt),
       workerPid: null,
@@ -201,7 +247,20 @@ export function describeRun(doc) {
     user: doc.user,
     selfDeployment: doc.selfDeployment === true,
     workerHeartbeatAt: doc.workerHeartbeatAt,
+    // Le rapport — produit par le moteur, masqué, prêt à être copié tel quel.
+    structuredReport: doc.structuredReport ?? null,
+    markdownReport: doc.markdownReport ?? null,
+    // Avancement, pour la barre de progression. Calculé à la lecture : le
+    // stocker obligerait à le recalculer à chaque écriture d'étape.
+    progress: computeProgress(doc.steps ?? []),
   };
+}
+
+/** Part des étapes tranchées — `pending` et `running` ne comptent pas. */
+function computeProgress(steps) {
+  if (steps.length === 0) return { done: 0, total: 0, percent: 0 };
+  const done = steps.filter((s) => ['ok', 'warning', 'error', 'skipped'].includes(s.status)).length;
+  return { done, total: steps.length, percent: Math.round((done / steps.length) * 100) };
 }
 
 /** Résumé de ligne — pour les listes. */

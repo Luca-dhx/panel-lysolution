@@ -71,6 +71,7 @@ try {
     target,
     sshPassword,
     releaseId,
+    user: process.env.PANEL_DEPLOY_USER || null,
     onStep: (step) => runs.recordStep(runId, step),
     onLog: (message, level) => runs.appendLog(runId, message, level),
   });

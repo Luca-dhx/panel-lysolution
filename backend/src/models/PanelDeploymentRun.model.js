@@ -73,6 +73,16 @@ const runSchema = new mongoose.Schema(
     summary: { type: String, default: null },
     error: { type: mongoose.Schema.Types.Mixed, default: null },
 
+    // ── LE RAPPORT ──────────────────────────────────────────────────────
+    // Produit par le moteur lui-même (`report/RunRecorder` + `markdown`),
+    // pas reconstruit ici : le Panel n'a aucune raison d'avoir sa propre
+    // idée de ce qu'est un rapport de déploiement.
+    //
+    // Persisté avec le run pour rester relisible des mois plus tard, y
+    // compris après un redémarrage du backend — c'est la pièce d'audit.
+    structuredReport: { type: mongoose.Schema.Types.Mixed, default: null },
+    markdownReport: { type: String, default: null },
+
     user: { type: String, default: null },
 
     // ── SURVEILLANCE DU PROCESSUS DÉTACHÉ ───────────────────────────────

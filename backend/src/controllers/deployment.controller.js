@@ -127,18 +127,26 @@ async function startOperation(req, res, operationType) {
     user: req.panelUser.email,
   });
 
-  return created(res, {
-    runId,
-    operationType,
-    selfDeployment,
-    // L'interface DOIT prévenir : le backend qu'elle interroge est celui qui
-    // va redémarrer. Sans cet avertissement, une coupure momentanée passerait
-    // pour un échec.
-    notice: selfDeployment
-      ? 'Ce déploiement met à jour le Panel que vous utilisez. Son backend redémarrera : '
-        + 'l’interface deviendra brièvement injoignable. Le déploiement se poursuit dans un '
-        + 'processus séparé — rechargez cette page pour retrouver son issue.'
-      : null,
+  // 202 ACCEPTED, pas 201 : rien n'est créé côté serveur au sens REST — une
+  // exécution est ACCEPTÉE et se poursuivra ailleurs. Le client reçoit de quoi
+  // la suivre, pas son résultat.
+  return res.status(202).json({
+    success: true,
+    data: {
+      runId,
+      executionId: runId,
+      status: 'queued',
+      operationType,
+      selfDeployment,
+      // L'interface DOIT prévenir : le backend qu'elle interroge est celui qui
+      // va redémarrer. Sans cet avertissement, une coupure momentanée passerait
+      // pour un échec.
+      notice: selfDeployment
+        ? 'Ce déploiement met à jour le Panel que vous utilisez. Son backend redémarrera : '
+          + 'l’interface deviendra brièvement injoignable. Le déploiement se poursuit dans un '
+          + 'processus séparé — rechargez cette page pour retrouver son issue.'
+        : null,
+    },
   });
 }
 
