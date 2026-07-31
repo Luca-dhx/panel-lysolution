@@ -2,6 +2,7 @@
 // importe config/env.js avec un environnement fabriqué (PANEL_SKIP_DOTENV=1 :
 // le .env local ne « répare » jamais un cas de test).
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { check, finish, section } from './helpers/harness.js';
@@ -56,14 +57,74 @@ section('ENV : aucune autre valeur silencieusement acceptée');
   check('ENV vide refusé', loadConfig({ ENV: '' }).status === 1);
 }
 
-section('MongoDB : variables obligatoires');
+section('MongoDB : une seule porte, aucun repli local');
 {
   check('MONGODB_URI absente refusée', loadConfig({ MONGODB_URI: undefined }).status === 1);
+  check('…et vide aussi', loadConfig({ MONGODB_URI: '   ' }).status === 1);
+
+  // LE POINT CENTRAL : le Panel ne doit JAMAIS deviner une base locale quand
+  // sa configuration manque. Une application qui se rabat silencieusement
+  // sur localhost donne l'illusion de fonctionner, puis échoue à la première
+  // écriture — sans que rien n'indique que la mauvaise base a été contactée.
+  const absente = loadConfig({ MONGODB_URI: undefined });
+  check('le refus NOMME la variable et dit qu’il n’y a pas de défaut',
+    /MONGODB_URI/.test(absente.stderr) && /aucune valeur par défaut/.test(absente.stderr));
+  check('…et annonce explicitement l’absence de repli local',
+    /ne se rabat JAMAIS sur une base locale/.test(absente.stderr));
+  check('…en donnant la forme attendue (Atlas et auto-hébergé)',
+    /mongodb\+srv/.test(absente.stderr) && /mongodb:\/\//.test(absente.stderr));
+
+  // Aucun repli codé en dur : le code source ne doit contenir aucune adresse
+  // Mongo par défaut.
+  const envSource = fs.readFileSync(new URL('../backend/src/config/env.js', import.meta.url), 'utf8');
+  const dbSource = fs.readFileSync(new URL('../backend/src/config/db.js', import.meta.url), 'utf8');
+  check('aucune URI Mongo codée en dur dans la configuration',
+    !/mongodb(\+srv)?:\/\/[^<\s]/.test(envSource.replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')));
+  check('…ni dans le module de connexion',
+    !/mongodb(\+srv)?:\/\//.test(dbSource.replace(/\/\/.*$/gm, '')));
+  check('MONGODB_URI est lue une seule fois, dans env.js',
+    (envSource.match(/process\.env\.MONGODB_URI/g) ?? []).length === 1);
+
+  // Forme de l'URI : une faute de préfixe doit être dite tout de suite, pas
+  // dix secondes plus tard par une erreur de pilote illisible.
+  const malFormee = loadConfig({ MONGODB_URI: 'postgres://localhost/x' });
+  check('une URI au mauvais protocole est refusée', malFormee.status === 1);
+  check('…en nommant les préfixes attendus',
+    /mongodb:\/\//.test(malFormee.stderr) && /mongodb\+srv:\/\//.test(malFormee.stderr));
+  check('mongodb+srv:// est accepté',
+    loadConfig({ MONGODB_URI: 'mongodb+srv://u:p@cluster0.abc.mongodb.net/' }).status === 0);
+
   check('DB_TEST absente refusée en TEST', loadConfig({ DB_TEST: undefined }).status === 1);
   check('DB_PROD absente refusée en PROD',
     loadConfig({ ENV: 'PROD', DB_PROD: undefined, SEED_DEV_EMAIL: undefined, SEED_DEV_PASSWORD: undefined }).status === 1);
   check('DB_PROD absente TOLÉRÉE en TEST (base non sélectionnée)',
     loadConfig({ DB_PROD: undefined }).status === 0);
+
+  // Un même cluster, deux bases : c'est l'ENV qui tranche, jamais l'URI.
+  const atlas = 'mongodb+srv://u:p@cluster0.abc.mongodb.net/';
+  check('en TEST, la base sélectionnée est DB_TEST',
+    loadConfig({ MONGODB_URI: atlas, DB_TEST: 'panel_test' }).config?.dbName === 'panel_test');
+  check('en PROD, c’est DB_PROD — même URI, base différente',
+    loadConfig({
+      MONGODB_URI: atlas, ENV: 'PROD', DB_PROD: 'panel_prod',
+      SEED_DEV_EMAIL: undefined, SEED_DEV_PASSWORD: undefined,
+    }).config?.dbName === 'panel_prod');
+}
+
+section('.env.example ne livre aucune base locale prête à l’emploi');
+{
+  // C'ÉTAIT LE VRAI PIÈGE : le modèle livrait MONGODB_URI=mongodb://127.0.0.1:27017.
+  // Copier .env.example vers .env donnait donc silencieusement une base
+  // locale — un repli, non pas dans le code, mais dans la documentation.
+  const example = fs.readFileSync(new URL('../backend/.env.example', import.meta.url), 'utf8');
+  const assignment = example.match(/^MONGODB_URI=(.*)$/m)?.[1] ?? null;
+  check('MONGODB_URI figure au modèle', assignment !== null);
+  check('…mais SANS valeur : rien de local prêt à l’emploi',
+    assignment !== null && assignment.trim() === '');
+  check('le modèle explique la forme Atlas', /mongodb\+srv:\/\/<utilisateur>/.test(example));
+  check('…et prévient pour l’autorisation d’IP Atlas', /Network Access/.test(example));
+  check('…et dit que les deux ENV partagent l’URI mais pas la base',
+    /DEUX BASES\s*\n?#?\s*DISTINCTES/.test(example) || /DEUX BASES/.test(example));
 }
 
 section('JWT : robustesse du secret imposée');
