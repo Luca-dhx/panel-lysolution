@@ -44,7 +44,13 @@ export function startDeploymentWorker({
 }) {
   const child = spawn(process.execPath, [WORKER_PATH], {
     cwd: backendRoot,
+    // `detached` permet au worker de survivre au redémarrage du backend — c'est
+    // indispensable quand le Panel se déploie LUI-MÊME. Sur Windows, un enfant
+    // détaché reçoit CREATE_NEW_CONSOLE : une fenêtre s'ouvre et reste affichée
+    // pendant tout le déploiement. `windowsHide` est l'option Node prévue pour
+    // la supprimer, sans rien changer au détachement ni à la survie du worker.
     detached: true,
+    windowsHide: true,
     stdio: 'ignore',
     env: {
       ...process.env,

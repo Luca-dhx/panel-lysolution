@@ -739,10 +739,22 @@ section('L’interface ne contourne rien et n’expose aucun secret');
   check('l’animation respecte prefers-reduced-motion',
     /prefers-reduced-motion[\s\S]{0,200}deploy-spinner/.test(styles));
 
-  check('le suivi SONDE au lieu d’ouvrir un flux',
-    /setInterval/.test(runPage) && !/EventSource|WebSocket/.test(runPage));
-  check('…et la divergence avec SB Auto 06 est JUSTIFIÉE dans le code',
-    /Divergence assumée/.test(runPage) && /NDJSON/.test(runPage));
+  // Le suivi consomme un FLUX REPRENABLE : ni sondage, ni flux « à la SB Auto »
+  // (qui mourrait au redémarrage du backend en auto-déploiement).
+  check('le suivi n’effectue plus AUCUN sondage',
+    !/setInterval/.test(runPage));
+  check('…il ouvre un flux reprenable',
+    /streamRun\(/.test(runPage) && /for await/.test(runPage));
+  check('…avec un curseur de reprise (dernier seq traité)',
+    /lastSeqRef/.test(runPage) && /evt\.seq/.test(runPage));
+  check('…et se reconnecte après coupure sans repartir de zéro',
+    /RECONNECT_MS/.test(runPage) && /AbortController/.test(runPage));
+  check('…en ne créant JAMAIS de ligne absente de la checklist',
+    /n’en crée jamais|ne crée jamais/.test(runPage) || /i === -1\) return prev/.test(runPage));
+  check('…et sans repeindre quand rien n’a changé',
+    /return prev;/.test(runPage));
+  check('…la divergence avec SB Auto 06 est JUSTIFIÉE dans le code',
+    /auto-déploiement/.test(runPage) && /NDJSON/.test(runPage));
   check('…et distingue « backend absent » d’une vraie erreur',
     /unreachable/.test(runPage));
   check('…en expliquant que c’est attendu pendant un auto-déploiement',
@@ -752,7 +764,8 @@ section('L’interface ne contourne rien et n’expose aucun secret');
     .map((m) => m[1].replace(/\$\{[^}$]*\}/g, ':id').split(/[?$]/)[0]);
   const known = [
     '/api/deployment', '/api/deployment/self', '/api/deployment/runs',
-    '/api/deployment/runs/:id', '/api/deployment/targets', '/api/deployment/targets/:id',
+    '/api/deployment/runs/:id', '/api/deployment/runs/:id/stream',
+    '/api/deployment/targets', '/api/deployment/targets/:id',
     '/api/deployment/targets/:id/test-connection', '/api/deployment/targets/:id/preflight',
     '/api/deployment/targets/:id/simulate', '/api/deployment/targets/:id/deploy',
     '/api/deployment/targets/:id/rollback', '/api/deployment/targets/:id/releases',

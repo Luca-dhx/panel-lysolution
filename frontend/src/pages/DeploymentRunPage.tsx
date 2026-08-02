@@ -3,29 +3,36 @@
 // L'écran que l'opérateur regarde pendant que ça se passe, puis relit après.
 // Trois choses, dans cet ordre : où on en est, ce qui a été fait, le rapport.
 //
-// ── POURQUOI DU SONDAGE, ET PAS UN FLUX ─────────────────────────────────────
-// SB Auto 06 diffuse ses étapes en NDJSON sur une connexion ouverte. C'est
-// plus élégant, et ce serait FAUX ici : le Panel peut se déployer LUI-MÊME,
-// et le flux se couperait au moment précis où il redémarre — c'est-à-dire
-// juste avant le contrôle de santé et la vérification publique, les deux
-// étapes qu'on attend le plus.
+// ── UN FLUX REPRENABLE, NI SONDAGE NI FLUX « À LA SB AUTO » ─────────────────
+// SB Auto 06 diffuse ses étapes en NDJSON depuis la requête qui EXÉCUTE le
+// déploiement. Transposé tel quel ici, ce serait faux : le Panel peut se
+// déployer LUI-MÊME, et ce flux mourrait au moment précis où PM2 redémarre son
+// backend — juste avant le contrôle de santé, l'étape qu'on attend le plus.
 //
-// L'exécution vit donc dans un processus détaché qui écrit son avancement en
-// base ; cet écran relit ce document. Une requête échoue pendant le
-// redémarrage, la suivante réussit, l'affichage reprend. C'est ce que le
-// sondage donne gratuitement et qu'un flux ne donne pas.
+// L'exécution vit donc dans un processus DÉTACHÉ qui écrit, au fil de l'eau, un
+// JOURNAL NUMÉROTÉ (`events[]`, `seq` monotone). Cet écran consomme ce journal
+// en flux continu et, à la coupure, se reconnecte avec le dernier `seq` traité.
+// La reprise est exacte : aucune perte, aucun doublon, aucun réordonnancement.
 //
-// Divergence assumée avec SB Auto 06, et documentée en 60_PANEL_DEPLOYMENT.
+// On obtient donc l'expérience de SB Auto — progression immédiate, aucun délai,
+// aucun sondage — AVEC la tolérance au redémarrage qu'exige l'auto-déploiement.
+// Le sondage toutes les 2 s a disparu.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
 import { deployment as api, errorMessage } from '@/lib/api';
-import type { DeploymentRun, RunStep } from '@/types.deployment';
+import type { DeploymentRun, DeployStreamEvent, RunStep } from '@/types.deployment';
 import { RunBadge, operationLabel } from '@/pages/DeploymentPage';
 
-/** Cadence de sondage pendant qu'une opération tourne. */
-const POLL_MS = 2000;
+/**
+ * Délai avant de retenter le flux après une coupure.
+ *
+ * Ce n'est PAS un sondage : le flux est continu, cette valeur ne sert qu'après
+ * une rupture — typiquement le redémarrage du backend quand le Panel se déploie
+ * lui-même. On reprend alors au dernier `seq` traité, sans perte ni doublon.
+ */
+const RECONNECT_MS = 800;
 
 const STEP_MARKS: Record<string, string> = {
   pending: '·', running: '⟳', ok: '✓', warning: '!', error: '✗', skipped: '–',
@@ -42,6 +49,8 @@ export function DeploymentRunPage() {
   const [copied, setCopied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const currentRef = useRef<HTMLLIElement | null>(null);
+  // Curseur de reprise : dernier `seq` réellement appliqué à l'état.
+  const lastSeqRef = useRef<number>(0);
 
   const load = useCallback(async () => {
     try {
@@ -49,29 +58,111 @@ export function DeploymentRunPage() {
       setRun(data);
       setUnreachable(false);
       setError(null);
+      return data;
     } catch (err) {
       const message = errorMessage(err, '');
       if (/introuvable|inconnue/i.test(message)) setError(message);
       else setUnreachable(true);
+      return null;
     }
   }, [runId]);
 
-  useEffect(() => { void load(); }, [load]);
-
-  // Sondage tant que l'opération tourne — ou tant que le backend est absent,
-  // précisément parce qu'il est peut-être en train de redémarrer.
+  /**
+   * SUIVI TEMPS RÉEL — un flux, jamais un sondage.
+   *
+   * On charge l'état complet UNE fois (la checklist canonique est déjà posée à
+   * la création du run : toutes les lignes existent, aucune n'apparaîtra), puis
+   * on n'applique plus que des deltas. Une étape qui change ne provoque la mise
+   * à jour que de SA ligne : pas de remplacement de tableau, donc pas de
+   * réordonnancement, pas de ligne recréée, pas de repaint global.
+   *
+   * À la coupure — le backend redémarre sous nos pieds en auto-déploiement — on
+   * se reconnecte avec le dernier `seq` traité. Le journal côté serveur étant
+   * persistant et numéroté, la reprise est exacte.
+   */
   useEffect(() => {
-    const active = run === null || run.status === 'running' || unreachable;
-    if (!active) return undefined;
-    const timer = setInterval(() => { void load(); }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [run, unreachable, load]);
+    const controller = new AbortController();
+    let stopped = false;
+    let retry: number | undefined;
 
-  // L'étape en cours reste visible : sur dix-huit lignes, elle sortirait de
-  // l'écran au bout de quelques minutes.
+    const applyEvent = (evt: DeployStreamEvent) => {
+      if (evt.kind === 'step') {
+        lastSeqRef.current = evt.seq;
+        setRun((prev) => {
+          if (!prev) return prev;
+          const i = prev.steps.findIndex((s) => s.id === evt.payload.id);
+          if (i === -1) return prev; // ligne inconnue : on n'en crée jamais
+          const before = prev.steps[i];
+          const after = { ...before, ...evt.payload };
+          // Rien n'a bougé → on rend la MÊME référence : React ne repeint pas.
+          if (before.status === after.status && before.message === after.message) return prev;
+          const steps = prev.steps.slice();
+          steps[i] = after;
+          return { ...prev, steps };
+        });
+      } else if (evt.kind === 'log') {
+        lastSeqRef.current = evt.seq;
+        setRun((prev) => (prev ? { ...prev, log: [...prev.log, evt.payload] } : prev));
+      } else if (evt.kind === 'ping') {
+        lastSeqRef.current = Math.max(lastSeqRef.current, evt.seq);
+      }
+    };
+
+    const pump = async () => {
+      while (!stopped) {
+        try {
+          for await (const evt of api.streamRun(runId, lastSeqRef.current, controller.signal)) {
+            if (stopped) return;
+            if (evt.kind === 'reload') {
+              // Curseur trop ancien (journal borné) : on reprend une photo
+              // complète, puis on repart du curseur QUE LE SERVEUR DONNE.
+              // Y mettre une valeur arbitrairement grande figerait le suivi :
+              // le serveur ne rend que les évènements STRICTEMENT postérieurs.
+              await load();
+              lastSeqRef.current = evt.lastSeq;
+              break;
+            }
+            if (evt.kind === 'end') {
+              // Le run est conclu : on relit une dernière fois pour récupérer
+              // le rapport et le résumé, qui ne transitent pas par le flux.
+              await load();
+              return;
+            }
+            applyEvent(evt);
+            setUnreachable(false);
+          }
+        } catch {
+          if (stopped) return;
+          // Coupure (backend en redémarrage) : ce n'est pas une erreur.
+          setUnreachable(true);
+        }
+        if (stopped) return;
+        await new Promise((r) => { retry = window.setTimeout(r, RECONNECT_MS); });
+      }
+    };
+
+    void (async () => {
+      const first = await load();
+      if (!first) { void pump(); return; }
+      if (first.status !== 'running') return; // run terminé : rien à suivre
+      void pump();
+    })();
+
+    return () => {
+      stopped = true;
+      controller.abort();
+      if (retry) window.clearTimeout(retry);
+    };
+  }, [runId, load]);
+
+  // L'étape en cours reste visible. La clé ne change QUE lorsque l'étape
+  // courante change réellement — avec le flux, elle ne repasse plus par
+  // `undefined` entre deux rafraîchissements, donc le scroll ne saute plus.
+  const currentStepId = run?.steps.find((s) => s.status === 'running')?.id ?? null;
   useEffect(() => {
+    if (!currentStepId) return;
     currentRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [run?.steps.filter((s) => s.status === 'running')[0]?.id]);
+  }, [currentStepId]);
 
   const copyReport = async () => {
     if (!run?.markdownReport) return;

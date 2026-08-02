@@ -9,6 +9,7 @@
  * ENV. Sinon on considère le déploiement en échec (pas de demi-succès).
  */
 import crypto from 'node:crypto';
+import { PUBLIC_MEDIA_PROBE_PATH } from './config/project.profile.js';
 
 /**
  * Diagnostic d'un backend qui NE RÉPOND PAS : statut PM2 + dernières lignes de
@@ -84,18 +85,23 @@ async function headResource(transport, url) {
 
 /**
  * Test FONCTIONNEL EXHAUSTIF des médias (LOT 12 renforcé).
- * 1) récupère /api/public/bootstrap et REFUSE toute URL d'upload locale/non sûre ;
+ * 1) récupère la sonde publique DÉCLARÉE AU PROFIL et REFUSE toute URL d'upload
+ *    locale/non sûre ;
  * 2) extrait les chemins de médias ESSENTIELS et vérifie que CHACUN se télécharge
- *    RÉELLEMENT (HTTP 200 + type MIME image) depuis les DEUX origines (vitrine ET
- *    Manager) — car le Manager charge ses médias relativement à sa propre origine.
+ *    RÉELLEMENT (HTTP 200 + type MIME image) depuis CHAQUE origine servie du
+ *    profil — un front charge ses médias relativement à sa propre origine.
  * Un simple « pas de localhost » ne suffit pas : un fichier absent (404) rend un
  * logo cassé tout en passant l'ancien contrôle.
- * @returns {Promise<{ok, reachable, localHits, checked, brokenCount}>}
+ * @returns {Promise<{ok, probed, reachable, localHits, checked, brokenCount}>}
  */
-export async function checkPublicMedia(transport, host, { managerHost, path = '/api/public/bootstrap', maxAssets = 8 } = {}) {
+export async function checkPublicMedia(transport, host, { origins: originSpec, path = PUBLIC_MEDIA_PROBE_PATH, maxAssets = 8 } = {}) {
+  // Le chemin de sonde est une donnée de PROJET (le profil le déclare). Un projet
+  // qui n'expose aucun catalogue public de médias n'a pas de sonde : on le DIT
+  // (`probed: false`) au lieu de retourner « ok » sans avoir rien vérifié.
+  if (!path) return { ok: true, probed: false, reachable: false, localHits: [], checked: [], brokenCount: 0 };
   const res = await transport.exec(`curl -fsS -m 8 https://${host}${path} || echo __ERR__`);
   const body = res.stdout || '';
-  if (!body.trim() || body.includes('__ERR__')) return { ok: true, reachable: false, localHits: [], checked: [], brokenCount: 0 };
+  if (!body.trim() || body.includes('__ERR__')) return { ok: true, probed: true, reachable: false, localHits: [], checked: [], brokenCount: 0 };
 
   // (1) URLs d'upload locales/non sûres encore stockées → cassées en HTTPS.
   const localHits = [...new Set([
@@ -105,8 +111,10 @@ export async function checkPublicMedia(transport, host, { managerHost, path = '/
 
   // (2) Chemins de médias à vérifier réellement.
   const paths = [...new Set((body.match(/\/uploads\/[^\s"'\\?]+/g) || []))].slice(0, maxAssets);
-  const origins = [{ label: 'site', base: `https://${host}` }];
-  if (managerHost) origins.push({ label: 'manager', base: `https://${managerHost}` });
+  // Origines à contrôler : fournies par la TOPOLOGIE (une par application
+  // servie). À défaut, l'hôte principal seul.
+  const origins = (originSpec?.length ? originSpec : [{ label: 'site', host }])
+    .map((o) => ({ label: o.label, base: `https://${o.host}` }));
 
   const checked = [];
   let brokenCount = 0;
@@ -120,11 +128,11 @@ export async function checkPublicMedia(transport, host, { managerHost, path = '/
       if (!ok) assetOk = false;
     }
     if (!assetOk) brokenCount += 1;
-    checked.push({ path: p, ...perOrigin, ok: assetOk });
+    checked.push({ path: p, origins: perOrigin, ok: assetOk });
   }
 
   const ok = localHits.length === 0 && brokenCount === 0;
-  return { ok, reachable: true, localHits, checked, brokenCount };
+  return { ok, probed: true, reachable: true, localHits, checked, brokenCount };
 }
 
 /**
@@ -171,7 +179,7 @@ function sha256(str) {
  *
  * @returns {Promise<{ok, reachable, indexMatch, jsMatch, versionMatch, label, remoteIndexHash, expectedIndexHash}>}
  */
-export async function checkWebsiteArtifact(transport, host, expected, { label = 'vitrine' } = {}) {
+export async function checkWebsiteArtifact(transport, host, expected, { label = 'site' } = {}) {
   if (!expected?.indexHash) return { ok: true, reachable: true, skipped: true, label };
   const remoteIndex = await fetchBody(transport, `https://${host}/`);
   if (remoteIndex == null) return { ok: false, reachable: false, indexMatch: false, jsMatch: false, versionMatch: false, label };

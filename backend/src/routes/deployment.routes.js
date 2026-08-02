@@ -20,6 +20,7 @@ import {
   rollback,
   run,
   runs,
+  runStream,
   self,
   simulate,
   testConnection,
@@ -36,6 +37,9 @@ router.get('/', asyncHandler(overview));
 router.get('/self', asyncHandler(self));
 router.get('/runs', asyncHandler(runs));
 router.get('/runs/:runId', asyncHandler(run));
+// Flux NDJSON reprenable : `?since=<seq>` reprend après une coupure (le
+// backend redémarre quand le Panel se déploie lui-même).
+router.get('/runs/:runId/stream', asyncHandler(runStream));
 router.get('/targets/:targetId', asyncHandler(detail));
 
 // — Destinations -----------------------------------------------------------

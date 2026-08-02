@@ -25,37 +25,40 @@ export function deriveSubHost(siteHost, subdomain) {
 }
 
 /** Applications du profil servies sur un sous-domaine dérivé. */
-export function subHostedApps() {
-  return APPS.filter((app) => app.role === 'web-sub' && app.subdomain);
+export function subHostedApps(profile) {
+  const list = Array.isArray(profile) ? profile : (profile?.APPS ?? APPS);
+  return list.filter((app) => app.subdomain && (app.role === 'web-sub' || app.role === 'static' || app.role === 'proxy'));
 }
 
 /**
  * Tous les hôtes d'un déploiement, dérivés du domaine principal :
  *   { site, api, apps: { <appId>: <host> } }
  */
-export function deriveHosts(siteHost) {
+export function deriveHosts(siteHost, profile) {
   if (!siteHost || typeof siteHost !== 'string') return null;
   const site = siteHost.toLowerCase();
   const apps = {};
-  for (const app of subHostedApps()) {
+  for (const app of subHostedApps(profile)) {
     apps[app.id] = deriveSubHost(site, app.subdomain);
   }
   return { site, api: deriveSubHost(site, API_SUBDOMAIN), apps };
 }
 
 /**
- * Hostname du Manager dérivé du hostname de la vitrine.
- * Conservé pour compatibilité : s'appuie désormais sur le profil.
+ * Hôte du PREMIER front servi sur un sous-domaine, s'il en existe un.
+ *
+ * Un projet à front unique n'en a pas : la valeur est alors `null`, ce qui est
+ * une information, pas un défaut. Aucune application n'est désignée par son
+ * nom — seul le rôle `web-sub` compte.
  */
-export function deriveManagerHost(siteHost) {
-  const app = subHostedApps().find((a) => a.id === 'manager');
-  if (!app) return null;
-  return deriveSubHost(siteHost, app.subdomain);
+export function derivePrimarySubHost(siteHost, profile) {
+  const app = subHostedApps(profile)[0];
+  return app ? deriveSubHost(siteHost, app.subdomain) : null;
 }
 
-/** URL HTTPS du Manager dérivée du hostname de la vitrine. */
-export function deriveManagerUrl(siteHost) {
-  const h = deriveManagerHost(siteHost);
+/** URL HTTPS du premier front sur sous-domaine, ou `null`. */
+export function derivePrimarySubUrl(siteHost, profile) {
+  const h = derivePrimarySubHost(siteHost, profile);
   return h ? `https://${h}` : null;
 }
 
@@ -75,7 +78,7 @@ export default {
   deriveSubHost,
   subHostedApps,
   deriveHosts,
-  deriveManagerHost,
-  deriveManagerUrl,
+  derivePrimarySubHost,
+  derivePrimarySubUrl,
   isCoveredByWildcard,
 };

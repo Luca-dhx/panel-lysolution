@@ -24,12 +24,19 @@ export class RuntimeConfigError extends Error {
   }
 }
 
-const KEYS = ['backendUrl', 'managerUrl', 'websiteUrl'];
+/**
+ * Les CLÉS écrites dépendent du projet de destination : c'est le schéma de SON
+ * `SystemConfiguration`, pas une donnée du moteur. Le profil les déclare via
+ * `RUNTIME_NETWORK_URLS` ; on valide donc les clés RÉELLEMENT produites.
+ */
+const keysOf = (urls) => Object.keys(urls || {});
 
 /** Valide un jeu d'URLs. `requirePublic` refuse localhost/http en destination publique. */
 export function validateNetworkUrls(urls, { requirePublic = true } = {}) {
   const bad = [];
   const local = [];
+  const KEYS = keysOf(urls);
+  if (!KEYS.length) throw new RuntimeConfigError('RUNTIME_CONFIG_INVALID', 'Aucune URL réseau à publier (profil sans RUNTIME_NETWORK_URLS ?).', { invalid: [] });
   for (const k of KEYS) {
     const v = urls?.[k];
     if (!v || typeof v !== 'string') { bad.push(k); continue; }
@@ -45,14 +52,37 @@ export function validateNetworkUrls(urls, { requirePublic = true } = {}) {
   if (local.length) throw new RuntimeConfigError('RUNTIME_CONFIG_STILL_LOCAL', `URLs réseau locales/non sécurisées interdites en destination publique : ${local.join(', ')}.`, { local });
 }
 
-/** URLs canoniques d'une destination (pas encore de sous-domaine api. dédié). */
-export function deriveNetworkUrls({ siteHost, managerHost, apiHost } = {}) {
+/**
+ * URLs canoniques d'une destination, DÉRIVÉES DU PROFIL.
+ *
+ * `RUNTIME_NETWORK_URLS` du profil décrit quelle clé du `SystemConfiguration`
+ * de la destination reçoit quelle URL :
+ *   { websiteUrl: { app: '<id>' }, backendUrl: { api: true }, … }
+ * Le moteur ne connaît donc aucune clé applicative en propre : un projet sans
+ * espace de gestion n'écrit tout simplement pas de `managerUrl`.
+ */
+export function deriveNetworkUrls({ siteHost, apiHost, topology, map } = {}) {
   const site = `https://${siteHost}`;
-  return {
-    backendUrl: apiHost ? `https://${apiHost}` : site, // /api proxifié sur l'hôte du site tant qu'il n'y a pas d'api.<domaine>
-    managerUrl: `https://${managerHost || `manager.${siteHost}`}`,
-    websiteUrl: site,
-  };
+  const spec = map ?? topology?.runtimeNetworkUrls ?? null;
+  if (!spec) {
+    // Profil muet : on publie au minimum le site et l'API (aucune invention).
+    return { websiteUrl: site, backendUrl: apiHost ? `https://${apiHost}` : site };
+  }
+  const urls = {};
+  for (const [key, ref] of Object.entries(spec)) {
+    if (ref?.api) {
+      urls[key] = apiHost ? `https://${apiHost}` : site;
+    } else if (ref?.app) {
+      const host = topology?.hosts?.[ref.app];
+      // Une clé qui référence une application absente du profil est une
+      // incohérence de configuration : on le dit, on n'invente pas d'hôte.
+      if (!host) throw new RuntimeConfigError('RUNTIME_CONFIG_INVALID', `RUNTIME_NETWORK_URLS.${key} référence l’application « ${ref.app} », absente de la topologie.`, { key, app: ref.app });
+      urls[key] = `https://${host}`;
+    } else if (ref?.site) {
+      urls[key] = site;
+    }
+  }
+  return urls;
 }
 
 /** Connexion native par défaut à la base de la destination. */
@@ -93,7 +123,9 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
     const stamp = now || new Date().toISOString();
     const existing = await coll.findOne({});
     let created = false;
-    const set = { 'network.backendUrl': urls.backendUrl, 'network.managerUrl': urls.managerUrl, 'network.websiteUrl': urls.websiteUrl, updatedAt: stamp };
+    // On n'écrit QUE les clés produites par le profil de la destination.
+    const set = { updatedAt: stamp };
+    for (const [k, v] of Object.entries(urls)) set[`network.${k}`] = v;
     if (existing) {
       await coll.updateOne({ _id: existing._id }, { $set: set });
     } else {
@@ -103,8 +135,11 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
 
     // RELECTURE : source de vérité, valide ce qui a réellement atterri.
     const after = await coll.findOne({});
-    const got = after?.network || {};
-    for (const k of KEYS) {
+    const all = after?.network || {};
+    // On ne relit QUE ce qu'on a écrit : une clé étrangère au profil de cette
+    // destination ne doit pas faire échouer la synchronisation.
+    const got = Object.fromEntries(Object.keys(urls).map((k) => [k, all[k]]));
+    for (const k of Object.keys(urls)) {
       if (got[k] !== urls[k]) {
         throw new RuntimeConfigError('RUNTIME_CONFIG_READBACK_FAILED', `Relecture incohérente pour ${k} : écrit "${urls[k]}", relu "${got[k] ?? '(absent)'}".`, { key: k });
       }
@@ -119,9 +154,9 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
   }
 }
 
-/** Résumé NON sensible pour le rapport. */
+/** Résumé NON sensible pour le rapport : les clés réellement publiées. */
 export function describeRuntimeConfig(result) {
-  return { backendUrl: result.urls.backendUrl, managerUrl: result.urls.managerUrl, websiteUrl: result.urls.websiteUrl, created: result.created };
+  return { ...result.urls, created: result.created };
 }
 
 export default { syncRuntimeNetworkConfiguration, validateNetworkUrls, deriveNetworkUrls, describeRuntimeConfig, RuntimeConfigError };

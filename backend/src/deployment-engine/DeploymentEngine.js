@@ -25,7 +25,7 @@ import { RunRecorder } from './report/RunRecorder.js';
 import { createRedactor } from './report/sanitize.js';
 import { renderMarkdown } from './report/markdown.js';
 import { toCanonical, canonicalStep, CANONICAL_ORDER } from './steps.js';
-import { deriveManagerHost, deriveManagerUrl, isCoveredByWildcard } from './hostnames.js';
+import { derivePrimarySubHost, derivePrimarySubUrl, isCoveredByWildcard } from './hostnames.js';
 import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
@@ -183,7 +183,7 @@ export class DeploymentEngine {
       let artifact = options.artifact;
       if (!artifact && !options.skipBuild) {
         onStep({ step: 'build', label: 'Build local', status: 'running' });
-        artifact = await buildArtifact({ exec: options.buildExec, onLog: (m) => onStep({ step: 'build', label: m, status: 'running' }) });
+        artifact = await buildArtifact({ exec: options.buildExec, profile: options.profile, onLog: (m) => onStep({ step: 'build', label: m, status: 'running' }) });
         artifactCleanup = artifact.cleanup;
         onStep({ step: 'build', label: 'Build local', status: 'ok' });
       }
@@ -218,8 +218,10 @@ export class DeploymentEngine {
    */
   async deployWithReport({ url, sessionId, options = {}, onEvent = () => {}, user, deploymentRunId, transport }) {
     const target = this.parseUrl(url);
-    const managerHost = deriveManagerHost(target.host);
-    const managerUrl = deriveManagerUrl(target.host);
+    // Hôte/URL du premier front sur sous-domaine, s'il en existe un au profil.
+    //  sur un projet à front unique : c'est une information, pas un manque.
+    const managerHost = derivePrimarySubHost(target.host, options.profile);
+    const managerUrl = derivePrimarySubUrl(target.host, options.profile);
     const version = options.version || (await this.getVersion());
 
     // Redacteur : secrets d'environnement connus (le mot de passe VPS est ajouté
@@ -330,7 +332,7 @@ export class DeploymentEngine {
       // -------------------- Phase DNS — PLANIFICATION (avant SSH) --------------------
       let dnsPlan = null;
       if (useProvider) {
-        dnsPlan = await dnsPlanPhase({ provider: options.dnsProvider, siteHost: target.host, expectedIp, ttl: options.dnsTtl, emitStep, recorder });
+        dnsPlan = await dnsPlanPhase({ provider: options.dnsProvider, siteHost: target.host, expectedIp, ttl: options.dnsTtl, emitStep, recorder, profile: options.profile });
         if (!dnsPlan.ok) {
           finalStepId = dnsPlan.failedStep;
           errorSummary = { code: dnsPlan.errorCode || 'DNS_FAILED', step: finalStepId, message: dnsPlan.section?.error?.message || 'Préparation du domaine impossible.', needsConfirmation: Boolean(dnsPlan.needsConfirmation), conflict: dnsPlan.conflict || null };
@@ -360,7 +362,7 @@ export class DeploymentEngine {
       });
       recorder.setPrereqs(preflight.checks);
       recorder.setSsh({ host: session?.host, port: 22, user: session?.username || 'root', result: preflight.checks.find((c) => c.id === 'ssh')?.ok ? 'connected' : 'failed' });
-      recorder.setDns(this._dnsSection(target, preflight));
+      recorder.setDns(this._dnsSection(target, preflight, options.profile));
 
       let preflightFailed = false;
       for (const [stepId, ids] of Object.entries(PREFLIGHT_CANONICAL)) {
@@ -398,7 +400,7 @@ export class DeploymentEngine {
       } else if (!useProvider) {
         // Repli manuel/wildcard : pas de création. On vérifie la résolution.
         emitStep('dns.site', 'skipped');
-        emitStep('dns.manager', 'skipped');
+        emitStep('dns.apps', 'skipped');
         emitStep('dns.verify', 'running');
         const dnsResult = await this._fallbackDnsVerify(target, expectedIp);
         if (dnsResult.blocking) {
@@ -431,7 +433,8 @@ export class DeploymentEngine {
           // Chaque sous-commande (install/build vitrine & Manager) est enregistrée
           // dans le rapport : commande, cwd, code, stdout/stderr (redigés/bornés).
           const built = await buildArtifact({
-            exec: options.buildExec, // injectable pour les tests ; localExec par défaut
+            exec: options.buildExec,
+            profile: options.profile, // topologie du projet (injectable pour les tests) // injectable pour les tests ; localExec par défaut
             root: options.buildRoot, // idem (défaut : racine du monorepo)
             stagingBase: options.buildStagingBase,
             // PROD : refuse une source Git non commitée (déploie exactement le commit annoncé).
@@ -475,7 +478,8 @@ export class DeploymentEngine {
         return finish();
       }
       const apiMode = artifact.frontendEnv?.VITE_API_URL ? artifact.frontendEnv.VITE_API_URL : 'relatif (/api → Nginx)';
-      recorder.markStep('artifact.build', { technicalMessage: `vitrine=${artifact.vitrineDist} manager=${artifact.managerDist} · frontend API=${apiMode}` });
+      const builtList = Object.entries(artifact.dists ?? {}).map(([id, dir]) => `${id}=${dir}`).join(' ');
+      recorder.markStep('artifact.build', { technicalMessage: `${builtList} · API front=${apiMode}` });
       emitStep('artifact.build', 'ok', { publicMessage: 'Version prête.' });
 
       // -------------------- Pipeline distant --------------------
@@ -512,7 +516,7 @@ export class DeploymentEngine {
       }
 
       emitStep('deployment.finalize', 'running');
-      recorder.noteRemote('started', `PM2 backend + Nginx (${target.host}, ${managerHost})`);
+      recorder.noteRemote('started', `PM2 backend + Nginx (${[target.host, managerHost].filter(Boolean).join(', ')})`);
       emitStep('deployment.finalize', 'ok', { publicMessage: 'Site publié.' });
       finalStatus = 'ok';
       finalStepId = 'deployment.finalize';
@@ -567,13 +571,13 @@ export class DeploymentEngine {
   }
 
   /** Section DNS du rapport selon le type de cible. */
-  _dnsSection(target, preflight) {
+  _dnsSection(target, preflight, profile) {
     if (target.type === 'subdomain') {
       return {
         mode: 'wildcard',
         wildcardBase: target.wildcardBase,
         note: `Couvert par le wildcard *.${target.wildcardBase} — aucun enregistrement DNS par site.`,
-        managerCoveredByWildcard: isCoveredByWildcard(deriveManagerHost(target.host), target.wildcardBase),
+        derivedHostsCoveredByWildcard: isCoveredByWildcard(derivePrimarySubHost(target.host, profile), target.wildcardBase),
       };
     }
     const resolves = preflight?.checks?.find((c) => c.id === 'dns-resolves');
@@ -584,7 +588,7 @@ export class DeploymentEngine {
   /** Capture les détails de section (nginx/https/services/public) depuis un step ok. */
   _captureSection(recorder, raw) {
     const d = raw.detail || {};
-    if (raw.step === 'nginx') recorder.setNginx({ ...d, note: 'server_name vitrine + Manager' });
+    if (raw.step === 'nginx') recorder.setNginx({ ...d, note: `server_name : ${(d.servedHosts ?? []).join(', ') || 'hôtes du profil'}` });
     if (raw.step === 'certbot') recorder.setHttps(d);
     if (raw.step === 'pm2') recorder.setServices(d);
     if (raw.step === 'health') recorder.setPublicTests(d);

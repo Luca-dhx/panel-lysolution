@@ -7,7 +7,7 @@
  *
  *   planPhase()      : dns.zone → dns.provider → dns.read (LECTURE SEULE + plan +
  *                      détection de conflits). N'écrit rien.
- *   mutationPhase()  : dns.site → dns.manager → dns.verify (CRÉATION/CORRECTION
+ *   mutationPhase()  : dns.site → dns.apps → dns.verify (CRÉATION/CORRECTION
  *                      puis vérification de la résolution publique). Appelée
  *                      APRÈS le préflight SSH.
  *
@@ -17,14 +17,17 @@
 import { ensureDnsRecord } from './ensureDns.js';
 import { relativeName } from './zoneResolver.js';
 import { waitForResolution } from './propagation.js';
-import { deriveManagerHost } from '../hostnames.js';
+import { planTopology } from '../topology.js';
 
 /** Détecte la zone, vérifie les credentials, lit l'existant et PLANIFIE (sans muter). */
-export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitStep, recorder }) {
-  const managerHost = deriveManagerHost(siteHost);
+export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitStep, recorder, profile }) {
+  // Les hôtes à publier viennent de la TOPOLOGIE : l'hôte du site + un par
+  // application servie sur un sous-domaine. Aucun nom en dur.
+  const topo = planTopology({ host: siteHost, profile });
+  const derivedHosts = topo.dnsHosts.filter((h) => h.host !== topo.host);
   const section = {
     provider: provider.name,
-    hostnames: [siteHost, managerHost],
+    hostnames: topo.dnsHosts.map((h) => h.host),
     expectedIp,
     ttlRequested: ttl ?? null,
     timeline: [],
@@ -38,7 +41,8 @@ export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitSt
     section.zone = zone.zone;
     section.zoneSource = zone.source;
     section.siteRelative = zone.relativeName;
-    section.managerRelative = relativeName(managerHost, zone.zone);
+    // Un nom relatif par hôte dérivé, indexé par application.
+    section.derivedRelatives = derivedHosts.map((h) => ({ appId: h.appId, label: h.label, host: h.host, relativeName: relativeName(h.host, zone.zone) }));
     section.timeline.push({ at: iso(), event: 'zone_detected', zone: zone.zone, source: zone.source });
     emitStep('dns.zone', 'ok', { technicalMessage: `zone=${zone.zone} (${zone.source})` });
   } catch (err) {
@@ -75,10 +79,13 @@ export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitSt
   try {
     const records = await provider.listRecords(zone.zone);
     const sitePlan = await ensureDnsRecord({ provider, zone: zone.zone, relativeName: zone.relativeName, expectedIp, ttl, records, dryRun: true });
-    const mgrPlan = await ensureDnsRecord({ provider, zone: zone.zone, relativeName: section.managerRelative, expectedIp, ttl, records, dryRun: true });
+    const derivedPlans = [];
+    for (const d of section.derivedRelatives) {
+      derivedPlans.push({ ...d, plan: await ensureDnsRecord({ provider, zone: zone.zone, relativeName: d.relativeName, expectedIp, ttl, records, dryRun: true }) });
+    }
     section.site = planSummary(sitePlan);
-    section.manager = planSummary(mgrPlan);
-    const conflict = [sitePlan, mgrPlan].find((p) => p.action === 'conflict');
+    section.derived = derivedPlans.map((d) => ({ appId: d.appId, host: d.host, ...planSummary(d.plan) }));
+    const conflict = [sitePlan, ...derivedPlans.map((d) => d.plan)].find((p) => p.action === 'conflict');
     if (conflict) {
       section.error = { code: 'HOSTINGER_RECORD_CONFLICT', reason: conflict.reason, message: conflict.message };
       recorder.setHostinger(section);
@@ -90,8 +97,8 @@ export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitSt
       return { ok: false, failedStep: 'dns.read', section, conflict, needsConfirmation: true, errorCode: 'HOSTINGER_RECORD_CONFLICT' };
     }
     recorder.setHostinger(section);
-    emitStep('dns.read', 'ok', { technicalMessage: `site=${sitePlan.action}, manager=${mgrPlan.action}` });
-    return { ok: true, zone, records, sitePlan, mgrPlan, managerHost, section };
+    emitStep('dns.read', 'ok', { technicalMessage: [`site=${sitePlan.action}`, ...derivedPlans.map((d) => `${d.appId}=${d.plan.action}`)].join(', ') });
+    return { ok: true, zone, records, sitePlan, derivedPlans, section };
   } catch (err) {
     section.error = { code: err.code || 'DNS_READ_ERROR', message: err.message };
     recorder.setHostinger(section);
@@ -100,14 +107,13 @@ export async function dnsPlanPhase({ provider, siteHost, expectedIp, ttl, emitSt
   }
 }
 
-/** Crée/corrige les enregistrements (site + Manager) puis vérifie la propagation. */
+/** Crée/corrige les enregistrements (site + hôtes dérivés) puis vérifie la propagation. */
 export async function dnsMutationPhase({ provider, plan, expectedIp, ttl, emitStep, recorder, resolutionOpts = {} }) {
   const section = recorder.sections.hostinger || {};
   section.actions = [];
   const zone = plan.zone.zone;
   const siteHostname = plan.zone.relativeName === '@' ? zone : `${plan.zone.relativeName}.${zone}`;
-  const mgrRel = section.managerRelative;
-  const mgrHostname = `${mgrRel}.${zone}`;
+  const derived = section.derivedRelatives ?? [];
 
   // dns.site
   emitStep('dns.site', 'running', { publicMessage: 'Préparation de l’adresse du site…' });
@@ -115,27 +121,43 @@ export async function dnsMutationPhase({ provider, plan, expectedIp, ttl, emitSt
   section.actions.push({ hostname: siteHostname, ...planSummary(siteRes) });
   emitStep('dns.site', actionStatus(siteRes), { technicalMessage: `action=${siteRes.action}` });
 
-  // dns.manager
-  emitStep('dns.manager', 'running', { publicMessage: 'Préparation de l’espace de gestion…' });
-  const mgrRes = await ensureDnsRecord({ provider, zone, relativeName: mgrRel, expectedIp, ttl });
-  section.actions.push({ hostname: mgrHostname, ...planSummary(mgrRes) });
-  emitStep('dns.manager', actionStatus(mgrRes), { technicalMessage: `action=${mgrRes.action}` });
+  // dns.apps : une adresse par application servie sur un sous-domaine. L'étape
+  // est SAUTÉE — et le dit — quand le profil n'en déclare aucune.
+  const derivedResults = [];
+  if (!derived.length) {
+    emitStep('dns.apps', 'skipped', { technicalMessage: 'aucune application sur sous-domaine dans le profil' });
+  } else {
+    emitStep('dns.apps', 'running', { publicMessage: 'Préparation des adresses des applications…' });
+    for (const d of derived) {
+      const res = await ensureDnsRecord({ provider, zone, relativeName: d.relativeName, expectedIp, ttl });
+      const hostname = `${d.relativeName}.${zone}`;
+      section.actions.push({ hostname, appId: d.appId, ...planSummary(res) });
+      derivedResults.push({ ...d, hostname, res });
+    }
+    const worst = derivedResults.map((d) => actionStatus(d.res)).includes('error') ? 'error' : 'ok';
+    emitStep('dns.apps', worst, { technicalMessage: derivedResults.map((d) => `${d.appId}=${d.res.action}`).join(', ') });
+  }
 
-  // dns.verify (résolution publique des DEUX hôtes). On mesure via le fournisseur
-  // (Hostinger : DNS réel ; Mock : stub) pour rester testable sans réseau.
+  // dns.verify (résolution publique de TOUS les hôtes). On mesure via le
+  // fournisseur (Hostinger : DNS réel ; Mock : stub) pour rester testable.
   emitStep('dns.verify', 'running', { publicMessage: 'Vérification de la disponibilité des adresses…' });
   const resolveOpts = { resolver: (h, ip) => provider.verifyResolution(h, ip), ...resolutionOpts };
   const siteResolve = await waitForResolution(siteHostname, expectedIp, resolveOpts);
-  const mgrResolve = await waitForResolution(mgrHostname, expectedIp, resolveOpts);
-  section.resolution = { site: pick(siteResolve), manager: pick(mgrResolve) };
-  section.timeline.push({ at: iso(), event: 'public_resolution', site: siteResolve.pointsToVps, manager: mgrResolve.pointsToVps });
+  const resolutions = { site: pick(siteResolve) };
+  let allResolved = siteResolve.pointsToVps;
+  for (const d of derivedResults) {
+    const r = await waitForResolution(d.hostname, expectedIp, resolveOpts);
+    resolutions[d.appId] = pick(r);
+    allResolved = allResolved && r.pointsToVps;
+  }
+  section.resolution = resolutions;
+  section.timeline.push({ at: iso(), event: 'public_resolution', ...Object.fromEntries(Object.entries(resolutions).map(([k, v]) => [k, v.pointsToVps])) });
   recorder.setHostinger(section);
 
-  const both = siteResolve.pointsToVps && mgrResolve.pointsToVps;
-  if (!both) {
+  if (!allResolved) {
     emitStep('dns.verify', 'warning', {
       publicMessage: 'Adresses préparées — propagation DNS encore en cours.',
-      technicalMessage: `site résolu=${siteResolve.pointsToVps}, manager résolu=${mgrResolve.pointsToVps}`,
+      technicalMessage: Object.entries(resolutions).map(([k, v]) => `${k} résolu=${v.pointsToVps}`).join(', '),
     });
     return { ok: true, propagated: false, section };
   }

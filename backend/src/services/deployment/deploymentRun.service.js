@@ -17,6 +17,8 @@ import { nowIso } from '../../bridge/bridgeContract.js';
 import { CANONICAL_STEPS } from '../../deployment-engine/steps.js';
 
 /** Un journal ne doit pas faire exploser la limite BSON de 16 Mo. */
+/** Borne du journal reprenable (suffisant pour un déploiement complet). */
+const MAX_EVENTS = 2000;
 const MAX_LOG_ENTRIES = 2000;
 const MAX_LOG_MESSAGE = 2000;
 
@@ -100,6 +102,9 @@ export async function heartbeat(runId) {
  */
 export async function recordStep(runId, { id, label, status, message = null, errorCode = null }) {
   const at = nowIso();
+  // Le journal reçoit le changement AVANT la matérialisation : un client
+  // reconnecté rejoue exactement la même suite d'états que le direct.
+  await appendEvent(runId, 'step', { id, label, status, message, errorCode });
   const doc = await PanelDeploymentRun.findOne({ runId }).select('steps').lean();
   if (!doc) return;
 
@@ -126,23 +131,60 @@ export async function recordStep(runId, { id, label, status, message = null, err
 
   const previous = doc.steps[index];
   const finished = status && status !== 'running';
+  // La checklist est PRÉ-REMPLIE à la création du run, avec `startedAt: null`.
+  // Cette branche ne posait jamais `startedAt` : `previous.startedAt` restait
+  // donc nul pour TOUTE étape canonique, et la durée calculée plus bas valait
+  // systématiquement `null`. Aucune étape d'un déploiement n'avait de durée.
+  const startedAt = previous.startedAt ?? (status === 'running' ? at : null);
   await PanelDeploymentRun.updateOne({ runId }, {
     $set: {
       [`steps.${index}.status`]: status ?? previous.status,
       [`steps.${index}.label`]: label ?? previous.label,
       [`steps.${index}.message`]: message ?? previous.message,
       [`steps.${index}.errorCode`]: errorCode ?? previous.errorCode,
+      ...(previous.startedAt ? {} : { [`steps.${index}.startedAt`]: startedAt ?? at }),
       ...(finished
         ? {
           [`steps.${index}.finishedAt`]: at,
-          [`steps.${index}.durationMs`]: previous.startedAt
-            ? Date.parse(at) - Date.parse(previous.startedAt)
-            : null,
+          // Repli sur `at` : une étape franchie en une seule émission (`skipped`,
+          // ou terminée avant d'être vue « running ») a une durée de 0, pas null.
+          [`steps.${index}.durationMs`]: Date.parse(at) - Date.parse(startedAt ?? at),
         }
         : {}),
       workerHeartbeatAt: at,
     },
   });
+}
+
+/**
+ * Ajoute un évènement au JOURNAL REPRENABLE, avec un numéro de séquence
+ * monotone.
+ *
+ * L'attribution du numéro et l'ajout se font dans UNE SEULE opération Mongo
+ * (pipeline d'agrégation) : `eventSeq` est lu, incrémenté et appliqué côté
+ * serveur. Deux écritures simultanées — deux workers, deux étapes émises dans
+ * la même milliseconde — ne peuvent donc pas recevoir le même numéro, là où un
+ * `findOne` suivi d'un `updateOne` en donnerait deux identiques.
+ */
+export async function appendEvent(runId, kind, payload) {
+  const at = nowIso();
+  await PanelDeploymentRun.updateOne({ runId }, [
+    { $set: { eventSeq: { $add: [{ $ifNull: ['$eventSeq', 0] }, 1] } } },
+    {
+      $set: {
+        workerHeartbeatAt: at,
+        events: {
+          // Borné : un run très long ne doit pas faire enfler le document.
+          // On conserve la FIN du journal — c'est elle que rejoue un client
+          // qui se reconnecte.
+          $slice: [
+            { $concatArrays: [{ $ifNull: ['$events', []] }, [{ seq: '$eventSeq', at, kind, payload }]] },
+            -MAX_EVENTS,
+          ],
+        },
+      },
+    },
+  ]);
 }
 
 /** Ajoute une ligne de journal, bornée en taille et en nombre. */
@@ -156,6 +198,30 @@ export async function appendLog(runId, message, level = 'INFO') {
     $push: { log: { $each: [entry], $slice: -MAX_LOG_ENTRIES } },
     $set: { workerHeartbeatAt: entry.at },
   });
+  await appendEvent(runId, 'log', entry);
+}
+
+/**
+ * Lit le journal À PARTIR d'un curseur — c'est la primitive de REPRISE.
+ *
+ * `since` est le dernier `seq` réellement reçu par le client. On rend
+ * strictement les évènements postérieurs : aucun doublon, aucune perte.
+ * `truncated` signale qu'un client trop en retard a dépassé la borne du
+ * journal ; il doit alors recharger l'état complet plutôt que rejouer.
+ */
+export async function readEventsSince(runId, since = 0) {
+  const doc = await PanelDeploymentRun.findOne({ runId })
+    .select('events eventSeq status')
+    .lean();
+  if (!doc) return null;
+  const events = (doc.events ?? []).filter((e) => e.seq > since);
+  const oldest = (doc.events ?? [])[0]?.seq ?? 0;
+  return {
+    events,
+    lastSeq: doc.eventSeq ?? 0,
+    status: doc.status,
+    truncated: since > 0 && oldest > since + 1,
+  };
 }
 
 /**
@@ -179,6 +245,19 @@ export async function finalizeRun(runId, {
       ? { ...step, status: step.status === 'running' ? 'error' : 'skipped', finishedAt: at }
       : step
   ));
+
+  // La conclusion REQUALIFIE des étapes (pending → skipped, running → error).
+  // Ces transitions doivent figurer au JOURNAL, sinon un client qui le rejoue
+  // n'atteint jamais l'état final affiché : le journal mentirait par omission.
+  for (const step of steps) {
+    const before = (doc.steps ?? []).find((s) => s.id === step.id);
+    if (before && before.status !== step.status) {
+      await appendEvent(runId, 'step', {
+        id: step.id, label: step.label, status: step.status, message: step.message, errorCode: step.errorCode,
+      });
+    }
+  }
+  await appendEvent(runId, 'status', { status, summary });
 
   await PanelDeploymentRun.updateOne({ runId }, {
     $set: {
@@ -335,7 +414,7 @@ export async function finalizeOrphanRuns() {
 }
 
 export default {
-  createRun, attachWorker, heartbeat, recordStep, appendLog, finalizeRun,
+  createRun, attachWorker, heartbeat, recordStep, appendLog, appendEvent, readEventsSince, finalizeRun,
   getRunOrThrow, describeRun, summariseRun, listRuns, activeRunFor, finalizeOrphanRuns,
   HEARTBEAT_TIMEOUT_MS,
 };

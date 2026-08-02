@@ -170,17 +170,19 @@ export function planSites(target, opts = {}) {
   const host = target.host;
   const roots = { ...(opts.roots ?? {}) };
   const sites = [];
+  // La composition vient du profil — injectable pour vérifier des topologies
+  // arbitraires sans toucher au profil du dépôt.
+  const APP_LIST = Array.isArray(opts.profile) ? opts.profile : (opts.profile?.APPS ?? APPS);
 
-  const webApps = APPS.filter((app) => nginxRoleOf(app) === 'web');
-  const subApps = APPS.filter((app) => nginxRoleOf(app) === 'web-subdomain');
+  const webApps = APP_LIST.filter((app) => nginxRoleOf(app) === 'web');
+  const subApps = APP_LIST.filter((app) => nginxRoleOf(app) === 'web-subdomain');
 
-  // Compatibilité ascendante : `webRoot` désigne la première application
-  // `web`, `subRoot` (ex-`managerRoot`) la première `web-subdomain`.
-  const legacySubRoot = opts.subRoot ?? opts.managerRoot;
+  // `webRoot` / `subRoot` : raccourcis positionnels (première application `web`,
+  // première `web-subdomain`) pour les appels qui ne construisent pas `roots`.
   if (opts.webRoot && webApps[0] && roots[webApps[0].id] === undefined) roots[webApps[0].id] = opts.webRoot;
-  if (legacySubRoot && subApps[0] && roots[subApps[0].id] === undefined) roots[subApps[0].id] = legacySubRoot;
+  if (opts.subRoot && subApps[0] && roots[subApps[0].id] === undefined) roots[subApps[0].id] = opts.subRoot;
 
-  for (const app of APPS) {
+  for (const app of APP_LIST) {
     const role = nginxRoleOf(app);
     if (role === 'server') continue; // le backend ne produit pas de bloc serveur
 
@@ -226,7 +228,7 @@ export function planSites(target, opts = {}) {
 
   // Hôte API dédié : déclaré par une application de rôle `api`, sinon dérivé
   // du sous-domaine d'API du profil (comportement historique).
-  const apiApp = APPS.find((app) => nginxRoleOf(app) === 'api');
+  const apiApp = APP_LIST.find((app) => nginxRoleOf(app) === 'api');
   const apiHost = deriveApiHost(host, opts.apiHost ?? (apiApp?.subdomain ? `${apiApp.subdomain}.${host}` : undefined));
   sites.push({
     id: apiApp?.id ?? 'api',

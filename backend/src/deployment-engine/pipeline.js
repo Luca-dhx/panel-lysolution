@@ -17,7 +17,9 @@ import { ensureCertificate } from './certbot.js';
 import { restartBackend } from './pm2.js';
 import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact } from './health.js';
 import { deriveNetworkUrls, describeRuntimeConfig } from './runtimeConfig.js';
-import { deriveManagerHost } from './hostnames.js';
+import { planTopology } from './topology.js';
+import { DeploymentError } from './errors.js';
+import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
 
 /** Étapes ordonnées du pipeline (identité stable pour l'UI et l'historique). */
 export const PIPELINE_STEPS = [
@@ -59,13 +61,13 @@ export async function runPipeline({ transport, target, artifact, options, versio
   const healthLocalOpts = { retries: health.localRetries, delayMs: health.localDelayMs };
   const healthPublicOpts = { retries: health.publicRetries, delayMs: health.publicDelayMs };
 
-  const host = target.host;
-  const managerHost = deriveManagerHost(host);
-  const apiHost = deriveApiHost(host);
-  const siteRoot = `${remoteRoot}/${host}`;
-  const webRoot = `${siteRoot}/vitrine`;
-  const managerRoot = `${siteRoot}/manager`;
-  const backendDir = `${siteRoot}/backend`;
+  // TOPOLOGIE : tout ce qui suit (racines distantes, hôtes, certificats,
+  // healthchecks) est dérivé du PROFIL. Le pipeline ne nomme aucune application.
+  const topo = planTopology({ host: target.host, remoteRoot, profile: options?.profile });
+  const host = topo.host;
+  const apiHost = deriveApiHost(host, topo.apiHost);
+  const siteRoot = topo.siteRoot;
+  const backendDir = topo.backendDir;
 
   const steps = [];
   const pipelineStart = clock();
@@ -101,8 +103,8 @@ export async function runPipeline({ transport, target, artifact, options, versio
 
   try {
     // Répertoire PARTAGÉ PERSISTANT (survit aux redéploiements) : médias + PDF.
-    const sharedRoot = `${siteRoot}/shared`;
-    const sharedUploads = `${sharedRoot}/uploads`;
+    const sharedRoot = topo.sharedRoot;
+    const sharedUploads = topo.sharedUploads;
 
     // 1. Upload de l'artefact (dist vitrine, dist manager, backend) + médias runtime.
     //
@@ -114,19 +116,40 @@ export async function runPipeline({ transport, target, artifact, options, versio
     //     (uploadDir SFTP écrase fichier par fichier, sans jamais supprimer).
     // L'ancienne version reste disponible en `.prev` (filet de retour arrière).
     await step('upload', 'Upload de l’artefact', async () => {
-      const webNext = `${webRoot}.next`;
-      const managerNext = `${managerRoot}.next`;
-      await transport.exec(`rm -rf ${webNext} ${managerNext} && mkdir -p ${webNext} ${managerNext} ${backendDir} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`);
-      const v = await transport.uploadDir(artifact.vitrineDist, webNext);
-      const m = await transport.uploadDir(artifact.managerDist, managerNext);
+      // Une entrée par application PUBLIÉE du profil — jamais deux slots figés.
+      // Chaque application doit avoir un dist construit : sinon le profil et
+      // l'artefact sont incohérents, et on le dit ici plutôt que d'uploader du vide.
+      const publications = topo.publishable.map((app) => {
+        const localDir = artifact.dists?.[app.id];
+        if (!localDir) {
+          throw new DeploymentError('ARTIFACT_APP_MISSING', `Aucun artefact construit pour l’application « ${app.id} » déclarée au profil.`, {
+            step: 'upload', details: { appId: app.id, role: app.role, built: Object.keys(artifact.dists || {}) },
+          });
+        }
+        return { app, localDir, target: app.remoteRoot, next: `${app.remoteRoot}.next`, prev: `${app.remoteRoot}.prev` };
+      });
+
+      const nextDirs = publications.map((p) => p.next).join(' ');
+      await transport.exec(`rm -rf ${nextDirs} && mkdir -p ${nextDirs} ${backendDir} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`);
+
+      const filesByApp = {};
+      for (const p of publications) {
+        const r = await transport.uploadDir(p.localDir, p.next);
+        filesByApp[p.app.id] = r.files;
+      }
       const b = await transport.uploadDir(artifact.backendDir, backendDir);
-      await transport.exec(
-        `rm -rf ${webRoot}.prev ${managerRoot}.prev` +
-        ` && if [ -d ${webRoot} ]; then mv ${webRoot} ${webRoot}.prev; fi` +
-        ` && mv ${webNext} ${webRoot}` +
-        ` && if [ -d ${managerRoot} ]; then mv ${managerRoot} ${managerRoot}.prev; fi` +
-        ` && mv ${managerNext} ${managerRoot}`
-      );
+
+      // Bascule ATOMIQUE application par application : purge des anciens assets
+      // (plus d'index.html périmé servi en cache) et `.prev` de secours.
+      const swap = [
+        `rm -rf ${publications.map((p) => p.prev).join(' ')}`,
+        ...publications.flatMap((p) => [
+          `if [ -d ${p.target} ]; then mv ${p.target} ${p.prev}; fi`,
+          `mv ${p.next} ${p.target}`,
+        ]),
+      ].join(' && ');
+      await transport.exec(swap);
+
       // Synchronise les médias vers le PARTAGÉ persistant (noms uniques → aucun
       // écrasement de contenu uploadé sur le site déployé).
       let uploadsFiles = 0;
@@ -134,7 +157,7 @@ export async function runPipeline({ transport, target, artifact, options, versio
         const u = await transport.uploadDir(artifact.uploadsDir, sharedUploads).catch(() => ({ files: 0 }));
         uploadsFiles = u.files || 0;
       }
-      return { vitrineFiles: v.files, managerFiles: m.files, backendFiles: b.files, uploadsFiles };
+      return { filesByApp, backendFiles: b.files, uploadsFiles };
     });
 
     // 2. Liaison des dossiers runtime du backend vers le PARTAGÉ + .env (sans secret VPS).
@@ -167,8 +190,12 @@ export async function runPipeline({ transport, target, artifact, options, versio
           if (m) parsed[m[1]] = m[2];
         }
         envKeys = Object.keys(parsed);
+        // LA LISTE VIENT DU PROFIL — comme dans `deployEnv.js`. Elle était codée
+        // en dur sur les besoins d'un projet vitrine (INTEGRATED_API_ENCRYPTION_KEY),
+        // que le Panel n'a pas et n'aura jamais : il exige BRIDGE_ENCRYPTION_KEY.
+        // `__DB_FOR_ENV__` est le marqueur du profil pour « la base de cet ENV ».
         const dbKey = String(env).toUpperCase() === 'PROD' ? 'DB_PROD' : 'DB_TEST';
-        const required = ['ENV', 'MONGODB_URI', dbKey, 'JWT_SECRET', 'INTEGRATED_API_ENCRYPTION_KEY'];
+        const required = REQUIRED_REMOTE_ENV.map((k) => (k === '__DB_FOR_ENV__' ? dbKey : k));
         const emptyOrMissing = required.filter((k) => !parsed[k] || !String(parsed[k]).trim());
         if (emptyOrMissing.length) {
           const { DeploymentError } = await import('./errors.js');
@@ -202,21 +229,24 @@ export async function runPipeline({ transport, target, artifact, options, versio
     // 3. Configuration Nginx PHASE HTTP — sert le challenge ACME (HTTP-01) et le
     //    site en HTTP. Écrase toute config précédente (même invalide). Indispensable
     //    AVANT certbot : la config HTTPS référence des certificats pas encore émis.
+    // Racines et hôtes servis : une entrée par application du profil.
+    const nginxOpts = { roots: topo.roots, hosts: topo.hosts, backendPort, apiHost, profile: options?.profile };
     let nginxResult;
     await step('nginx', 'Configuration du routage web', async () => {
-      nginxResult = await applyNginxHttpOnly(transport, target, { webRoot, managerRoot, backendPort, managerHost, apiHost });
-      return { ...nginxResult, siteServerName: host, managerServerName: managerHost, apiServerName: apiHost };
+      nginxResult = await applyNginxHttpOnly(transport, target, nginxOpts);
+      return { ...nginxResult, siteServerName: host, servedHosts: topo.servedHosts, apiServerName: apiHost };
     });
 
-    // 4. Certificat TLS : vitrine (wildcard ou dédié) + Manager + API (dédiés) via HTTP-01.
+    // 4. Certificat TLS : hôte principal (wildcard ou dédié) + CHAQUE hôte dérivé
+    //    du profil (jamais couvert par un wildcard à un niveau) via HTTP-01.
     //    Nginx sert déjà le challenge sur le port 80 (phase HTTP ci-dessus).
-    await step('certbot', 'Certificat HTTPS', async () => ensureCertificate(transport, target, { email, managerHost, apiHost }));
+    await step('certbot', 'Certificat HTTPS', async () =>
+      ensureCertificate(transport, target, { email, dedicatedHosts: topo.dedicatedCertHosts })
+    );
 
     // 5. Configuration Nginx PHASE HTTPS complète — les certificats existent
     //    désormais : `nginx -t` passe, on bascule le site en HTTPS puis on recharge.
-    await step('reload', 'Activation HTTPS', async () =>
-      applyNginxConfig(transport, target, { webRoot, managerRoot, backendPort, managerHost, apiHost })
-    );
+    await step('reload', 'Activation HTTPS', async () => applyNginxConfig(transport, target, nginxOpts));
 
     // 6. (Re)démarrage backend via PM2.
     let pm2Info;
@@ -252,17 +282,21 @@ export async function runPipeline({ transport, target, artifact, options, versio
       const dbName = String(env).toUpperCase() === 'PROD' ? remoteEnv?.DB_PROD : remoteEnv?.DB_TEST;
       // backendUrl = URL API CANONIQUE (https://api.<host>) — le domaine API dédié
       // vient d'être configuré (Nginx + certificat) juste au-dessus.
-      const urls = deriveNetworkUrls({ siteHost: host, managerHost, apiHost });
+      const urls = deriveNetworkUrls({ siteHost: host, apiHost, topology: topo });
       const res = await options.runtimeConfigSync({ mongoUri: remoteEnv?.MONGODB_URI, dbName, urls, requirePublic: true });
       return describeRuntimeConfig(res);
     });
 
-    // 8. Validation finale : vitrine ET Manager répondent en HTTPS + bon ENV.
+    // 8. Validation finale : CHAQUE application publiée répond en HTTPS + bon ENV.
     await step('validate', 'Validation', async () => {
       const pub = await checkPublicHealth(transport, host, healthPublicOpts);
-      const managerPub = await checkPublicHealth(transport, managerHost, healthPublicOpts);
       health.public = pub;
-      health.managerPublic = managerPub;
+      // Santé publique de chaque hôte dérivé du profil (hors hôte principal,
+      // déjà couvert par `pub`).
+      health.appPublic = {};
+      for (const app of topo.publishable.filter((a) => !a.isPrimaryHost)) {
+        health.appPublic[app.id] = await checkPublicHealth(transport, app.host, healthPublicOpts);
+      }
       if (!pub?.ok) {
         const { DeploymentError } = await import('./errors.js');
         throw new DeploymentError('HEALTH_PUBLIC_FAILED', 'Le site ne répond pas en HTTPS après déploiement.', {
@@ -276,7 +310,9 @@ export async function runPipeline({ transport, target, artifact, options, versio
       // Test FONCTIONNEL des médias : une ressource publique ne doit contenir
       // AUCUNE URL d'upload locale/non sûre — sinon les images sont cassées en
       // HTTPS. Un tel état ne doit PAS être déclaré « Healthy ».
-      const media = await checkPublicMedia(transport, host, { managerHost });
+      // Les médias sont vérifiés depuis CHAQUE origine servie : un front charge
+      // ses médias relativement à sa propre origine.
+      const media = await checkPublicMedia(transport, host, { origins: topo.publishable.map((a) => ({ label: a.id, host: a.host })) });
       health.media = media;
       if (media.reachable && !media.ok) {
         const { DeploymentError } = await import('./errors.js');
@@ -285,7 +321,10 @@ export async function runPipeline({ transport, target, artifact, options, versio
             step: 'validate', details: { sample: media.localHits },
           });
         }
-        const broken = (media.checked || []).filter((c) => !c.ok).map((c) => `${c.path} (site=${c.site?.code}/${c.site?.mime || '-'}${c.manager ? `, manager=${c.manager.code}/${c.manager.mime || '-'}` : ''})`);
+        const broken = (media.checked || []).filter((c) => !c.ok).map((c) => {
+          const per = Object.entries(c.origins || {}).map(([label, r]) => `${label}=${r.code}/${r.mime || '-'}`).join(', ');
+          return `${c.path} (${per})`;
+        });
         throw new DeploymentError('MEDIA_UNREACHABLE', `Des médias essentiels ne se téléchargent pas (HTTP/MIME) : ${broken.slice(0, 4).join(' · ')}.`, {
           step: 'validate', details: { broken: broken.slice(0, 8), brokenCount: media.brokenCount },
         });
@@ -311,39 +350,46 @@ export async function runPipeline({ transport, target, artifact, options, versio
       //
       // FAIL-CLOSED en PROD : une empreinte manquante neutraliserait le contrôle
       // (skipped) — on refuse donc de déclarer un déploiement PROD réussi sans
-      // avoir PU prouver que la vitrine servie est la bonne.
-      if (String(env).toUpperCase() === 'PROD' && (!artifact.web?.vitrine?.indexHash || !artifact.web?.manager?.indexHash)) {
+      // avoir PU prouver que CHAQUE front servi est bien celui construit. La
+      // liste des fronts à prouver vient du profil, pas de deux noms figés.
+      const fingerprinted = topo.publishable.map((app) => ({ app, fp: artifact.web?.[app.id] }));
+      const unproven = fingerprinted.filter(({ fp }) => !fp?.indexHash).map(({ app }) => app.id);
+      if (String(env).toUpperCase() === 'PROD' && unproven.length) {
         const { DeploymentError } = await import('./errors.js');
-        throw new DeploymentError('WEBSITE_FINGERPRINT_MISSING', 'Empreinte web absente de l’artefact (index.html non fingerprinté) : impossible de PROUVER que le site servi correspond au build. Déploiement PROD refusé.', {
+        throw new DeploymentError('WEBSITE_FINGERPRINT_MISSING', `Empreinte web absente de l’artefact pour : ${unproven.join(', ')} (index.html non fingerprinté) : impossible de PROUVER que le site servi correspond au build. Déploiement PROD refusé.`, {
           step: 'validate',
-          details: { vitrine: Boolean(artifact.web?.vitrine?.indexHash), manager: Boolean(artifact.web?.manager?.indexHash) },
+          details: { unproven, fingerprinted: fingerprinted.filter(({ fp }) => fp?.indexHash).map(({ app }) => app.id) },
         });
       }
       const expectedCommit = artifact.manifest?.commitHash || null;
       const withCommit = (fp) => (fp && expectedCommit ? { ...fp, commitHash: expectedCommit } : fp);
-      const webVitrine = await checkWebsiteArtifact(transport, host, withCommit(artifact.web?.vitrine), { label: 'vitrine' });
-      const webManager = await checkWebsiteArtifact(transport, managerHost, withCommit(artifact.web?.manager), { label: 'manager' });
-      health.webArtifact = { vitrine: webVitrine, manager: webManager };
-      for (const w of [webVitrine, webManager]) {
+      health.webArtifact = {};
+      for (const { app, fp } of fingerprinted) {
+        const w = await checkWebsiteArtifact(transport, app.host, withCommit(fp), { label: app.id });
+        health.webArtifact[app.id] = w;
         if (w.reachable && !w.ok && !w.skipped) {
           const { DeploymentError } = await import('./errors.js');
-          throw new DeploymentError('WEBSITE_ARTIFACT_MISMATCH', `Le ${w.label} servi ne correspond pas à l'artefact construit (index ${w.indexMatch ? 'ok' : 'divergent'}, JS ${w.jsMatch ? 'ok' : 'divergent'}, version ${w.versionMatch ? 'ok' : 'divergente'}) — probable cache/ancienne version.`, {
+          throw new DeploymentError('WEBSITE_ARTIFACT_MISMATCH', `Le front « ${app.id} » servi ne correspond pas à l'artefact construit (index ${w.indexMatch ? 'ok' : 'divergent'}, JS ${w.jsMatch ? 'ok' : 'divergent'}, version ${w.versionMatch ? 'ok' : 'divergente'}) — probable cache/ancienne version.`, {
             step: 'validate',
-            details: { host: w.label === 'manager' ? managerHost : host, expectedIndex: w.expectedIndexHash?.slice(0, 12), remoteIndex: w.remoteIndexHash?.slice(0, 12), expectedJs: w.expectedJs, expectedCommit: w.expectedCommit?.slice(0, 12), remoteCommit: w.remoteCommit?.slice(0, 12) },
+            details: { appId: app.id, host: app.host, expectedIndex: w.expectedIndexHash?.slice(0, 12), remoteIndex: w.remoteIndexHash?.slice(0, 12), expectedJs: w.expectedJs, expectedCommit: w.expectedCommit?.slice(0, 12), remoteCommit: w.remoteCommit?.slice(0, 12) },
           });
         }
       }
 
-      const managerOk = health?.managerPublic?.ok === true;
       return {
         url: target.canonicalUrl,
-        managerUrl: `https://${managerHost}`,
         apiUrl: `https://${apiHost}`,
         env: pub.env,
         siteHttp: pub.httpCode,
-        managerHttp: health?.managerPublic?.httpCode ?? null,
-        managerReachable: managerOk,
-        mediaOk: media.ok,
+        // Une entrée par application publiée — le rapport suit le profil.
+        apps: Object.fromEntries(topo.publishable.map((app) => [app.id, {
+          url: `https://${app.host}`,
+          http: app.isPrimaryHost ? pub.httpCode : (health.appPublic?.[app.id]?.httpCode ?? null),
+          reachable: app.isPrimaryHost ? pub.ok === true : health.appPublic?.[app.id]?.ok === true,
+        }])),
+        // « ok » ne vaut que si une sonde a RÉELLEMENT été exécutée.
+        mediaOk: media.probed && media.reachable ? media.ok : null,
+        mediaProbe: !media.probed ? 'aucune sonde déclarée au profil' : (media.reachable ? 'vérifiée' : 'sonde injoignable'),
         apiReachable: api.reachable,
         apiHttp: api.code,
       };

@@ -14,6 +14,7 @@ import type {
 import type {
   DeploymentOverview, DeploymentRun, DeploymentTarget, PanelSelfInfo,
   ReleaseList, RunRow, StartedOperation, TargetDetail,
+  DeployStreamEvent,
 } from '@/types.deployment';
 
 const TOKEN_KEY = 'panel_token';
@@ -411,6 +412,65 @@ export const deployment = {
 
   // — Suivi ----------------------------------------------------------------
   run: (runId: string) => request<DeploymentRun>(`/api/deployment/runs/${runId}`),
+
+  /**
+   * FLUX REPRENABLE des évènements d'un run (NDJSON, une ligne = un évènement).
+   *
+   * Rend un itérateur asynchrone : l'appelant consomme les évènements au fil de
+   * l'eau, sans jamais recharger le run entier. `since` est le dernier `seq`
+   * réellement traité — c'est lui qui rend la reprise exacte après la coupure
+   * provoquée par le redémarrage du backend en auto-déploiement.
+   *
+   * L'itérateur se TERMINE normalement à la fin du run (évènement `end`) ; toute
+   * autre fin (coupure réseau, backend qui redémarre) remonte en exception, à
+   * charge de l'appelant de rappeler la méthode avec le curseur à jour.
+   */
+  async *streamRun(
+    runId: string,
+    since: number,
+    signal: AbortSignal,
+  ): AsyncGenerator<DeployStreamEvent, void, void> {
+    const headers: Record<string, string> = {};
+    const token = tokenStore.get();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const res = await fetch(
+      `/api/deployment/runs/${runId}/stream?since=${since}`,
+      { headers, signal },
+    );
+    if (!res.ok || !res.body) {
+      throw new ApiError(res.status, 'Flux de suivi indisponible.');
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        // NDJSON : on ne rend que les lignes COMPLÈTES ; un fragment reste en
+        // tampon jusqu'à l'arrivée de son saut de ligne.
+        let nl = buffer.indexOf('\n');
+        while (nl !== -1) {
+          const line = buffer.slice(0, nl).trim();
+          buffer = buffer.slice(nl + 1);
+          if (line) {
+            try {
+              yield JSON.parse(line) as DeployStreamEvent;
+            } catch {
+              // Ligne tronquée par une coupure : on l'ignore plutôt que de
+              // corrompre l'état. Le curseur n'a pas avancé, elle reviendra.
+            }
+          }
+          nl = buffer.indexOf('\n');
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+  },
 
   runs: (targetId?: string) =>
     request<{ items: RunRow[] }>(

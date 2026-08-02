@@ -40,6 +40,29 @@ const logSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/**
+ * JOURNAL ORDONNÉ des évènements du run — la pièce qui rend le suivi temps
+ * réel REPRENABLE.
+ *
+ * `steps` porte l'ÉTAT COURANT (la checklist telle qu'elle doit s'afficher) ;
+ * ce journal porte la SUITE DES CHANGEMENTS, chacun numéroté. Ce n'est pas un
+ * doublon de stockage : on ne peut pas reprendre un flux à partir d'un état,
+ * seulement à partir d'un journal. Un client déconnecté — c'est le cas NORMAL
+ * quand le Panel se déploie lui-même et redémarre son backend — se reconnecte
+ * avec le dernier `seq` reçu et reprend exactement où il en était : aucune
+ * perte, aucun doublon, aucun réordonnancement.
+ */
+const eventSchema = new mongoose.Schema(
+  {
+    seq: { type: Number, required: true },
+    at: { type: String, required: true },
+    // step · log · status
+    kind: { type: String, required: true },
+    payload: { type: mongoose.Schema.Types.Mixed, default: null },
+  },
+  { _id: false },
+);
+
 const runSchema = new mongoose.Schema(
   {
     runId: { type: String, required: true, unique: true },
@@ -61,6 +84,12 @@ const runSchema = new mongoose.Schema(
 
     steps: { type: [stepSchema], default: [] },
     log: { type: [logSchema], default: [] },
+
+    // Journal reprenable + compteur monotone. `eventSeq` est incrémenté par
+    // l'opération d'écriture elle-même : deux écritures concurrentes ne
+    // peuvent donc pas obtenir le même numéro.
+    events: { type: [eventSchema], default: [] },
+    eventSeq: { type: Number, default: 0 },
 
     startedAt: { type: String, required: true },
     finishedAt: { type: String, default: null },

@@ -23,6 +23,7 @@
  * Utilise child_process localement (pas le Transport, qui vise le VPS).
  */
 import { APPS, BUILD_STAGING_PREFIX, PROJECT_ID } from './config/project.profile.js';
+import { buildableApps as topologyBuildableApps } from './topology.js';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -35,6 +36,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** Racine du monorepo (…/backend/src/deployment -> remonte de 3). */
 export const PROJECT_ROOT = path.resolve(__dirname, '../../..');
 
+/** Liste d'applications d'un profil (objet complet, tableau, ou défaut du dépôt). */
+function profileApps(profile) {
+  if (!profile) return APPS;
+  return Array.isArray(profile) ? profile : (profile.APPS ?? APPS);
+}
+/** Applications réellement construites (rôle, jamais nom). */
+const buildableApps = (appList) => topologyBuildableApps(appList);
+
 /**
  * Exécute une commande locale et capture la sortie.
  * Résout TOUJOURS (même sur code non nul) avec `{ code, signal, stdout, stderr }`.
@@ -43,7 +52,18 @@ export const PROJECT_ROOT = path.resolve(__dirname, '../../..');
  */
 export function localExec(command, args, { cwd = PROJECT_ROOT, timeoutMs = 600_000, env } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, env: env || process.env, shell: process.platform === 'win32' });
+    // `shell` est NÉCESSAIRE sur Windows : `npm`/`npx` y sont des scripts `.cmd`,
+    // que `spawn` ne sait pas lancer directement. Mais un `cmd.exe` lancé sans
+    // consigne ouvre une FENÊTRE DE CONSOLE à chaque sous-commande — le build en
+    // lance plusieurs par application. `windowsHide` est l'option prévue par Node
+    // pour cela : elle pose CREATE_NO_WINDOW au niveau du processus enfant.
+    // Sans effet hors Windows, on la passe donc inconditionnellement.
+    const child = spawn(command, args, {
+      cwd,
+      env: env || process.env,
+      shell: process.platform === 'win32',
+      windowsHide: true,
+    });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -206,14 +226,27 @@ async function pathExists(p, fsMod = fs) {
  * une erreur DÉMONTRÉE (pas une supposition) : package.json manquant, ou
  * lockfile absent (npm ci est alors impossible).
  */
-async function resolveLayout(root, fsMod = fs) {
+async function resolveLayout(root, fsMod = fs, appList = APPS) {
   // La composition du projet vient du PROFIL, jamais d'une liste codée en dur :
-  // c'est ce qui permet au même moteur de construire une vitrine + un Manager
-  // ici, et un frontend unique ailleurs.
+  // c'est ce qui permet au même moteur de construire deux fronts ici, un seul
+  // ailleurs, ou cinq applications sur un projet atypique.
   const apps = {};
-  for (const app of APPS) apps[app.id] = path.join(root, app.dir);
+  for (const app of appList) apps[app.id] = path.join(root, app.dir);
 
-  for (const app of APPS) {
+  // COHÉRENCE DU PROFIL, contrôlée AVANT tout build : la topologie expose des
+  // chemins dérivés des rôles (`web` → hôte principal, `server` → backend). Un
+  // profil qui n'en déclare pas produirait des chemins vides très en aval ; on
+  // refuse ici, explicitement, plutôt que d'échouer plus tard sans motif.
+  for (const role of ['web', 'server']) {
+    if (!appList.some((app) => app.role === role)) {
+      throw new DeploymentError('ARTIFACT_PATH_INVALID', `Profil de projet incomplet : aucune application de rôle « ${role} » déclarée.`, {
+        step: 'build',
+        details: { phase: 'profile', role, declared: appList.map((app) => `${app.id}:${app.role}`) },
+      });
+    }
+  }
+
+  for (const app of appList) {
     const dir = apps[app.id];
     if (!(await pathExists(path.join(dir, 'package.json'), fsMod))) {
       throw new DeploymentError('ARTIFACT_PATH_INVALID', `Projet introuvable ou invalide : ${app.dir}/package.json manquant.`, {
@@ -223,8 +256,9 @@ async function resolveLayout(root, fsMod = fs) {
     }
   }
   // npm ci EXIGE un lockfile cohérent : son absence est bloquante et explicite.
-  // Seules les applications réellement construites sont concernées.
-  for (const app of APPS.filter((a) => a.role !== 'server')) {
+  // Seules les applications réellement CONSTRUITES sont concernées — le rôle le
+  // dit, pas le nom.
+  for (const app of buildableApps(appList)) {
     if (!(await pathExists(path.join(apps[app.id], 'package-lock.json'), fsMod))) {
       throw new DeploymentError('ARTIFACT_PATH_INVALID', `Lockfile manquant : ${app.dir}/package-lock.json (npm ci impossible).`, {
         step: 'build',
@@ -239,19 +273,30 @@ async function resolveLayout(root, fsMod = fs) {
 /*  Phases de build instrumentées                                             */
 /* -------------------------------------------------------------------------- */
 
-/** Libellé lisible + code d'erreur spécialisé par phase. */
-const PHASE_META = Object.fromEntries(
-  APPS.filter((app) => app.role !== 'server').flatMap((app) => [
-    [app.installPhase, {
-      label: app.installLabel ?? `installation des dépendances (${app.id})`,
-      code: app.installFailedCode ?? `ARTIFACT_INSTALL_${app.id.toUpperCase()}_FAILED`,
-    }],
-    [app.buildPhase, {
-      label: app.buildLabel ?? `construction de ${app.id}`,
-      code: app.buildFailedCode ?? `ARTIFACT_BUILD_${app.id.toUpperCase()}_FAILED`,
-    }],
-  ]),
-);
+/**
+ * Libellé lisible + code d'erreur spécialisé par phase, dérivés du profil.
+ * Les identifiants de phase eux-mêmes viennent du profil (`installPhase` /
+ * `buildPhase`) ; à défaut ils sont dérivés de l'identifiant d'application, de
+ * sorte qu'un profil minimal reste parfaitement utilisable.
+ */
+function phaseMetaOf(appList) {
+  return Object.fromEntries(
+    buildableApps(appList).flatMap((app) => [
+      [installPhaseOf(app), {
+        label: app.installLabel ?? `installation des dépendances (${app.id})`,
+        code: app.installFailedCode ?? `ARTIFACT_INSTALL_${app.id.toUpperCase()}_FAILED`,
+      }],
+      [buildPhaseOf(app), {
+        label: app.buildLabel ?? `construction de ${app.id}`,
+        code: app.buildFailedCode ?? `ARTIFACT_BUILD_${app.id.toUpperCase()}_FAILED`,
+      }],
+    ]),
+  );
+}
+
+/** Identifiants de phase — déclarés au profil, sinon dérivés de l'id. */
+const installPhaseOf = (app) => app.installPhase ?? `install_${app.id}`;
+const buildPhaseOf = (app) => app.buildPhase ?? `build_${app.id}`;
 
 /** Motif lisible depuis une erreur de spawn (ENOENT, timeout…). */
 function spawnReason(err) {
@@ -262,7 +307,11 @@ function spawnReason(err) {
 }
 
 /**
- * Construit vitrine + manager pour la production, DANS un staging isolé.
+ * Construit TOUTES les applications déclarées au profil, DANS un staging isolé.
+ *
+ * Le moteur ne connaît aucun nom d'application : il construit ce que le profil
+ * déclare comme constructible (rôles `web`, `web-sub`, `static`), dans l'ordre
+ * du profil.
  *
  * @param {object} [opts]
  * @param {(msg:string)=>void} [opts.onLog]   Log libre (compat historique).
@@ -273,8 +322,13 @@ function spawnReason(err) {
  * @param {Function} [opts.exec]      Exécuteur (injectable pour les tests).
  * @param {string} [opts.stagingBase] Base des répertoires temporaires.
  * @param {object} [opts.fsMod]       Module fs/promises (injectable pour les tests).
- * @returns {Promise<{vitrineDist:string, managerDist:string, backendDir:string,
- *   stagingRoot:string, cleanup:()=>Promise<void>}>}
+ * @param {object|Array} [opts.profile] Profil de projet (défaut : celui du dépôt).
+ * @returns {Promise<{dists:Record<string,string>, appDirs:Record<string,string>,
+ *   backendDir:string, stagingRoot:string, web:Record<string,object>,
+ *   cleanup:()=>Promise<void>}>}
+ *   `dists` (une entrée par application construite) et `appDirs` (une entrée
+ *   par application stagée) sont les SEULES sources de vérité des chemins :
+ *   aucun alias nommé n'est exposé.
  */
 export async function buildArtifact({
   onLog = () => {},
@@ -283,9 +337,10 @@ export async function buildArtifact({
   exec = localExec,
   stagingBase = os.tmpdir(),
   fsMod = fs,
+  profile,
   // Config PRODUCTION des frontends (baked au build). VITE_API_URL vide = appels
   // RELATIFs (même origine → Nginx proxifie /api vers le backend). C'est le bon
-  // choix sur le VPS : robuste, indépendant du domaine, valable vitrine ET Manager.
+  // choix sur le VPS : robuste, indépendant du domaine, valable pour tout front.
   frontendEnv = { VITE_API_URL: '' },
   // LOT 4 : refuse une source Git « dirty » (défaut en PROD) — on ne déploie
   // jamais des modifications non commitées, pour garantir que le code déployé
@@ -293,7 +348,9 @@ export async function buildArtifact({
   requireCleanSource = false,
   builtAt = new Date().toISOString(),
 } = {}) {
-  const apps = await resolveLayout(root, fsMod);
+  const appList = profileApps(profile);
+  const PHASE_META = phaseMetaOf(appList);
+  const apps = await resolveLayout(root, fsMod, appList);
 
   // Source Git EXACTE (avant tout build) — sert au garde-fou + au manifeste.
   const git = await getGitSourceInfo(root, exec);
@@ -365,15 +422,19 @@ export async function buildArtifact({
     stagingRoot = await fsMod.mkdtemp(path.join(stagingBase, BUILD_STAGING_PREFIX));
     // Chemins de staging dérivés du profil : `staged[appId]`.
     const staged = {};
-    for (const app of APPS) staged[app.id] = path.join(stagingRoot, app.dir);
-    const webApps = APPS.filter((app) => app.role !== 'server');
-    const serverApp = APPS.find((app) => app.role === 'server');
+    for (const app of appList) staged[app.id] = path.join(stagingRoot, app.dir);
+    // Ce qui est CONSTRUIT vient du rôle, pas du nom.
+    const webApps = buildableApps(appList);
+    const serverApp = appList.find((app) => app.role === 'server');
     const stBackend = staged[serverApp.id];
 
     onLog('[build] préparation du staging isolé…');
     try {
-      for (const app of APPS) {
-        await copyApp(apps[app.id], staged[app.id], { isBackend: app.role === 'server', fsMod });
+      for (const app of appList) {
+        // Les rôles serveur (`server`, `worker`) ont des secrets et des dossiers
+        // de runtime à exclure ; les fronts, des overrides de dev à neutraliser.
+        const isServerSide = app.role === 'server' || app.role === 'worker';
+        await copyApp(apps[app.id], staged[app.id], { isBackend: isServerSide, fsMod });
       }
     } catch (err) {
       throw new DeploymentError('ARTIFACT_STAGE_FAILED', `Préparation du staging impossible : ${err.message}.`, {
@@ -392,10 +453,10 @@ export async function buildArtifact({
       await fsMod.writeFile(path.join(staged[app.id], '.env.production.local'), frontEnvContent);
     }
 
-    // Ordre du profil : pour chaque application front, install puis build.
+    // Ordre du profil : pour chaque application constructible, install puis build.
     for (const app of webApps) {
-      await runPhase(app.installPhase, 'npm', ['ci'], staged[app.id]);
-      await runPhase(app.buildPhase, 'npm', ['run', 'build'], staged[app.id]);
+      await runPhase(installPhaseOf(app), 'npm', ['ci'], staged[app.id]);
+      await runPhase(buildPhaseOf(app), 'npm', ['run', 'build'], staged[app.id]);
     }
 
     // Dossiers `dist` par application, contrôlés après build.
@@ -411,9 +472,6 @@ export async function buildArtifact({
       }
       dists[app.id] = dir;
     }
-    const vitrineDist = dists.vitrine ?? null;
-    const managerDist = dists.manager ?? null;
-
     // Médias RUNTIME : le dossier uploads VIVANT (hors staging) est la source à
     // synchroniser vers le répertoire PARTAGÉ persistant du VPS. Non versionné,
     // non buildé : simple copie de fichiers.
@@ -429,19 +487,20 @@ export async function buildArtifact({
       branch: git.branch,
       isDirty: git.isDirty,
       builtAt,
-      // Empreintes par application (profil) + alias historiques conservés
-      // pour ne rien casser chez les consommateurs existants.
+      // Empreintes PAR APPLICATION, clés = identifiants du profil. Aucun alias
+      // nommé : un consommateur lit `appArtifactHashes[<id du profil>]`.
       appArtifactHashes: Object.fromEntries(
         await Promise.all(webApps.map(async (app) => [app.id, await hashDir(dists[app.id], fsMod)])),
       ),
-      managerArtifactHash: managerDist ? await hashDir(managerDist, fsMod) : null,
-      vitrineArtifactHash: vitrineDist ? await hashDir(vitrineDist, fsMod) : null,
       backendSourceHash: await hashDir(path.join(stBackend, 'src'), fsMod),
     };
     const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
     await fsMod.writeFile(path.join(stBackend, 'build-manifest.json'), manifestJson);
-    await fsMod.writeFile(path.join(vitrineDist, 'version.json'), manifestJson);
-    await fsMod.writeFile(path.join(managerDist, 'version.json'), manifestJson);
+    // `version.json` est déposé dans le dist de CHAQUE application construite :
+    // la boucle suit la composition réelle du projet, quelle qu'elle soit.
+    for (const app of webApps) {
+      await fsMod.writeFile(path.join(dists[app.id], 'version.json'), manifestJson);
+    }
 
     // Empreintes WEB : servent au contrôle post-déploiement (index + JS servis ==
     // artefact construit). Non embarquées dans le manifeste public.
@@ -451,7 +510,10 @@ export async function buildArtifact({
 
     onLog(`[build] artefact prêt (commit ${git.shortCommit || 'n/a'} / ${git.branch || 'n/a'}${git.isDirty ? ' · DIRTY' : ''}).`);
     // Succès : le staging survit jusqu'à l'upload ; l'appelant appelle cleanup().
-    return { dists, vitrineDist, managerDist, backendDir: stBackend, uploadsDir, stagingRoot, cleanup, frontendEnv, manifest, git, web };
+    // `appDirs` expose le staging de CHAQUE application (y compris `worker`),
+    // ce qui permet à l'upload de publier les rôles non-front sans les nommer.
+    const appDirs = Object.fromEntries(appList.map((app) => [app.id, staged[app.id]]));
+    return { dists, appDirs, backendDir: stBackend, uploadsDir, stagingRoot, cleanup, frontendEnv, manifest, git, web };
   } catch (err) {
     // Échec : on nettoie IMMÉDIATEMENT le staging (atomicité : rien n'est uploadé).
     await cleanup();

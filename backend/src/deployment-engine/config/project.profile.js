@@ -67,6 +67,21 @@ export const APPS = Object.freeze([
 export const API_SUBDOMAIN = 'api';
 
 /**
+ * SCHÉMA RÉSEAU de la destination : quelles clés de son `SystemConfiguration`
+ * le déploiement renseigne, et depuis quelle application.
+ *
+ * C'est une donnée de PROJET, pas de moteur : le schéma appartient à
+ * l'application déployée. Le Panel n'a pas d'espace de gestion distinct — il
+ * n'écrit donc aucune `managerUrl`, là où un projet vitrine en déclare une.
+ */
+// Les clés sont celles du schéma `SystemConfiguration.network` du Panel
+// (`backendUrl`, `frontendUrl`) — pas celles d'un autre projet.
+export const RUNTIME_NETWORK_URLS = Object.freeze({
+  frontendUrl: Object.freeze({ app: 'frontend' }),
+  backendUrl: Object.freeze({ api: true }),
+});
+
+/**
  * Bases wildcard gérées par l'infrastructure : un certificat `*.base` unique
  * couvre toutes les cibles d'un seul niveau sous cette base.
  * Surchargeable par la variable d'environnement `DEPLOY_WILDCARD_BASES`.
@@ -100,6 +115,13 @@ export const REQUIRED_REMOTE_ENV = Object.freeze([
   'BRIDGE_ENCRYPTION_KEY',
 ]);
 
+/**
+ * Sonde publique servant au contrôle FONCTIONNEL des médias après déploiement.
+ * Le Panel n'expose aucun catalogue public de médias : il n'a pas de sonde, et
+ * le rapport doit le dire plutôt que d'annoncer un contrôle réussi.
+ */
+export const PUBLIC_MEDIA_PROBE_PATH = null;
+
 /** Préfixe des processus PM2 : `<slug>-<host>`. */
 export function serviceName(host) {
   return `${PROJECT_SLUG}-${String(host).replace(/[^a-z0-9.-]/gi, '-')}`;
@@ -113,6 +135,8 @@ export default {
   PROJECT_ID,
   APPS,
   API_SUBDOMAIN,
+  RUNTIME_NETWORK_URLS,
+  PUBLIC_MEDIA_PROBE_PATH,
   DEFAULT_WILDCARD_BASES,
   BACKUP_ROOT,
   DEFAULT_REMOTE_ROOT,

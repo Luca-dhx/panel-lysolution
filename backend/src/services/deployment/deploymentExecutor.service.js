@@ -14,6 +14,7 @@ import { DeploymentEngine } from '../../deployment-engine/DeploymentEngine.js';
 import { openSession, closeSession } from '../../deployment-engine/passwordVault.js';
 import { buildRemoteEnv } from '../../deployment-engine/deployEnv.js';
 import { canonicalStep } from '../../deployment-engine/steps.js';
+import { syncRuntimeNetworkConfiguration } from '../../deployment-engine/runtimeConfig.js';
 import config from '../../config/env.js';
 
 /** Opérations que le Panel sait exécuter sur une destination. */
@@ -217,8 +218,11 @@ async function simulation({ engine, target, sessionId, step, log }) {
  */
 async function deployWithFullReport({ engine, target, sessionId, step, log, user }) {
   const parsedTarget = engine.parseUrl(target.url);
+  // `buildRemoteEnv` retourne une ENVELOPPE { remoteEnv, dbName, env, sourcePath } :
+  // seul `.remoteEnv` porte les variables. Étaler l'enveloppe n'envoyait aucune
+  // variable sur le VPS — uniquement `remoteEnv=[object Object]`.
   const remoteEnv = {
-    ...buildRemoteEnv(parsedTarget, { env: target.environment }),
+    ...buildRemoteEnv(parsedTarget, { env: target.environment }).remoteEnv,
     PORT: String(target.backendPort),
     ...(target.extraEnv ?? {}),
   };
@@ -240,6 +244,10 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
       sshHost: target.sshHost,
       sshUser: target.sshUser,
       operationType: 'DEPLOYMENT',
+      // Écrit les URLs publiques dans le SystemConfiguration de la DESTINATION
+      // (comme SB Auto). Sans cette capacité, l'étape `runtime.sync` se déclarait
+      // réussie sans rien faire — une étape verte sans action.
+      runtimeConfigSync: syncRuntimeNetworkConfiguration,
     },
     // Le moteur émet un évènement par transition d'étape. On le transcrit
     // dans le run persisté — c'est ce que l'interface relit.
@@ -329,7 +337,8 @@ async function deployment({ engine, target, sessionId, step, log, steps }) {
   // cible analysée, pas notre projection — il attend sa propre forme.
   const parsedTarget = engine.parseUrl(target.url);
   const remoteEnv = {
-    ...buildRemoteEnv(parsedTarget, { env: target.environment }),
+    // `.remoteEnv` : la valeur utile de l'enveloppe retournée par le moteur.
+    ...buildRemoteEnv(parsedTarget, { env: target.environment }).remoteEnv,
     // Le port d'écoute vient de la destination : deux destinations sur un
     // même serveur ne doivent pas se disputer le port.
     PORT: String(target.backendPort),

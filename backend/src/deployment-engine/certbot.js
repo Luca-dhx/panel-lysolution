@@ -1,14 +1,15 @@
 /**
  * Gestion des certificats TLS (Let's Encrypt via certbot).
  *
- * Vitrine :
+ * Hôte principal :
  *   - sous-domaine wildcard : le certificat *.base existe déjà, on le réutilise
  *     (aucune émission, le moteur ne touche jamais le DNS) ;
  *   - domaine client : certificat dédié via challenge HTTP-01 (webroot).
  *
- * Manager (`manager.<host>`) : TOUJOURS un certificat DÉDIÉ — un wildcard
- * *.base à un seul niveau ne couvre pas `manager.<host>` (deux niveaux). Il est
- * émis/réutilisé via HTTP-01 (le DNS wildcard résout bien plusieurs niveaux).
+ * Hôtes DÉRIVÉS (`<sous-domaine>.<host>`, quel que soit le rôle qui les
+ * déclare) : TOUJOURS un certificat DÉDIÉ — un wildcard *.base à un seul niveau
+ * ne couvre pas deux niveaux. Émis/réutilisé via HTTP-01 (le DNS wildcard, lui,
+ * résout bien plusieurs niveaux).
  */
 import { certPaths, legacyDedicatedCertPaths } from './nginx.js';
 
@@ -36,14 +37,20 @@ async function ensureHostCert(transport, host, { email, webroot }) {
 }
 
 /**
- * S'assure que la vitrine ET le Manager disposent d'un certificat valide.
- * @returns {Promise<{obtained:boolean, reused:boolean, certName:string, vitrine:object, manager:object|null}>}
+ * S'assure que l'hôte principal ET chaque hôte dérivé disposent d'un certificat.
+ *
+ * La liste des hôtes dérivés vient de la TOPOLOGIE (donc du profil) : le module
+ * ne connaît aucun nom d'application.
+ *
+ * @param {object} opts
+ * @param {string[]} [opts.dedicatedHosts] Hôtes exigeant un certificat dédié.
+ * @returns {Promise<{obtained:boolean, reused:boolean, certName:string, primary:object, dedicated:Record<string,object>}>}
  */
-export async function ensureCertificate(transport, target, { email, webroot = '/var/www/certbot', managerHost, apiHost } = {}) {
+export async function ensureCertificate(transport, target, { email, webroot = '/var/www/certbot', dedicatedHosts = [] } = {}) {
   const paths = certPaths(target);
-  let vitrine;
+  let primary;
 
-  // Vitrine : wildcard réutilisé (sous-domaine) ou cert dédié (domaine client).
+  // Hôte principal : wildcard réutilisé (sous-domaine) ou cert dédié (domaine client).
   if (target.type === 'subdomain') {
     const check = await transport.exec(`test -f ${paths.fullchain} && echo OK || echo NO`);
     if (!check.stdout.trim().endsWith('OK')) {
@@ -54,24 +61,20 @@ export async function ensureCertificate(transport, target, { email, webroot = '/
         { step: 'certbot', details: { expected: paths.fullchain } }
       );
     }
-    vitrine = { host: target.host, obtained: false, reused: true, wildcard: true, certName: paths.certName };
+    primary = { host: target.host, obtained: false, reused: true, wildcard: true, certName: paths.certName };
   } else {
-    vitrine = { ...(await ensureHostCert(transport, target.host, { email, webroot })), certName: paths.certName };
+    primary = { ...(await ensureHostCert(transport, target.host, { email, webroot })), certName: paths.certName };
   }
 
-  // Manager : certificat dédié (émis ou réutilisé).
-  let manager = null;
-  if (managerHost) {
-    manager = { ...(await ensureHostCert(transport, managerHost, { email, webroot })), certName: legacyDedicatedCertPaths(managerHost).certName };
+  // Chaque hôte dérivé (front sur sous-domaine, domaine API…) : certificat
+  // DÉDIÉ, jamais couvert par un wildcard à un seul niveau.
+  const dedicated = {};
+  for (const h of dedicatedHosts) {
+    if (!h || h === target.host) continue;
+    dedicated[h] = { ...(await ensureHostCert(transport, h, { email, webroot })), certName: legacyDedicatedCertPaths(h).certName };
   }
 
-  // API : certificat dédié (domaine `api.<host>`, jamais couvert par un wildcard 1 niveau).
-  let api = null;
-  if (apiHost) {
-    api = { ...(await ensureHostCert(transport, apiHost, { email, webroot })), certName: legacyDedicatedCertPaths(apiHost).certName };
-  }
-
-  return { obtained: vitrine.obtained, reused: vitrine.reused, certName: vitrine.certName, vitrine, manager, api };
+  return { obtained: primary.obtained, reused: primary.reused, certName: primary.certName, primary, dedicated };
 }
 
 export default { ensureCertificate };

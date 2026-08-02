@@ -95,7 +95,13 @@ export class RunRecorder {
       s.finishedAt = iso();
       if (s.startedAt) s.durationMs = new Date(s.finishedAt) - new Date(s.startedAt);
     }
-    if (patch.durationMs != null) s.durationMs = patch.durationMs;
+    // La durée d'une étape canonique est l'INTERVALLE RÉEL début→fin, calculé
+    // juste au-dessus. Plusieurs étapes brutes du pipeline peuvent se projeter
+    // sur une même étape canonique (`certbot` + `reload` → `https.configure`) :
+    // écraser avec la durée de la DERNIÈRE sous-étape faisait afficher 1 s pour
+    // une activation HTTPS de 20 s. La durée fournie ne sert donc que de repli,
+    // quand aucun intervalle n'a pu être mesuré.
+    if (patch.durationMs != null && s.durationMs == null) s.durationMs = patch.durationMs;
     if (patch.publicMessage !== undefined) s.publicMessage = this.redactor.redactString(patch.publicMessage);
     if (patch.technicalMessage !== undefined) s.technicalMessage = this.redactor.redactString(patch.technicalMessage);
     if (patch.errorCode !== undefined) s.errorCode = patch.errorCode;

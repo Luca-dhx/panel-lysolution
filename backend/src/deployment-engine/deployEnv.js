@@ -12,8 +12,8 @@
  * On n'écrase que ce qui est SPÉCIFIQUE À L'HÔTE cible :
  *   - ENV          : environnement visé par ce déploiement (défaut PROD) ;
  *   - PORT         : port du backend sur le VPS (target.backendPort) ;
- *   - CORS_ORIGINS : vitrine + Manager en https ;
- *   - PUBLIC_URL   : URL publique de la vitrine.
+ *   - CORS_ORIGINS : chaque hôte servi du profil, en https ;
+ *   - PUBLIC_URL   : URL publique de l'hôte principal.
  * Tout le reste (MONGODB_URI, DB_TEST, DB_PROD, JWT_SECRET, JWT_EXPIRES_IN,
  * INTEGRATED_API_ENCRYPTION_KEY, et toute clé additionnelle) est repris VERBATIM.
  *
@@ -27,6 +27,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DeploymentError } from './errors.js';
 import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
+import { planTopology } from './topology.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** `.env` du backend de contrôle (même emplacement que celui lu par config/env.js). */
@@ -60,7 +61,7 @@ export function serializeEnv(obj) {
  * Construit le `.env` distant d'une cible à partir du `.env` source (verbatim),
  * en n'écrasant que les variables spécifiques à l'hôte.
  *
- * @param {object} target  DeploymentTarget (host, backendPort, managerHost?).
+ * @param {object} target  DeploymentTarget (host, backendPort).
  * @param {object} [opts]
  * @param {string} [opts.env]           Environnement visé (défaut PROD).
  * @param {string} [opts.sourceEnvPath] Chemin du `.env` source.
@@ -68,11 +69,15 @@ export function serializeEnv(obj) {
  * @param {object} [opts.fsMod]         fs (injectable pour tests).
  * @returns {{remoteEnv:object, dbName:string, env:string, sourcePath:string}}
  */
-export function buildRemoteEnv(target, { env = 'PROD', sourceEnvPath = DEFAULT_SOURCE_ENV, source, fsMod = fs } = {}) {
+export function buildRemoteEnv(target, { env = 'PROD', sourceEnvPath = DEFAULT_SOURCE_ENV, source, fsMod = fs, profile } = {}) {
   if (!target?.host) throw new DeploymentError('DEPLOY_ENV_INVALID', 'Cible sans hôte : impossible de construire la configuration distante.', { step: 'build' });
   const host = target.host;
-  const managerHost = target.managerHost || `manager.${host}`;
   const targetEnv = String(env || 'PROD').toUpperCase();
+  // ORIGINES CORS : tous les hôtes RÉELLEMENT servis par le profil. Un projet à
+  // front unique n'autorise que le sien ; un projet à cinq applications les
+  // autorise toutes — sans qu'aucun sous-domaine ne soit supposé.
+  const topo = planTopology({ host, profile });
+  const corsHosts = [...new Set(topo.publishable.map((a) => a.host))];
 
   // Source = le `.env` du projet (verbatim). On peut l'injecter parsé (tests).
   let src = source;
@@ -129,7 +134,7 @@ export function buildRemoteEnv(target, { env = 'PROD', sourceEnvPath = DEFAULT_S
   // Overrides SPÉCIFIQUES À L'HÔTE — rien d'autre n'est modifié.
   remoteEnv.ENV = targetEnv;
   remoteEnv.PORT = String(target.backendPort ?? src.PORT ?? '');
-  remoteEnv.CORS_ORIGINS = `https://${host},https://${managerHost}`;
+  remoteEnv.CORS_ORIGINS = corsHosts.map((h) => `https://${h}`).join(',');
   remoteEnv.PUBLIC_URL = `https://${host}`;
 
   return { remoteEnv, dbName: remoteEnv[dbKey], env: targetEnv, sourcePath: sourceEnvPath };

@@ -21,7 +21,7 @@ export const CANONICAL_STEPS = [
   { id: 'server.preflight', label: 'Vérification des prérequis du serveur', critical: true },
   { id: 'remote.safety', label: 'Vérification de sécurité de la destination', critical: true },
   { id: 'dns.site', label: 'Préparation de l’adresse du site', critical: true },
-  { id: 'dns.manager', label: 'Préparation de l’adresse de gestion', critical: true },
+  { id: 'dns.apps', label: 'Préparation des adresses des applications', critical: true },
   { id: 'dns.verify', label: 'Vérification de la disponibilité des adresses', critical: true },
   { id: 'artifact.build', label: 'Préparation de la nouvelle version', critical: true },
   { id: 'artifact.upload', label: 'Transfert du projet', critical: true },

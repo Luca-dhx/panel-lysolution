@@ -74,6 +74,24 @@ export interface RunLogEntry {
   message: string;
 }
 
+/**
+ * Évènement du FLUX REPRENABLE de suivi.
+ *
+ * `seq` est monotone et sans trou : c'est le curseur de reprise. Les évènements
+ * de service (`end`, `ping`, `reload`) n'en portent pas systématiquement.
+ *   · `step`   une étape change d'état — on met à jour CETTE ligne, aucune autre ;
+ *   · `log`    une ligne de journal s'ajoute ;
+ *   · `end`    le run est conclu, le flux se termine normalement ;
+ *   · `ping`   maintien de connexion, aucun effet visuel ;
+ *   · `reload` le curseur du client est trop ancien : recharger l'état complet.
+ */
+export type DeployStreamEvent =
+  | { seq: number; at: string; kind: 'step'; payload: Partial<RunStep> & { id: string } }
+  | { seq: number; at: string; kind: 'log'; payload: RunLogEntry }
+  | { kind: 'end'; status: RunStatus; seq: number }
+  | { kind: 'ping'; seq: number }
+  | { kind: 'reload'; reason: string; lastSeq: number };
+
 export interface DeploymentRun {
   runId: string;
   targetId: string;

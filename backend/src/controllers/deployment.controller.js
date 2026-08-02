@@ -21,7 +21,7 @@ import {
   getTargetOrThrow, listTargets, markDeploying, updateTarget,
 } from '../services/deployment/deploymentTarget.service.js';
 import {
-  activeRunFor, createRun, getRunOrThrow, listRuns,
+  activeRunFor, createRun, getRunOrThrow, listRuns, readEventsSince,
 } from '../services/deployment/deploymentRun.service.js';
 import { startDeploymentWorker } from '../services/deployment/deploymentWorker.service.js';
 import { OPERATIONS, executeOperation } from '../services/deployment/deploymentExecutor.service.js';
@@ -167,6 +167,79 @@ export const rollback = (req, res) => startOperation(req, res, OPERATIONS.ROLLBA
  */
 export async function run(req, res) {
   return ok(res, await getRunOrThrow(req.params.runId));
+}
+
+/**
+ * FLUX REPRENABLE des évènements d'un run (NDJSON, une ligne = un évènement).
+ *
+ * ── POURQUOI PAS LE FLUX DE SB AUTO ─────────────────────────────────────────
+ * SB Auto diffuse le déploiement DEPUIS la requête qui l'exécute : son backend
+ * n'est jamais l'application déployée, la connexion survit donc à l'opération.
+ * Le Panel, lui, se déploie LUI-MÊME : à l'étape `services.start`, PM2
+ * redémarre le processus qui servirait le flux. Toute connexion ouverte meurt.
+ *
+ * Ce flux-ci est donc alimenté par le JOURNAL PERSISTÉ qu'écrit le worker
+ * détaché, et non par l'exécution. Conséquences :
+ *   · le client se reconnecte avec `?since=<dernier seq reçu>` et reprend
+ *     exactement où il en était — aucune perte, aucun doublon ;
+ *   · l'ordre est garanti par le numéro de séquence, pas par l'ordre d'arrivée ;
+ *   · une coupure due au redémarrage n'est plus un trou, c'est une pause.
+ *
+ * `truncated: true` signale un client trop en retard (journal borné) : il doit
+ * recharger l'état complet plutôt que rejouer une suite incomplète.
+ */
+export async function runStream(req, res) {
+  const { runId } = req.params;
+  const since0 = Number.parseInt(req.query.since ?? '0', 10);
+  const first = await readEventsSince(runId, Number.isFinite(since0) ? since0 : 0);
+  if (!first) throw ApiError.notFound('PANEL_RUN_NOT_FOUND', `Exécution « ${runId} » introuvable.`);
+
+  res.status(200);
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no'); // Nginx ne doit pas tamponner le flux
+  res.flushHeaders?.();
+
+  let cursor = Number.isFinite(since0) ? since0 : 0;
+  let closed = false;
+  req.on('close', () => { closed = true; });
+
+  const write = (obj) => res.write(`${JSON.stringify(obj)}
+`);
+
+  // Le serveur interroge la base ; le client, lui, ne sonde JAMAIS : il lit un
+  // flux continu. La latence perçue est celle de cette boucle, pas d'un
+  // rafraîchissement d'interface.
+  const TICK_MS = 250;
+  const IDLE_KEEPALIVE_MS = 15_000;
+  let lastWrite = Date.now();
+
+  try {
+    let batch = first;
+    for (;;) {
+      if (closed) break;
+      if (batch.truncated) {
+        // Le client repart de l'état complet ; on lui donne le curseur EXACT
+        // auquel reprendre, sinon il ne saurait pas quoi demander ensuite.
+        write({ kind: 'reload', reason: 'journal tronqué', lastSeq: batch.lastSeq });
+        break;
+      }
+      for (const evt of batch.events) {
+        write(evt);
+        cursor = evt.seq;
+        lastWrite = Date.now();
+      }
+      const terminal = batch.status && batch.status !== 'running';
+      if (terminal && cursor >= batch.lastSeq) { write({ kind: 'end', status: batch.status, seq: cursor }); break; }
+      if (Date.now() - lastWrite > IDLE_KEEPALIVE_MS) { write({ kind: 'ping', seq: cursor }); lastWrite = Date.now(); }
+      await new Promise((r) => { setTimeout(r, TICK_MS); });
+      batch = await readEventsSince(runId, cursor);
+      if (!batch) break;
+    }
+  } finally {
+    res.end();
+  }
+  return undefined;
 }
 
 export async function runs(req, res) {

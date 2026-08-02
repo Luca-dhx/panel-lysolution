@@ -65,7 +65,6 @@ export function renderMarkdown(report) {
   L.push(`- **Résultat** : ${STATUS_LABEL[id.result] || id.result || '—'}`);
   L.push(`- **Étape finale** : ${id.finalStepId || '—'}`);
   L.push(`- **Site** : ${id.siteUrl || '—'}`);
-  L.push(`- **Manager** : ${id.managerUrl || '—'}`);
   L.push(`- **Serveur** : ${id.sshUser || 'root'}@${id.sshHost || '—'}`);
   L.push(`- **Début** : ${id.startedAt || '—'}`);
   L.push(`- **Fin** : ${id.finishedAt || '—'}`);
@@ -81,8 +80,7 @@ export function renderMarkdown(report) {
     deploymentRunId: id.deploymentRunId,
     deploymentTargetId: id.deploymentTargetId,
     destination: id.targetName,
-    hostnameVitrine: id.siteHost,
-    hostnameManager: id.managerHost,
+    hostnameSite: id.siteHost,
     environnement: id.env,
     branche: id.branch,
     commit: id.commit,
@@ -115,19 +113,20 @@ export function renderMarkdown(report) {
         zone: h.zone,
         stratégieZone: h.zoneSource,
         nomRelatifSite: h.siteRelative,
-        nomRelatifManager: h.managerRelative,
+        nomsRelatifsApplications: (h.derivedRelatives ?? []).map((d) => `${d.appId}:${d.relativeName}`).join(', ') || null,
         credentialsVérifiés: h.credentials?.verified,
         domainesAccessibles: h.credentials?.domainsCount,
         ttlDemandé: h.ttlRequested,
       }));
-      for (const [label, rec] of [['Site', h.site], ['Manager', h.manager]]) {
+      for (const [label, rec] of [['Site', h.site], ...(h.derived ?? []).map((d) => [d.appId, d])]) {
         if (!rec) continue;
         L.push(`- **${label}** (${rec.action}) : ${rec.previous ? `précédent ${JSON.stringify(rec.previous)} → ` : ''}attendu ${rec.expected}${rec.ttlApplied ? ` · TTL ${rec.ttlApplied}` : ''}${rec.message ? ` — ${rec.message}` : ''}`);
       }
       if (h.resolution) {
         const r = (x) => (x ? `résolu=${x.pointsToVps} (${x.attempts} essais, ${x.elapsedMs} ms${x.timedOut ? ', timeout' : ''})` : '—');
-        L.push(`- **Résolution publique — Site** : ${r(h.resolution.site)}`);
-        L.push(`- **Résolution publique — Manager** : ${r(h.resolution.manager)}`);
+        for (const [label, rec] of Object.entries(h.resolution)) {
+          L.push(`- **Résolution publique — ${label}** : ${r(rec)}`);
+        }
       }
       if (h.error) L.push(`- **Erreur** : ${h.error.code} — ${h.error.message}`);
       if (h.timeline?.length) {
