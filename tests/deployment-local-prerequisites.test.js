@@ -151,4 +151,97 @@ section('8. Prérequis LOCAUX et DISTANTS sont distingués');
   check('les contrôles distants sont marqués scope=remote', /scope:\s*'remote'/.test(preflight));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('9. PREUVE COMPORTEMENTALE : dépôt dirty en PROD → rien n’existe');
+{
+  // ── CE QUE LA SECTION 7 NE PROUVE PAS ────────────────────────────────────
+  // Elle lit le SOURCE du contrôleur et compare des positions de texte. Elle
+  // resterait verte si la garde devenait inopérante sans bouger de place — et
+  // ne dit rien de ce qui existe en base après un refus. Cette section-ci
+  // n'inspecte aucun code : elle envoie la vraie requête HTTP et regarde ce
+  // que le Panel a créé. Elle casse si le contrôle repart dans le pipeline,
+  // puisqu'alors un run serait bel et bien créé avant le refus.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { PROJECT_ROOT } = await import('../backend/src/deployment-engine/build.js');
+  const {
+    connectTestDatabase, setTestEnv, startMemoryMongo, startServer, stopMemoryMongo,
+  } = await import('./helpers/harness.js');
+
+  // Le dépôt est rendu DÉTERMINISTEMENT non commité : un fichier non suivi
+  // suffit, et il est retiré quoi qu'il arrive. Sans cela, le test dépendrait
+  // de l'état de travail du poste — vert par hasard sur un dépôt propre.
+  const probeFile = path.join(PROJECT_ROOT, `.deploy-gate-probe-${process.pid}.tmp`);
+  fs.writeFileSync(probeFile, 'sonde de test — supprimée automatiquement\n');
+
+  try {
+    setTestEnv();
+    await startMemoryMongo();
+    await connectTestDatabase();
+
+    const { createApp } = await import('../backend/src/app.js');
+    const { config } = await import('../backend/src/config/env.js');
+    const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
+    const PanelDeploymentRun = (await import('../backend/src/models/PanelDeploymentRun.model.js')).default;
+    const PanelDeploymentTarget = (await import('../backend/src/models/PanelDeploymentTarget.model.js')).default;
+
+    await seedFromEnv();
+    const { call, close } = await startServer(createApp());
+    const login = await call('POST', '/api/auth/login', {
+      body: { email: config.seedDevEmail, password: config.seedDevPassword },
+    });
+    const AUTH = { authorization: `Bearer ${login.json.data.token}` };
+
+    const created = await call('POST', '/api/deployment/targets', {
+      headers: AUTH,
+      body: { name: 'Prod', url: 'https://prod.exemple.com', environment: 'PROD', sshHost: '203.0.113.10' },
+    });
+    const targetId = created.json?.data?.targetId;
+    check('destination PROD créée', created.status === 201 && Boolean(targetId));
+
+    // Le dépôt est bien non commité : sinon la preuve ci-dessous ne prouve rien.
+    const local = await runLocalPreflight({ env: 'PROD' });
+    check('le dépôt de travail est bien non commité pour ce test', local.ok === false);
+
+    const res = await call('POST', `/api/deployment/targets/${targetId}/deploy`, {
+      headers: AUTH,
+      body: { sshPassword: 'motdepasse', confirmProduction: true },
+    });
+
+    check('la requête est REFUSÉE en 400', res.status === 400);
+    check('…avec le code attendu', res.json?.code === 'PANEL_DEPLOY_LOCAL_PREREQUISITES_FAILED');
+    check('…un message explicite', /Source Git non commitée/.test(res.json?.message ?? ''));
+    check('…la liste des fichiers fautifs', (res.json?.details?.files ?? []).length > 0);
+    check('…dont le fichier sonde', (res.json?.details?.files ?? [])
+      .some((f) => f.path.includes('.deploy-gate-probe-')));
+    check('…et l’aveu que le pipeline n’a pas tourné', res.json?.details?.pipelineExecuted === false);
+
+    // ── LE CŒUR DE LA PREUVE : rien n’a été créé ───────────────────────────
+    // Aucun run ⇒ aucune checklist et aucun rapport (tous deux vivent dans le
+    // document du run) ⇒ aucun worker (il ne peut démarrer sans runId) ⇒
+    // aucune connexion SSH, aucun appel DNS, aucune écriture distante, tous
+    // situés en aval du worker.
+    check('AUCUN DeploymentRun créé', (await PanelDeploymentRun.countDocuments({})) === 0);
+    check('…donc aucune étape de checklist', (await PanelDeploymentRun.countDocuments({ 'steps.0': { $exists: true } })) === 0);
+    check('…donc aucun rapport de déploiement', (await PanelDeploymentRun.countDocuments({ structuredReport: { $ne: null } })) === 0);
+
+    const target = await PanelDeploymentTarget.findOne({ targetId }).lean();
+    check('la destination n’est PAS passée en DEPLOYING', target.state !== 'DEPLOYING');
+    check('…et ne porte aucun run', (target.lastRunId ?? null) === null);
+
+    // ── NON-RÉGRESSION : le même dépôt dirty reste autorisé en TEST ────────
+    // On l'éprouve à la porte elle-même : la laisser ouvrir un vrai
+    // déploiement lancerait un worker détaché et une vraie connexion SSH.
+    const testEnv = await runLocalPreflight({ env: 'TEST' });
+    check('dépôt non commité en TEST : la porte n’oppose AUCUN refus', testEnv.ok === true);
+    check('…tout en signalant les fichiers (informatif, non bloquant)',
+      testEnv.checks.some((c) => c.id === 'source.clean' && c.required === false));
+
+    await close();
+    await stopMemoryMongo();
+  } finally {
+    fs.rmSync(probeFile, { force: true });
+  }
+}
+
 finish();
