@@ -275,5 +275,84 @@ section('Réconciliation de la clé, codes expirés, majeure inconnue');
   ));
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Le code d’appairage n’est consommé QU’AU succès, et une seule fois');
+{
+  const codeAlive = async (projectId) =>
+    Boolean((await registryStore.getById(projectId)).pairing.pairingCodeHash);
+
+  // 1. UN CODE REFUSÉ N'EST PAS BRÛLÉ. Le contraire condamnerait l'opérateur à
+  //    redemander un code au moindre faux pas de frappe.
+  {
+    const p = await registry.declareProject({
+      publicBackendUrl: 'https://code-a.test', projectName: 'Code A',
+    });
+    check('avant tout essai, le code est en place', await codeAlive(p.record.projectId));
+    check('un code inconnu est refusé', await rejectsWith(
+      () => Promise.resolve(pairing.bootstrap(bootstrapDto('PAIR-FAUX-FAUX-FAUX', { projectKey: 'code-a' }))),
+      'BRIDGE_PAIRING_CODE_INVALID',
+    ));
+    check('…et n’a RIEN consommé', await codeAlive(p.record.projectId));
+    await pairing.bootstrap(bootstrapDto(p.pairingCode, { projectKey: 'code-a' }));
+    check('…le vrai code fonctionne toujours ensuite',
+      (await registryStore.getById(p.record.projectId)).pairing.status === 'PAIRED');
+  }
+
+  // 2. UN ÉCHEC EN COURS D'APPAIRAGE NE CONSOMME PAS NON PLUS. Le Manifest est
+  //    validé avant l'écriture : un projet mal configuré peut se reprendre.
+  {
+    const p = await registry.declareProject({
+      publicBackendUrl: 'https://code-b.test', projectName: 'Code B',
+    });
+    check('un Manifest non conforme est refusé', await rejectsWith(
+      () => Promise.resolve(pairing.bootstrap(
+        bootstrapDto(p.pairingCode, { projectKey: 'code-b', manifest: { nimporte: 'quoi' } }),
+      )),
+      'BRIDGE_INVALID_PAYLOAD',
+    ));
+    check('…sans bruler le code', await codeAlive(p.record.projectId));
+    await pairing.bootstrap(bootstrapDto(p.pairingCode, { projectKey: 'code-b' }));
+    check('…et le meme code aboutit au second essai',
+      (await registryStore.getById(p.record.projectId)).pairing.status === 'PAIRED');
+  }
+
+  // 3. LE SUCCÈS CONSOMME, EXACTEMENT UNE FOIS.
+  {
+    const p = await registry.declareProject({
+      publicBackendUrl: 'https://code-c.test', projectName: 'Code C',
+    });
+    await pairing.bootstrap(bootstrapDto(p.pairingCode, { projectKey: 'code-c' }));
+    check('après succès, le code a disparu de la fiche', !(await codeAlive(p.record.projectId)));
+    check('le rejouer est refusé', await rejectsWith(
+      () => Promise.resolve(pairing.bootstrap(bootstrapDto(p.pairingCode, { projectKey: 'code-c' }))),
+      'BRIDGE_PAIRING_CODE_INVALID',
+    ));
+  }
+
+  // 4. CONSOMMATION ATOMIQUE. Deux bootstraps SIMULTANÉS porteurs du même code
+  //    passaient les mêmes contrôles sur la même fiche encore intacte : les
+  //    deux réussissaient, et le second écrasait le bridgeToken du premier —
+  //    qui restait appairé avec un jeton mort, sans que rien ne le signale.
+  {
+    const p = await registry.declareProject({
+      publicBackendUrl: 'https://code-d.test', projectName: 'Code D',
+    });
+    const attempt = (softwareVersion) => pairing
+      .bootstrap(bootstrapDto(p.pairingCode, { projectKey: 'code-d', softwareVersion }))
+      .then(() => 'OK', (err) => err.code ?? 'ERREUR');
+
+    const issues = await Promise.all([attempt('X'), attempt('Y')]);
+    check(`un SEUL des deux appairages simultanés aboutit — [${issues.join(', ')}]`,
+      issues.filter((r) => r === 'OK').length === 1);
+    check('…le perdant est refusé comme un code déjà utilisé',
+      issues.includes('BRIDGE_PAIRING_CODE_INVALID'));
+
+    const rec = await registryStore.getById(p.record.projectId);
+    check('la fiche porte un seul appairage cohérent',
+      rec.pairing.status === 'PAIRED' && Boolean(rec.pairing.bridgeTokenHash));
+    check('…et le code est consommé', !(await codeAlive(p.record.projectId)));
+  }
+}
+
 await stopMemoryMongo();
 finish();

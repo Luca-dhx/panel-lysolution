@@ -142,7 +142,11 @@ export async function bootstrap(dto) {
     bridgeManifest = validation.manifest;
   }
 
-  // Le code est consommé quoi qu'il arrive ensuite : usage strictement unique.
+  // Le code n'est consommé QU'ICI : tous les refus ci-dessus laissent la fiche
+  // intacte, donc le code réutilisable. On mémorise le hash validé pour que
+  // l'écriture finale puisse exiger qu'il soit TOUJOURS en place — sans quoi
+  // deux bootstraps simultanés porteurs du même code réussiraient tous les deux.
+  const consumedHash = record.pairing.pairingCodeHash;
   record.pairing.pairingCodeHash = null;
   record.pairing.pairingCodeExpiresAt = null;
 
@@ -168,7 +172,12 @@ export async function bootstrap(dto) {
     record.manifestSource = 'BRIDGE';
     record.manifestUpdatedAt = nowIso();
   }
-  await registryStore.save(record);
+  // CONSOMMATION ATOMIQUE : une seule écriture porte à la fois l'effacement du
+  // code et l'appairage complet, et elle n'a lieu que si le code est encore
+  // celui qu'on a validé. Un perdant de course n'écrit RIEN et se voit refusé
+  // comme n'importe quel code déjà utilisé.
+  const consumed = await registryStore.saveIfPairingCodeMatches(record, consumedHash);
+  if (!consumed) throw codeInvalid;
 
   await recordEvent({
     projectId: record.projectId,

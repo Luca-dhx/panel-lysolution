@@ -42,6 +42,28 @@ export const registryStore = {
     return record;
   },
 
+  /**
+   * Écriture CONDITIONNELLE au code d'appairage encore en place.
+   *
+   * Le bootstrap lit la fiche, vérifie le code, puis écrit — deux temps. Entre
+   * les deux, un second bootstrap portant le MÊME code passait les mêmes
+   * contrôles sur la même fiche encore intacte : les deux réussissaient, et le
+   * dernier écrasait le bridgeToken du premier, qui se retrouvait appairé avec
+   * un jeton mort. Le filtre porte donc sur le hash lu au début : la première
+   * écriture consomme le code, la seconde ne correspond plus à rien.
+   *
+   * @returns {Promise<boolean>} vrai si CETTE écriture a consommé le code.
+   */
+  async saveIfPairingCodeMatches(record, expectedHash) {
+    record.updatedAt = new Date().toISOString();
+    const { _id, ...data } = record;
+    const result = await PanelProject.updateOne(
+      { projectId: record.projectId, 'pairing.pairingCodeHash': expectedHash },
+      { $set: data },
+    );
+    return result.matchedCount === 1;
+  },
+
   async remove(projectId) {
     const result = await PanelProject.deleteOne({ projectId });
     return result.deletedCount > 0;
