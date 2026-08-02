@@ -21,6 +21,7 @@ const TESTS = [
   'deploy.test.js',
   'deployment-build.test.js',
   'deployment-remote-env.test.js',
+  'deployment-local-prerequisites.test.js',
   'deployment-report-truth.test.js',
   'deployment-silence.test.js',
   'deployment-stream.test.js',

@@ -14,9 +14,17 @@ import { parseTargetUrl } from './url.js';
 import { certPaths } from './nginx.js';
 import { checkDomainPointsToVps, resolveVpsIp } from './dns.js';
 
-/** Petite fabrique de résultat de contrôle. */
+/**
+ * Petite fabrique de résultat de contrôle.
+ *
+ * `scope: 'remote'` : TOUS les contrôles de ce module portent sur le SERVEUR
+ * cible et exigent un transport. Les prérequis de la machine qui pilote
+ * (source Git…) vivent dans `localPreflight.js` et portent `scope: 'local'`.
+ * La distinction remonte jusqu'à l'interface : l'opérateur sait immédiatement
+ * s'il doit agir sur sa machine ou sur l'infrastructure.
+ */
 function check(id, label, ok, { required = true, detail = null } = {}) {
-  return { id, label, ok: Boolean(ok), required, detail };
+  return { id, label, ok: Boolean(ok), required, detail, scope: 'remote' };
 }
 
 /**

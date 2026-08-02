@@ -28,6 +28,7 @@ import { toCanonical, canonicalStep, CANONICAL_ORDER } from './steps.js';
 import { derivePrimarySubHost, derivePrimarySubUrl, isCoveredByWildcard } from './hostnames.js';
 import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
+import { runLocalPreflight } from './localPreflight.js';
 import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
 
 /**
@@ -216,6 +217,21 @@ export class DeploymentEngine {
    *   version:string, target:object, managerHost:string, managerUrl:string,
    *   steps:object[], structuredReport:object, markdownReport:string, errorSummary:object|null}>}
    */
+  /**
+   * PRÉREQUIS LOCAUX — porte d'entrée de TOUT déploiement.
+   *
+   * Évalués sur la machine qui pilote, sans transport, sans run, sans worker.
+   * Un échec ici signifie « le déploiement n'a pas commencé » : rien n'a été
+   * créé, rien n'a été contacté, rien n'est à nettoyer. C'est ce qui permet à
+   * l'appelant de refuser AVANT de persister quoi que ce soit.
+   *
+   * Tous les points d'entrée passent par ici : `deployWithReport` l'appelle en
+   * première instruction, de sorte qu'aucun chemin ne puisse le contourner.
+   */
+  async checkLocalPrerequisites({ env = 'PROD', root, exec } = {}) {
+    return runLocalPreflight({ env, root, exec });
+  }
+
   async deployWithReport({ url, sessionId, options = {}, onEvent = () => {}, user, deploymentRunId, transport }) {
     const target = this.parseUrl(url);
     // Hôte/URL du premier front sur sous-domaine, s'il en existe un au profil.

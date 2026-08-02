@@ -16,6 +16,7 @@
 import { created, ok } from '../utils/apiResponse.js';
 import ApiError from '../utils/ApiError.js';
 import config from '../config/env.js';
+import { DeploymentEngine } from '../deployment-engine/DeploymentEngine.js';
 import {
   createTarget, deleteTarget, deploymentSummary, describeTarget,
   getTargetOrThrow, listTargets, markDeploying, updateTarget,
@@ -104,6 +105,28 @@ async function startOperation(req, res, operationType) {
     throw ApiError.badRequest('PANEL_DEPLOY_CONFIRMATION_REQUIRED',
       `Déploiement refusé parce que « ${target.name} » est une destination de PRODUCTION `
       + 'et que la confirmation explicite est absente.');
+  }
+
+  // ── PRÉREQUIS LOCAUX — AVANT TOUT EFFET DE BORD ─────────────────────────
+  // Évalués sur la machine qui pilote : aucune connexion, aucune écriture.
+  // Un échec ici signifie que le déploiement N'A PAS COMMENCÉ — pas de run,
+  // pas de worker, pas de SSH, pas de DNS, pas de dossier distant. C'est la
+  // raison d'être de ce placement : le contrôle de source vivait auparavant
+  // dans `artifact.build`, donc APRÈS les mutations DNS.
+  if (operationType === OPERATIONS.DEPLOYMENT) {
+    const local = await new DeploymentEngine({ mongoUri: config.mongoUri })
+      .checkLocalPrerequisites({ env: target.environment });
+    if (!local.ok) {
+      const source = local.failedChecks.find((c) => c.id === 'source.clean');
+      throw ApiError.badRequest('PANEL_DEPLOY_LOCAL_PREREQUISITES_FAILED',
+        'Impossible de lancer le déploiement : Source Git non commitée.', {
+          scope: 'local',
+          pipelineExecuted: false,
+          checks: local.checks,
+          failedChecks: local.failedChecks,
+          files: source?.files ?? [],
+        });
+    }
   }
 
   const selfDeployment = target.selfHosted === true && operationType === OPERATIONS.DEPLOYMENT;
