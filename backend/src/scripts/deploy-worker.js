@@ -62,6 +62,26 @@ beat.unref?.();
 
 let outcome = { status: 'error', summary: null, error: null };
 
+/**
+ * FILE D'ÉCRITURE DES ÉTAPES — sérialisée, dans l'ordre d'émission.
+ *
+ * Le moteur émet `running` puis l'état terminal de la même étape. Quand rien
+ * ne les sépare (aucun travail distant entre les deux : préflight,
+ * finalisation), les deux écritures partaient en parallèle et se doublaient :
+ * si `running` se déposait APRÈS `ok`, l'étape restait « en cours », et
+ * `finalizeRun` requalifiait tout `running` résiduel en `error`. D'où des
+ * étapes rouges sur un déploiement pourtant réussi à 20/20 — et un journal
+ * d'évènements qui annonçait la fin avant le début.
+ *
+ * Chaîner les écritures rend l'ordre d'émission égal à l'ordre de
+ * matérialisation. Aucune étape, aucun statut, aucun contrat ne change.
+ */
+let stepQueue = Promise.resolve();
+const enqueueStep = (step) => {
+  stepQueue = stepQueue.then(() => runs.recordStep(runId, step)).catch(() => {});
+  return stepQueue;
+};
+
 try {
   const target = await targets.getTargetOrThrow(targetId);
   const { executeOperation } = await import('../services/deployment/deploymentExecutor.service.js');
@@ -72,7 +92,7 @@ try {
     sshPassword,
     releaseId,
     user: process.env.PANEL_DEPLOY_USER || null,
-    onStep: (step) => runs.recordStep(runId, step),
+    onStep: (step) => enqueueStep(step),
     onLog: (message, level) => runs.appendLog(runId, message, level),
   });
 } catch (err) {
@@ -88,6 +108,10 @@ try {
 } finally {
   clearInterval(beat);
   try {
+    // On attend que la file soit vide AVANT de conclure : `finalizeRun`
+    // requalifie les étapes encore `running` en `error`. Conclure pendant
+    // qu'une écriture est en vol condamnerait une étape déjà terminée.
+    await stepQueue;
     await runs.finalizeRun(runId, outcome);
     await targets.recordDeployment(targetId, {
       operationType,

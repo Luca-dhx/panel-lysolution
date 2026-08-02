@@ -195,5 +195,79 @@ section('8. Conclusion : le journal seul suffit à reconstruire l’état final'
     events.some((e) => e.kind === 'status' && e.payload.status === 'error'));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('9. Étapes émises coup sur coup : l’ordre d’écriture suit l’ordre d’émission');
+{
+  // ── LA RÉGRESSION VERROUILLÉE ICI ────────────────────────────────────────
+  // Le moteur émet `running` puis l'état terminal de la MÊME étape. Quand un
+  // vrai travail les sépare (build, pipeline distant), la première écriture a
+  // le temps de se déposer. Quand rien ne les sépare — préflight, finalisation
+  // — les deux écritures partaient en parallèle et se doublaient : `running`
+  // se déposait parfois APRÈS `ok`. L'étape restait « en cours », et
+  // `finalizeRun` requalifie tout `running` résiduel en `error` : des étapes
+  // ROUGES sur un déploiement réussi à 20/20.
+  //
+  // Les sections précédentes ne pouvaient pas le voir : elles attendent chaque
+  // `recordStep`. C'est justement l'absence d'attente qui était le défaut.
+  const runId = await newRun();
+
+  // Câblage du worker : file sérialisée, dans l'ordre d'émission.
+  let queue = Promise.resolve();
+  const emit = (step) => { queue = queue.then(() => runs.recordStep(runId, step)); return queue; };
+
+  const BACK_TO_BACK = ['ssh.connect', 'server.preflight', 'remote.safety', 'deployment.finalize'];
+  for (const id of BACK_TO_BACK) {
+    emit({ id, status: 'running' });   // volontairement NON attendu
+    emit({ id, status: 'ok' });        // idem : c'est le cas qui régressait
+  }
+  await queue;
+
+  const materialized = (await PanelDeploymentRun.findOne({ runId }).select('steps').lean()).steps;
+  const stuck = materialized.filter((s) => BACK_TO_BACK.includes(s.id) && s.status !== 'ok');
+  check(`aucune étape ne reste « en cours »${stuck.length ? ` — ${stuck.map((s) => `${s.id}:${s.status}`).join(', ')}` : ''}`,
+    stuck.length === 0);
+
+  // Le journal doit raconter la même histoire, dans le même ordre : pour
+  // chaque étape, `running` AVANT son état terminal. Un journal qui annonce la
+  // fin avant le début ne peut pas être rejoué par un client reconnecté.
+  const { events } = await runs.readEventsSince(runId, 0);
+  const stepEvents = events.filter((e) => e.kind === 'step');
+  const outOfOrder = BACK_TO_BACK.filter((id) => {
+    const seqs = stepEvents.filter((e) => e.payload.id === id);
+    return seqs.length !== 2 || seqs[0].payload.status !== 'running' || seqs[1].payload.status !== 'ok';
+  });
+  check(`le journal ordonne running → ok pour chaque étape${outOfOrder.length ? ` — ${outOfOrder.join(', ')}` : ''}`,
+    outOfOrder.length === 0);
+
+  // Et la conclusion ne doit noircir personne.
+  await runs.finalizeRun(runId, { status: 'ok', summary: 'Déploiement réussi.' });
+  const finalSteps = (await PanelDeploymentRun.findOne({ runId }).select('steps').lean()).steps;
+  const red = finalSteps.filter((s) => s.status === 'error');
+  check(`après finalizeRun, aucune étape rouge sur un run réussi${red.length ? ` — ${red.map((s) => s.id).join(', ')}` : ''}`,
+    red.length === 0);
+  check('les étapes jamais émises restent « sautées », pas en erreur',
+    finalSteps.filter((s) => !BACK_TO_BACK.includes(s.id)).every((s) => s.status === 'skipped'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('10. Le worker sérialise réellement ses écritures d’étapes');
+{
+  // Garde STRUCTURELLE sur le seul point de câblage réel : le comportement
+  // ci-dessus ne vaut que si le worker enfile ses écritures au lieu de les
+  // lancer en parallèle, et attend la file avant de conclure.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const worker = fs.readFileSync(path.join(root, 'backend/src/scripts/deploy-worker.js'), 'utf8');
+
+  check('onStep n’appelle plus recordStep en parallèle',
+    !/onStep:\s*\(step\)\s*=>\s*runs\.recordStep/.test(worker));
+  check('les écritures d’étapes passent par une file chaînée',
+    /stepQueue\s*=\s*stepQueue\.then\(/.test(worker));
+  check('la file est vidée AVANT finalizeRun',
+    /await stepQueue;[\s\S]{0,400}?await runs\.finalizeRun/.test(worker));
+}
+
 await stopMemoryMongo();
 finish();
