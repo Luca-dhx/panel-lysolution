@@ -538,7 +538,7 @@ section('Surface /api/diagnostic : lecture seule et authentifiée');
   const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
   const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
   await registryStore.clear();
-  const declared = await registry.declareProject({ projectKey: 'projet-api', projectName: 'Projet API' });
+  const declared = await registry.declareProject({ publicBackendUrl: 'https://projet-api.test', projectName: 'Projet API' });
   await seedFromEnv();
 
   const { createApp } = await import('../backend/src/app.js');

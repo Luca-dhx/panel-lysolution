@@ -1,5 +1,5 @@
 // ============================================================================
-// MIROIR EXÉCUTABLE des contrats OpenAPI v1.3.0 des ponts.
+// MIROIR EXÉCUTABLE des contrats OpenAPI v1.4.0 des ponts.
 //   docs/spec/PanelBridge.openapi.yaml   (le Panel SERT ce contrat)
 //   docs/spec/ProjectBridge.openapi.yaml (le Panel CONSOMME ce contrat)
 // Toute requête entrante sur /bridge/v1 est validée par ce fichier ; toute
@@ -15,12 +15,16 @@
 // .network / .descriptor. Tous OPTIONNELS ; 1.3.0 (Phase 4, ADDITIF) —
 // DÉCOUVERTE DESCENDANTE : BootstrapResponse.company / .integratedApis /
 // .syncCursor, et Identity.appliedConfiguration côté ProjectBridge (ce que le
-// projet a réellement appliqué). Tous OPTIONNELS.
+// projet a réellement appliqué). Tous OPTIONNELS ; 1.4.0 (ADDITIF) — IDENTITÉ
+// AU PING : PingResponse.projectKey / .projectName côté ProjectBridge. Le
+// Panel reconnaît un projet AVANT l'appairage au lieu d'en faire ressaisir la
+// clé — `/identity` exige un bridgeToken qui n'existe pas encore à ce moment.
+// Tous OPTIONNELS.
 // ============================================================================
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.3.0';
+export const CONTRACT_VERSION = '1.4.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).

@@ -32,15 +32,34 @@ export async function detail(req, res) {
   });
 }
 
+/**
+ * DÉCLARE un projet à partir de son ADRESSE.
+ *
+ * `projectKey` n'est pas lu du corps de requête — volontairement. La clé est
+ * une donnée technique interne : la laisser entrer par l'API, c'est laisser le
+ * client choisir l'identifiant du registre. Un `projectKey` envoyé par un
+ * client est donc ignoré en silence, et le test de non-régression le vérifie.
+ *
+ * L'identité est relue ICI par la sonde, jamais acceptée du client : le
+ * frontend pourrait annoncer n'importe quoi. Sonde best-effort — un projet
+ * pas encore déployé reste déclarable, sa clé sera réconciliée à l'appairage.
+ */
 export async function declare(req, res) {
-  const { projectKey, projectName, manifest = null } = req.body ?? {};
+  const { url = null, projectName = null, manifest = null } = req.body ?? {};
+
+  let bridgeIdentity = null;
+  const probed = await probeProjectUrl(url).catch(() => null);
+  if (probed?.compatible) bridgeIdentity = probed.bridgeIdentity;
+
   const { record, pairingCode, pairingCodeExpiresAt } = await declareProject({
-    projectKey,
+    publicBackendUrl: url,
     projectName,
+    bridgeIdentity,
     manifest,
   });
   return created(res, {
     project: toPublicProject(record),
+    probe: probed,
     pairingCode,
     pairingCodeExpiresAt,
   });

@@ -32,7 +32,7 @@ const iso = () => new Date().toISOString();
 section('Registre : une fiche déclarée survit au redémarrage');
 let declared;
 {
-  declared = await registry.declareProject({ projectKey: 'projet-durable', projectName: 'Projet durable' });
+  declared = await registry.declareProject({ publicBackendUrl: 'https://projet-durable.test', projectName: 'Projet durable' });
   await simulateRestart();
   const reloaded = await registryStore.getById(declared.record.projectId);
   check('fiche retrouvée après redémarrage', reloaded?.projectKey === 'projet-durable');

@@ -11,8 +11,11 @@ import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
-
-const PROJECT_KEY_RE = /^[a-z0-9][a-z0-9-]{1,118}[a-z0-9]$/;
+import {
+  generateProjectKey,
+  normalizeBackendUrl,
+  resolveProjectName,
+} from './projectIdentity.js';
 
 // La vivacité et la santé vivent dans les services de supervision : le
 // registre les EXPOSE, il ne les recalcule pas (une seule implémentation).
@@ -30,20 +33,66 @@ function assertValidManifestOrThrow(manifestInput) {
   return validation;
 }
 
-export async function declareProject({ projectKey, projectName, manifest = null }) {
-  if (typeof projectKey !== 'string' || !PROJECT_KEY_RE.test(projectKey)) {
+/**
+ * DÉCLARE un projet dans le registre.
+ *
+ * La CLÉ N'EST PAS UN PARAMÈTRE : elle est générée ici, jamais reçue. Le
+ * frontend n'a donc aucun moyen de décider d'un identifiant, et l'utilisateur
+ * n'a plus rien à deviner. Voir projectIdentity.js pour l'ordre de préférence.
+ *
+ * @param {object}  input
+ * @param {string}  input.publicBackendUrl  Adresse du projet — la seule saisie obligatoire.
+ * @param {string} [input.projectName]      Nom lisible ; à défaut, celui que le projet s'est donné.
+ * @param {object} [input.bridgeIdentity]   Identité annoncée au ping (contrat >= 1.4.0).
+ * @param {object} [input.manifest]         Manifest de secours (projets sans transport de Manifest).
+ */
+export async function declareProject({
+  publicBackendUrl,
+  projectName = null,
+  bridgeIdentity = null,
+  manifest = null,
+} = {}) {
+  const normalizedUrl = normalizeBackendUrl(publicBackendUrl);
+  if (!normalizedUrl) {
     throw ApiError.badRequest(
-      'PANEL_PROJECT_KEY_INVALID',
-      'projectKey invalide : 3 à 120 caractères, kebab-case (a-z, 0-9, tirets).',
+      'PANEL_PROJECT_URL_INVALID',
+      'URL du backend invalide : une adresse http(s) est requise.',
     );
   }
-  if (typeof projectName !== 'string' || projectName.trim().length === 0) {
+
+  const generated = generateProjectKey({
+    bridgeIdentity,
+    projectName,
+    publicBackendUrl: normalizedUrl,
+  });
+  if (!generated) {
+    throw ApiError.badRequest(
+      'PANEL_PROJECT_KEY_UNRESOLVABLE',
+      'Impossible de dériver une clé technique : donnez un nom de projet.',
+    );
+  }
+
+  const resolvedName = resolveProjectName({ bridgeIdentity, projectName, publicBackendUrl: normalizedUrl });
+  if (!resolvedName) {
     throw ApiError.badRequest('PANEL_PROJECT_NAME_REQUIRED', 'projectName est requis.');
   }
-  if (await registryStore.getByKey(projectKey)) {
+
+  // ── ANTI-DOUBLONS ────────────────────────────────────────────────────────
+  // Un même projet ne peut entrer qu'une fois, par quelque porte qu'on tente :
+  // même adresse, même clé dérivée, ou même identité annoncée par le pont.
+  // Le message est le même dans les trois cas — c'est le même fait.
+  const already =
+    (await registryStore.getByBackendUrl(normalizedUrl))
+    ?? (await registryStore.getByKey(generated.projectKey))
+    ?? (bridgeIdentity?.projectKey
+      ? await registryStore.getByKey(bridgeIdentity.projectKey)
+      : null);
+
+  if (already) {
     throw ApiError.conflict(
-      'PANEL_PROJECT_KEY_TAKEN',
-      `Un projet « ${projectKey} » existe déjà dans le registre.`,
+      'PANEL_PROJECT_ALREADY_DECLARED',
+      'Ce projet est déjà déclaré dans le Panel.',
+      { projectId: already.projectId, projectName: already.projectName },
     );
   }
 
@@ -56,8 +105,9 @@ export async function declareProject({ projectKey, projectName, manifest = null 
   const manifestSource = validatedManifest ? 'MANUAL' : null;
   const record = {
     projectId: newBridgeId(),
-    projectKey,
-    projectName: projectName.trim(),
+    projectKey: generated.projectKey,
+    projectKeySource: generated.source,
+    projectName: resolvedName,
     createdAt: now,
     updatedAt: now,
     pairing: {
@@ -72,8 +122,11 @@ export async function declareProject({ projectKey, projectName, manifest = null 
     runtime: {
       environment: null,
       softwareVersion: null,
+      // Ce que la sonde a constaté : l'adresse est connue DÈS la déclaration
+      // (c'est elle qu'on a saisie), plus seulement après l'appairage. C'est
+      // ce qui rend la détection de doublons possible avant tout appairage.
       contractVersion: null,
-      publicBackendUrl: null,
+      publicBackendUrl: normalizedUrl,
       lastHeartbeatAt: null,
       lastHealth: null,
       bridgeStats: null,

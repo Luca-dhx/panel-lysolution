@@ -19,6 +19,7 @@ import {
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import registryStore from '../registry/registryStore.js';
+import { normalizeBackendUrl } from '../registry/projectIdentity.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 
@@ -82,10 +83,38 @@ export async function bootstrap(dto) {
   );
   if (!record) throw codeInvalid;
   if (new Date(record.pairing.pairingCodeExpiresAt).getTime() < Date.now()) throw codeInvalid;
-  // Le refus ne précise pas lequel des deux (code / projectKey) est faux.
-  if (record.projectKey !== dto.projectKey) throw codeInvalid;
   if (record.pairing.status === 'PAIRED') {
     throw new BridgeError(BRIDGE_ERROR_CODES.ALREADY_PAIRED, 'Projet déjà appairé.');
+  }
+
+  // ── RÉCONCILIATION DE LA CLÉ ─────────────────────────────────────────────
+  // Le PROJET est propriétaire de sa clé : il la dérive de son propre nom et
+  // l'annonce ici. Le Panel, lui, ne fait que la pré-calculer au moment de la
+  // déclaration — parfois sans avoir pu la lire (projet en contrat 1.3.x, dont
+  // le ping ne l'annonce pas encore). Exiger l'égalité stricte revenait donc à
+  // refuser l'appairage sous le motif « code invalide » chaque fois que la
+  // dérivation locale différait — un message qui n'a jamais désigné la vraie
+  // cause, et que l'utilisateur ne pouvait corriger qu'en devinant la clé.
+  //
+  // Le secret d'appairage reste le CODE, à usage unique et déjà vérifié
+  // ci-dessus : c'est lui qui prouve qu'on parle au bon projet. La clé n'est
+  // qu'un identifiant technique — on l'ADOPTE au lieu de la contester.
+  // Rien à adopter si le projet n'annonce pas de clé : on garde la nôtre
+  // plutôt que d'écraser une valeur connue par une absence.
+  const announcedKey = typeof dto.projectKey === 'string' ? dto.projectKey.trim() : '';
+  if (announcedKey.length > 0 && announcedKey !== record.projectKey) {
+    const collision = await registryStore.getByKey(announcedKey);
+    if (collision && collision.projectId !== record.projectId) {
+      throw new BridgeError(
+        BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
+        'Un autre projet du registre porte déjà cette clé technique.',
+      );
+    }
+    logger.info(
+      `Clé réconciliée à l’appairage : « ${record.projectKey} » -> « ${announcedKey} » (le projet fait foi).`,
+    );
+    record.projectKey = announcedKey;
+    record.projectKeySource = 'RECONCILED';
   }
 
   // Contrat ≥ 1.1.0 : Manifest joint au bootstrap. Canal OFFICIEL — validé
@@ -102,6 +131,8 @@ export async function bootstrap(dto) {
         { issues: validation.errors },
       );
     }
+    // La cohérence reste EXIGÉE, mais contre la clé que le projet vient
+    // d'annoncer : un Manifest qui se contredit lui-même est un vrai défaut.
     if (validation.manifest.project.key !== record.projectKey) {
       throw new BridgeError(
         BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
@@ -125,7 +156,11 @@ export async function bootstrap(dto) {
   record.runtime.environment = dto.environment;
   record.runtime.softwareVersion = dto.softwareVersion;
   record.runtime.contractVersion = dto.contractVersion;
-  record.runtime.publicBackendUrl = dto.publicBackendUrl ?? null;
+  // L'adresse est stockée NORMALISÉE (comparaison de doublons exacte). Un
+  // bootstrap qui n'en annonce aucune ne doit pas effacer celle qu'on a
+  // saisie à la déclaration : on ne remplace que ce qui est réellement dit.
+  const announcedUrl = normalizeBackendUrl(dto.publicBackendUrl);
+  if (announcedUrl) record.runtime.publicBackendUrl = announcedUrl;
 
   // Le Manifest reçu par le pont fait foi : il remplace toute saisie manuelle.
   if (bridgeManifest !== null) {

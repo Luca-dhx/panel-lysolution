@@ -37,6 +37,14 @@
 #     leurs valeurs). Sans cela le Panel ne saurait que ce qu'il a émis, pas
 #     ce qui a pris effet. OPTIONNEL.
 #     Compatible 1.0.x, 1.1.x et 1.2.x.
+#   1.4.0 — ADDITIF, IDENTITÉ AU PING : PingResponse.projectKey et
+#     .projectName. `/identity` exige un bridgeToken, qui n'existe qu'APRÈS
+#     l'appairage : sans ces deux champs, un Panel qui découvre une adresse ne
+#     peut pas savoir à quel projet il parle, et doit faire ressaisir à la main
+#     une clé que le projet connaît déjà. Le projet reste seul propriétaire de
+#     son identité. Rien d'autre ne sort du ping : la composition (Manifest,
+#     santé, opérations) demeure derrière l'appairage. OPTIONNELS.
+#     Compatible 1.0.x, 1.1.x, 1.2.x et 1.3.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -46,7 +54,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.3.0
+  version: 1.4.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -79,7 +87,9 @@ paths:
       summary: Vivacité du ProjectBridge (sans authentification).
       description: >
         Permet au Panel (et aux sondes) de vérifier que la surface existe.
-        Expose UNIQUEMENT l'état d'appairage — aucune donnée du projet.
+        Expose l'état d'appairage et, depuis 1.4.0, l'IDENTITÉ NOMINALE du
+        projet (clé et nom) — de quoi le reconnaître avant tout appairage.
+        Rien d'autre : la composition du projet reste derrière le bridgeToken.
       parameters:
         - $ref: '#/components/parameters/ContractVersion'
       responses:
@@ -443,6 +453,19 @@ components:
             paired:
               type: boolean
               description: true si un Panel est appairé à ce projet.
+            # ----------------------------------------------------- >= 1.4.0
+            projectKey:
+              type: string
+              minLength: 3
+              maxLength: 120
+              description: >
+                Clé technique STABLE du projet, telle qu'il l'annoncera au
+                bootstrap. Le Panel s'en sert pour reconnaître le projet avant
+                l'appairage plutôt que de la faire ressaisir.
+            projectName:
+              type: string
+              minLength: 1
+              description: Nom lisible du projet, tel qu'il se nomme lui-même.
             time: { type: string, format: date-time }
 
     IdentityResponseEnvelope:

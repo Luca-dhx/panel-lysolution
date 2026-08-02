@@ -41,6 +41,11 @@
 #     premier pull. Tous OPTIONNELS : un Panel qui ne les sert pas reste
 #     conforme, un projet qui les ignore aussi.
 #     Compatible 1.0.x, 1.1.x et 1.2.x.
+#   1.4.0 — RIEN DE NOUVEAU SUR CETTE SURFACE. La version accompagne l'ajout
+#     de PingResponse.projectKey / .projectName côté ProjectBridge : les deux
+#     contrats partagent un même numéro pour qu'un seul en-tête suffise à
+#     décrire ce que parle un pont.
+#     Compatible 1.0.x, 1.1.x, 1.2.x et 1.3.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -50,7 +55,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.3.0
+  version: 1.4.0
 servers:
   - url: https://panel.example.com
     description: >

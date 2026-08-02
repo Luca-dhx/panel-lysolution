@@ -37,7 +37,7 @@ const majorOf = (version) => String(version ?? '').split('.')[0] || '?';
  */
 export async function probeProjectUrl(url, { timeoutMs = 8_000, fetchImpl } = {}) {
   const checkedAt = new Date().toISOString();
-  const base = { url, reachable: false, isProjectBridge: false, contractVersion: null, compatible: false, alreadyPaired: null, checkedAt };
+  const base = { url, reachable: false, isProjectBridge: false, contractVersion: null, compatible: false, alreadyPaired: null, bridgeIdentity: null, checkedAt };
 
   let normalized;
   try {
@@ -73,12 +73,24 @@ export async function probeProjectUrl(url, { timeoutMs = 8_000, fetchImpl } = {}
   const compatible = contractVersion ? isContractCompatible(contractVersion) : false;
   const isProjectBridge = probe.data?.service === 'project-bridge' || contractVersion !== null;
 
+  // IDENTITÉ ANNONCÉE (contrat >= 1.4.0). Absente d'un projet 1.3.x : c'est un
+  // manque, jamais une erreur — la clé sera dérivée puis réconciliée au
+  // bootstrap. On ne DÉDUIT rien ici : ce que le projet ne dit pas vaut null.
+  const bridgeIdentity =
+    typeof probe.data?.projectKey === 'string' || typeof probe.data?.projectName === 'string'
+      ? {
+        projectKey: probe.data.projectKey ?? null,
+        projectName: probe.data.projectName ?? null,
+      }
+      : null;
+
   return {
     ...base,
     reachable: true,
     isProjectBridge,
     contractVersion,
     compatible,
+    bridgeIdentity,
     // Le ping public expose `paired` : un projet déjà appairé ailleurs
     // refuserait le bootstrap, autant le savoir avant de brûler un code.
     alreadyPaired: probe.data?.paired ?? null,

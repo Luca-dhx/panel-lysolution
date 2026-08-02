@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Card, CopyField, EmptyState, StatusBadge } from '@/components/ui';
-import { ApiError, api, errorMessage } from '@/lib/api';
+import { ApiError, api, errorMessage, probeProject } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { useProjects } from '@/lib/useProjects';
+import type { ProbeResult } from '@/types.company';
 import type { PublicProject } from '@/types';
-
-const KEBAB_CASE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 interface CreatedCode {
   projectName: string;
@@ -23,12 +22,18 @@ interface ManifestEditorState {
 export function ProjectsPage() {
   const { projects, loading, error, reload } = useProjects();
 
-  // Déclaration d'un projet
-  const [projectKey, setProjectKey] = useState('');
+  // Déclaration d'un projet — adresse + nom, jamais de clé : elle est générée
+  // par le serveur à partir de l'identité que le projet annonce lui-même.
   const [projectName, setProjectName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedCode | null>(null);
+
+  // Sonde d'URL, AVANT tout appairage
+  const [probeUrl, setProbeUrl] = useState('');
+  const [probing, setProbing] = useState(false);
+  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
 
   // Actions par ligne
   const [actionError, setActionError] = useState<string | null>(null);
@@ -41,30 +46,52 @@ export function ProjectsPage() {
   const [manifestSaved, setManifestSaved] = useState(false);
   const [savingManifest, setSavingManifest] = useState(false);
 
-  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitCreate = async () => {
     setCreateError(null);
-    const key = projectKey.trim();
-    const name = projectName.trim();
-    if (!KEBAB_CASE.test(key)) {
-      setCreateError('La clé du projet doit être en kebab-case (ex. : mon-projet-01).');
-      return;
-    }
     setCreating(true);
     try {
-      const res = await api.createProject({ projectKey: key, projectName: name });
+      const name = projectName.trim();
+      const res = await api.createProject({
+        url: probeUrl.trim(),
+        ...(name.length > 0 ? { projectName: name } : {}),
+      });
       setCreated({
         projectName: res.project.projectName,
         pairingCode: res.pairingCode,
         expiresAt: res.pairingCodeExpiresAt,
       });
-      setProjectKey('');
       setProjectName('');
+      setProbeUrl('');
+      setProbeResult(null);
       await reload();
     } catch (err) {
       setCreateError(errorMessage(err, 'Impossible de déclarer le projet.'));
     } finally {
       setCreating(false);
+    }
+  };
+
+  /**
+   * SONDE — le seul appel sortant possible AVANT l'appairage : les autres
+   * routes du ProjectBridge exigent un bridgeToken qui n'existe pas encore.
+   * Elle ne crée rien et ne modifie rien : on constate, on n'engage pas.
+   */
+  const submitProbe = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setProbeError(null);
+    setProbeResult(null);
+    setProbing(true);
+    try {
+      const result = await probeProject(probeUrl.trim());
+      setProbeResult(result);
+      // Le projet se nomme lui-même : on pré-remplit avec CE nom plutôt que
+      // d'en faire inventer un. L'utilisateur reste libre de le remplacer.
+      const announced = result.bridgeIdentity?.projectName;
+      if (announced && projectName.trim().length === 0) setProjectName(announced);
+    } catch (err) {
+      setProbeError(errorMessage(err, 'Impossible de sonder cette adresse.'));
+    } finally {
+      setProbing(false);
     }
   };
 
@@ -146,33 +173,112 @@ export function ProjectsPage() {
       </header>
 
       <Card title="Déclarer un projet">
-        <form className="inline-form" onSubmit={(e) => void submitCreate(e)}>
+        <p className="muted">
+          Renseignez l’adresse du backend, testez le pont, puis déclarez. La clé technique du
+          projet est générée automatiquement à partir de l’identité qu’il annonce lui-même : elle
+          ne se saisit pas.
+        </p>
+        <form className="inline-form" onSubmit={(e) => void submitProbe(e)}>
           <label className="field">
-            <span className="field-label">Clé du projet (kebab-case)</span>
+            <span className="field-label">URL publique du backend du projet</span>
             <input
-              type="text"
-              value={projectKey}
-              onChange={(e) => setProjectKey(e.target.value)}
-              placeholder="mon-projet-01"
-              pattern="[a-z0-9]+(-[a-z0-9]+)*"
-              title="Lettres minuscules et chiffres séparés par des tirets."
+              type="url"
+              value={probeUrl}
+              onChange={(e) => setProbeUrl(e.target.value)}
+              placeholder="https://api.mon-projet.exemple.com"
               required
             />
           </label>
-          <label className="field">
-            <span className="field-label">Nom du projet</span>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder="Nom lisible du projet"
-              required
-            />
-          </label>
-          <button type="submit" className="btn btn-primary" disabled={creating}>
-            {creating ? 'Déclaration…' : 'Déclarer'}
+          <button type="submit" className="btn btn-primary" disabled={probing}>
+            {probing ? 'Test en cours…' : 'Tester le bridge'}
           </button>
         </form>
+
+        {probeError ? <div className="alert alert-error">{probeError}</div> : null}
+
+        {probeResult ? (
+          <div
+            className={
+              probeResult.compatible && probeResult.alreadyPaired !== true
+                ? 'alert alert-success'
+                : probeResult.reachable
+                  ? 'alert alert-warning'
+                  : 'alert alert-error'
+            }
+          >
+            <strong>{probeResult.reason}</strong>
+            <dl className="detail-list">
+              <div>
+                <dt>Adresse joignable</dt>
+                <dd>{probeResult.reachable ? 'oui' : 'non'}</dd>
+              </div>
+              <div>
+                <dt>ProjectBridge reconnu</dt>
+                <dd>{probeResult.isProjectBridge ? 'oui' : 'non'}</dd>
+              </div>
+              <div>
+                <dt>Contrat du projet</dt>
+                <dd>
+                  {probeResult.contractVersion ? (
+                    <code className="inline-code">{probeResult.contractVersion}</code>
+                  ) : (
+                    <span className="muted">non annoncé</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Contrat du Panel</dt>
+                <dd>
+                  <code className="inline-code">{probeResult.panelContractVersion ?? '—'}</code>
+                </dd>
+              </div>
+              <div>
+                <dt>Compatibles</dt>
+                <dd>{probeResult.compatible ? 'oui' : 'non'}</dd>
+              </div>
+              <div>
+                <dt>Déjà appairé</dt>
+                <dd>
+                  {probeResult.alreadyPaired === null
+                    ? <span className="muted">inconnu</span>
+                    : probeResult.alreadyPaired ? 'oui' : 'non'}
+                </dd>
+              </div>
+              <div>
+                <dt>Testé le</dt>
+                <dd>{formatDateTime(probeResult.checkedAt)}</dd>
+              </div>
+            </dl>
+          </div>
+        ) : null}
+
+        {/* La déclaration ne s'ouvre qu'une fois le pont constaté valide : on
+            n'inscrit pas au registre une adresse dont on ignore ce qu'elle
+            répond. Un projet déjà appairé ailleurs reste barré. */}
+        {probeResult?.compatible && probeResult.alreadyPaired !== true ? (
+          <div className="inline-form">
+            <label className="field">
+              <span className="field-label">
+                Nom du projet <span className="muted">(pré-rempli, modifiable)</span>
+              </span>
+              <input
+                type="text"
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="Nom lisible du projet"
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={creating}
+              onClick={() => void submitCreate()}
+            >
+              {creating ? 'Déclaration…' : 'Déclarer ce projet'}
+            </button>
+          </div>
+        ) : null}
+
         {createError ? <div className="alert alert-error">{createError}</div> : null}
       </Card>
 
@@ -205,8 +311,8 @@ export function ProjectsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Clé</th>
                   <th>Nom</th>
+                  <th>Adresse</th>
                   <th>Appairage</th>
                   <th>Vivacité</th>
                   <th>Version logicielle</th>
@@ -219,10 +325,14 @@ export function ProjectsPage() {
                   const isPaired = project.pairing.status === 'PAIRED';
                   return (
                     <tr key={project.projectId}>
-                      <td>
-                        <code className="inline-code">{project.projectKey}</code>
-                      </td>
                       <td>{project.projectName}</td>
+                      <td>
+                        {project.runtime.publicBackendUrl ? (
+                          <code className="inline-code">{project.runtime.publicBackendUrl}</code>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
                       <td>
                         <StatusBadge kind="pairing" value={project.pairing.status} />
                       </td>

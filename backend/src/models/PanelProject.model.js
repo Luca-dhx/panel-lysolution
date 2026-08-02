@@ -46,6 +46,16 @@ const panelProjectSchema = new mongoose.Schema(
   {
     projectId: { type: String, required: true, unique: true },
     projectKey: { type: String, required: true, unique: true },
+    // D'OÙ vient la clé — jamais d'une saisie. `BRIDGE_KEY` signifie que le
+    // projet l'a annoncée lui-même (contrat >= 1.4.0) : c'est la seule source
+    // vraie par construction. Les autres sont des dérivations, réconciliées
+    // avec la valeur du projet au bootstrap. `null` = fiche antérieure à la
+    // génération automatique, laissée intacte.
+    projectKeySource: {
+      type: String,
+      enum: ['BRIDGE_KEY', 'BRIDGE_NAME', 'NAME', 'URL', 'RECONCILED', null],
+      default: null,
+    },
     projectName: { type: String, required: true },
     createdAt: { type: String, required: true },
     updatedAt: { type: String, required: true },

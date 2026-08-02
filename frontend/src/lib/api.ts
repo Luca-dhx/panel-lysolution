@@ -127,7 +127,12 @@ export const api = {
 
   listProjects: () => request<{ projects: PublicProject[] }>('/api/projects'),
 
-  createProject: (body: { projectKey: string; projectName: string }) =>
+  /**
+   * DÉCLARE un projet à partir de son adresse. Aucune clé n'est transmise :
+   * l'identifiant technique est généré par le serveur, à partir de l'identité
+   * que le projet annonce lui-même. Le client ne le choisit jamais.
+   */
+  createProject: (body: { url: string; projectName?: string }) =>
     request<{ project: PublicProject; pairingCode: string; pairingCodeExpiresAt: string }>(
       '/api/projects',
       { method: 'POST', body },

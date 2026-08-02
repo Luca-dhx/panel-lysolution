@@ -13,6 +13,7 @@ const TESTS = [
   'manifest.test.js',
   'capabilities.test.js',
   'registry.test.js',
+  'project-identity.test.js',
   'domains.test.js',
   'persistence.test.js',
   'bridge-http.test.js',

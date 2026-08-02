@@ -23,6 +23,14 @@ export const registryStore = {
     return toRecord(await PanelProject.findOne({ projectKey }).lean());
   },
 
+  // Recherche par ADRESSE — la fiche et le projet distant sont la même chose
+  // vus des deux bouts. L'URL stockée est toujours normalisée (voir
+  // projectIdentity.normalizeBackendUrl) : la comparaison est donc exacte.
+  async getByBackendUrl(normalizedUrl) {
+    if (!normalizedUrl) return null;
+    return toRecord(await PanelProject.findOne({ 'runtime.publicBackendUrl': normalizedUrl }).lean());
+  },
+
   async list() {
     return (await PanelProject.find({}).lean()).map(toRecord);
   },

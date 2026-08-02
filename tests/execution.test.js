@@ -370,7 +370,7 @@ section('LOT 1/9 — Cycle de vie complet, en simulation');
   await registryStore.clear();
   await PanelExecution.deleteMany({});
 
-  const declared = await registry.declareProject({ projectKey: 'projet-pilote', projectName: 'Projet Pilote' });
+  const declared = await registry.declareProject({ publicBackendUrl: 'https://projet-pilote.test', projectName: 'Projet Pilote' });
   const record = declared.record;
   record.pairing.status = 'PAIRED';
   record.pairing.pairedAt = ago(86_400);
@@ -522,7 +522,7 @@ section('LOT 1/9 — Cycle de vie complet, en simulation');
   // ROTATE_SECRETS est autorisée en TEST : pour éprouver un refus réel, il
   // faut une cible en PROD — l'interdiction d'environnement est justement la
   // politique la plus tranchante du registre.
-  const prod = (await registry.declareProject({ projectKey: 'projet-prod', projectName: 'Projet Prod' })).record;
+  const prod = (await registry.declareProject({ publicBackendUrl: 'https://projet-prod.test', projectName: 'Projet Prod' })).record;
   prod.pairing.status = 'PAIRED';
   prod.runtime = { ...record.runtime, environment: 'PROD' };
   prod.manifest = { ...record.manifest, project: { ...record.manifest.project, key: 'projet-prod', environment: 'PROD' } };
@@ -666,7 +666,7 @@ section('Surface /api/executions');
   await registryStore.clear();
   await PanelExecution.deleteMany({});
 
-  const declared = await registry.declareProject({ projectKey: 'projet-api', projectName: 'Projet API' });
+  const declared = await registry.declareProject({ publicBackendUrl: 'https://projet-api.test', projectName: 'Projet API' });
   const record = declared.record;
   record.pairing.status = 'PAIRED';
   record.runtime = { ...record.runtime, environment: 'TEST', publicBackendUrl: 'https://api.api.test' };

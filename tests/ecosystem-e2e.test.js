@@ -173,14 +173,9 @@ check('…seuls les noms de clés et leurs empreintes sont rendus',
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('LOT 5 — Déclaration du projet et sonde AVANT appairage');
 
-const declared = await http('POST', `${PANEL_URL}/api/projects`, {
-  headers: AUTH, body: { projectKey: 'sb-auto-06', projectName: 'SB Auto 06' },
-});
-check('POST /api/projects → 201', declared.status === 201);
-const projectId = declared.json?.data?.project?.projectId;
-const pairingCode = declared.json?.data?.pairingCode;
-check('…un code d’appairage à usage unique est délivré', typeof pairingCode === 'string' && pairingCode.length > 0);
-
+// La déclaration part désormais de l'ADRESSE : elle a donc lieu APRÈS le
+// démarrage du projet, plus avant. C'est aussi l'ordre réel d'un opérateur —
+// on ne déclare pas une adresse dont on ignore ce qu'elle répond.
 const probeDead = await http('POST', `${PANEL_URL}/api/projects/probe`, {
   headers: AUTH, body: { url: 'http://127.0.0.1:1' },
 });
@@ -213,10 +208,38 @@ const probeAlive = await http('POST', `${PANEL_URL}/api/projects/probe`, {
 check('la sonde reconnaît un ProjectBridge vivant',
   probeAlive.status === 200 && probeAlive.json?.data?.isProjectBridge === true);
 check('…lit sa version de contrat dans l’en-tête',
-  probeAlive.json.data.contractVersion === '1.3.0');
+  probeAlive.json.data.contractVersion === '1.4.0');
 check('…et la juge compatible', probeAlive.json.data.compatible === true);
 check('…en concluant qu’il est prêt pour l’appairage',
   /prêt pour l’appairage/.test(probeAlive.json.data.reason));
+// Contrat >= 1.4.0 : le projet se NOMME sur son ping public. C'est ce qui
+// permet de ne plus faire saisir sa clé.
+check('…et le projet annonce son identité sans être appairé',
+  probeAlive.json.data.bridgeIdentity?.projectKey === 'sb-auto-06'
+  && typeof probeAlive.json.data.bridgeIdentity?.projectName === 'string');
+
+// DÉCLARATION — aucune clé transmise. Le corps contient volontairement un
+// `projectKey` fantaisiste : le backend doit l'IGNORER et dériver la clé de
+// l'identité annoncée par le projet.
+const declared = await http('POST', `${PANEL_URL}/api/projects`, {
+  headers: AUTH,
+  body: { url: projectProc.baseUrl, projectKey: 'cle-imposee-par-le-client' },
+});
+check('POST /api/projects → 201', declared.status === 201);
+const projectId = declared.json?.data?.project?.projectId;
+const pairingCode = declared.json?.data?.pairingCode;
+check('…un code d’appairage à usage unique est délivré', typeof pairingCode === 'string' && pairingCode.length > 0);
+check('…la clé vient du PROJET, pas du client',
+  declared.json?.data?.project?.projectKey === 'sb-auto-06');
+check('…et le nom aussi, sans avoir été saisi',
+  declared.json?.data?.project?.projectName === 'SB Auto 06');
+
+// Deux clics = un seul projet : la seconde déclaration est refusée.
+const twice = await http('POST', `${PANEL_URL}/api/projects`, {
+  headers: AUTH, body: { url: projectProc.baseUrl },
+});
+check('déclarer deux fois la même adresse → refus',
+  twice.status === 409 && twice.json?.code === 'PANEL_PROJECT_ALREADY_DECLARED');
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('LOT 5 — APPAIRAGE RÉEL (le projet appelle le Panel)');

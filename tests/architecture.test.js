@@ -191,6 +191,38 @@ section('Le frontend passe par le client d’API centralisé');
     hardcoded.length === 0);
 }
 
+section('Aucune capacité n’est exposée sans être atteignable par l’utilisateur');
+{
+  // Une route backend peut être écrite, testée, exportée dans lib/api.ts… et
+  // n'être branchée à AUCUN écran. La capacité existe alors partout sauf là
+  // où elle sert, et rien n'échoue pour le signaler : les tests passent, la
+  // fonction est simplement morte. C'est ainsi que le « Tester le bridge »
+  // est resté injoignable. La règle : tout appel d'API exporté doit être
+  // consommé par au moins un autre fichier du frontend.
+  const apiFile = path.join(frontendSrc, 'lib', 'api.ts');
+  const source = read(apiFile);
+
+  // Découpe le fichier en blocs de premier niveau `export const NAME = …`,
+  // chacun s'étendant jusqu'au prochain export.
+  const starts = [...source.matchAll(/^export const (\w+)\s*=/gm)];
+  const blocks = starts.map((match, index) => ({
+    name: match[1],
+    body: source.slice(match.index, starts[index + 1]?.index ?? source.length),
+  }));
+
+  // Seuls comptent les exports qui appellent RÉELLEMENT le backend.
+  const callers = blocks.filter((block) => /\brequest[<(]/.test(block.body));
+  check(`lib/api.ts expose ${callers.length} points d’appel au backend`, callers.length > 0);
+
+  const consumers = frontendFiles.filter((file) => file !== apiFile);
+  const dead = callers.filter((block) => {
+    const used = new RegExp(`\\b${block.name}\\b`);
+    return !consumers.some((file) => used.test(read(file)));
+  });
+  check(`aucun point d’appel mort${dead.length ? ` — ${dead.map((b) => b.name).join(', ')}` : ''}`,
+    dead.length === 0);
+}
+
 section('Les secrets ne sortent jamais par une API');
 {
   const registry = read(path.join(backendSrc, 'services', 'registry', 'projectRegistry.service.js'));

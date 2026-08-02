@@ -160,6 +160,8 @@ export interface ProbeResult {
   contractVersion: string | null;
   compatible: boolean;
   alreadyPaired: boolean | null;
+  /** Identité annoncée par le projet sur son ping public (contrat >= 1.4.0). */
+  bridgeIdentity: { projectKey: string | null; projectName: string | null } | null;
   panelContractVersion?: string;
   reason: string;
   checkedAt: string;

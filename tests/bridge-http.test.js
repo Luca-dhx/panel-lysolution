@@ -56,7 +56,7 @@ section('Garde de version du contrat (toutes routes, ping compris)');
 }
 
 section('Bootstrap — POST /bridge/v1/pairings');
-const declared = await registry.declareProject({ projectKey: 'projet-http', projectName: 'Projet HTTP' });
+const declared = await registry.declareProject({ publicBackendUrl: 'https://projet-http.test', projectName: 'Projet HTTP' });
 let bridgeToken;
 {
   const invalid = await call('POST', '/bridge/v1/pairings', { headers: H, body: { hello: 'world' } });
@@ -108,7 +108,7 @@ let bridgeToken;
 section('Bootstrap 1.1 avec Manifest joint');
 {
   const withManifest = await registry.declareProject({
-    projectKey: 'projet-manifest',
+    publicBackendUrl: 'https://projet-manifest.test',
     projectName: 'Projet Manifest',
   });
   const manifest = {

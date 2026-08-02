@@ -47,7 +47,7 @@ function conformManifest(overrides = {}) {
 function bootstrapDto(pairingCode, overrides = {}) {
   return {
     contractVersion: CONTRACT_VERSION,
-    projectKey: 'garage-exemple',
+    publicBackendUrl: 'https://garage-exemple.test',
     projectName: 'Garage Exemple',
     environment: 'PROD',
     softwareVersion: '1.4.2',
@@ -63,7 +63,7 @@ section('Déclaration d’un projet conforme au Manager Standard');
 let declared;
 {
   declared = await registry.declareProject({
-    projectKey: 'garage-exemple',
+    publicBackendUrl: 'https://garage-exemple.test',
     projectName: 'Garage Exemple',
     manifest: conformManifest(),
   });
@@ -79,16 +79,36 @@ let declared;
 
 section('Garde-fous de déclaration');
 {
-  check('projectKey dupliqué refusé', await rejectsWith(
-    () => registry.declareProject({ projectKey: 'garage-exemple', projectName: 'Doublon' }),
-    'PANEL_PROJECT_KEY_TAKEN',
+  // ── ANTI-DOUBLONS ────────────────────────────────────────────────────────
+  // Trois portes mènent au même projet ; les trois doivent être fermées, et
+  // avec le MÊME code : c'est le même fait, pas trois incidents différents.
+  check('même adresse → refus', await rejectsWith(
+    () => registry.declareProject({ publicBackendUrl: 'https://garage-exemple.test', projectName: 'Doublon' }),
+    'PANEL_PROJECT_ALREADY_DECLARED',
   ));
-  check('projectKey non kebab-case refusé', await rejectsWith(
-    () => registry.declareProject({ projectKey: 'Garage Exemple', projectName: 'X' }),
-    'PANEL_PROJECT_KEY_INVALID',
+  check('même adresse écrite autrement (casse, port, barre finale) → refus', await rejectsWith(
+    () => registry.declareProject({ publicBackendUrl: 'https://Garage-Exemple.TEST:443/', projectName: 'Doublon' }),
+    'PANEL_PROJECT_ALREADY_DECLARED',
+  ));
+  check('autre adresse mais même clé dérivée → refus', await rejectsWith(
+    () => registry.declareProject({ publicBackendUrl: 'https://autre-adresse.test', projectName: 'Garage Exemple' }),
+    'PANEL_PROJECT_ALREADY_DECLARED',
+  ));
+  check('autre adresse mais même identité annoncée par le pont → refus', await rejectsWith(
+    () => registry.declareProject({
+      publicBackendUrl: 'https://encore-une-autre.test',
+      projectName: 'Nom Sans Rapport',
+      bridgeIdentity: { projectKey: 'garage-exemple', projectName: 'Garage Exemple' },
+    }),
+    'PANEL_PROJECT_ALREADY_DECLARED',
+  ));
+
+  check('URL absente ou non http(s) refusée', await rejectsWith(
+    () => registry.declareProject({ publicBackendUrl: 'pas-une-url', projectName: 'X' }),
+    'PANEL_PROJECT_URL_INVALID',
   ));
   check('manifest invalide refusé à la déclaration', await rejectsWith(
-    () => registry.declareProject({ projectKey: 'autre-projet', projectName: 'X', manifest: { nope: true } }),
+    () => registry.declareProject({ publicBackendUrl: 'https://autre-projet.test', projectName: 'X', manifest: { nope: true } }),
     'PANEL_MANIFEST_INVALID',
   ));
 }
@@ -213,14 +233,36 @@ section('Révocation et ré-appairage');
     && (await registryStore.getById(record.projectId)) === null);
 }
 
-section('Codes expirés et projectKey trompeur');
+section('Réconciliation de la clé, codes expirés, majeure inconnue');
 {
-  const other = await registry.declareProject({ projectKey: 'projet-b', projectName: 'Projet B' });
-  const record = await registryStore.getById(other.record.projectId);
-  check('bootstrap avec le bon code mais le mauvais projectKey refusé', await rejectsWith(
-    () => Promise.resolve(pairing.bootstrap(bootstrapDto(other.pairingCode, { projectKey: 'projet-vole', projectName: 'X' }))),
-    'BRIDGE_PAIRING_CODE_INVALID',
+  // ── RÉCONCILIATION ───────────────────────────────────────────────────────
+  // Le PROJET est propriétaire de sa clé ; le Panel ne fait que la
+  // pré-calculer. Une divergence n'est donc plus un refus (elle l'était, sous
+  // le motif trompeur « code invalide », que l'utilisateur ne pouvait lever
+  // qu'en devinant la clé) : le Panel ADOPTE ce que le projet annonce. Le
+  // secret prouvant l'identité reste le code d'appairage, à usage unique.
+  const reconciling = await registry.declareProject({
+    publicBackendUrl: 'https://projet-r.test', projectName: 'Projet R',
+  });
+  check('la clé pré-calculée vient du nom', reconciling.record.projectKey === 'projet-r');
+  await pairing.bootstrap(bootstrapDto(reconciling.pairingCode, { projectKey: 'cle-reelle-du-projet' }));
+  const reconciled = await registryStore.getById(reconciling.record.projectId);
+  check('bootstrap avec une AUTRE clé : le Panel adopte celle du projet',
+    reconciled.projectKey === 'cle-reelle-du-projet');
+  check('…et trace d’où elle vient', reconciled.projectKeySource === 'RECONCILED');
+  check('…l’appairage aboutit', reconciled.pairing.status === 'PAIRED');
+
+  // Ce qui reste INTERDIT : marcher sur la clé d'un autre projet du registre.
+  const victim = await registry.declareProject({
+    publicBackendUrl: 'https://projet-v.test', projectName: 'Projet V',
+  });
+  check('adopter la clé D’UN AUTRE projet reste refusé', await rejectsWith(
+    () => Promise.resolve(pairing.bootstrap(bootstrapDto(victim.pairingCode, { projectKey: 'cle-reelle-du-projet' }))),
+    'BRIDGE_INVALID_PAYLOAD',
   ));
+
+  const other = await registry.declareProject({ publicBackendUrl: 'https://projet-b.test', projectName: 'Projet B' });
+  const record = await registryStore.getById(other.record.projectId);
   record.pairing.pairingCodeExpiresAt = new Date(Date.now() - 1000).toISOString();
   await registryStore.save(record);
   check('code expiré refusé', await rejectsWith(

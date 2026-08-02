@@ -87,7 +87,7 @@ let declared;
 {
   await registryStore.clear();
   declared = await registry.declareProject({
-    projectKey: 'garage-nord',
+    publicBackendUrl: 'https://garage-nord.test',
     projectName: 'Garage Nord',
     manifest: manifestFor('garage-nord', {
       engines: { deployment: '1.1.0', duplication: '1.1.0' },
@@ -113,7 +113,7 @@ let declared;
   check('non appairé : pas de date d’appairage', d.dates.pairedAt === null);
   check('non appairé : aucun heartbeat', d.dates.lastHeartbeatAt === null);
 
-  const noManifest = await registry.declareProject({ projectKey: 'projet-muet', projectName: 'Projet Muet' });
+  const noManifest = await registry.declareProject({ publicBackendUrl: 'https://projet-muet.test', projectName: 'Projet Muet' });
   const dm = registry.describeProject(await registryStore.getById(noManifest.record.projectId));
   check('sans Manifest : type inconnu, jamais inventé', dm.type === null && dm.layout === null);
   check('sans Manifest : le nom du registre sert de repli', dm.name === 'Projet Muet');
