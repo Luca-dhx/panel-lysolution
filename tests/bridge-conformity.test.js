@@ -167,6 +167,82 @@ section('Client sortant : une méthode par opération du contrat');
     PROJECT_BRIDGE_CLIENT_METHODS.length === Object.keys(contract.PROJECT_API_ROUTES).length);
 }
 
+section('Client sortant : la version de contrat part SUR LE FIL, à chaque appel');
+{
+  // Vérifier que les méthodes EXISTENT ne prouve rien sur ce qui circule :
+  // un projet qui reçoit « aucune » version répond 409 et le pont paraît
+  // rompu côté serveur alors que la faute est à l'émission. On capture donc
+  // le fetch et on inspecte les en-têtes RÉELLEMENT transmis.
+  const sent = [];
+  const fetchImpl = (url, init) => {
+    sent.push({ url: String(url), headers: init?.headers ?? {} });
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, data: {} }),
+      headers: new Headers({ [contract.CONTRACT_VERSION_HEADER]: contract.CONTRACT_VERSION }),
+    });
+  };
+
+  // Un jeu d'arguments par méthode : le contrat en compte 9, toutes doivent
+  // être exercées — une méthode ajoutée sans argument ici fera échouer le
+  // compte plus bas, jamais passer silencieusement.
+  const invocations = {
+    ping: (c) => c.ping(),
+    getIdentity: (c) => c.getIdentity(),
+    getHealth: (c) => c.getHealth(),
+    getManifest: (c) => c.getManifest(),
+    deliverChanges: (c) => c.deliverChanges([]),
+    readLocalChanges: (c) => c.readLocalChanges({ cursor: null, limit: 10 }),
+    listOperations: (c) => c.listOperations(),
+    invokeOperation: (c) => c.invokeOperation('op.test', { invocationId: 'i-1', params: {} }),
+    notifyUnpair: (c) => c.notifyUnpair(),
+  };
+
+  check('un jeu d’arguments pour CHAQUE méthode du contrat',
+    PROJECT_BRIDGE_CLIENT_METHODS.every((m) => typeof invocations[m] === 'function')
+    && Object.keys(invocations).length === PROJECT_BRIDGE_CLIENT_METHODS.length);
+
+  const headerOf = (entry) => {
+    // Insensible à la casse : le client a le droit de choisir sa graphie,
+    // c'est le nom canonique qui compte, pas sa capitalisation.
+    const found = Object.entries(entry.headers)
+      .find(([k]) => k.toLowerCase() === contract.CONTRACT_VERSION_HEADER);
+    return found?.[1] ?? null;
+  };
+
+  for (const method of PROJECT_BRIDGE_CLIENT_METHODS) {
+    sent.length = 0;
+    const client = new ProjectBridgeClient({
+      baseUrl: 'https://exemple.invalid',
+      bridgeToken: 'jeton-de-test',
+      fetchImpl,
+    });
+    await invocations[method](client);
+    check(`${method}() émet ${contract.CONTRACT_VERSION_HEADER}: ${contract.CONTRACT_VERSION}`,
+      sent.length === 1 && headerOf(sent[0]) === contract.CONTRACT_VERSION);
+  }
+
+  // `probe()` n'est pas un chemin du contrat mais emprunte le réseau : c'est
+  // le tout premier appel d'un appairage, celui qui doit surtout pas partir nu.
+  sent.length = 0;
+  const prober = new ProjectBridgeClient({ baseUrl: 'https://exemple.invalid', fetchImpl });
+  await prober.probe();
+  check(`probe() émet ${contract.CONTRACT_VERSION_HEADER}: ${contract.CONTRACT_VERSION}`,
+    sent.length === 1 && headerOf(sent[0]) === contract.CONTRACT_VERSION);
+
+  // Garde anti-régression structurelle : aucun appel réseau du client ne doit
+  // pouvoir être ajouté sans l'en-tête. On le vérifie sur la SOURCE, car un
+  // futur `fetch` oublié n'apparaîtrait dans aucun des appels ci-dessus.
+  const clientSource = fs.readFileSync(
+    path.join(root, 'backend/src/bridge/ProjectBridgeClient.js'), 'utf8',
+  );
+  const fetchCalls = clientSource.match(/this\.fetchImpl\(/g)?.length ?? 0;
+  const headerMentions = clientSource.match(/CONTRACT_VERSION_HEADER\]:\s*CONTRACT_VERSION/g)?.length ?? 0;
+  check(`chaque appel réseau du client pose l’en-tête (${fetchCalls} appels, ${headerMentions} poses)`,
+    fetchCalls > 0 && headerMentions >= fetchCalls);
+}
+
 section('Exclusivité architecturale : un seul fichier parle réseau aux projets');
 {
   const srcDir = path.join(root, 'backend', 'src');

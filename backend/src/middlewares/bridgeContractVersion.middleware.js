@@ -14,10 +14,14 @@ export function bridgeContractVersionGuard(req, res, next) {
   res.setHeader(CONTRACT_VERSION_HEADER, CONTRACT_VERSION);
   const requested = req.get(CONTRACT_VERSION_HEADER);
   if (!isContractCompatible(requested)) {
+    // Le message DIT ce qui a été reçu et ce qui était attendu : « aucune »
+    // (en-tête absent, donc un client qui ne l'émet pas) ne se diagnostique
+    // pas comme « 2.0.0 » (majeures divergentes, donc miroirs à porter).
+    // Miroir exact du message du ProjectBridge côté projet.
     return next(
       new BridgeError(
         BRIDGE_ERROR_CODES.CONTRACT_VERSION_UNSUPPORTED,
-        'Version majeure du contrat non supportée.',
+        `Version majeure du contrat non supportée (reçu : ${requested ?? 'aucune'}, attendu : ${CONTRACT_VERSION}).`,
       ),
     );
   }
