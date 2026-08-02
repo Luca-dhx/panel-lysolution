@@ -75,9 +75,26 @@ export function dedicatedCertPaths(host) {
  */
 export const legacyDedicatedCertPaths = dedicatedCertPaths;
 
-/** Bloc proxy commun (API + uploads + health) vers le backend PM2. */
+/**
+ * Bloc proxy commun (API + PONT + uploads + health) vers le backend PM2.
+ *
+ * `/bridge/` est la surface que les PROJETS appellent (bootstrap d'appairage,
+ * heartbeats, synchronisation) : elle n'est pas sous `/api/`, et sans son
+ * propre bloc elle retombait dans le repli SPA `try_files … /index.html`.
+ * nginx la servait alors par son module statique, qui accepte GET/HEAD et
+ * refuse le reste — un `POST /bridge/v1/pairings` recevait donc un
+ * 405 Not Allowed d'nginx sans jamais atteindre Express.
+ */
 function backendProxy(backendPort) {
   return `    location /api/ {
+        proxy_pass http://127.0.0.1:${backendPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location /bridge/ {
         proxy_pass http://127.0.0.1:${backendPort};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -276,14 +293,19 @@ ${header}
 ${apiProxyAll(backendPort)}
 }`;
     }
+    // Les blocs PROXY sont écrits AVANT le repli SPA. nginx choisit le préfixe
+    // le plus LONG, pas le premier : l'ordre ne décide de rien pour lui. Il
+    // décide en revanche de ce qu'on lit — voir d'abord ce qui part au backend,
+    // puis le repli, est la seule lecture qui ne laisse pas croire que `/`
+    // capture tout.
     return `# --- ${site.id} ---
 ${header}
 
     root ${site.root};
     index index.html;
-
+${site.withBackendProxy ? `\n${proxy}\n` : ''}
 ${staticSiteLocations()}
-${site.withBackendProxy ? `\n${proxy}\n` : ''}}`;
+}`;
   });
 
   return `# Généré par DeploymentEngine — cible ${target.host}

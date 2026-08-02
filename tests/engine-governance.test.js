@@ -221,6 +221,25 @@ section('Nginx : entièrement piloté par le profil');
   check('politique de cache correcte', conf.includes('Cache-Control "no-cache"') && conf.includes('public, immutable'));
   check('bannière de génération', conf.startsWith('# Généré par DeploymentEngine'));
 
+  // ── SURFACE DE PONT PROXIFIÉE ────────────────────────────────────────────
+  // `/bridge/` n'avait aucun bloc : les appels des projets (bootstrap
+  // d'appairage, heartbeats, synchronisation) retombaient dans le repli SPA
+  // `try_files … /index.html`, servis par le module statique d'nginx — qui
+  // accepte GET/HEAD et refuse le reste. Un `POST /bridge/v1/pairings`
+  // recevait donc un 405 Not Allowed d'nginx, sans jamais atteindre Express.
+  const spa = conf.split(/^server \{/m).find((b) => b.includes('try_files'));
+  check('la surface de pont est proxifiée', /location \/bridge\/ \{/.test(spa));
+  check('…vers le MÊME backend que /api/',
+    (spa.match(/proxy_pass http:\/\/127\.0\.0\.1:5001;/g) || []).length >= 2);
+  check('…avec les mêmes en-têtes que /api/ (Host, X-Real-IP, X-Forwarded-*)',
+    (spa.match(/proxy_set_header X-Forwarded-Proto \$scheme;/g) || []).length >= 2);
+  // nginx choisit le préfixe le plus LONG, pas le premier : l'ordre ne change
+  // rien pour lui. Il change ce qu'on lit — et c'est la lecture qui avait
+  // laissé croire que tout partait au backend.
+  check('le bloc /bridge/ précède le repli SPA',
+    spa.indexOf('location /bridge/') < spa.indexOf('location / {'));
+  check('le repli SPA existe toujours', spa.includes('try_files $uri $uri/ /index.html'));
+
   const http = renderNginxHttpOnly(target, { roots, backendPort: 5001 });
   check('phase HTTP : aucun certificat référencé', !http.includes('ssl_certificate'));
   check('phase HTTP : challenge ACME servi pour chaque hôte',
