@@ -479,6 +479,66 @@ const detail = await http('GET', `${PANEL_URL}/api/projects/${projectId}`, { hea
 check('GET /api/projects/:id expose la même valeur',
   detail.json?.data?.project?.business?.presentation?.companyName === NOUVEAU_NOM);
 
+// ── PREUVE PAR L'OUTBOX DU PROJET : chaque maillon, avec ses vraies valeurs ──
+// On ouvre la base du PROJET (autre processus, autre base) pour constater ce
+// qui a réellement été mis en file, et dans quel état la file l'a laissé.
+// L'instance mongoose du Panel sert de pont vers l'AUTRE base : aucune
+// dépendance nouvelle, et la connexion est refermée juste après.
+const projectDb = await PanelPresentation.base
+  .createConnection(`${projectMongo.getUri()}sbauto_e2e`).asPromise();
+const outbox = projectDb.collection('paneloutboxentries');
+
+const presentationEntries = await outbox
+  .find({ entityType: 'PROJECT_PRESENTATION' }).sort({ createdAt: 1 }).toArray();
+check('une entrée PROJECT_PRESENTATION a bien été créée dans l’outbox',
+  presentationEntries.length > 0);
+const derniere = presentationEntries[presentationEntries.length - 1];
+check('…portant le NOUVEAU nom commercial', derniere?.payload?.companyName === NOUVEAU_NOM);
+check('…émise par le PROJET', derniere?.emitter === 'PROJECT');
+check('…et ACQUITTÉE par le Panel (PENDING → ACKNOWLEDGED)',
+  derniere?.status === 'ACKNOWLEDGED');
+check('aucune écriture d’identité REFUSÉE par le Panel',
+  (await outbox.countDocuments({ entityType: 'PROJECT_PRESENTATION', status: 'REJECTED' })) === 0);
+
+// ── LES TROIS MODÈLES ÉMETTENT-ILS RÉELLEMENT ? ─────────────────────────────
+// Company (logos) et SystemConfiguration (réseau) sont deux hooks distincts ;
+// le contrat est déjà couvert plus haut. Un hook manquant se voit ici.
+const compterIdentite = () => outbox.countDocuments({ entityType: 'PROJECT_PRESENTATION' });
+
+// (a) Company — champ `logos`, un autre chemin surveillé que `name`.
+const avantLogo = await compterIdentite();
+const majLogo = await http('PUT', `${projectProc.baseUrl}/api/company`, {
+  headers: projectProc.auth,
+  body: { name: NOUVEAU_NOM, logos: { header: '/uploads/logo-synchro.png' } },
+});
+check('la modification du LOGO est acceptée par le Manager', majLogo.status === 200);
+check('…et déclenche une NOUVELLE projection d’identité',
+  await eventually('émission après logo', async () => (await compterIdentite()) > avantLogo));
+
+// (b) SystemConfiguration — hook DISTINCT, sur un autre modèle.
+// L'URL du site remonte telle quelle ; celle du logo, elle, n'est publiée que
+// si le backend est joignable publiquement — ce qu'un test local n'est pas.
+const SITE = 'https://garage-du-nord-synchro.test';
+const avantReseau = await compterIdentite();
+const majReseau = await http('PUT', `${projectProc.baseUrl}/api/system-configuration/network`, {
+  headers: projectProc.auth,
+  body: {
+    backendUrl: projectProc.baseUrl,
+    managerUrl: 'https://manager-synchro.test',
+    websiteUrl: SITE,
+  },
+});
+check('la modification du RÉSEAU est acceptée par le Manager', majReseau.status === 200);
+check('…et déclenche elle aussi une projection',
+  await eventually('émission après réseau', async () => (await compterIdentite()) > avantReseau));
+check('…dont l’adresse du site arrive au Panel',
+  await eventually('site projeté', async () => {
+    const p = await PanelPresentation.findOne({ projectId }).lean();
+    return p?.network?.website === SITE;
+  }));
+
+await projectDb.close();
+
 // ── Coupure du Panel, modification, redémarrage du projet ────────────────
 await panelServer.close();
 
