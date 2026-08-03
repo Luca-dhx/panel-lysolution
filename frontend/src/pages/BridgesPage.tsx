@@ -3,7 +3,7 @@ import { formatRelative } from '@/lib/format';
 import { useProjects } from '@/lib/useProjects';
 
 export function BridgesPage() {
-  const { projects, loading, error } = useProjects();
+  const { projects, isInitialLoading, error } = useProjects();
 
   return (
     <div className="page">
@@ -14,7 +14,7 @@ export function BridgesPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      {loading ? (
+      {isInitialLoading ? (
         <p className="muted">Chargement des projets…</p>
       ) : projects.length === 0 ? (
         <EmptyState

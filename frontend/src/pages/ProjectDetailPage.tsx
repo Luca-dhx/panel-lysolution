@@ -10,15 +10,17 @@
  * L'onglet Développeur n'est pas seulement masqué : un ADMIN qui manipulerait
  * l'URL n'obtiendrait rien de plus, l'onglet n'étant pas rendu pour lui.
  *
- * Aucun encart « Contrat », « Factures » ou « Réunions » n'est affiché : ces
- * données ne remontent pas encore des sites. Un cadre vide se lirait comme
- * « ce client n'a pas de contrat », ce qui serait faux.
+ * Le contrat est affiché depuis qu'il remonte des sites. « Factures » et
+ * « Réunions » restent absents : ces données ne remontent pas encore, et un
+ * cadre vide se lirait comme « ce client n'a pas de facture », ce qui serait
+ * faux.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
-import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { useProject } from '@/lib/useProjects';
+import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import type { PublicProject } from '@/types';
 import {
@@ -45,31 +47,19 @@ type Tab = 'overview' | 'dev';
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const isDev = useIsDev();
-  const [project, setProject] = useState<PublicProject | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  /**
+   * La fiche est VIVANTE : une modification faite dans le Manager du client
+   * apparaît ici sans clic, comme dans la liste. Le rafraîchissement est
+   * silencieux — l'onglet actif, le défilement et les états locaux ci-dessous
+   * survivent, puisque le composant n'est jamais démonté entre deux réponses.
+   */
+  const { project, isInitialLoading, isRefreshing, error } = useProject(projectId);
   const [tab, setTab] = useState<Tab>('overview');
+  const showRefreshHint = useSustained(isRefreshing, 500);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    api
-      .getProject(projectId as string)
-      .then((data) => {
-        if (!cancelled) setProject(data.project);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(errorMessage(err, 'Projet introuvable.'));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  if (loading) return <div className="page"><p className="muted">Chargement du projet…</p></div>;
+  if (isInitialLoading) return <div className="page"><p className="muted">Chargement du projet…</p></div>;
+  // Après le premier chargement, `error` reste nul tant qu'une fiche est
+  // affichable : un rafraîchissement raté ne remplace pas une page lue.
   if (error || !project) {
     return (
       <div className="page">
@@ -101,7 +91,12 @@ export function ProjectDetailPage() {
           )}
           <div className="project-row-main">
             <h1>{projectDisplayName(project)}</h1>
-            {description ? <p className="page-description">{description}</p> : null}
+            {description ? (
+              <p className="page-description">
+                {description}
+                {showRefreshHint ? <span className="live-hint">Mise à jour…</span> : null}
+              </p>
+            ) : null}
             <div className="project-row-meta">
               <span className={toneBadgeClass(site.tone)}>{site.label}</span>
               <span className={toneBadgeClass(connection.tone)}>{connection.label}</span>

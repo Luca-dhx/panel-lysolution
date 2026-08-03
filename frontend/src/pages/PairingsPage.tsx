@@ -13,7 +13,7 @@ interface GeneratedCode {
 }
 
 export function PairingsPage() {
-  const { projects, loading, error, reload } = useProjects();
+  const { projects, isInitialLoading, error, reload } = useProjects();
   const [generated, setGenerated] = useState<GeneratedCode | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyProjectId, setBusyProjectId] = useState<string | null>(null);
@@ -84,7 +84,7 @@ export function PairingsPage() {
       {error ? <div className="alert alert-error">{error}</div> : null}
       {actionError ? <div className="alert alert-error">{actionError}</div> : null}
 
-      {loading ? (
+      {isInitialLoading ? (
         <p className="muted">Chargement des projets…</p>
       ) : projects.length === 0 ? (
         <EmptyState

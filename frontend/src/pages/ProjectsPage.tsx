@@ -21,6 +21,7 @@ import { Card, CopyField, EmptyState } from '@/components/ui';
 import { api, errorMessage, probeProject } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { useProjects } from '@/lib/useProjects';
+import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import type { ProbeResult } from '@/types.company';
 import {
@@ -46,8 +47,9 @@ interface CreatedCode {
 }
 
 export function ProjectsPage() {
-  const { projects, loading, error, reload } = useProjects();
+  const { projects, isInitialLoading, isRefreshing, error, reload } = useProjects();
   const isDev = useIsDev();
+  const showRefreshHint = useSustained(isRefreshing, 500);
 
   const [projectName, setProjectName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -104,7 +106,12 @@ export function ProjectsPage() {
     <div className="page">
       <header className="page-header">
         <h1>Projets clients</h1>
-        <p className="page-description">Les sites que nous gérons et leur état du jour.</p>
+        <p className="page-description">
+          Les sites que nous gérons et leur état du jour.
+          {/* Mention placée EN FIN de ligne existante : elle ne pousse rien et
+              ne change aucune hauteur. Silencieuse sous une demi-seconde. */}
+          {showRefreshHint ? <span className="live-hint">Mise à jour…</span> : null}
+        </p>
       </header>
 
       {error ? <div className="alert alert-error">{error}</div> : null}
@@ -196,7 +203,7 @@ export function ProjectsPage() {
       ) : null}
 
       {/* ── LISTE MÉTIER ──────────────────────────────────────────────────── */}
-      {loading ? (
+      {isInitialLoading ? (
         <p className="muted">Chargement des projets…</p>
       ) : projects.length === 0 ? (
         <EmptyState

@@ -18,7 +18,7 @@ function rowState(project: PublicProject, panelMajor: number | null): RowState {
 }
 
 export function VersionsPage() {
-  const { projects, loading, error } = useProjects();
+  const { projects, isInitialLoading, error } = useProjects();
   const { version, loading: versionLoading } = usePanelVersion();
 
   const panelMajor = majorVersion(version?.contractVersion);
@@ -46,7 +46,7 @@ export function VersionsPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      {loading ? (
+      {isInitialLoading ? (
         <p className="muted">Chargement des projets…</p>
       ) : projects.length === 0 ? (
         <EmptyState

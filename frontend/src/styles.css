@@ -672,6 +672,14 @@ textarea:focus {
   color: var(--text-muted);
 }
 
+/* Mention de rafraîchissement : discrète, en fin de ligne existante, sans
+   hauteur propre — elle ne peut donc déplacer aucun contenu. */
+.live-hint {
+  margin-left: 0.5rem;
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+
 /* ---------- Éditeur de manifest ---------- */
 
 .manifest-editor {

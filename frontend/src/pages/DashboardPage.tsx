@@ -25,7 +25,7 @@ import {
 } from '@/lib/projectPresentation';
 
 export function DashboardPage() {
-  const { projects, loading, error } = useProjects();
+  const { projects, isInitialLoading, error } = useProjects();
   const isDev = useIsDev();
 
   const declared = projects.length;
@@ -57,25 +57,25 @@ export function DashboardPage() {
 
       <div className="stat-grid">
         <Card className="stat-card">
-          <span className="stat-value">{loading ? '…' : declared}</span>
+          <span className="stat-value">{isInitialLoading ? '…' : declared}</span>
           <span className="stat-label">Projets clients</span>
         </Card>
         <Card className="stat-card">
-          <span className="stat-value">{loading ? '…' : connected}</span>
+          <span className="stat-value">{isInitialLoading ? '…' : connected}</span>
           <span className="stat-label">Reliés au Panel</span>
         </Card>
         <Card className="stat-card">
-          <span className="stat-value">{loading ? '…' : online}</span>
+          <span className="stat-value">{isInitialLoading ? '…' : online}</span>
           <span className="stat-label">Sites en ligne</span>
         </Card>
         <Card className="stat-card">
-          <span className="stat-value">{loading ? '…' : toCheck}</span>
+          <span className="stat-value">{isInitialLoading ? '…' : toCheck}</span>
           <span className="stat-label">À vérifier</span>
         </Card>
       </div>
 
       <Card title="Projets nécessitant une attention">
-        {loading ? (
+        {isInitialLoading ? (
           <p className="muted">Chargement…</p>
         ) : alerts.length === 0 ? (
           <EmptyState
@@ -101,7 +101,7 @@ export function DashboardPage() {
       </Card>
 
       <Card title="Dernières activités">
-        {loading ? (
+        {isInitialLoading ? (
           <p className="muted">Chargement…</p>
         ) : recent.length === 0 ? (
           <EmptyState

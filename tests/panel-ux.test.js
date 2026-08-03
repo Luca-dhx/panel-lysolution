@@ -271,4 +271,59 @@ section('8. Identité commerciale : le manifeste enrichi prime (contrat >= 1.4.x
     /URL du site/.test(devPart) && /URL du Manager/.test(devPart) && /URL du backend/.test(devPart));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('9. Le rafraîchissement automatique reste INVISIBLE');
+{
+  const hook = read('frontend/src/lib/useProjects.ts');
+  const live = read('frontend/src/lib/useLiveQuery.ts');
+  const projects = read('frontend/src/pages/ProjectsPage.tsx');
+  const detail = read('frontend/src/pages/ProjectDetailPage.tsx');
+  const screens = ['ProjectsPage', 'ProjectDetailPage', 'DashboardPage', 'BridgesPage',
+    'PairingsPage', 'VersionsPage']
+    .map((name) => [name, read(`frontend/src/pages/${name}.tsx`)]);
+
+  // Le piège d'origine : UN booléen pour deux situations très différentes.
+  check('le hook distingue chargement initial et rafraîchissement',
+    hook.includes('isInitialLoading') && hook.includes('isRefreshing'));
+  check('plus aucun booléen « loading » ambigu n’est exposé',
+    !/loading/.test(hook));
+
+  for (const [name, source] of screens) {
+    check(`${name} ne remet jamais l’écran en chargement pendant un sondage`,
+      !/loading\s*\?/.test(source));
+  }
+
+  // Ce qui est déjà affiché survit à une réponse manquante.
+  check('une erreur n’est levée que s’il n’y a RIEN à montrer',
+    /if \(!hasDataRef\.current\) setError/.test(live));
+  check('les données précédentes ne sont jamais remises à zéro en cours de route',
+    !/setData\(null\)[\s\S]{0,200}catch/.test(live));
+
+  // Un seul sondage, un seul minuteur, nettoyés au démontage.
+  check('une requête en vol bloque la suivante', /if \(inFlightRef\.current\) return/.test(live));
+  check('le minuteur est nettoyé', /clearInterval\(timer\)/.test(live));
+  check('l’écouteur de fenêtre aussi', /removeEventListener\('focus'/.test(live));
+  check('le sondage se tait quand l’onglet est caché',
+    /visibilityState === 'hidden'/.test(live));
+
+  // Stabilité du rendu : identités de liste et états locaux.
+  check('la liste est indexée par identifiant de projet',
+    /key=\{project\.projectId\}/.test(projects));
+  check('aucune clé instable ne remonte les cartes',
+    !/key=\{JSON\.stringify/.test(projects) && !/key=\{JSON\.stringify/.test(detail));
+  check('la fiche garde son onglet actif dans un état local',
+    /useState<Tab>\('overview'\)/.test(detail));
+  check('la fiche n’affiche plus de chargement après le premier',
+    /isInitialLoading\) return/.test(detail));
+
+  // Le formulaire de déclaration ne doit rien devoir au sondage.
+  check('la saisie du formulaire est un état local, jamais réécrit par une réponse',
+    /const \[projectName, setProjectName\] = useState\(''\)/.test(projects)
+    && !/setProjectName\(.*project(s)?\[/.test(projects));
+
+  // Vocabulaire : la mention de rafraîchissement reste en français simple.
+  check('aucun vocabulaire technique introduit par l’indicateur',
+    !/refetch|polling|fetching/i.test(projects) && !/refetch|polling|fetching/i.test(detail));
+}
+
 finish();

@@ -2,7 +2,7 @@
 // Chaque test est un processus séparé : isolation totale des stores en RAM.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,6 +20,7 @@ const TESTS = [
   'bridge-conformity.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
+  'live-refresh.test.js',
   'deploy.test.js',
   'deployment-build.test.js',
   'deployment-remote-env.test.js',

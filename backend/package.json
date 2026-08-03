@@ -19,6 +19,8 @@
     "test:deploy": "node ../tests/deploy.test.js",
     "test:diagnostic": "node ../tests/diagnostic.test.js",
     "test:supervision": "node ../tests/supervision.test.js",
+    "test:live-refresh": "node --experimental-strip-types --import ../tests/helpers/registerFrontendLoader.mjs ../tests/live-refresh.test.js",
+    "test:panel-ux": "node ../tests/panel-ux.test.js",
     "test:architecture": "node ../tests/architecture.test.js",
     "test:manifest": "node ../tests/manifest.test.js",
     "test:capabilities": "node ../tests/capabilities.test.js",
