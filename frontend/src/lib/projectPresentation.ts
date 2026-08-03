@@ -29,6 +29,8 @@ import type { PublicProject } from '@/types';
  * comme titre donnerait des libellés de trois lignes.
  */
 export function projectDisplayName(project: PublicProject): string {
+  const commercial = project.descriptor?.presentation?.companyName?.trim();
+  if (commercial) return commercial;
   const fromManifest = project.descriptor?.name?.trim();
   if (fromManifest) return fromManifest;
   const declared = project.projectName?.trim();
@@ -36,10 +38,36 @@ export function projectDisplayName(project: PublicProject): string {
   return project.projectKey;
 }
 
-/** Phrase de présentation publiée par le projet, ou `null`. */
+/**
+ * Phrase de présentation. Le SLOGAN du client prime sur la description du
+ * descripteur : cette dernière décrit le projet modèle et se retrouvait,
+ * identique, sur chaque duplicata.
+ */
 export function projectDescription(project: PublicProject): string | null {
+  const tagline = project.descriptor?.presentation?.tagline?.trim();
+  if (tagline) return tagline;
   const d = project.descriptor?.description?.trim();
   return d && d.length > 0 ? d : null;
+}
+
+/**
+ * Logo publié par le projet — URL absolue, résolue par LUI contre son propre
+ * domaine (voir MEDIAS_PUBLICS.md). Le Panel ne stocke aucun média ; en
+ * l'absence de logo, l'appelant affiche les initiales.
+ */
+export function projectLogoUrl(project: PublicProject): string | null {
+  const logo = project.descriptor?.presentation?.logoUrl?.trim();
+  return logo && logo.length > 0 ? logo : null;
+}
+
+/** Moyens de contact publiés, filtrés par le projet (activés seulement). */
+export function projectContacts(project: PublicProject): {
+  email?: string;
+  phone?: string;
+  website?: string;
+} | null {
+  const c = project.descriptor?.presentation?.contacts;
+  return c && Object.keys(c).length > 0 ? c : null;
 }
 
 /** Initiales pour l'avatar de repli — aucun logo n'est encore synchronisé. */
@@ -53,21 +81,35 @@ export function projectInitials(project: PublicProject): string {
 }
 
 /**
- * Adresse publique du site, telle que le PROJET la publie. Le manifeste donne
- * un jeu d'URLs nommées ; on préfère celle du site, puis la première venue.
+ * Adresse publique du SITE, et rien d'autre.
  *
- * Deux replis sont volontairement absents :
- *   · l'URL du BACKEND — ce n'est pas une adresse qu'on montre à un client ;
- *   · le domaine seul, préfixé d'un schéma choisi par nous — ce serait produire
- *     un lien qu'on n'a jamais vérifié. Le domaine est rendu comme TEXTE par
- *     `projectDomain`, sans prétendre être cliquable.
+ * Le manifeste nomme désormais ses URLs (`website`, `manager`, `backend`,
+ * contrat >= 1.4.x) : on lit `website`, sans repli. Prendre « la première
+ * venue » faisait afficher l'URL de l'API — `api.<domaine>` — comme adresse du
+ * client, et « manager » aurait montré l'administration à sa place.
+ *
+ * Aucun repli non plus sur le domaine seul préfixé d'un schéma choisi par
+ * nous : ce serait un lien jamais vérifié. `projectDomain` le rend comme
+ * TEXTE, sans prétendre être cliquable.
  */
 export function projectSiteUrl(project: PublicProject): string | null {
+  const site = project.descriptor?.urls?.website?.trim();
+  return site && site.length > 0 ? site : null;
+}
+
+/**
+ * Adresses TECHNIQUES du projet — Manager et backend. Réservées à l'onglet
+ * Développeur : ni l'une ni l'autre n'est l'adresse du client.
+ */
+export function projectTechnicalUrls(project: PublicProject): {
+  manager: string | null;
+  backend: string | null;
+} {
   const urls = project.descriptor?.urls ?? null;
-  if (!urls) return null;
-  const preferred = urls.site ?? urls.website ?? urls.vitrine ?? null;
-  if (preferred) return preferred;
-  return Object.values(urls)[0] ?? null;
+  return {
+    manager: urls?.manager?.trim() || null,
+    backend: urls?.backend?.trim() || null,
+  };
 }
 
 /** Domaine principal annoncé, pour l'afficher quand aucune URL complète n'existe. */

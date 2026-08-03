@@ -535,17 +535,52 @@ components:
           description: >
             OPTIONNEL (contrat >= 1.2.0) : identite reseau publique du projet,
             telle que LUI la connait. Le Panel l'affiche, ne la modifie jamais.
+            Depuis 1.4.x, les cles `website`, `manager` et `backend` sont
+            NORMALISEES : le Panel n'a plus a deviner laquelle designe le site
+            du client. `primaryDomain` est le domaine du SITE quand il est
+            connu, celui de l'API a defaut.
           properties:
             primaryDomain: { type: string, nullable: true }
             urls:
               type: object
+              description: >
+                Cles conventionnelles : website (site public), manager
+                (administration), backend (API). Toute autre cle reste
+                autorisee et simplement ignoree par le Panel.
               additionalProperties: { type: string }
+        presentation:
+          type: object
+          description: >
+            OPTIONNEL (contrat >= 1.4.x) : identite COMMERCIALE du projet, telle
+            que le client la reconnait. Sans elle, le Panel affiche le nom
+            technique du projet et l'URL de son API comme s'il s'agissait du
+            client et de son site. Tous les champs sont facultatifs : un projet
+            qui n'en publie aucun reste pleinement conforme. Les URL de medias
+            sont TOUJOURS absolues et joignables (voir
+            docs/panelXvitrine/MEDIAS_PUBLICS.md) : le Panel ne copie aucun
+            fichier et ne stocke aucun media.
+          properties:
+            companyName: { type: string, description: 'Nom commercial de l''entreprise cliente.' }
+            tagline: { type: string, description: 'Slogan ou phrase de presentation.' }
+            logoUrl: { type: string, format: uri, description: 'URL absolue du logo principal.' }
+            faviconUrl: { type: string, format: uri, description: 'URL absolue de l''icone d''onglet.' }
+            contacts:
+              type: object
+              description: >
+                Uniquement les moyens de contact ACTIVES et renseignes. Les
+                reseaux sociaux et metadonnees du catalogue ne sont pas
+                transportes.
+              properties:
+                email: { type: string }
+                phone: { type: string }
+                website: { type: string }
         descriptor:
           type: object
           description: >
             OPTIONNEL (contrat >= 1.2.0) : carte de visite du projet pour la
             supervision (type de produit, description courte, layout).
           properties:
+            name: { type: string, description: 'OPTIONNEL (>= 1.4.x) : nom lisible du projet.' }
             type: { type: string, description: 'Ex. vitrine, panel, api.' }
             description: { type: string }
             layout: { type: string, description: 'Topologie declaree par le profil du moteur.' }

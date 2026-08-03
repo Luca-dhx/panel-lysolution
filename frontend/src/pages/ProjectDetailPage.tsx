@@ -28,7 +28,10 @@ import {
   projectAlert,
   projectDescription,
   projectDisplayName,
+  projectContacts,
   projectInitials,
+  projectLogoUrl,
+  projectTechnicalUrls,
   projectSiteUrl,
   siteState,
   toneBadgeClass,
@@ -88,7 +91,11 @@ export function ProjectDetailPage() {
       {/* ── EN-TÊTE ─────────────────────────────────────────────────────── */}
       <header className="page-header">
         <div className="project-row">
-          <span className="project-avatar">{projectInitials(project)}</span>
+          {projectLogoUrl(project) ? (
+            <img className="project-avatar" src={projectLogoUrl(project) as string} alt="" />
+          ) : (
+            <span className="project-avatar">{projectInitials(project)}</span>
+          )}
           <div className="project-row-main">
             <h1>{projectDisplayName(project)}</h1>
             {description ? <p className="page-description">{description}</p> : null}
@@ -150,6 +157,7 @@ function OverviewTab({
 }) {
   const site = siteState(project);
   const lastSync = project.runtime.bridgeStats?.lastSyncAt ?? null;
+  const contacts = projectContacts(project);
 
   return (
     <>
@@ -183,6 +191,35 @@ function OverviewTab({
           </div>
         </dl>
       </Card>
+
+      {contacts ? (
+        <Card title="Contacts">
+          <dl className="detail-list">
+            {contacts.email ? (
+              <div>
+                <dt>E-mail</dt>
+                <dd><a href={`mailto:${contacts.email}`}>{contacts.email}</a></dd>
+              </div>
+            ) : null}
+            {contacts.phone ? (
+              <div>
+                <dt>Téléphone</dt>
+                <dd><a href={`tel:${contacts.phone.replace(/\s+/g, '')}`}>{contacts.phone}</a></dd>
+              </div>
+            ) : null}
+            {contacts.website ? (
+              <div>
+                <dt>Site web</dt>
+                <dd>
+                  <a href={contacts.website} target="_blank" rel="noreferrer">
+                    {contacts.website.replace(/^[a-z]+:\/\//, '')}
+                  </a>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </Card>
+      ) : null}
 
       <Card title="Suivi">
         <dl className="detail-list">
@@ -224,6 +261,9 @@ function OverviewTab({
 function DeveloperTab({ project }: { project: PublicProject }) {
   const [rawOpen, setRawOpen] = useState(false);
   const d = project.descriptor;
+  // Les trois adresses sont montrées SÉPARÉMENT : seule celle du site a sa
+  // place sur un écran métier, les deux autres restent ici.
+  const tech = { site: projectSiteUrl(project), ...projectTechnicalUrls(project) };
 
   return (
     <>
@@ -256,7 +296,9 @@ function DeveloperTab({ project }: { project: PublicProject }) {
       <Card title="Fiche technique du projet">
         <dl className="detail-list">
           <div><dt>Identifiant technique</dt><dd><code className="inline-code">{project.projectKey}</code></dd></div>
-          <div><dt>URL du backend</dt><dd>{project.runtime.publicBackendUrl ?? '—'}</dd></div>
+          <div><dt>URL du site</dt><dd>{tech.site ?? '—'}</dd></div>
+          <div><dt>URL du Manager</dt><dd>{tech.manager ?? '—'}</dd></div>
+          <div><dt>URL du backend</dt><dd>{tech.backend ?? project.runtime.publicBackendUrl ?? '—'}</dd></div>
           <div><dt>Environnement</dt><dd>{project.runtime.environment ?? '—'}</dd></div>
           <div><dt>Version applicative</dt><dd>{d?.versions?.software ?? '—'}</dd></div>
           <div><dt>Version de contrat Bridge</dt><dd>{d?.versions?.contract ?? '—'}</dd></div>

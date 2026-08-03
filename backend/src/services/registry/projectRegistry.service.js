@@ -313,7 +313,14 @@ export function describeProject(record) {
   const runtime = record.runtime ?? {};
   return {
     slug: record.projectKey,
-    name: manifest?.project?.name ?? record.projectName,
+    // PRÉSENTATION (contrat >= 1.4.x) — le nom COMMERCIAL prime sur le nom
+    // technique dès que le projet le publie : c'est celui sous lequel
+    // l'équipe connaît le client.
+    name: manifest?.presentation?.companyName
+      ?? manifest?.descriptor?.name
+      ?? manifest?.project?.name
+      ?? record.projectName,
+    presentation: manifest?.presentation ?? null,
     type: manifest?.descriptor?.type ?? null,
     description: manifest?.descriptor?.description ?? null,
     layout: manifest?.descriptor?.layout ?? null,

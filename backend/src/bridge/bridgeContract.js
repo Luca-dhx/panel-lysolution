@@ -204,8 +204,37 @@ export const projectManifestSchema = z.object({
       urls: z.record(z.string().min(1), z.string()).optional(),
     })
     .optional(),
+  // PRÉSENTATION (>= 1.4.x, ADDITIF) — l'identité COMMERCIALE du projet.
+  // Sans elle, le Panel affichait le nom technique du projet et l'URL de son
+  // API comme s'il s'agissait du client et de son site. Tous les champs sont
+  // optionnels : un projet qui ne publie rien reste pleinement conforme, et
+  // l'absence se distingue d'une valeur vide.
+  //
+  // `logoUrl` / `faviconUrl` sont TOUJOURS des URL absolues joignables : le
+  // projet résout lui-même ses chemins locaux contre son propre domaine public
+  // — la convention est documentée côté projet modèle. Le Panel se contente de
+  // pointer l'adresse distante : il ne copie ni ne stocke aucun média.
+  presentation: z
+    .object({
+      companyName: z.string().min(1).optional(),
+      tagline: z.string().min(1).optional(),
+      logoUrl: z.string().url().optional(),
+      faviconUrl: z.string().url().optional(),
+      contacts: z
+        .object({
+          email: z.string().min(1).optional(),
+          phone: z.string().min(1).optional(),
+          website: z.string().min(1).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional(),
   descriptor: z
     .object({
+      // Nom LISIBLE du projet, tel qu'il se nomme (>= 1.4.x).
+      name: z.string().min(1).optional(),
       type: z.string().optional(),
       description: z.string().optional(),
       layout: z.string().optional(),

@@ -215,4 +215,60 @@ section('7. Le nom affiché ne retombe jamais sur une valeur technique par défa
     presentation.includes('Le site ne communique plus avec le Panel'));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('8. Identité commerciale : le manifeste enrichi prime (contrat >= 1.4.x)');
+{
+  const presentation = read('frontend/src/lib/projectPresentation.ts');
+
+  // Ordre du nom : commercial > descripteur > déclaré > clé technique.
+  const iCommercial = presentation.indexOf('presentation?.companyName');
+  const iDescriptor = presentation.indexOf('descriptor?.name');
+  const iDeclared = presentation.indexOf('project.projectName');
+  const iKey = presentation.indexOf('return project.projectKey');
+  check('le nom COMMERCIAL est cherché en premier',
+    iCommercial !== -1 && iCommercial < iDescriptor);
+  check('…puis le descripteur, puis le nom déclaré, puis la clé',
+    iDescriptor < iDeclared && iDeclared < iKey);
+
+  check('le slogan du client prime sur la description du projet modèle',
+    presentation.indexOf('presentation?.tagline') < presentation.indexOf('descriptor?.description'));
+
+  // L'URL du SITE ne vient QUE de `website` : plus aucun repli.
+  // Le CORPS seul : le commentaire de la fonction explique justement pourquoi
+  // le backend est exclu, il ne doit pas compter comme une lecture.
+  const siteFn = presentation
+    .slice(
+      presentation.indexOf('export function projectSiteUrl'),
+      presentation.indexOf('export function projectTechnicalUrls'),
+    )
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  check('l’URL du site ne lit que la clé `website`',
+    /urls\?\.website/.test(siteFn));
+  check('…sans aucun repli sur une autre URL',
+    !/Object\.values/.test(siteFn) && !/urls\.site|urls\.vitrine/.test(siteFn));
+  check('l’URL du BACKEND n’est jamais l’adresse du site',
+    !/backend/.test(siteFn));
+  check('l’URL du MANAGER non plus', !/manager/.test(siteFn));
+
+  check('les adresses techniques sont exposées à part',
+    presentation.includes('export function projectTechnicalUrls'));
+  check('le logo publié par le projet est lu', presentation.includes('presentation?.logoUrl'));
+  check('les contacts publiés sont lus', presentation.includes('presentation?.contacts'));
+
+  // La liste métier affiche le logo, et retombe sur les initiales.
+  const projects = read('frontend/src/pages/ProjectsPage.tsx');
+  check('la liste affiche le logo quand il existe', /projectLogoUrl\(project\)/.test(projects));
+  check('…et les initiales sinon', /projectInitials\(project\)/.test(projects));
+
+  // Les trois adresses ne se mélangent pas : seule celle du site est métier.
+  const detail = read('frontend/src/pages/ProjectDetailPage.tsx');
+  const businessPart = detail.slice(0, detail.indexOf('function DeveloperTab'));
+  check('la fiche métier ne montre ni Manager ni backend',
+    !/URL du Manager|URL du backend/.test(businessPart));
+  const devPart = detail.slice(detail.indexOf('function DeveloperTab'));
+  check('l’onglet Développeur montre les trois adresses séparément',
+    /URL du site/.test(devPart) && /URL du Manager/.test(devPart) && /URL du backend/.test(devPart));
+}
+
 finish();

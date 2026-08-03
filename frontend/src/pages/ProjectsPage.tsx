@@ -29,6 +29,7 @@ import {
   projectDescription,
   projectDisplayName,
   projectInitials,
+  projectLogoUrl,
   projectDomain,
   projectSiteUrl,
   siteState,
@@ -211,13 +212,18 @@ export function ProjectsPage() {
             const since = lastContact(project);
             const url = projectSiteUrl(project);
             const domain = projectDomain(project);
+            const logoUrl = projectLogoUrl(project);
             const description = projectDescription(project);
             return (
               <Card key={project.projectId}>
                 <div className="project-row">
-                  {/* Aucun logo n'est encore remonté par les sites : on affiche
-                      les initiales plutôt qu'une image absente. */}
-                  <span className="project-avatar">{projectInitials(project)}</span>
+                  {/* Le logo vient du projet, en URL absolue ; à défaut, les
+                      initiales — jamais une image manquante. */}
+                  {logoUrl ? (
+                    <img className="project-avatar" src={logoUrl} alt="" loading="lazy" />
+                  ) : (
+                    <span className="project-avatar">{projectInitials(project)}</span>
+                  )}
 
                   <div className="project-row-main">
                     <p className="project-row-title">{projectDisplayName(project)}</p>

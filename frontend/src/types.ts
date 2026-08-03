@@ -66,9 +66,19 @@ export interface PublicProject {
 }
 
 /** Descripteur publié par le projet (voir `describeProject` côté Panel). */
+export interface ProjectPresentation {
+  companyName?: string;
+  tagline?: string;
+  logoUrl?: string;
+  faviconUrl?: string;
+  contacts?: { email?: string; phone?: string; website?: string };
+}
+
 export interface ProjectDescriptor {
   slug: string;
   name: string;
+  /** Identité commerciale publiée par le projet (contrat >= 1.4.x). */
+  presentation: ProjectPresentation | null;
   type: string | null;
   description: string | null;
   layout: string | null;
