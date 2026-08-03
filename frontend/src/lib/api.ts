@@ -10,6 +10,7 @@ import type {
   HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
 } from '@/types.supervision';
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
+import type { EventScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
@@ -190,6 +191,34 @@ export const api = {
     lien.click();
     URL.revokeObjectURL(url);
   },
+
+  /* ── AGENDA ET ÉVÉNEMENTS — données PROPRES au Panel, aucun pont ─────── */
+  listEvents: (scope: EventScope, projectId?: string) =>
+    request<{ events: ProjectEvent[] }>(
+      `/api/events?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
+    ),
+
+  pendingEvents: () => request<{ events: ProjectEvent[] }>('/api/events/pending'),
+
+  projectEvents: (projectId: string) =>
+    request<ProjectEventsSummary>(`/api/events/project/${projectId}`),
+
+  createEvent: (body: Record<string, unknown>) =>
+    request<{ event: ProjectEvent }>('/api/events', { method: 'POST', body }),
+
+  completeEvent: (eventId: string, body: Record<string, unknown>) =>
+    request<{ event: ProjectEvent }>(`/api/events/${eventId}/complete`, { method: 'POST', body }),
+
+  missEvent: (eventId: string, body: Record<string, unknown>) =>
+    request<{ event: ProjectEvent }>(`/api/events/${eventId}/miss`, { method: 'POST', body }),
+
+  rescheduleEvent: (eventId: string, body: Record<string, unknown>) =>
+    request<{ previous: ProjectEvent; next: ProjectEvent }>(
+      `/api/events/${eventId}/reschedule`, { method: 'POST', body },
+    ),
+
+  snoozeEvent: (eventId: string) =>
+    request<{ event: ProjectEvent }>(`/api/events/${eventId}/snooze`, { method: 'POST' }),
 
   generatePairingCode: (projectId: string) =>
     request<{ pairingCode: string; pairingCodeExpiresAt: string }>(

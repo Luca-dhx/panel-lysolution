@@ -84,6 +84,12 @@ section('Le transport réseau vers les projets est exclusif');
     // fiche projet). Elle n'appelle que /ping, sans authentification, et
     // n'écrit rien.
     'backend/src/services/registry/probe.service.js',
+    // Lot 2A — ACTIONS CONTRACTUELLES. Elles invoquent une opération déclarée
+    // par le projet et journalisent la demande AVANT de l'émettre. Le moteur
+    // d'exécution ne convient pas : il modélise des runs approuvables et
+    // simulables, machinerie sans rapport avec une demande unique dont
+    // l'autorité reste chez le projet.
+    'backend/src/services/contract/contractActions.service.js',
   ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
   check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,

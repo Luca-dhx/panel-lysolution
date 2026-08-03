@@ -1488,3 +1488,41 @@ textarea:focus {
 .team-row-name { font-weight: 600; }
 
 .project-avatar-small { width: 2rem; height: 2rem; font-size: 0.75rem; }
+
+/* ---------- Agenda et événements ---------- */
+.event-list { list-style: none; margin: 0; padding: 0; }
+
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  flex-wrap: wrap;
+}
+
+.event-row:last-child { border-bottom: none; }
+
+.event-row-when {
+  min-width: 11rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.event-row-main { display: flex; flex-direction: column; flex: 1; min-width: 12rem; }
+
+.event-row-title { font-weight: 600; }
+
+/* Formulaire d'événement : deux colonnes quand la place le permet. */
+.event-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.event-form textarea { resize: vertical; }
+
+.event-confirm { display: block; }
+
+.section-title { margin: 1rem 0 0.25rem; font-size: 0.95rem; }

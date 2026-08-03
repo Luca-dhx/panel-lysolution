@@ -20,6 +20,7 @@ import { ProjectDetailPage } from '@/pages/ProjectDetailPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { PairingsPage } from '@/pages/PairingsPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
+import { AgendaPage } from '@/pages/AgendaPage';
 import { VersionsPage } from '@/pages/VersionsPage';
 
 /** Enveloppe DEV — une seule barrière, jamais dupliquée dans les pages. */
@@ -39,6 +40,7 @@ export default function App() {
         {/* ── GESTION — accessible à toute l'équipe ─────────────────────── */}
         <Route path="/" element={<DashboardPage />} />
         <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/agenda" element={<AgendaPage />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
         <Route path="/company" element={<CompanyPage />} />
 

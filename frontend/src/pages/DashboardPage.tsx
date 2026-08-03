@@ -15,6 +15,9 @@
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { useProjects } from '@/lib/useProjects';
+import { useEvents, usePendingEvents } from '@/lib/useEvents';
+import { EventConfirmation } from '@/components/EventConfirmation';
+import { EventRow } from '@/pages/AgendaPage';
 import { useIsDev } from '@/auth/RequireDev';
 import {
   lastContact,
@@ -73,6 +76,8 @@ export function DashboardPage() {
           <span className="stat-label">À vérifier</span>
         </Card>
       </div>
+
+      <AgendaDuJour />
 
       <Card title="Projets nécessitant une attention">
         {isInitialLoading ? (
@@ -147,3 +152,50 @@ export function DashboardPage() {
 }
 
 export default DashboardPage;
+
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * LA JOURNÉE — ce qui attend une confirmation d'abord, le reste ensuite.
+ *
+ * L'ordre n'est pas décoratif : une confirmation en attente se périme, un
+ * rendez-vous à venir non. Ce qui exige une action passe donc devant.
+ */
+function AgendaDuJour() {
+  const { events: enAttente, reload: rechargerAttente } = usePendingEvents();
+  const { events: aujourdhui } = useEvents('today');
+  const { events: aVenir } = useEvents('upcoming');
+
+  const prochains = aVenir.slice(0, 5);
+  if (enAttente.length === 0 && aujourdhui.length === 0 && prochains.length === 0) return null;
+
+  return (
+    <>
+      {enAttente.length > 0 ? (
+        <Card title={`Confirmations en attente (${enAttente.length})`}>
+          {enAttente.map((e) => (
+            <EventConfirmation key={e._id} event={e} onResolved={() => void rechargerAttente()} />
+          ))}
+        </Card>
+      ) : null}
+
+      {aujourdhui.length > 0 ? (
+        <Card title="Aujourd’hui">
+          <ul className="event-list">
+            {aujourdhui.map((e) => <EventRow key={e._id} event={e} />)}
+          </ul>
+        </Card>
+      ) : null}
+
+      {prochains.length > 0 ? (
+        <Card title="Prochains rendez-vous">
+          <ul className="event-list">
+            {prochains.map((e) => <EventRow key={e._id} event={e} />)}
+          </ul>
+          <p><Link to="/agenda">Voir tout l’agenda →</Link></p>
+        </Card>
+      ) : null}
+    </>
+  );
+}

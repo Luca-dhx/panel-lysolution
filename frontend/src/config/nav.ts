@@ -27,6 +27,9 @@ export const NAV_ITEMS: NavItem[] = [
   // ── GESTION — le quotidien de l'équipe ────────────────────────────────────
   { to: '/', label: 'Tableau de bord', section: 'GESTION' },
   { to: '/projects', label: 'Projets clients', section: 'GESTION' },
+  // Agenda ET événements : une seule page, les filtres suffisent à passer de
+  // l'un à l'autre. Deux écrans auraient montré les mêmes objets deux fois.
+  { to: '/agenda', label: 'Agenda et événements', section: 'GESTION' },
   // « Mon entreprise » et non « Entreprise » : cette page porte l'identité de
   // L.Y Solution publiée vers les sites, pas la fiche d'un client.
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },

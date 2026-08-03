@@ -19,6 +19,10 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { ContractCard } from '@/components/ContractCard';
+import { EventConfirmation } from '@/components/EventConfirmation';
+import { EventForm } from '@/components/EventForm';
+import { EventRow } from '@/pages/AgendaPage';
+import { useProjectEvents } from '@/lib/useEvents';
 import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
@@ -227,6 +231,8 @@ function OverviewTab({
       ) : (
         <ContractCard project={project} contract={null} />
       )}
+
+      <ProjectEventsCard projectId={project.projectId} />
 
       <TeamCard team={project.business?.team ?? []} />
 
@@ -440,6 +446,67 @@ function TeamCard({ team }: { team: TeamMember[] }) {
       <p className="muted">
         Ces comptes appartiennent au projet : ils se gèrent dans son Manager, pas ici.
       </p>
+    </Card>
+  );
+}
+
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ÉVÉNEMENTS DU PROJET — prochain, à confirmer, historique.
+ *
+ * Ces rendez-vous appartiennent au Panel. Le client n'en reçoit rien : ce sont
+ * nos notes de suivi, pas les siennes.
+ */
+function ProjectEventsCard({ projectId }: { projectId: string }) {
+  const { summary, isInitialLoading, reload } = useProjectEvents(projectId);
+  const [ouvert, setOuvert] = useState(false);
+
+  if (isInitialLoading) {
+    return <Card title="Suivi et rendez-vous"><p className="muted">Chargement…</p></Card>;
+  }
+
+  const aConfirmer = summary?.toConfirm ?? [];
+  const historique = summary?.history ?? [];
+
+  return (
+    <Card title="Suivi et rendez-vous">
+      {aConfirmer.map((e) => (
+        <EventConfirmation key={e._id} event={e} onResolved={() => void reload()} />
+      ))}
+
+      <dl className="detail-list">
+        <div>
+          <dt>Prochain rendez-vous</dt>
+          <dd>
+            {summary?.next
+              ? `${formatDateTime(summary.next.scheduledAt)} — ${summary.next.title}`
+              : <span className="muted">aucun de prévu</span>}
+          </dd>
+        </div>
+      </dl>
+
+      {ouvert ? (
+        <EventForm
+          projectId={projectId}
+          onCreated={() => { setOuvert(false); void reload(); }}
+          onCancel={() => setOuvert(false)}
+        />
+      ) : (
+        <button type="button" className="btn btn-secondary btn-small" onClick={() => setOuvert(true)}>
+          Planifier un événement
+        </button>
+      )}
+
+      {historique.length > 0 ? (
+        <>
+          <h3 className="section-title">Historique</h3>
+          <ul className="event-list">
+            {historique.map((e) => <EventRow key={e._id} event={e} />)}
+          </ul>
+        </>
+      ) : null}
     </Card>
   );
 }

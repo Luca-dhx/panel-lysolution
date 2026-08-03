@@ -9,6 +9,7 @@ import { seedFromEnv } from './services/auth/panelUsers.service.js';
 import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
+import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
 
 async function start() {
   await connectDatabase();
@@ -26,6 +27,10 @@ async function start() {
   const backend = await resolveBackendUrl();
   logger.info(`URL publique du Panel : ${backend.url ?? '(non configurée)'} [source ${backend.source}]`);
 
+  // ÉCHÉANCES : un événement devient « à confirmer » même si personne n'a le
+  // Panel ouvert. La détection est donc ici, pas dans un navigateur.
+  startEventScheduler();
+
   const app = createApp();
   const server = app.listen(config.port, () => {
     logger.success(
@@ -35,6 +40,7 @@ async function start() {
 
   const shutdown = (signal) => {
     logger.info(`${signal} reçu : arrêt du serveur…`);
+    stopEventScheduler();
     server.close(async () => {
       await disconnectDatabase();
       process.exit(0);

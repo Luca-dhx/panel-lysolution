@@ -19,6 +19,7 @@ const TESTS = [
   'bridge-http.test.js',
   'bridge-conformity.test.js',
   'contract-actions.test.js',
+  'events.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
   'live-refresh.test.js',

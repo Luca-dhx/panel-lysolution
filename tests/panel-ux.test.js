@@ -45,8 +45,10 @@ section('1. Deux espaces, et le menu reflète la règle');
     layout.includes('navItemsFor(') && !/NAV_ITEMS\.map/.test(layout));
 
   const gestionLabels = gestion.map((i) => i.label);
-  check(`Gestion = Tableau de bord, Projets clients, Mon entreprise — ${gestionLabels.join(', ')}`,
-    gestionLabels.join('|') === 'Tableau de bord|Projets clients|Mon entreprise');
+  // « Agenda et événements » entre en Gestion (Lot 2C) : c'est le suivi client
+  // de l'équipe, pas une opération d'infrastructure.
+  check(`Gestion = Tableau de bord, Projets clients, Agenda et événements, Mon entreprise — ${gestionLabels.join(', ')}`,
+    gestionLabels.join('|') === 'Tableau de bord|Projets clients|Agenda et événements|Mon entreprise');
 
   const devPaths = dev.map((i) => i.to);
   check('les 7 entrées techniques sont dans Développeur',
@@ -66,7 +68,7 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
 
   // `*` est le repli global (redirection), `/login` est hors coquille : ni
   // l'un ni l'autre n'est une surface technique à garder.
-  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/company', '/panel'];
+  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/company', '/panel'];
   const technical = routes.filter(
     (r) => !BUSINESS.includes(r.path) && r.path !== '/login' && r.path !== '*',
   );
