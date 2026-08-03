@@ -110,7 +110,7 @@ export function ProjectActionsPage() {
     return (
       <div className="page">
         <div className="alert alert-error">{error}</div>
-        <p><Link to="/supervision">← Retour au parc</Link></p>
+        <p><Link to="/supervision/parc">← Retour au parc</Link></p>
       </div>
     );
   }

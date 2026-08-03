@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
-import { NAV_ITEMS } from '@/config/nav';
+import { SECTION_LABELS, SECTION_ORDER, navItemsFor } from '@/config/nav';
 import { usePanelVersion } from '@/lib/usePanelVersion';
 
 export function Layout() {
@@ -21,17 +21,29 @@ export function Layout() {
           <p className="sidebar-subtitle">Administration du parc</p>
         </div>
 
+        {/* Deux espaces distincts. La section Développeur n'est rendue que
+            pour un compte DEV — et ses routes sont gardées séparément, le
+            menu ne fait que refléter la règle. */}
         <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) => (isActive ? 'nav-link nav-link-active' : 'nav-link')}
-            >
-              {item.label}
-            </NavLink>
-          ))}
+          {SECTION_ORDER.map((section) => {
+            const items = navItemsFor(user?.role ?? 'ADMIN').filter((i) => i.section === section);
+            if (items.length === 0) return null;
+            return (
+              <div key={section} className="nav-section">
+                <p className="nav-section-title">{SECTION_LABELS[section]}</p>
+                {items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    className={({ isActive }) => (isActive ? 'nav-link nav-link-active' : 'nav-link')}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="sidebar-footer">

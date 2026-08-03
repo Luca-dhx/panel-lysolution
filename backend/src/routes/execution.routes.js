@@ -8,7 +8,7 @@
 // c'est ce qui rend le contournement du moteur impossible par construction.
 import { Router } from 'express';
 import asyncHandler from '../utils/asyncHandler.js';
-import { requirePanelUser } from '../middlewares/panelAuth.middleware.js';
+import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
   actions,
   cancel,
@@ -24,6 +24,10 @@ import {
 const router = Router();
 
 router.use(asyncHandler(requirePanelUser));
+// Surface TECHNIQUE : réservée aux comptes DEV, comme les écrans qui la
+// consomment. La garde du frontend redirige un ADMIN ; sans cette ligne, la
+// donnée restait atteignable par appel direct à l'API.
+router.use(requirePanelDev);
 
 // — Lecture ----------------------------------------------------------------
 router.get('/actions', asyncHandler(actions));

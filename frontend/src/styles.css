@@ -122,6 +122,29 @@ code {
   flex: 1;
 }
 
+/* Deux espaces séparés : Gestion, puis Développeur. */
+.nav-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.nav-section + .nav-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.nav-section-title {
+  margin: 0 0 0.35rem;
+  padding: 0 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .nav-link {
   display: block;
   padding: 0.55rem 0.75rem;
@@ -482,6 +505,103 @@ textarea:focus {
   background: rgba(79, 124, 255, 0.1);
   border-color: rgba(79, 124, 255, 0.35);
   color: #b9c9ff;
+}
+
+/* Listes de lecture (alertes, activités, projets) — un badge, une phrase. */
+.plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.alert-row-body {
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+/* Avatar de repli d'un projet : initiales, tant qu'aucun logo n'est remonté. */
+.project-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  border-radius: var(--radius);
+  background: rgba(79, 124, 255, 0.16);
+  color: #9db4ff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.grid-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.project-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+}
+
+.project-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-row-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.project-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.75rem;
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Onglets de la fiche projet. */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+}
+
+.tab {
+  padding: 0.55rem 0.9rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab-active {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent-hover);
+  font-weight: 600;
 }
 
 .code-reveal {

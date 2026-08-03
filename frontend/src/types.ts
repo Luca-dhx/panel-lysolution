@@ -42,6 +42,14 @@ export interface PublicProject {
     bridgeStats: { outboxSize?: number; lastSyncAt?: string | null } | null;
   };
   liveness: Liveness;
+  /** Secondes depuis le dernier contact ; `null` si le projet n'a jamais parlé. */
+  secondsSinceLastHeartbeat: number | null;
+  /**
+   * CARTE DE VISITE du projet — entièrement dérivée de ce qu'il publie, jamais
+   * ressaisie côté Panel. C'est la seule source d'un libellé présentable
+   * aujourd'hui : le pont ne transporte encore ni logo ni raison sociale.
+   */
+  descriptor: ProjectDescriptor;
   capabilities: {
     enabled: string[];
     reserved: string[];
@@ -50,4 +58,46 @@ export interface PublicProject {
   };
   manifest: unknown | null;
   manifestSource: 'BRIDGE' | 'MANUAL' | null;
+  manifestUpdatedAt: string | null;
+  /** Ce que le projet déclare avoir APPLIQUÉ. `null` = jamais constaté. */
+  appliedConfiguration: AppliedConfiguration | null;
+  /** Note de supervision saisie côté Panel, jamais transmise au projet. */
+  note: string | null;
+}
+
+/** Descripteur publié par le projet (voir `describeProject` côté Panel). */
+export interface ProjectDescriptor {
+  slug: string;
+  name: string;
+  type: string | null;
+  description: string | null;
+  layout: string | null;
+  environment: 'TEST' | 'PROD' | null;
+  primaryDomain: string | null;
+  urls: Record<string, string> | null;
+  versions: {
+    software: string | null;
+    contract: string | null;
+    manifestFormat: string | null;
+    deploymentEngine: string | null;
+    duplicationEngine: string | null;
+  };
+  dates: {
+    createdAt: string;
+    pairedAt: string | null;
+    lastHeartbeatAt: string | null;
+    lastActivityAt: string;
+    manifestUpdatedAt: string | null;
+  };
+}
+
+export interface AppliedConfiguration {
+  companyId: string | null;
+  companySlug: string | null;
+  companyVersion: number | null;
+  companyAppliedAt: string | null;
+  integratedApiCount: number;
+  integratedApiKeys: string[];
+  lastSyncAt: string | null;
+  observedAt: string;
 }

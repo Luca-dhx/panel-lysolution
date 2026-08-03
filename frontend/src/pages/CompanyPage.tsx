@@ -84,10 +84,10 @@ export function CompanyPage() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>{c.identity.name}</h1>
+        <h1>Mon entreprise — {c.identity.name}</h1>
         <p className="muted">
-          L’entreprise que ce Panel représente. Sa configuration publiée est la
-          source de vérité de tous les projets appairés.
+          Informations de L.Y Solution partagées avec les projets connectés. Ce n’est pas la
+          fiche d’une entreprise cliente : c’est notre identité, publiée vers les sites.
         </p>
         <div className="execution-head">
           <span className="badge badge-neutral">{c.environment}</span>
@@ -291,7 +291,10 @@ function CompanyCreation({ onCreated }: { onCreated: () => void }) {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Entreprise</h1>
+        <h1>Mon entreprise</h1>
+        <p className="muted">
+          Informations de L.Y Solution partagées avec les projets connectés.
+        </p>
       </header>
       <EmptyState
         title="Aucune entreprise configurée"

@@ -1,11 +1,39 @@
+/**
+ * PROJETS CLIENTS — la page que consulte l'équipe, pas l'inventaire du parc.
+ *
+ * Elle affichait une table d'infrastructure : clé technique, état d'appairage,
+ * version logicielle, capacités, éditeur de Manifest. Autant d'informations
+ * qu'un commercial ne peut ni lire ni utiliser. La liste répond désormais aux
+ * questions qu'on se pose sur un client : de qui s'agit-il, son site
+ * fonctionne-t-il, quand a-t-on eu de ses nouvelles.
+ *
+ * Ce qui a disparu d'ici n'a pas été supprimé : la clé technique, le Manifest,
+ * les versions et les actions techniques vivent dans l'onglet Développeur de
+ * la fiche projet.
+ *
+ * La DÉCLARATION d'un projet reste réservée aux comptes DEV : elle exige de
+ * sonder une adresse de backend et de transmettre un code d'appairage — une
+ * opération d'infrastructure, pas de gestion.
+ */
 import { useState } from 'react';
-import type { FormEvent } from 'react';
-import { Card, CopyField, EmptyState, StatusBadge } from '@/components/ui';
-import { ApiError, api, errorMessage, probeProject } from '@/lib/api';
+import { Link } from 'react-router-dom';
+import { Card, CopyField, EmptyState } from '@/components/ui';
+import { api, errorMessage, probeProject } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { useProjects } from '@/lib/useProjects';
+import { useIsDev } from '@/auth/RequireDev';
 import type { ProbeResult } from '@/types.company';
-import type { PublicProject } from '@/types';
+import {
+  connectionState,
+  lastContact,
+  projectDescription,
+  projectDisplayName,
+  projectInitials,
+  projectDomain,
+  projectSiteUrl,
+  siteState,
+  toneBadgeClass,
+} from '@/lib/projectPresentation';
 
 interface CreatedCode {
   projectName: string;
@@ -13,38 +41,35 @@ interface CreatedCode {
   expiresAt: string;
 }
 
-interface ManifestEditorState {
-  projectId: string;
-  projectName: string;
-  text: string;
-}
-
 export function ProjectsPage() {
   const { projects, loading, error, reload } = useProjects();
+  const isDev = useIsDev();
 
-  // Déclaration d'un projet — adresse + nom, jamais de clé : elle est générée
-  // par le serveur à partir de l'identité que le projet annonce lui-même.
   const [projectName, setProjectName] = useState('');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedCode | null>(null);
 
-  // Sonde d'URL, AVANT tout appairage
   const [probeUrl, setProbeUrl] = useState('');
   const [probing, setProbing] = useState(false);
   const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
 
-  // Actions par ligne
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Éditeur de manifest
-  const [editor, setEditor] = useState<ManifestEditorState | null>(null);
-  const [editorError, setEditorError] = useState<string | null>(null);
-  const [editorDetails, setEditorDetails] = useState<string | null>(null);
-  const [unknownCaps, setUnknownCaps] = useState<string[] | null>(null);
-  const [manifestSaved, setManifestSaved] = useState(false);
-  const [savingManifest, setSavingManifest] = useState(false);
+  const testConnection = async () => {
+    setProbeError(null);
+    setProbeResult(null);
+    setProbing(true);
+    try {
+      const result = await probeProject(probeUrl.trim());
+      setProbeResult(result);
+      const announced = result.bridgeIdentity?.projectName;
+      if (announced && projectName.trim().length === 0) setProjectName(announced);
+    } catch (err) {
+      setProbeError(errorMessage(err, 'Impossible de joindre cette adresse.'));
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const submitCreate = async () => {
     setCreateError(null);
@@ -71,371 +96,160 @@ export function ProjectsPage() {
     }
   };
 
-  /**
-   * SONDE — le seul appel sortant possible AVANT l'appairage : les autres
-   * routes du ProjectBridge exigent un bridgeToken qui n'existe pas encore.
-   * Elle ne crée rien et ne modifie rien : on constate, on n'engage pas.
-   */
-  const submitProbe = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setProbeError(null);
-    setProbeResult(null);
-    setProbing(true);
-    try {
-      const result = await probeProject(probeUrl.trim());
-      setProbeResult(result);
-      // Le projet se nomme lui-même : on pré-remplit avec CE nom plutôt que
-      // d'en faire inventer un. L'utilisateur reste libre de le remplacer.
-      const announced = result.bridgeIdentity?.projectName;
-      if (announced && projectName.trim().length === 0) setProjectName(announced);
-    } catch (err) {
-      setProbeError(errorMessage(err, 'Impossible de sonder cette adresse.'));
-    } finally {
-      setProbing(false);
-    }
-  };
-
-  const removeProject = async (project: PublicProject) => {
-    if (!window.confirm(`Retirer « ${project.projectName} » du parc ?`)) {
-      return;
-    }
-    setActionError(null);
-    try {
-      await api.removeProject(project.projectId);
-      if (editor?.projectId === project.projectId) {
-        closeEditor();
-      }
-      await reload();
-    } catch (err) {
-      setActionError(errorMessage(err, 'Impossible de retirer le projet du parc.'));
-    }
-  };
-
-  const openEditor = (project: PublicProject) => {
-    setEditor({
-      projectId: project.projectId,
-      projectName: project.projectName,
-      text:
-        project.manifest !== null && project.manifest !== undefined
-          ? JSON.stringify(project.manifest, null, 2)
-          : '{\n}',
-    });
-    setEditorError(null);
-    setEditorDetails(null);
-    setUnknownCaps(null);
-    setManifestSaved(false);
-  };
-
-  const closeEditor = () => {
-    setEditor(null);
-    setEditorError(null);
-    setEditorDetails(null);
-    setUnknownCaps(null);
-    setManifestSaved(false);
-  };
-
-  const saveManifest = async () => {
-    if (!editor) return;
-    setEditorError(null);
-    setEditorDetails(null);
-    setUnknownCaps(null);
-    setManifestSaved(false);
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(editor.text);
-    } catch {
-      setEditorError('JSON invalide : corrigez la syntaxe avant d’envoyer.');
-      return;
-    }
-
-    setSavingManifest(true);
-    try {
-      const res = await api.updateManifest(editor.projectId, parsed);
-      setUnknownCaps(res.unknownFeatures);
-      setManifestSaved(true);
-      await reload();
-    } catch (err) {
-      setEditorError(errorMessage(err, 'Impossible d’enregistrer le manifest.'));
-      if (err instanceof ApiError && err.details !== undefined) {
-        setEditorDetails(JSON.stringify(err.details, null, 2));
-      }
-    } finally {
-      setSavingManifest(false);
-    }
-  };
-
   return (
     <div className="page">
       <header className="page-header">
-        <h1>Projets</h1>
-        <p className="page-description">Parc des projets clients déclarés dans le Panel.</p>
+        <h1>Projets clients</h1>
+        <p className="page-description">Les sites que nous gérons et leur état du jour.</p>
       </header>
 
-      <Card title="Déclarer un projet">
-        <p className="muted">
-          Renseignez l’adresse du backend, testez le pont, puis déclarez. La clé technique du
-          projet est générée automatiquement à partir de l’identité qu’il annonce lui-même : elle
-          ne se saisit pas.
-        </p>
-        <form className="inline-form" onSubmit={(e) => void submitProbe(e)}>
-          <label className="field">
-            <span className="field-label">URL publique du backend du projet</span>
-            <input
-              type="url"
-              value={probeUrl}
-              onChange={(e) => setProbeUrl(e.target.value)}
-              placeholder="https://api.mon-projet.exemple.com"
-              required
-            />
-          </label>
-          <button type="submit" className="btn btn-primary" disabled={probing}>
-            {probing ? 'Test en cours…' : 'Tester le bridge'}
-          </button>
-        </form>
+      {error ? <div className="alert alert-error">{error}</div> : null}
 
-        {probeError ? <div className="alert alert-error">{probeError}</div> : null}
-
-        {probeResult ? (
-          <div
-            className={
-              probeResult.compatible && probeResult.alreadyPaired !== true
-                ? 'alert alert-success'
-                : probeResult.reachable
-                  ? 'alert alert-warning'
-                  : 'alert alert-error'
-            }
-          >
-            <strong>{probeResult.reason}</strong>
-            <dl className="detail-list">
-              <div>
-                <dt>Adresse joignable</dt>
-                <dd>{probeResult.reachable ? 'oui' : 'non'}</dd>
-              </div>
-              <div>
-                <dt>ProjectBridge reconnu</dt>
-                <dd>{probeResult.isProjectBridge ? 'oui' : 'non'}</dd>
-              </div>
-              <div>
-                <dt>Contrat du projet</dt>
-                <dd>
-                  {probeResult.contractVersion ? (
-                    <code className="inline-code">{probeResult.contractVersion}</code>
-                  ) : (
-                    <span className="muted">non annoncé</span>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt>Contrat du Panel</dt>
-                <dd>
-                  <code className="inline-code">{probeResult.panelContractVersion ?? '—'}</code>
-                </dd>
-              </div>
-              <div>
-                <dt>Compatibles</dt>
-                <dd>{probeResult.compatible ? 'oui' : 'non'}</dd>
-              </div>
-              <div>
-                <dt>Déjà appairé</dt>
-                <dd>
-                  {probeResult.alreadyPaired === null
-                    ? <span className="muted">inconnu</span>
-                    : probeResult.alreadyPaired ? 'oui' : 'non'}
-                </dd>
-              </div>
-              <div>
-                <dt>Testé le</dt>
-                <dd>{formatDateTime(probeResult.checkedAt)}</dd>
-              </div>
-            </dl>
-          </div>
-        ) : null}
-
-        {/* La déclaration ne s'ouvre qu'une fois le pont constaté valide : on
-            n'inscrit pas au registre une adresse dont on ignore ce qu'elle
-            répond. Un projet déjà appairé ailleurs reste barré. */}
-        {probeResult?.compatible && probeResult.alreadyPaired !== true ? (
+      {/* ── DÉCLARATION — réservée aux comptes DEV ─────────────────────────── */}
+      {isDev ? (
+        <Card title="Déclarer un projet">
+          <p className="muted">
+            Renseignez l’adresse du backend, testez la connexion, puis déclarez. L’identifiant
+            technique est généré automatiquement : il ne se saisit pas.
+          </p>
           <div className="inline-form">
             <label className="field">
-              <span className="field-label">
-                Nom du projet <span className="muted">(pré-rempli, modifiable)</span>
-              </span>
+              <span className="field-label">Adresse du backend</span>
               <input
-                type="text"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="Nom lisible du projet"
+                type="url"
+                value={probeUrl}
+                onChange={(e) => setProbeUrl(e.target.value)}
+                placeholder="https://api.mon-projet.exemple.com"
               />
             </label>
             <button
               type="button"
-              className="btn btn-primary"
-              disabled={creating}
-              onClick={() => void submitCreate()}
+              className="btn btn-secondary"
+              disabled={probing || probeUrl.trim().length === 0}
+              onClick={() => void testConnection()}
             >
-              {creating ? 'Déclaration…' : 'Déclarer ce projet'}
+              {probing ? 'Test en cours…' : 'Tester la connexion'}
             </button>
           </div>
-        ) : null}
 
-        {createError ? <div className="alert alert-error">{createError}</div> : null}
-      </Card>
+          {probeError ? <div className="alert alert-error">{probeError}</div> : null}
+
+          {probeResult ? (
+            <div
+              className={
+                probeResult.compatible && probeResult.alreadyPaired !== true
+                  ? 'alert alert-success'
+                  : probeResult.reachable
+                    ? 'alert alert-warning'
+                    : 'alert alert-error'
+              }
+            >
+              {probeResult.reason}
+            </div>
+          ) : null}
+
+          {probeResult?.compatible && probeResult.alreadyPaired !== true ? (
+            <div className="inline-form">
+              <label className="field">
+                <span className="field-label">
+                  Nom du projet <span className="muted">(pré-rempli, modifiable)</span>
+                </span>
+                <input
+                  type="text"
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="Nom lisible du projet"
+                />
+              </label>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={creating}
+                onClick={() => void submitCreate()}
+              >
+                {creating ? 'Déclaration…' : 'Déclarer le projet'}
+              </button>
+            </div>
+          ) : null}
+
+          {createError ? <div className="alert alert-error">{createError}</div> : null}
+        </Card>
+      ) : null}
 
       {created ? (
         <div className="alert alert-warning code-reveal">
-          <strong>Code d’appairage pour « {created.projectName} »</strong>
+          <strong>Code de connexion pour « {created.projectName} »</strong>
           <CopyField value={created.pairingCode} label="Code" />
-          <p>
-            Ce code ne sera plus jamais affiché. Expire le {formatDateTime(created.expiresAt)}.
-          </p>
-          <button type="button" className="btn btn-secondary btn-small" onClick={() => setCreated(null)}>
+          <p>Ce code ne sera plus jamais affiché. Expire le {formatDateTime(created.expiresAt)}.</p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            onClick={() => setCreated(null)}
+          >
             J’ai noté le code
           </button>
         </div>
       ) : null}
 
-      {error ? <div className="alert alert-error">{error}</div> : null}
-      {actionError ? <div className="alert alert-error">{actionError}</div> : null}
-
+      {/* ── LISTE MÉTIER ──────────────────────────────────────────────────── */}
       {loading ? (
         <p className="muted">Chargement des projets…</p>
       ) : projects.length === 0 ? (
         <EmptyState
-          title="Aucun projet dans le parc"
-          hint="Utilisez le formulaire ci-dessus pour déclarer votre premier projet."
+          title="Aucun projet client"
+          hint={
+            isDev
+              ? 'Déclarez un premier projet à partir de l’adresse de son backend.'
+              : 'Aucun projet n’a encore été déclaré dans le Panel.'
+          }
         />
       ) : (
-        <Card>
-          <div className="table-wrapper">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Nom</th>
-                  <th>Adresse</th>
-                  <th>Appairage</th>
-                  <th>Vivacité</th>
-                  <th>Version logicielle</th>
-                  <th>Capacités actives</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {projects.map((project) => {
-                  const isPaired = project.pairing.status === 'PAIRED';
-                  return (
-                    <tr key={project.projectId}>
-                      <td>{project.projectName}</td>
-                      <td>
-                        {project.runtime.publicBackendUrl ? (
-                          <code className="inline-code">{project.runtime.publicBackendUrl}</code>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td>
-                        <StatusBadge kind="pairing" value={project.pairing.status} />
-                      </td>
-                      <td>
-                        <StatusBadge kind="liveness" value={project.liveness} />
-                      </td>
-                      <td>
-                        {project.runtime.softwareVersion ?? <span className="muted">—</span>}
-                      </td>
-                      <td>
-                        {project.capabilities.enabled.length > 0 ? (
-                          <span className="badge-list">
-                            {project.capabilities.enabled.map((cap) => (
-                              <span key={cap} className="badge badge-neutral">
-                                {cap}
-                              </span>
-                            ))}
-                          </span>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="row-actions">
-                          <button
-                            type="button"
-                            className="btn btn-small btn-secondary"
-                            onClick={() => openEditor(project)}
-                          >
-                            Éditer le Manifest
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-small btn-danger"
-                            disabled={isPaired}
-                            title={
-                              isPaired
-                                ? 'Révoquez d’abord l’appairage'
-                                : 'Retirer ce projet du parc'
-                            }
-                            onClick={() => void removeProject(project)}
-                          >
-                            Retirer du parc
-                          </button>
-                        </div>
-                        {isPaired ? (
-                          <span className="cell-secondary">Révoquez d’abord l’appairage</span>
-                        ) : null}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+        <div className="grid-cards">
+          {projects.map((project) => {
+            const site = siteState(project);
+            const link = connectionState(project);
+            const since = lastContact(project);
+            const url = projectSiteUrl(project);
+            const domain = projectDomain(project);
+            const description = projectDescription(project);
+            return (
+              <Card key={project.projectId}>
+                <div className="project-row">
+                  {/* Aucun logo n'est encore remonté par les sites : on affiche
+                      les initiales plutôt qu'une image absente. */}
+                  <span className="project-avatar">{projectInitials(project)}</span>
 
-      {editor ? (
-        <Card title={`Manifest — ${editor.projectName}`} className="manifest-editor">
-          <p className="muted">
-            Collez ou modifiez le manifest JSON du projet, puis enregistrez pour le valider côté
-            Panel.
-          </p>
-          <textarea
-            className="manifest-textarea"
-            value={editor.text}
-            onChange={(e) => setEditor({ ...editor, text: e.target.value })}
-            rows={14}
-            spellCheck={false}
-          />
-          {editorError ? <div className="alert alert-error">{editorError}</div> : null}
-          {editorDetails ? <pre className="error-details">{editorDetails}</pre> : null}
-          {manifestSaved ? (
-            <div className="alert alert-success">Manifest enregistré.</div>
-          ) : null}
-          {unknownCaps && unknownCaps.length > 0 ? (
-            <div className="alert alert-warning">
-              Capacités inconnues du Panel :{' '}
-              <span className="badge-list">
-                {unknownCaps.map((cap) => (
-                  <span key={cap} className="badge badge-warn">
-                    {cap}
-                  </span>
-                ))}
-              </span>
-            </div>
-          ) : null}
-          <div className="row-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={savingManifest}
-              onClick={() => void saveManifest()}
-            >
-              {savingManifest ? 'Enregistrement…' : 'Enregistrer le manifest'}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={closeEditor}>
-              Fermer
-            </button>
-          </div>
-        </Card>
-      ) : null}
+                  <div className="project-row-main">
+                    <p className="project-row-title">{projectDisplayName(project)}</p>
+                    {description ? <p className="muted">{description}</p> : null}
+
+                    <div className="project-row-meta">
+                      <span className={toneBadgeClass(site.tone)}>{site.label}</span>
+                      <span className={toneBadgeClass(link.tone)}>{link.label}</span>
+                      {since ? <span>Dernier contact {since}</span> : null}
+                      {url ? (
+                        <a href={url} target="_blank" rel="noreferrer">
+                          {url.replace(/^[a-z]+:\/\//, '')}
+                        </a>
+                      ) : domain ? (
+                        <span>{domain}</span>
+                      ) : null}
+                    </div>
+
+                    {project.note ? <p className="cell-secondary">{project.note}</p> : null}
+                  </div>
+
+                  <Link className="btn btn-secondary btn-small" to={`/projects/${project.projectId}`}>
+                    Voir
+                  </Link>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
+
+export default ProjectsPage;

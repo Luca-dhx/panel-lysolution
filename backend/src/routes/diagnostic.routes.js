@@ -7,7 +7,7 @@
 // aucun projet et n'écrit rien.
 import { Router } from 'express';
 import asyncHandler from '../utils/asyncHandler.js';
-import { requirePanelUser } from '../middlewares/panelAuth.middleware.js';
+import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
   catalog,
   fleetDiagnostic,
@@ -21,6 +21,10 @@ import {
 const router = Router();
 
 router.use(asyncHandler(requirePanelUser));
+// Surface TECHNIQUE : réservée aux comptes DEV, comme les écrans qui la
+// consomment. La garde du frontend redirige un ADMIN ; sans cette ligne, la
+// donnée restait atteignable par appel direct à l'API.
+router.use(requirePanelDev);
 
 // Niveau 0 — analyse du parc
 router.get('/fleet', asyncHandler(fleetDiagnostic));

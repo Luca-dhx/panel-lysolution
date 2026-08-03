@@ -42,7 +42,7 @@ export function ProjectSupervisionPage() {
     return (
       <div className="page">
         <div className="alert alert-error">{error}</div>
-        <p><Link to="/supervision">← Retour au parc</Link></p>
+        <p><Link to="/supervision/parc">← Retour au parc</Link></p>
       </div>
     );
   }
@@ -55,7 +55,7 @@ export function ProjectSupervisionPage() {
 
   return (
     <div className="page">
-      <p className="breadcrumb"><Link to="/supervision">← Parc</Link></p>
+      <p className="breadcrumb"><Link to="/supervision/parc">← Parc</Link></p>
 
       <header className="page-header">
         <h1>{descriptor.name}</h1>

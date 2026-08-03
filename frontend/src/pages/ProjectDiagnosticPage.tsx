@@ -36,7 +36,7 @@ export function ProjectDiagnosticPage() {
     return (
       <div className="page">
         <div className="alert alert-error">{error}</div>
-        <p><Link to="/supervision">← Retour au parc</Link></p>
+        <p><Link to="/supervision/parc">← Retour au parc</Link></p>
       </div>
     );
   }
@@ -47,7 +47,7 @@ export function ProjectDiagnosticPage() {
   return (
     <div className="page">
       <p className="breadcrumb">
-        <Link to="/supervision">← Parc</Link>
+        <Link to="/supervision/parc">← Parc</Link>
         {' · '}
         <Link to={`/supervision/${projectId}`}>Fiche projet</Link>
       </p>

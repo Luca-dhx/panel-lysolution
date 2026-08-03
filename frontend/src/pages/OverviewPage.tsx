@@ -120,7 +120,7 @@ export function OverviewPage() {
               </ul>
             )}
             <p className="card-footer-link">
-              <Link to="/supervision">Voir tout le parc →</Link>
+              <Link to="/supervision/parc">Voir tout le parc →</Link>
             </p>
           </Card>
 
