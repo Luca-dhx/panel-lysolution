@@ -17,17 +17,38 @@ import type { PublicProject } from '@/types';
 /**
  * Nom lisible d'un projet, par ordre de préférence DÉCROISSANTE :
  *
- *   1. le nom commercial synchronisé — n'existe PAS encore : le pont ne
- *      transporte ni raison sociale ni logo. La place est réservée ici pour
- *      que le jour où il arrivera, un seul endroit change ;
+ *   1. le nom commercial SYNCHRONISÉ, poussé par le projet à chaque
+ *      modification — la seule source vivante ;
  *   2. `descriptor.name`, que le projet publie dans son manifeste ;
  *   3. le nom déclaré au Panel à la création ;
  *   4. l'identifiant technique — dernier recours, jamais un choix.
+ *
+ * Les rangs 2 à 4 sont des SECOURS, pas des sources métier : le manifeste est
+ * une photographie prise à l'appairage ou sur action manuelle. Un projet qui
+ * n'a jamais rien poussé s'affiche donc, mais `isBusinessSynchronized` le
+ * signale — voir le commentaire de cette fonction.
  *
  * `descriptor.description` n'entre pas dans cette liste : c'est une phrase de
  * présentation (« Garage du Nord — vitrine et Manager »), pas un nom. L'utiliser
  * comme titre donnerait des libellés de trois lignes.
  */
+/**
+ * Le projet a-t-il déjà poussé son identité commerciale ?
+ *
+ * ── POURQUOI CETTE FONCTION EXISTE ─────────────────────────────────────────
+ * Sans elle, une synchronisation en panne était INVISIBLE : les écrans
+ * retombaient silencieusement sur le manifeste, une photographie prise à
+ * l'appairage. L'utilisateur voyait un nom — l'ancien — et concluait que sa
+ * modification n'avait pas été enregistrée, alors que le problème était le
+ * lien entre les deux systèmes.
+ *
+ * Un secours muet qui ressemble à une donnée à jour est pire que pas de
+ * secours du tout. Les écrans affichent donc le repli, mais le DISENT.
+ */
+export function isBusinessSynchronized(project: PublicProject): boolean {
+  return Boolean(project.business?.presentation);
+}
+
 export function projectDisplayName(project: PublicProject): string {
   // La projection POUSSÉE prime : elle arrive à chaque modification, alors que
   // le manifeste n'est relu qu'à l'appairage ou sur action manuelle.

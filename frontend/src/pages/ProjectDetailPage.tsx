@@ -28,6 +28,7 @@ import {
   contractState,
   formatAmount,
   formatInterval,
+  isBusinessSynchronized,
   lastContact,
   linkState,
   projectAlert,
@@ -100,6 +101,9 @@ export function ProjectDetailPage() {
             <div className="project-row-meta">
               <span className={toneBadgeClass(site.tone)}>{site.label}</span>
               <span className={toneBadgeClass(connection.tone)}>{connection.label}</span>
+              {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
+                <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
+              ) : null}
               {since ? <span>Dernier contact {since}</span> : null}
             </div>
           </div>

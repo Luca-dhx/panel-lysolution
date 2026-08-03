@@ -326,4 +326,31 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
     !/refetch|polling|fetching/i.test(projects) && !/refetch|polling|fetching/i.test(detail));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('10. Un manifeste périmé ne se fait plus passer pour une donnée vivante');
+{
+  const presentation = read('frontend/src/lib/projectPresentation.ts');
+  const projects = read('frontend/src/pages/ProjectsPage.tsx');
+  const detail = read('frontend/src/pages/ProjectDetailPage.tsx');
+
+  check('le Panel sait dire si l’identité a DÉJÀ été poussée',
+    presentation.includes('export function isBusinessSynchronized'));
+  check('…et le lit sur la projection, pas sur le manifeste',
+    /isBusinessSynchronized[\s\S]{0,200}business\?\.presentation/.test(presentation));
+
+  for (const [name, source] of [['la liste', projects], ['la fiche', detail]]) {
+    check(`${name} signale un projet relié dont l’identité n’est pas synchronisée`,
+      /pairing\.status === 'PAIRED' && !isBusinessSynchronized\(project\)/.test(source)
+      && source.includes('Identité non synchronisée'));
+  }
+
+  // Le repli manifeste reste — c'est l'amorçage et le secours — mais il vient
+  // APRÈS la projection, sur chaque champ métier.
+  for (const champ of ['companyName', 'tagline', 'logoUrl']) {
+    const bloc = presentation.slice(presentation.indexOf(`business?.presentation?.${champ}`));
+    check(`${champ} : la projection est lue AVANT le descripteur`,
+      bloc.indexOf('descriptor?.presentation') > 0);
+  }
+}
+
 finish();

@@ -459,6 +459,26 @@ const projete = await PanelPresentation.findOne({ projectId }).lean();
 check('…avec le slogan', projete?.tagline === 'Entretien et réparation depuis 1998');
 check('…et aucun clic « Rafraîchir le Manifest » n’a été nécessaire', true);
 
+// ── LE CHEMIN DE LECTURE : ce que l'écran reçoit RÉELLEMENT ──────────────
+// Projeter en base ne suffit pas. Tant que GET /api/projects ne rend pas la
+// valeur, l'utilisateur ne voit rien — et c'est indiscernable d'une
+// synchronisation en panne.
+const liste = await http('GET', `${PANEL_URL}/api/projects`, { headers: AUTH });
+const fiche = liste.json?.data?.projects?.find((p) => p.projectId === projectId);
+check('GET /api/projects expose le nouveau nom commercial',
+  fiche?.business?.presentation?.companyName === NOUVEAU_NOM);
+check('…et le slogan', fiche?.business?.presentation?.tagline === 'Entretien et réparation depuis 1998');
+
+// La PREUVE que la projection prime : le manifeste, lui, n'a pas bougé.
+check('le manifeste porte encore l’ANCIENNE identité',
+  fiche?.manifest?.presentation?.companyName !== NOUVEAU_NOM);
+check('…donc la valeur affichée vient bien de la projection, pas du manifeste',
+  fiche?.business?.presentation?.companyName !== fiche?.manifest?.presentation?.companyName);
+
+const detail = await http('GET', `${PANEL_URL}/api/projects/${projectId}`, { headers: AUTH });
+check('GET /api/projects/:id expose la même valeur',
+  detail.json?.data?.project?.business?.presentation?.companyName === NOUVEAU_NOM);
+
 // ── Coupure du Panel, modification, redémarrage du projet ────────────────
 await panelServer.close();
 

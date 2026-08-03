@@ -29,6 +29,7 @@ import {
   contractState,
   formatAmount,
   formatInterval,
+  isBusinessSynchronized,
   lastContact,
   projectDescription,
   projectDisplayName,
@@ -244,6 +245,12 @@ export function ProjectsPage() {
                     <div className="project-row-meta">
                       <span className={toneBadgeClass(site.tone)}>{site.label}</span>
                       <span className={toneBadgeClass(link.tone)}>{link.label}</span>
+                      {/* Un projet relié qui n'a jamais rien poussé affiche son
+                          manifeste : on le DIT, sinon une panne de
+                          synchronisation ressemble à une donnée à jour. */}
+                      {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
+                        <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
+                      ) : null}
                       {since ? <span>Dernier contact {since}</span> : null}
                       {url ? (
                         <a href={url} target="_blank" rel="noreferrer">
