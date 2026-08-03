@@ -179,6 +179,30 @@ export class ProjectBridgeClient {
   }
 
   // -- pairing ---------------------------------------------------------------
+  /**
+   * Récupère un document du projet — flux BINAIRE, pas du JSON.
+   *
+   * Le chemin vient de la projection (`document.downloadPath`) : c'est le
+   * projet qui dit où aller le chercher, jamais le Panel qui le devine.
+   */
+  async fetchDocument(path) {
+    const url = new URL(path, this.baseUrl).toString();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      return await this.fetchImpl(url, {
+        method: 'GET',
+        headers: {
+          [CONTRACT_VERSION_HEADER]: CONTRACT_VERSION,
+          authorization: `Bearer ${this.bridgeToken}`,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   notifyUnpair() {
     return this.#request('POST', PROJECT_API_ROUTES.unpair, { body: {} });
   }

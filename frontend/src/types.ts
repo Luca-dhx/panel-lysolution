@@ -92,7 +92,37 @@ export interface BusinessAmount {
   interval?: string | null;
 }
 
+export interface BusinessDocument {
+  available: boolean;
+  kind?: 'ORIGINAL' | 'SIGNED' | null;
+  filename?: string | null;
+  pageCount?: number;
+  version?: number;
+  signatureStatus?: string | null;
+  signedAt?: string | null;
+  generatedAt?: string | null;
+}
+
+export interface ContractOperation {
+  id: string;
+  label: string;
+  description?: string;
+  available: boolean;
+  effect?: string;
+}
+
+export interface ContractAction {
+  operationId: string;
+  outcome: 'REQUESTED' | 'SUCCEEDED' | 'FAILED';
+  requestedAt: string;
+  reason: string | null;
+  actor: { email: string | null; role: string | null };
+  contract: { previousStatus: string | null; newStatus: string | null; endsAt: string | null };
+  errorMessage: string | null;
+}
+
 export interface BusinessContract {
+  document?: BusinessDocument | null;
   sourceContractId: string;
   status: string;
   reference: string | null;

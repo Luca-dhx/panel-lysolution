@@ -18,6 +18,13 @@ import {
 } from '../services/pairing/pairing.service.js';
 import ProjectBridgeClient from '../bridge/ProjectBridgeClient.js';
 import { probeProjectUrl } from '../services/registry/probe.service.js';
+import {
+  listContractActions,
+  listContractOperations,
+  requestContractAction,
+} from '../services/contract/contractActions.service.js';
+import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
+import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 
 export async function list(_req, res) {
   const now = Date.now();
@@ -125,4 +132,84 @@ export async function probe(req, res) {
       'Sonde impossible parce qu’aucune URL n’a ete fournie.');
   }
   return ok(res, await probeProjectUrl(url));
+}
+
+
+/* ── CONTRAT : ce que le Panel peut DEMANDER au projet ────────────────────── */
+
+/** GET /:projectId/contract/operations — catalogue vivant + historique. */
+export async function contractOperations(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const catalogue = await listContractOperations(record);
+  return ok(res, {
+    ...catalogue,
+    environment: record.runtime?.environment ?? null,
+    history: await listContractActions(record.projectId),
+  });
+}
+
+/**
+ * POST /:projectId/contract/cancel — DEMANDE de résiliation.
+ *
+ * Le Panel ne touche pas à sa projection : la nouvelle vérité lui reviendra
+ * par la synchronisation, comme toute autre modification du contrat.
+ */
+export async function cancelContract(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const { operationId, reason = null } = req.body ?? {};
+  const { action } = await requestContractAction(record, {
+    operationId,
+    reason: typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : null,
+    actor: {
+      userId: req.panelUser?.userId ?? null,
+      email: req.panelUser?.email ?? null,
+      role: req.panelUser?.role ?? null,
+    },
+  });
+  return ok(res, { action });
+}
+
+/**
+ * GET /:projectId/contract/document — le PDF, relayé depuis le projet.
+ *
+ * Le Panel ne STOCKE aucun document contractuel : il va le chercher chez son
+ * propriétaire, avec son jeton de pont, et le relaie à l'utilisateur. Le
+ * chemin vient de la projection — le Panel ne le fabrique pas.
+ */
+export async function contractDocument(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const projection = await PanelProjectContract.findOne({ projectId: record.projectId }).lean();
+  const chemin = projection?.document?.downloadPath;
+  if (!projection?.document?.available || !chemin) {
+    throw ApiError.notFound(
+      'PANEL_CONTRACT_DOCUMENT_UNAVAILABLE',
+      'Aucun document contractuel n’a été publié par ce projet.',
+    );
+  }
+
+  const bridgeToken = record.pairing?.status === 'PAIRED' ? getOutboundBridgeToken(record) : null;
+  if (!bridgeToken || !record.runtime?.publicBackendUrl) {
+    throw ApiError.conflict(
+      'PANEL_PROJECT_NOT_PAIRED',
+      'Le lien avec ce projet est rompu : le document ne peut pas être récupéré.',
+    );
+  }
+
+  const client = new ProjectBridgeClient({
+    baseUrl: record.runtime.publicBackendUrl,
+    bridgeToken,
+  });
+  const amont = await client.fetchDocument(chemin);
+  if (!amont.ok) {
+    throw ApiError.conflict(
+      'PANEL_CONTRACT_DOCUMENT_UNREACHABLE',
+      `Le projet n’a pas rendu le document (HTTP ${amont.status}).`,
+    );
+  }
+
+  const nom = projection.document.filename || 'contrat.pdf';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${nom.replace(/"/g, '')}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(Buffer.from(await amont.arrayBuffer()));
 }

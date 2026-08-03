@@ -72,6 +72,24 @@ const contractSchema = new mongoose.Schema(
     sourceContractId: { type: String, required: true },
     status: { type: String, required: true },
     reference: { type: String, default: null },
+    /**
+     * Le document contractuel n'est jamais STOCKÉ ici, seulement DÉCRIT.
+     * `downloadPath` est une route du projet — le Panel va y chercher le PDF
+     * quand un humain le demande, avec son jeton de pont. Aucun chemin disque
+     * n'entre dans cette collection.
+     */
+    document: {
+      available: { type: Boolean, default: false },
+      kind: { type: String, default: null },
+      filename: { type: String, default: null },
+      pageCount: { type: Number, default: 0 },
+      checksum: { type: String, default: null },
+      version: { type: Number, default: 0 },
+      signatureStatus: { type: String, default: null },
+      signedAt: { type: String, default: null },
+      generatedAt: { type: String, default: null },
+      downloadPath: { type: String, default: null },
+    },
     createdAt: { type: String, default: null },
     activatedAt: { type: String, default: null },
     pricing: {

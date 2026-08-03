@@ -117,6 +117,20 @@ async function applyContract({ projectId, change }) {
         projectId,
         sourceContractId: c.sourceContractId,
         status: c.status,
+        document: c.document
+          ? {
+            available: c.document.available,
+            kind: c.document.kind,
+            filename: c.document.filename,
+            pageCount: c.document.pageCount ?? 0,
+            checksum: c.document.checksum ?? null,
+            version: c.document.version ?? 0,
+            signatureStatus: c.document.signatureStatus ?? null,
+            signedAt: c.document.signedAt ?? null,
+            generatedAt: c.document.generatedAt ?? null,
+            downloadPath: c.document.downloadPath,
+          }
+          : { available: false },
         reference: c.reference ?? null,
         createdAt: c.createdAt ?? null,
         activatedAt: c.activatedAt ?? null,

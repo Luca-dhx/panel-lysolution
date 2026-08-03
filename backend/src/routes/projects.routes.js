@@ -5,6 +5,9 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
   declare,
+  cancelContract,
+  contractDocument,
+  contractOperations,
   detail,
   list,
   probe,
@@ -20,6 +23,12 @@ router.use(asyncHandler(requirePanelUser));
 
 router.get('/', asyncHandler(list));
 router.get('/:projectId', asyncHandler(detail));
+
+// CONTRAT — lecture pour tous les comptes du Panel, DEMANDE de résiliation
+// aussi : c'est un acte de gestion, pas une opération d'infrastructure.
+router.get('/:projectId/contract/operations', asyncHandler(contractOperations));
+router.get('/:projectId/contract/document', asyncHandler(contractDocument));
+router.post('/:projectId/contract/cancel', asyncHandler(cancelContract));
 
 // Sonde d'URL — POST par commodité de corps, mais AUCUNE écriture : elle
 // interroge une adresse et rend un constat.

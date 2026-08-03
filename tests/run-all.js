@@ -18,6 +18,7 @@ const TESTS = [
   'persistence.test.js',
   'bridge-http.test.js',
   'bridge-conformity.test.js',
+  'contract-actions.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
   'live-refresh.test.js',

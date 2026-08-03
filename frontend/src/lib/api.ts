@@ -1,4 +1,10 @@
-import type { PanelUser, PanelVersion, PublicProject } from '@/types';
+import type {
+  ContractAction,
+  ContractOperation,
+  PanelUser,
+  PanelVersion,
+  PublicProject,
+} from '@/types';
 import type {
   Dashboard, FleetResult, ProjectOverview, ProjectTechnical,
   HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
@@ -140,6 +146,50 @@ export const api = {
 
   getProject: (projectId: string) =>
     request<{ project: PublicProject }>(`/api/projects/${projectId}`),
+
+  /* ── CONTRAT — le Panel DEMANDE, le projet décide ────────────────────── */
+  getContractOperations: (projectId: string) =>
+    request<{
+      operations: ContractOperation[];
+      reachable: boolean;
+      environment: string | null;
+      history: ContractAction[];
+    }>(`/api/projects/${projectId}/contract/operations`),
+
+  cancelContract: (projectId: string, operationId: string, reason?: string) =>
+    request<{ action: ContractAction }>(`/api/projects/${projectId}/contract/cancel`, {
+      method: 'POST',
+      body: { operationId, ...(reason ? { reason } : {}) },
+    }),
+
+  /**
+   * Télécharge le document contractuel.
+   *
+   * Un simple lien ne suffirait pas : la route exige le jeton du Panel, et un
+   * `<a href>` ne porte aucun en-tête. On récupère donc le flux, puis on
+   * déclenche l'enregistrement — le fichier ne fait que passer.
+   */
+  async downloadContractDocument(projectId: string, filename: string): Promise<void> {
+    const token = tokenStore.get();
+    const res = await fetch(`/api/projects/${projectId}/contract/document`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const corps = await res.json().catch(() => null);
+      throw new ApiError(
+        res.status,
+        corps?.message ?? 'Le document n’a pas pu être récupéré.',
+        corps?.code,
+      );
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const lien = document.createElement('a');
+    lien.href = url;
+    lien.download = filename || 'contrat.pdf';
+    lien.click();
+    URL.revokeObjectURL(url);
+  },
 
   generatePairingCode: (projectId: string) =>
     request<{ pairingCode: string; pairingCodeExpiresAt: string }>(

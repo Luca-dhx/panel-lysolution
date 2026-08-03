@@ -1454,3 +1454,18 @@ textarea:focus {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Actions contractuelles : alignées, espacées, jamais collées au texte. */
+.contract-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

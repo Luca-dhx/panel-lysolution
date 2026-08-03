@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
+import { ContractCard } from '@/components/ContractCard';
 import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
@@ -25,9 +26,6 @@ import { useIsDev } from '@/auth/RequireDev';
 import type { PublicProject } from '@/types';
 import {
   connectionState,
-  contractState,
-  formatAmount,
-  formatInterval,
   isBusinessSynchronized,
   lastContact,
   linkState,
@@ -225,42 +223,9 @@ function OverviewTab({
       ) : null}
 
       {contract ? (
-        <Card title="Contrat">
-          <dl className="detail-list">
-            <div>
-              <dt>Statut</dt>
-              <dd>
-                <span className={toneBadgeClass(contractState(contract.status).tone)}>
-                  {contractState(contract.status).label}
-                </span>
-              </dd>
-            </div>
-            {contract.reference ? (
-              <div><dt>Référence</dt><dd>{contract.reference}</dd></div>
-            ) : null}
-            {formatAmount(contract.pricing.subscription) ? (
-              <div>
-                <dt>Abonnement</dt>
-                <dd>
-                  {formatAmount(contract.pricing.subscription)}
-                  {formatInterval(contract.pricing.subscription?.interval)
-                    ? ` ${formatInterval(contract.pricing.subscription?.interval)}`
-                    : ''}
-                </dd>
-              </div>
-            ) : null}
-            {formatAmount(contract.pricing.launchFee) ? (
-              <div><dt>Frais de mise en service</dt><dd>{formatAmount(contract.pricing.launchFee)}</dd></div>
-            ) : null}
-            {contract.activatedAt ? (
-              <div><dt>Activé le</dt><dd>{formatDateTime(contract.activatedAt)}</dd></div>
-            ) : null}
-          </dl>
-        </Card>
+        <ContractCard project={project} contract={contract} />
       ) : (
-        <Card title="Contrat">
-          <p className="muted">Aucun contrat actif synchronisé.</p>
-        </Card>
+        <ContractCard project={project} contract={null} />
       )}
 
       <Card title="Suivi">

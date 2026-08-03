@@ -372,6 +372,31 @@ export const contractPayloadSchema = z
     sourceContractId: z.string().min(1),
     status: z.string().min(1),
     reference: z.string().nullable().optional(),
+    /**
+     * MÉTADONNÉES du document contractuel — jamais le fichier.
+     *
+     * Le PDF reste chez le projet, dans son stockage privé. Le Panel en garde
+     * de quoi DIRE ce qui existe et un chemin d'API pour aller le chercher.
+     * `downloadPath` est une route du projet, pas un chemin disque : exposer
+     * un chemin de fichier dans un espace métier serait une fuite, et
+     * deviendrait faux au premier changement d'hébergement.
+     */
+    document: z
+      .object({
+        available: z.boolean(),
+        kind: z.enum(['ORIGINAL', 'SIGNED']),
+        filename: z.string().min(1),
+        contentType: z.string().min(1).optional(),
+        pageCount: z.number().int().nonnegative().optional(),
+        checksum: z.string().nullable().optional(),
+        version: z.number().int().nonnegative().optional(),
+        signatureStatus: z.string().min(1).optional(),
+        signedAt: z.string().nullable().optional(),
+        generatedAt: z.string().nullable().optional(),
+        downloadPath: z.string().startsWith('/'),
+      })
+      .strict()
+      .optional(),
     createdAt: z.string().nullable().optional(),
     activatedAt: z.string().nullable().optional(),
     pricing: z
