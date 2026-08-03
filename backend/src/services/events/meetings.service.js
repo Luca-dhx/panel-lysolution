@@ -15,7 +15,14 @@
  */
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
-import { MEETING_STATUS, MEETING_TRANSITIONS, PanelMeeting } from '../../models/PanelMeeting.model.js';
+import {
+  MEETING_MODES,
+  MEETING_STATUS,
+  MEETING_TRANSITIONS,
+  PanelMeeting,
+  REMOTE_KINDS,
+} from '../../models/PanelMeeting.model.js';
+import { applyPatch } from './revisions.js';
 import { EVENT_STATUS, PanelProjectEvent } from '../../models/PanelProjectEvent.model.js';
 
 function transition(meeting, to) {
@@ -30,10 +37,85 @@ function transition(meeting, to) {
   return meeting;
 }
 
+/**
+ * NORMALISE le mode et EFFACE les champs incompatibles.
+ *
+ * Les effacer plutôt que les masquer : une adresse laissée sur une
+ * visioconférence finit par être lue comme le lieu du rendez-vous, et un
+ * numéro oublié sur un présentiel fait appeler quelqu'un pour rien.
+ *
+ * @returns {object} les champs de lieu, prêts à être appliqués
+ */
+export function normalizeMode(data) {
+  const mode = MEETING_MODES.includes(data.mode) ? data.mode : 'ONSITE';
+
+  if (mode === 'ONSITE') {
+    const address = String(data.address ?? '').trim();
+    if (!address) {
+      throw ApiError.badRequest(
+        'PANEL_MEETING_ADDRESS_REQUIRED',
+        'Une réunion en présentiel demande une adresse.',
+      );
+    }
+    return {
+      mode,
+      address,
+      addressComplement: String(data.addressComplement ?? '').trim(),
+      accessNotes: String(data.accessNotes ?? '').trim(),
+      remoteKind: null,
+      phone: '',
+      meetingUrl: '',
+    };
+  }
+
+  const remoteKind = REMOTE_KINDS.includes(data.remoteKind) ? data.remoteKind : null;
+  if (!remoteKind) {
+    throw ApiError.badRequest(
+      'PANEL_MEETING_REMOTE_KIND_REQUIRED',
+      'Précisez s’il s’agit d’un appel ou d’une visioconférence.',
+    );
+  }
+
+  if (remoteKind === 'CALL') {
+    const phone = String(data.phone ?? '').trim();
+    if (!phone) {
+      throw ApiError.badRequest(
+        'PANEL_MEETING_PHONE_REQUIRED',
+        'Un appel demande un numéro de téléphone.',
+      );
+    }
+    return {
+      mode, remoteKind, phone, meetingUrl: '',
+      address: '', addressComplement: '', accessNotes: '',
+    };
+  }
+
+  const meetingUrl = String(data.meetingUrl ?? '').trim();
+  let url;
+  try {
+    url = new URL(meetingUrl);
+  } catch {
+    url = null;
+  }
+  // HTTPS, ou un schéma d'application réellement utilisé pour la visio. Un
+  // `http://` en clair est refusé : un lien de réunion transporte un jeton.
+  const schemasAcceptes = ['https:', 'msteams:', 'zoommtg:', 'webex:'];
+  if (!url || !schemasAcceptes.includes(url.protocol)) {
+    throw ApiError.badRequest(
+      'PANEL_MEETING_URL_INVALID',
+      'Le lien de visioconférence doit être une adresse https (ou un lien d’application reconnu).',
+    );
+  }
+  return {
+    mode, remoteKind, meetingUrl, phone: '',
+    address: '', addressComplement: '', accessNotes: '',
+  };
+}
+
 export async function createMeeting(data, actor = {}) {
   const {
     projectId, projectName = null, title, description = '',
-    scheduledAt, durationMinutes = 60, location = '',
+    scheduledAt, durationMinutes = 60,
     internalParticipants = [], externalParticipants = [],
     rescheduledFromMeetingId = null,
   } = data ?? {};
@@ -53,7 +135,7 @@ export async function createMeeting(data, actor = {}) {
     description,
     scheduledAt: new Date(scheduledAt),
     durationMinutes,
-    location,
+    ...normalizeMode(data ?? {}),
     internalParticipants,
     externalParticipants,
     rescheduledFromMeetingId,
@@ -67,6 +149,42 @@ async function loadOrThrow(meetingId) {
   const meeting = await PanelMeeting.findById(meetingId);
   if (!meeting) throw ApiError.notFound('PANEL_MEETING_NOT_FOUND', 'Réunion introuvable.');
   return meeting;
+}
+
+/**
+ * MODIFIER une réunion — passée comme future, quel que soit son statut.
+ *
+ * Une erreur de saisie se corrige. Ce qui protège l'histoire n'est pas
+ * l'interdiction mais la trace : chaque champ touché est consigné avec son
+ * avant et son après.
+ */
+export async function updateMeeting(meetingId, data = {}, actor = {}) {
+  const meeting = await loadOrThrow(meetingId);
+  const patch = {};
+
+  if (data.title !== undefined) {
+    const title = String(data.title).trim();
+    if (!title) throw ApiError.badRequest('PANEL_MEETING_TITLE_REQUIRED', 'Un intitulé est requis.');
+    patch.title = title;
+  }
+  if (data.description !== undefined) patch.description = data.description;
+  if (data.scheduledAt !== undefined) {
+    if (Number.isNaN(new Date(data.scheduledAt).getTime())) {
+      throw ApiError.badRequest('PANEL_MEETING_DATE_REQUIRED', 'Date invalide.');
+    }
+    patch.scheduledAt = new Date(data.scheduledAt);
+  }
+  if (data.durationMinutes !== undefined) patch.durationMinutes = Number(data.durationMinutes);
+  if (data.internalParticipants !== undefined) patch.internalParticipants = data.internalParticipants;
+  if (data.externalParticipants !== undefined) patch.externalParticipants = data.externalParticipants;
+
+  // Le mode se corrige d'un bloc : changer d'avis sur le lieu doit effacer ce
+  // qui n'a plus de sens, pas empiler deux réponses contradictoires.
+  if (data.mode !== undefined) Object.assign(patch, normalizeMode({ ...meeting.toObject(), ...data }));
+
+  const modifies = applyPatch(meeting, patch, { actor, reason: data.reason ?? null });
+  await meeting.save();
+  return { meeting, modifies };
 }
 
 export async function cancelMeeting(meetingId, { reason = null } = {}, actor = {}) {
@@ -107,7 +225,13 @@ export async function rescheduleMeeting(meetingId, { scheduledAt, reason = null 
     description: ancienne.description,
     scheduledAt,
     durationMinutes: ancienne.durationMinutes,
-    location: ancienne.location,
+    mode: ancienne.mode,
+    address: ancienne.address,
+    addressComplement: ancienne.addressComplement,
+    accessNotes: ancienne.accessNotes,
+    remoteKind: ancienne.remoteKind,
+    phone: ancienne.phone,
+    meetingUrl: ancienne.meetingUrl,
     internalParticipants: ancienne.internalParticipants,
     externalParticipants: ancienne.externalParticipants,
     rescheduledFromMeetingId: String(ancienne._id),
@@ -201,6 +325,8 @@ export async function listMeetings({ projectId = null, scope = 'upcoming', limit
 
 export default {
   createMeeting,
+  updateMeeting,
+  normalizeMode,
   cancelMeeting,
   rescheduleMeeting,
   convertDueMeetings,

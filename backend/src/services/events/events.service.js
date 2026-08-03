@@ -23,18 +23,21 @@ import {
   PanelProjectEvent,
 } from '../../models/PanelProjectEvent.model.js';
 import { MEETING_STATUS, PanelMeeting } from '../../models/PanelMeeting.model.js';
+import { applyPatch } from './revisions.js';
 
-/** Report de relance : assez long pour ne pas harceler, assez court pour servir. */
-export const SNOOZE_MINUTES = 120;
-
-function transition(event, to) {
-  const autorisees = EVENT_TRANSITIONS[event.status] ?? [];
+/** Valide une transition SANS l'appliquer. */
+function assertTransition(from, to) {
+  const autorisees = EVENT_TRANSITIONS[from] ?? [];
   if (!autorisees.includes(to)) {
     throw ApiError.conflict(
       'PANEL_EVENT_TRANSITION_FORBIDDEN',
-      `Un événement ${event.status} ne peut pas passer à ${to}.`,
+      `Un événement ${from} ne peut pas passer à ${to}.`,
     );
   }
+}
+
+function transition(event, to) {
+  assertTransition(event.status, to);
   event.status = to;
   return event;
 }
@@ -123,7 +126,6 @@ export async function confirmEvent(eventId, data = {}, actor = {}) {
 
   event.confirmedBy = actor.email ?? null;
   event.confirmedAt = new Date();
-  event.remindAfter = null;
   event.updatedBy = actor.email ?? null;
   await event.save();
   await closeSourceMeeting(event);
@@ -142,36 +144,76 @@ export async function missEvent(eventId, { reason = 'OTHER', notes = '' } = {}, 
   if (notes) event.notes = notes;
   event.confirmedBy = actor.email ?? null;
   event.confirmedAt = new Date();
-  event.remindAfter = null;
   event.updatedBy = actor.email ?? null;
   await event.save();
   await closeSourceMeeting(event);
   return event;
 }
 
-/** « Me le rappeler plus tard » — l'événement RESTE en attente, la relance recule. */
-export async function snoozeEvent(eventId, actor = {}) {
+/**
+ * MODIFIER un événement — y compris confirmé, manqué ou annulé.
+ *
+ * On se trompe en confirmant, on apprend le lendemain que le client n'était
+ * pas là, on complète un compte rendu. Refuser la correction ne rend pas
+ * l'historique plus vrai : il le fige sur une erreur. Chaque champ touché est
+ * consigné avec son avant et son après.
+ */
+export async function updateEvent(eventId, data = {}, actor = {}) {
   const event = await loadOrThrow(eventId);
-  if (event.status !== EVENT_STATUS.PENDING_CONFIRMATION) {
-    throw ApiError.conflict(
-      'PANEL_EVENT_NOT_PENDING',
-      'Seul un événement en attente de confirmation peut être reporté à plus tard.',
-    );
+  const patch = {};
+
+  if (data.title !== undefined) {
+    const title = String(data.title).trim();
+    if (!title) throw ApiError.badRequest('PANEL_EVENT_TITLE_REQUIRED', 'Un intitulé est requis.');
+    patch.title = title;
   }
-  event.remindAfter = new Date(Date.now() + SNOOZE_MINUTES * 60_000);
-  event.updatedBy = actor.email ?? null;
+  if (data.occurredAt !== undefined) {
+    if (Number.isNaN(new Date(data.occurredAt).getTime())) {
+      throw ApiError.badRequest('PANEL_EVENT_DATE_REQUIRED', 'Date invalide.');
+    }
+    patch.occurredAt = new Date(data.occurredAt);
+  }
+  if (data.type !== undefined) {
+    if (!EVENT_TYPES.includes(data.type)) {
+      throw ApiError.badRequest('PANEL_EVENT_TYPE_UNKNOWN', 'Type d’événement inconnu.');
+    }
+    patch.type = data.type;
+  }
+  if (data.notes !== undefined) patch.notes = data.notes;
+  if (data.outcome !== undefined) patch.outcome = data.outcome;
+  if (data.nextActions !== undefined) patch.nextActions = data.nextActions.filter(Boolean);
+  if (data.internalParticipants !== undefined) patch.internalParticipants = data.internalParticipants;
+  if (data.externalParticipants !== undefined) patch.externalParticipants = data.externalParticipants;
+
+  // Reclasser reste possible, mais passe par la machine à états — et se
+  // retrouve dans le journal comme n'importe quelle autre correction.
+  if (data.status !== undefined && data.status !== event.status) {
+    // On VALIDE la transition sans l'appliquer : c'est `applyPatch` qui écrit,
+    // afin que le changement de statut apparaisse dans le journal comme les
+    // autres. L'appliquer ici le rendrait invisible — il ne resterait plus
+    // aucune différence à consigner.
+    assertTransition(event.status, data.status);
+    patch.status = data.status;
+    if (data.missedReason !== undefined) patch.missedReason = data.missedReason;
+  }
+
+  const modifies = applyPatch(event, patch, { actor, reason: data.reason ?? null });
   await event.save();
-  return event;
+  return { event, modifies };
 }
 
 /* ── Lectures ─────────────────────────────────────────────────────────────── */
 
-/** Ce qu'il faut confirmer MAINTENANT — les relances repoussées se taisent. */
-export async function listPendingConfirmations(now = new Date()) {
-  return PanelProjectEvent.find({
-    status: EVENT_STATUS.PENDING_CONFIRMATION,
-    $or: [{ remindAfter: null }, { remindAfter: { $lte: now } }],
-  }).sort({ occurredAt: 1 }).lean();
+/**
+ * Ce qu'il faut confirmer.
+ *
+ * Plus de report de relance : « me le rappeler plus tard » n'existe plus. Une
+ * question qu'on peut repousser indéfiniment finit par n'être jamais posée, et
+ * le champ qui la portait ne servait qu'à ce bouton.
+ */
+export async function listPendingConfirmations() {
+  return PanelProjectEvent.find({ status: EVENT_STATUS.PENDING_CONFIRMATION })
+    .sort({ occurredAt: 1 }).lean();
 }
 
 /**
@@ -205,7 +247,7 @@ export default {
   createPastEvent,
   confirmEvent,
   missEvent,
-  snoozeEvent,
+  updateEvent,
   listEvents,
   listPendingConfirmations,
   describeProjectEvents,

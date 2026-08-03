@@ -7,6 +7,7 @@ import {
   createMeeting,
   listMeetings,
   rescheduleMeeting,
+  updateMeeting,
 } from '../services/events/meetings.service.js';
 import {
   confirmEvent,
@@ -15,7 +16,7 @@ import {
   listEvents,
   listPendingConfirmations,
   missEvent,
-  snoozeEvent,
+  updateEvent,
 } from '../services/events/events.service.js';
 
 /** L'auteur d'une décision. Jamais anonyme. */
@@ -37,6 +38,11 @@ export async function planMeeting(req, res) {
 
 export async function cancelPlannedMeeting(req, res) {
   return ok(res, { meeting: await cancelMeeting(req.params.meetingId, req.body ?? {}, actorOf(req)) });
+}
+
+export async function editMeeting(req, res) {
+  const { meeting } = await updateMeeting(req.params.meetingId, req.body ?? {}, actorOf(req));
+  return ok(res, { meeting });
 }
 
 export async function reschedule(req, res) {
@@ -83,6 +89,7 @@ export async function miss(req, res) {
   return ok(res, { event: await missEvent(req.params.eventId, req.body ?? {}, actorOf(req)) });
 }
 
-export async function snooze(req, res) {
-  return ok(res, { event: await snoozeEvent(req.params.eventId, actorOf(req)) });
+export async function editEvent(req, res) {
+  const { event } = await updateEvent(req.params.eventId, req.body ?? {}, actorOf(req));
+  return ok(res, { event });
 }

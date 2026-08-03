@@ -6,6 +6,17 @@
  * daté au passé et ne bouge plus — c'est de l'histoire.
  */
 
+export type MeetingMode = 'ONSITE' | 'REMOTE';
+export type RemoteKind = 'CALL' | 'VIDEO';
+
+export interface Revision {
+  at: string;
+  actorEmail: string | null;
+  actorRole: string | null;
+  reason: string | null;
+  changes: { field: string; from: unknown; to: unknown }[];
+}
+
 export type MeetingStatus = 'PLANNED' | 'DONE_PENDING_CONFIRMATION' | 'CANCELLED' | 'RESCHEDULED';
 export type MeetingScope = 'upcoming' | 'today' | 'to_confirm' | 'past';
 
@@ -26,7 +37,13 @@ export interface Meeting {
   description: string;
   scheduledAt: string;
   durationMinutes: number;
-  location: string;
+  mode: MeetingMode;
+  address: string;
+  addressComplement: string;
+  accessNotes: string;
+  remoteKind: RemoteKind | null;
+  phone: string;
+  meetingUrl: string;
   status: MeetingStatus;
   internalParticipants: Participant[];
   externalParticipants: string[];
@@ -34,6 +51,7 @@ export interface Meeting {
   rescheduledToMeetingId: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
+  revisions: Revision[];
   createdBy: string | null;
   createdAt: string;
 }
@@ -55,7 +73,7 @@ export interface ProjectEvent {
   missedReason: MissedReason | null;
   confirmedBy: string | null;
   confirmedAt: string | null;
-  remindAfter: string | null;
+  revisions: Revision[];
   createdBy: string | null;
   createdAt: string;
 }

@@ -9,6 +9,8 @@ import {
   addPastEvent,
   cancelPlannedMeeting,
   confirm,
+  editEvent,
+  editMeeting,
   events,
   forProject,
   meetings,
@@ -16,7 +18,6 @@ import {
   pending,
   planMeeting,
   reschedule,
-  snooze,
 } from '../controllers/events.controller.js';
 
 const router = Router();
@@ -25,6 +26,7 @@ router.use(asyncHandler(requirePanelUser));
 /* Réunions — objets d'AGENDA, futurs, déplaçables. */
 router.get('/meetings', asyncHandler(meetings));
 router.post('/meetings', asyncHandler(planMeeting));
+router.put('/meetings/:meetingId', asyncHandler(editMeeting));
 router.post('/meetings/:meetingId/cancel', asyncHandler(cancelPlannedMeeting));
 router.post('/meetings/:meetingId/reschedule', asyncHandler(reschedule));
 
@@ -39,6 +41,8 @@ router.post('/events', asyncHandler(addPastEvent));
 // machine à états.
 router.post('/events/:eventId/confirm', asyncHandler(confirm));
 router.post('/events/:eventId/miss', asyncHandler(miss));
-router.post('/events/:eventId/snooze', asyncHandler(snooze));
+// Tout objet reste MODIFIABLE, même classé : une erreur de saisie se corrige,
+// et c'est la trace — pas l'interdiction — qui protège l'historique.
+router.put('/events/:eventId', asyncHandler(editEvent));
 
 export default router;

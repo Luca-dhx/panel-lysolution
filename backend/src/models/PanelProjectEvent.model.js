@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { revisionSchema } from './PanelMeeting.model.js';
 
 /**
  * ÉVÉNEMENT — ce qui S'EST PASSÉ avec un client.
@@ -33,15 +34,22 @@ export const EVENT_STATUS = Object.freeze({
 export const EVENT_STATUS_VALUES = Object.freeze(Object.values(EVENT_STATUS));
 
 /**
- * Transitions autorisées. Les états de constat sont TERMINAUX : rouvrir un
- * fait consigné réécrirait l'histoire. Une correction se fait par un nouvel
- * événement, qui porte sa propre date de saisie.
+ * Tous les états de constat sont ATTEIGNABLES depuis n'importe lequel.
+ *
+ * L'immuabilité était une erreur : on se trompe en confirmant, on apprend le
+ * lendemain que le client n'était pas là, on corrige un compte rendu. Refuser
+ * la correction ne rend pas l'historique plus vrai — il le fige simplement sur
+ * une erreur, et pousse à créer un doublon pour dire le contraire.
+ *
+ * Ce qui protège l'histoire n'est donc pas l'interdiction, mais la TRACE :
+ * chaque correction consigne son auteur, ses anciennes valeurs et ses
+ * nouvelles. Rien ne s'efface, tout s'ajoute.
  */
 export const EVENT_TRANSITIONS = Object.freeze({
   PENDING_CONFIRMATION: ['CONFIRMED', 'MISSED', 'CANCELLED'],
-  CONFIRMED: [],
-  MISSED: [],
-  CANCELLED: [],
+  CONFIRMED: ['MISSED', 'CANCELLED'],
+  MISSED: ['CONFIRMED', 'CANCELLED'],
+  CANCELLED: ['CONFIRMED', 'MISSED'],
 });
 
 /** Motifs de non-tenue — fermés, pour rester agrégeables. */
@@ -87,11 +95,11 @@ const eventSchema = new mongoose.Schema(
     confirmedAt: { type: Date, default: null },
 
     /**
-     * Prochaine relance de la confirmation. « Me le rappeler plus tard » la
-     * repousse ; sans cela, la même question reviendrait à chaque
-     * rafraîchissement et l'on apprendrait très vite à l'ignorer.
+     * HISTORIQUE DES CORRECTIONS — auteur, date, avant, après, motif.
+     * Corriger n'est pas effacer : l'historique ne se réécrit pas, il
+     * s'allonge.
      */
-    remindAfter: { type: Date, default: null },
+    revisions: { type: [revisionSchema], default: [] },
 
     createdBy: { type: String, default: null },
     updatedBy: { type: String, default: null },
@@ -101,7 +109,7 @@ const eventSchema = new mongoose.Schema(
 
 // L'historique se lit à l'envers ; les confirmations, par statut et relance.
 eventSchema.index({ projectId: 1, occurredAt: -1 });
-eventSchema.index({ status: 1, remindAfter: 1 });
+eventSchema.index({ status: 1, occurredAt: 1 });
 // UNE seule confirmation par réunion : c'est cet index qui rend la conversion
 // à l'échéance idempotente, quoi qu'il arrive du côté de l'ordonnanceur.
 eventSchema.index(

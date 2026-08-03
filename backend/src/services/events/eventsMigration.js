@@ -104,7 +104,6 @@ export async function migrateLegacyEvents() {
           status: EVENT_STATUS.PENDING_CONFIRMATION,
           internalParticipants: doc.internalParticipants ?? [],
           externalParticipants: doc.externalParticipants ?? [],
-          remindAfter: doc.remindAfter ?? null,
           createdBy: doc.createdBy ?? null,
         });
         evenements += 1;
@@ -133,7 +132,6 @@ export async function migrateLegacyEvents() {
       nextActions: doc.nextActions ?? [],
       missedReason: doc.missedReason ?? null,
       confirmedAt: doc.completedAt ?? null,
-      remindAfter: doc.remindAfter ?? null,
       createdBy: doc.createdBy ?? null,
       updatedBy: doc.updatedBy ?? null,
     });

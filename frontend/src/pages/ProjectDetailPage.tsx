@@ -29,6 +29,8 @@ import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import type { PublicProject, TeamMember } from '@/types';
+import type { Meeting, ProjectEvent } from '@/types.events';
+import { api } from '@/lib/api';
 import {
   connectionState,
   isBusinessSynchronized,
@@ -481,6 +483,10 @@ function EventsTab({ project }: { project: PublicProject }) {
   const { summary, isInitialLoading, reload } = useProjectEvents(projectId);
   const { meetings, reload: rechargerReunions } = useMeetings('upcoming', projectId);
   const [volet, setVolet] = useState<null | 'reunion' | 'evenement'>(null);
+  // Édition : on rouvre le MÊME formulaire, pré-rempli. Un écran d'édition
+  // séparé aurait dupliqué chaque champ et chaque validation.
+  const [reunionEditee, setReunionEditee] = useState<Meeting | null>(null);
+  const [evenementEdite, setEvenementEdite] = useState<ProjectEvent | null>(null);
   const [filtreType, setFiltreType] = useState('');
   const [filtreStatut, setFiltreStatut] = useState('');
 
@@ -506,20 +512,22 @@ function EventsTab({ project }: { project: PublicProject }) {
         </button>
       </div>
 
-      {volet === 'reunion' ? (
+      {volet === 'reunion' || reunionEditee ? (
         <MeetingForm
           projectId={projectId}
           projectName={nom}
-          onCreated={() => { setVolet(null); toutRecharger(); }}
-          onCancel={() => setVolet(null)}
+          meeting={reunionEditee ?? undefined}
+          onSaved={() => { setVolet(null); setReunionEditee(null); toutRecharger(); }}
+          onCancel={() => { setVolet(null); setReunionEditee(null); }}
         />
       ) : null}
-      {volet === 'evenement' ? (
+      {volet === 'evenement' || evenementEdite ? (
         <PastEventForm
           projectId={projectId}
           projectName={nom}
-          onCreated={() => { setVolet(null); toutRecharger(); }}
-          onCancel={() => setVolet(null)}
+          event={evenementEdite ?? undefined}
+          onSaved={() => { setVolet(null); setEvenementEdite(null); toutRecharger(); }}
+          onCancel={() => { setVolet(null); setEvenementEdite(null); }}
         />
       ) : null}
 
@@ -536,7 +544,15 @@ function EventsTab({ project }: { project: PublicProject }) {
           <p className="muted">Aucune réunion prévue avec ce client.</p>
         ) : (
           <ul className="event-list">
-            {meetings.map((m) => <MeetingRow key={m._id} meeting={m} showProject={false} />)}
+            {meetings.map((m) => (
+              <MeetingRow
+                key={m._id}
+                meeting={m}
+                showProject={false}
+                onEdit={setReunionEditee}
+                onCancel={(r) => void api.cancelMeeting(r._id).then(toutRecharger)}
+              />
+            ))}
           </ul>
         )}
       </Card>
@@ -558,7 +574,9 @@ function EventsTab({ project }: { project: PublicProject }) {
           <p className="muted">Rien n’a encore été consigné pour ce client.</p>
         ) : (
           <ul className="event-list">
-            {historique.map((e) => <EventRow key={e._id} event={e} showProject={false} />)}
+            {historique.map((e) => (
+              <EventRow key={e._id} event={e} showProject={false} onEdit={setEvenementEdite} />
+            ))}
           </ul>
         )}
       </Card>

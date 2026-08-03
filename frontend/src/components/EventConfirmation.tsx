@@ -7,11 +7,12 @@
  * de rendez-vous qui n'ont jamais eu lieu — et deviendrait inutilisable
  * exactement le jour où l'on en aurait besoin.
  *
- * ── QUATRE RÉPONSES, PAS DEUX ───────────────────────────────────────────────
- * Une réunion se reporte aussi, et l'on n'a pas toujours le temps d'écrire un
- * compte rendu sur-le-champ. « Plus tard » est donc une réponse légitime : elle
- * laisse l'attente en place et recule la relance de deux heures, au lieu de
- * reposer la même question à chaque rafraîchissement.
+ * ── TROIS RÉPONSES ──────────────────────────────────────────────────────────
+ * Oui, non, ou reporter. « Me le rappeler plus tard » a été retiré : une
+ * question qu'on peut repousser indéfiniment finit par n'être jamais posée, et
+ * la liste des confirmations en attente devenait une file d'attente qu'on
+ * apprend à ignorer. Répondre prend cinq secondes ; reporter la question ne
+ * fait que la déplacer.
  *
  * « Reporter » agit sur la RÉUNION, pas sur l'événement : c'est le rendez-vous
  * qu'on déplace. L'attente de confirmation disparaît alors — il n'y a plus
@@ -20,6 +21,7 @@
 import { useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { DateField, TimeField, joinIso, splitIso } from '@/components/DateTimeField';
 import type { MissedReason, ProjectEvent } from '@/types.events';
 
 const MOTIFS: { value: MissedReason; label: string }[] = [
@@ -51,10 +53,13 @@ export function EventConfirmation({
   const [notes, setNotes] = useState('');
   const [outcome, setOutcome] = useState('');
   const [actions, setActions] = useState('');
-  const [heureReelle, setHeureReelle] = useState('');
+  const reel = splitIso(event.occurredAt);
+  const [dateReelle, setDateReelle] = useState(reel.date);
+  const [heureReelle, setHeureReelle] = useState(reel.time);
   const [participants, setParticipants] = useState(event.externalParticipants.join(', '));
   const [motif, setMotif] = useState<MissedReason>('CLIENT_ABSENT');
   const [nouvelleDate, setNouvelleDate] = useState('');
+  const [nouvelleHeure, setNouvelleHeure] = useState(reel.time);
 
   const agir = async (action: () => Promise<unknown>) => {
     setErreur(null);
@@ -97,14 +102,6 @@ export function EventConfirmation({
           >
             Reporter
           </button>
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            disabled={enCours}
-            onClick={() => void agir(() => api.snoozeEvent(event._id))}
-          >
-            Me le rappeler plus tard
-          </button>
         </div>
       ) : null}
 
@@ -131,14 +128,8 @@ export function EventConfirmation({
               placeholder="séparés par des virgules"
             />
           </label>
-          <label className="field">
-            <span className="field-label">Heure réelle, si différente</span>
-            <input
-              type="datetime-local"
-              value={heureReelle}
-              onChange={(e) => setHeureReelle(e.target.value)}
-            />
-          </label>
+          <DateField label="Date réelle" value={dateReelle} onChange={setDateReelle} />
+          <TimeField label="Heure réelle" value={heureReelle} onChange={setHeureReelle} />
           <div className="contract-actions">
             <button
               type="button"
@@ -149,7 +140,9 @@ export function EventConfirmation({
                 outcome,
                 nextActions: lignes(actions),
                 externalParticipants: virgules(participants),
-                ...(heureReelle ? { occurredAt: new Date(heureReelle).toISOString() } : {}),
+                ...(joinIso(dateReelle, heureReelle)
+                  ? { occurredAt: joinIso(dateReelle, heureReelle) }
+                  : {}),
               }))}
             >
               {enCours ? 'Enregistrement…' : 'Enregistrer'}
@@ -195,14 +188,8 @@ export function EventConfirmation({
 
       {volet === 'reporter' ? (
         <div className="event-form">
-          <label className="field">
-            <span className="field-label">Nouvelle date</span>
-            <input
-              type="datetime-local"
-              value={nouvelleDate}
-              onChange={(e) => setNouvelleDate(e.target.value)}
-            />
-          </label>
+          <DateField label="Nouvelle date" value={nouvelleDate} onChange={setNouvelleDate} />
+          <TimeField label="Nouvelle heure" value={nouvelleHeure} onChange={setNouvelleHeure} />
           <p className="muted">
             La réunion d’origine est close et reliée à la nouvelle. Cette question disparaît :
             il n’y a plus rien à constater.
@@ -211,9 +198,9 @@ export function EventConfirmation({
             <button
               type="button"
               className="btn btn-primary btn-small"
-              disabled={enCours || !nouvelleDate}
+              disabled={enCours || !joinIso(nouvelleDate, nouvelleHeure)}
               onClick={() => void agir(() => api.rescheduleMeeting(event.sourceMeetingId as string, {
-                scheduledAt: new Date(nouvelleDate).toISOString(),
+                scheduledAt: joinIso(nouvelleDate, nouvelleHeure),
                 reason: 'Reportée',
               }))}
             >

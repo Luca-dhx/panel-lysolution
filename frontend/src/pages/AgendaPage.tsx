@@ -59,13 +59,13 @@ export function AgendaPage() {
 
       {volet === 'reunion' ? (
         <MeetingForm
-          onCreated={() => { setVolet(null); toutRecharger(); }}
+          onSaved={() => { setVolet(null); toutRecharger(); }}
           onCancel={() => setVolet(null)}
         />
       ) : null}
       {volet === 'evenement' ? (
         <PastEventForm
-          onCreated={() => { setVolet(null); toutRecharger(); }}
+          onSaved={() => { setVolet(null); toutRecharger(); }}
           onCancel={() => setVolet(null)}
         />
       ) : null}

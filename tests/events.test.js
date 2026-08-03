@@ -55,15 +55,16 @@ section('1. Une réunion se PLANIFIE — objet d’agenda');
       projectId: P1, projectName: 'SB Auto 07', title: 'Point mensuel',
       description: 'Ordre du jour : contrat, roadmap',
       scheduledAt: dans(60), durationMinutes: 45,
-      location: 'https://visio.exemple.fr/point',
+      mode: 'REMOTE', remoteKind: 'VIDEO', meetingUrl: 'https://visio.exemple.fr/point',
       externalParticipants: ['client@garage.test'],
     },
   });
   check('la réunion est créée', res.status === 201);
   check('…en PLANNED', res.json.data.meeting.status === 'PLANNED');
   check('…avec son ordre du jour', res.json.data.meeting.description.includes('roadmap'));
-  check('…et son lieu ou lien visio',
-    res.json.data.meeting.location === 'https://visio.exemple.fr/point');
+  check('…en distanciel, par visioconférence',
+    res.json.data.meeting.mode === 'REMOTE' && res.json.data.meeting.remoteKind === 'VIDEO');
+  check('…avec son lien', res.json.data.meeting.meetingUrl === 'https://visio.exemple.fr/point');
   check('aucun événement n’est créé à la planification',
     (await PanelProjectEvent.countDocuments({ projectId: P1 })) === 0);
 
@@ -81,9 +82,11 @@ section('2. À l’échéance : « à confirmer », JAMAIS « tenue »');
   await PanelProjectEvent.deleteMany({});
   const echue = await meetings.createMeeting({
     projectId: P1, projectName: 'SB Auto 07', title: 'Réunion d’hier', scheduledAt: dans(-30),
+    mode: 'ONSITE', address: '12 rue des Garages',
   }, { email: 'dev@panel.test' });
   const future = await meetings.createMeeting({
     projectId: P1, title: 'Réunion de demain', scheduledAt: dans(600),
+    mode: 'ONSITE', address: '12 rue des Garages',
   }, { email: 'dev@panel.test' });
 
   const res = await meetings.convertDueMeetings();
@@ -150,7 +153,7 @@ section('5. « Non » — le motif décide de MISSED ou CANCELLED');
 {
   const preparer = async (titre) => {
     const m = await meetings.createMeeting(
-      { projectId: P1, title: titre, scheduledAt: dans(-10) }, { email: 'dev@panel.test' },
+      { projectId: P1, title: titre, scheduledAt: dans(-10), mode: 'ONSITE', address: 'Sur place' }, { email: 'dev@panel.test' },
     );
     await meetings.convertDueMeetings();
     return PanelProjectEvent.findOne({ sourceMeetingId: String(m._id) }).lean();
@@ -189,6 +192,7 @@ section('6. Reporter : deux réunions liées, AUCUN doublon');
   const initiale = await meetings.createMeeting({
     projectId: P1, projectName: 'SB Auto 07', title: 'Revue de contrat',
     scheduledAt: dans(-5), externalParticipants: ['client@garage.test'],
+    mode: 'ONSITE', address: '12 rue des Garages',
   }, { email: 'dev@panel.test' });
   await meetings.convertDueMeetings();
   check('une confirmation est en attente',
@@ -217,7 +221,7 @@ section('7. Annuler une réunion');
   await PanelMeeting.deleteMany({});
   await PanelProjectEvent.deleteMany({});
   const m = await meetings.createMeeting(
-    { projectId: P1, title: 'À annuler', scheduledAt: dans(120) }, { email: 'dev@panel.test' },
+    { projectId: P1, title: 'À annuler', scheduledAt: dans(120), mode: 'ONSITE', address: 'Sur place' }, { email: 'dev@panel.test' },
   );
   const res = await call('POST', `/api/meetings/${m._id}/cancel`, {
     headers: AUTH, body: { reason: 'Plus d’objet' },
@@ -231,31 +235,148 @@ section('7. Annuler une réunion');
   check('une réunion annulée ne se réannule pas', rejeu.status === 409);
 }
 
-section('8. « Me le rappeler plus tard » ne harcèle pas');
+section('8. Présentiel / distanciel : validation et NETTOYAGE');
+{
+  await PanelMeeting.deleteMany({});
+
+  const sansAdresse = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: { projectId: P1, title: 'Sans adresse', scheduledAt: dans(60), mode: 'ONSITE' },
+  });
+  check('présentiel sans adresse : refusé', sansAdresse.status === 400);
+
+  const sansKind = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: { projectId: P1, title: 'Distanciel flou', scheduledAt: dans(60), mode: 'REMOTE' },
+  });
+  check('distanciel sans préciser appel ou visio : refusé', sansKind.status === 400);
+
+  const sansNumero = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: {
+      projectId: P1, title: 'Appel', scheduledAt: dans(60),
+      mode: 'REMOTE', remoteKind: 'CALL', phone: '  ',
+    },
+  });
+  check('appel sans numéro : refusé', sansNumero.status === 400);
+
+  const urlNue = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: {
+      projectId: P1, title: 'Visio', scheduledAt: dans(60),
+      mode: 'REMOTE', remoteKind: 'VIDEO', meetingUrl: 'visio.exemple.fr',
+    },
+  });
+  check('visio avec une URL invalide : refusée', urlNue.status === 400);
+
+  const enClair = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: {
+      projectId: P1, title: 'Visio', scheduledAt: dans(60),
+      mode: 'REMOTE', remoteKind: 'VIDEO', meetingUrl: 'http://visio.exemple.fr/x',
+    },
+  });
+  check('visio en http non chiffré : refusée', enClair.status === 400);
+
+  const presentiel = await call('POST', '/api/meetings', {
+    headers: AUTH,
+    body: {
+      projectId: P1, title: 'Chez le client', scheduledAt: dans(120),
+      mode: 'ONSITE', address: '12 rue des Garages', addressComplement: 'Batiment B',
+      accessNotes: 'Sonner a l atelier',
+    },
+  });
+  check('présentiel complet accepté', presentiel.status === 201);
+  check('…avec son complément et ses indications',
+    presentiel.json.data.meeting.addressComplement === 'Batiment B'
+    && presentiel.json.data.meeting.accessNotes === 'Sonner a l atelier');
+
+  const id = presentiel.json.data.meeting._id;
+  const versVisio = await call('PUT', `/api/meetings/${id}`, {
+    headers: AUTH,
+    body: { mode: 'REMOTE', remoteKind: 'VIDEO', meetingUrl: 'https://visio.exemple.fr/abc' },
+  });
+  check('bascule vers la visioconférence', versVisio.json.data.meeting.remoteKind === 'VIDEO');
+  check('…l’adresse est EFFACÉE', versVisio.json.data.meeting.address === '');
+  check('…le complément aussi', versVisio.json.data.meeting.addressComplement === '');
+  check('…et les indications d’accès également', versVisio.json.data.meeting.accessNotes === '');
+
+  const versAppel = await call('PUT', `/api/meetings/${id}`, {
+    headers: AUTH,
+    body: { mode: 'REMOTE', remoteKind: 'CALL', phone: '0102030405' },
+  });
+  check('bascule visio → appel', versAppel.json.data.meeting.remoteKind === 'CALL');
+  check('…l’URL de visio est EFFACÉE', versAppel.json.data.meeting.meetingUrl === '');
+  check('…et le numéro est conservé', versAppel.json.data.meeting.phone === '0102030405');
+
+  const retour = await call('PUT', `/api/meetings/${id}`, {
+    headers: AUTH, body: { mode: 'ONSITE', address: '3 place du Marché' },
+  });
+  check('retour au présentiel', retour.json.data.meeting.mode === 'ONSITE');
+  check('…le téléphone est EFFACÉ', retour.json.data.meeting.phone === '');
+  check('…et l’URL aussi', retour.json.data.meeting.meetingUrl === '');
+}
+
+section('9. Tout reste MODIFIABLE, et tout est tracé');
 {
   await PanelMeeting.deleteMany({});
   await PanelProjectEvent.deleteMany({});
-  const m = await meetings.createMeeting(
-    { projectId: P1, title: 'À confirmer', scheduledAt: dans(-15) }, { email: 'dev@panel.test' },
+
+  const future = await meetings.createMeeting(
+    { projectId: P1, title: 'Point futur', scheduledAt: dans(600), mode: 'ONSITE', address: 'A' },
+    { email: 'dev@panel.test' },
+  );
+  const r1 = await call('PUT', `/api/meetings/${future._id}`, {
+    headers: AUTH, body: { title: 'Point futur corrigé', reason: 'Erreur de frappe' },
+  });
+  check('une réunion future est modifiable', r1.json.data.meeting.title === 'Point futur corrigé');
+  const rev1 = r1.json.data.meeting.revisions.at(-1);
+  check('…avec son auteur', rev1.actorEmail === 'dev@panel.test');
+  check('…son motif', rev1.reason === 'Erreur de frappe');
+  check('…l’ancienne et la nouvelle valeur',
+    rev1.changes[0].field === 'title' && rev1.changes[0].from === 'Point futur'
+    && rev1.changes[0].to === 'Point futur corrigé');
+
+  const passee = await meetings.createMeeting(
+    { projectId: P1, title: 'Point passé', scheduledAt: dans(-60), mode: 'ONSITE', address: 'A' },
+    { email: 'dev@panel.test' },
   );
   await meetings.convertDueMeetings();
-  const evt = await PanelProjectEvent.findOne({ sourceMeetingId: String(m._id) }).lean();
+  const r2 = await call('PUT', `/api/meetings/${passee._id}`, {
+    headers: AUTH, body: { durationMinutes: 90 },
+  });
+  check('une réunion PASSÉE reste modifiable', r2.json.data.meeting.durationMinutes === 90);
 
-  check('il apparaît dans les confirmations en attente',
-    (await events.listPendingConfirmations()).length === 1);
+  const evt = await PanelProjectEvent.findOne({ sourceMeetingId: String(passee._id) }).lean();
+  await call('POST', `/api/events/${evt._id}/confirm`, { headers: AUTH, body: { notes: 'RAS' } });
 
-  const res = await call('POST', `/api/events/${evt._id}/snooze`, { headers: AUTH });
-  check('le report de relance réussit', res.status === 200);
-  check('…l’événement RESTE en attente', res.json.data.event.status === 'PENDING_CONFIRMATION');
-  check('…mais disparaît des relances immédiates',
-    (await events.listPendingConfirmations()).length === 0);
-  check('…et revient à l’échéance de la relance',
-    (await events.listPendingConfirmations(new Date(Date.now() + 3 * 3600_000))).length === 1);
-  check('…sans créer aucun événement supplémentaire',
-    (await PanelProjectEvent.countDocuments({})) === 1);
+  const r3 = await call('PUT', `/api/events/${evt._id}`, {
+    headers: AUTH, body: { notes: 'Compte rendu complété', reason: 'Oubli' },
+  });
+  check('un événement CONFIRMÉ reste modifiable',
+    r3.json.data.event.notes === 'Compte rendu complété');
+  check('…et l’historique s’allonge au lieu de se réécrire',
+    r3.json.data.event.revisions.length === 1
+    && r3.json.data.event.revisions[0].changes[0].from === 'RAS');
+
+  const r4 = await call('PUT', `/api/events/${evt._id}`, {
+    headers: AUTH,
+    body: { status: 'MISSED', missedReason: 'CLIENT_ABSENT', reason: 'Info du lendemain' },
+  });
+  check('un événement confirmé peut être RECLASSÉ', r4.json.data.event.status === 'MISSED');
+  check('…et la correction est tracée',
+    r4.json.data.event.revisions.at(-1).changes.some((c) => c.field === 'status'));
+  check('…sans perdre les corrections précédentes', r4.json.data.event.revisions.length === 2);
 }
 
-section('9. Saisir un événement PASSÉ à la main');
+section('9 bis. « Me le rappeler plus tard » n’existe plus');
+{
+  const evt = await PanelProjectEvent.findOne({}).lean();
+  const snooze = await call('POST', `/api/events/${evt._id}/snooze`, { headers: AUTH });
+  check('la route de rappel différé a disparu', snooze.status === 404);
+}
+
+section('10. Saisir un événement PASSÉ à la main');
 {
   const res = await call('POST', '/api/events', {
     headers: AUTH,
@@ -278,7 +399,7 @@ section('9. Saisir un événement PASSÉ à la main');
   check('on ne fabrique pas une réunion tenue à la main', reserve.status === 400);
 }
 
-section('10. Un projet ne voit JAMAIS l’historique d’un autre');
+section('11. Un projet ne voit JAMAIS l’historique d’un autre');
 {
   await PanelProjectEvent.deleteMany({});
   await events.createPastEvent(
@@ -311,7 +432,7 @@ section('10. Un projet ne voit JAMAIS l’historique d’un autre');
   check('…et ne ramène rien quand rien ne correspond', vide.json.data.events.length === 0);
 }
 
-section('11. Migration de l’ancien modèle — rien n’est perdu');
+section('12. Migration de l’ancien modèle — rien n’est perdu');
 {
   await PanelMeeting.deleteMany({});
   await PanelProjectEvent.deleteMany({});
@@ -375,7 +496,7 @@ section('11. Migration de l’ancien modèle — rien n’est perdu');
   check('relancer la migration ne fait rien', rejeu.examined === 0);
 }
 
-section('12. AUCUN pont n’est appelé — jamais');
+section('13. AUCUN pont n’est appelé — jamais');
 {
   const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
@@ -396,7 +517,7 @@ section('12. AUCUN pont n’est appelé — jamais');
   check('aucune notion d’entité de contrat', !/entityType|writeId/.test(sources));
 }
 
-section('13. Les écrans séparent l’agenda de l’histoire');
+section('14. Les écrans séparent l’agenda de l’histoire');
 {
   const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');

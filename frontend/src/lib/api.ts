@@ -11,6 +11,7 @@ import type {
 } from '@/types.supervision';
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
+import type { PanelTheme } from '@/lib/useTheme';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
@@ -192,6 +193,12 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
+  /* ── THÈME DU PANEL ──────────────────────────────────────────────────── */
+  getTheme: () => request<{ theme: PanelTheme }>('/api/theme'),
+  saveTheme: (theme: PanelTheme) =>
+    request<{ theme: PanelTheme }>('/api/theme', { method: 'PUT', body: theme }),
+  resetTheme: () => request<{ theme: PanelTheme }>('/api/theme/reset', { method: 'POST' }),
+
   /* ── AGENDA (réunions) et HISTORIQUE (événements) — aucun pont ────────── */
   listMeetings: (scope: MeetingScope, projectId?: string) =>
     request<{ meetings: Meeting[] }>(
@@ -200,6 +207,12 @@ export const api = {
 
   planMeeting: (body: Record<string, unknown>) =>
     request<{ meeting: Meeting }>('/api/meetings', { method: 'POST', body }),
+
+  updateMeeting: (meetingId: string, body: Record<string, unknown>) =>
+    request<{ meeting: Meeting }>(`/api/meetings/${meetingId}`, { method: 'PUT', body }),
+
+  updateEvent: (eventId: string, body: Record<string, unknown>) =>
+    request<{ event: ProjectEvent }>(`/api/events/${eventId}`, { method: 'PUT', body }),
 
   cancelMeeting: (meetingId: string, reason?: string) =>
     request<{ meeting: Meeting }>(`/api/meetings/${meetingId}/cancel`, {
@@ -234,9 +247,6 @@ export const api = {
 
   missEvent: (eventId: string, body: Record<string, unknown>) =>
     request<{ event: ProjectEvent }>(`/api/events/${eventId}/miss`, { method: 'POST', body }),
-
-  snoozeEvent: (eventId: string) =>
-    request<{ event: ProjectEvent }>(`/api/events/${eventId}/snooze`, { method: 'POST' }),
 
   generatePairingCode: (projectId: string) =>
     request<{ pairingCode: string; pairingCodeExpiresAt: string }>(
