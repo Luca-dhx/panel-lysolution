@@ -8,6 +8,7 @@ import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import eventsRoutes from './routes/events.routes.js';
+import themeRoutes from './routes/theme.routes.js';
 import networkRoutes from './routes/network.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
@@ -30,6 +31,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectsRoutes);
   app.use('/api', eventsRoutes);
+  app.use('/api/theme', themeRoutes);
   app.use('/api/system-configuration', networkRoutes);
   app.use('/api/supervision', supervisionRoutes);
   app.use('/api/diagnostic', diagnosticRoutes);

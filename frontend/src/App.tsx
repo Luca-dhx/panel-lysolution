@@ -21,12 +21,18 @@ import { LoginPage } from '@/pages/LoginPage';
 import { PairingsPage } from '@/pages/PairingsPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
 import { AgendaPage } from '@/pages/AgendaPage';
+import { ThemePage } from '@/pages/ThemePage';
+import { useThemeLoader } from '@/lib/useTheme';
 import { VersionsPage } from '@/pages/VersionsPage';
 
 /** Enveloppe DEV — une seule barrière, jamais dupliquée dans les pages. */
 const dev = (element: JSX.Element) => <RequireDev>{element}</RequireDev>;
 
 export default function App() {
+  // Le thème enregistré est appliqué dès l'ouverture : sans cela, l'écran
+  // afficherait une seconde les couleurs par défaut avant de se repeindre.
+  useThemeLoader();
+
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
@@ -46,6 +52,7 @@ export default function App() {
 
         {/* ── DÉVELOPPEUR — routes réellement interdites aux ADMIN ──────── */}
         {/* Divulgation progressive : vue globale → parc → fiche technique. */}
+        <Route path="/theme" element={dev(<ThemePage />)} />
         <Route path="/supervision" element={dev(<OverviewPage />)} />
         <Route path="/supervision/parc" element={dev(<FleetPage />)} />
         <Route path="/supervision/:projectId" element={dev(<ProjectSupervisionPage />)} />

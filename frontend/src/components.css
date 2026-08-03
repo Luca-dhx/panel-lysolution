@@ -1,0 +1,415 @@
+/**
+ * COMPOSANTS ET RESPONSIVE — la couche de refonte.
+ *
+ * Aucune couleur écrite en dur : tout vient des tokens de `tokens.css`, donc
+ * du thème. Changer une couleur du thème repeint ce fichier entier sans qu'on
+ * y touche.
+ */
+
+/* ---------- Barre supérieure et tiroir ---------- */
+.topbar {
+  display: none;
+  align-items: center;
+  gap: var(--p-space-3);
+  height: var(--p-header-height);
+  padding: 0 var(--p-space-4);
+  background: var(--p-sidebar);
+  border-bottom: 1px solid var(--p-border);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.topbar-burger {
+  background: transparent;
+  border: 1px solid var(--p-border);
+  color: var(--p-text);
+  border-radius: var(--p-radius-sm);
+  /* 44 px : la taille minimale d'une cible tactile confortable. */
+  min-width: 44px;
+  min-height: 44px;
+  font-size: var(--p-text-lg);
+  cursor: pointer;
+  transition: background var(--p-motion-fast) var(--p-ease);
+}
+
+.topbar-burger:hover {
+  background: var(--p-surface-raised);
+}
+
+.topbar-title {
+  font-weight: 600;
+  font-family: var(--p-font-heading);
+}
+
+.drawer-scrim {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 45;
+  animation: fade-in var(--p-motion) var(--p-ease);
+}
+
+body.no-scroll {
+  overflow: hidden;
+}
+
+/* ---------- Sélecteur segmenté (présentiel / distanciel) ---------- */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  background: var(--p-surface-sunken);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+}
+
+.segment {
+  border: none;
+  background: transparent;
+  color: var(--p-text-muted);
+  padding: var(--p-space-2) var(--p-space-4);
+  min-height: 40px;
+  border-radius: var(--p-radius-sm);
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+  transition: background var(--p-motion-fast) var(--p-ease),
+    color var(--p-motion-fast) var(--p-ease);
+}
+
+.segment:hover {
+  color: var(--p-text);
+}
+
+.segment-active {
+  background: var(--p-primary);
+  color: var(--p-background);
+  font-weight: 600;
+}
+
+/* ---------- Puces de durée ---------- */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}
+
+.chip {
+  border: 1px solid var(--p-border);
+  background: var(--p-surface-sunken);
+  color: var(--p-text-muted);
+  border-radius: var(--p-radius-full);
+  padding: var(--p-space-2) var(--p-space-4);
+  min-height: 38px;
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+  transition: border-color var(--p-motion-fast) var(--p-ease),
+    color var(--p-motion-fast) var(--p-ease);
+}
+
+.chip:hover {
+  border-color: var(--p-border-strong);
+  color: var(--p-text);
+}
+
+.chip-active {
+  background: var(--p-primary-soft);
+  border-color: var(--p-primary);
+  color: var(--p-text);
+  font-weight: 600;
+}
+
+/* ---------- Sélecteur de date ---------- */
+.picker {
+  position: relative;
+}
+
+.picker-trigger {
+  width: 100%;
+  text-align: left;
+  background: var(--p-surface-sunken);
+  border: 1px solid var(--p-border);
+  color: var(--p-text);
+  border-radius: var(--p-radius-sm);
+  padding: var(--p-space-3);
+  min-height: 44px;
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+  transition: border-color var(--p-motion-fast) var(--p-ease);
+}
+
+.picker-trigger:hover,
+.picker-trigger:focus-visible {
+  border-color: var(--p-primary);
+  outline: none;
+}
+
+.picker-popover {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  background: var(--p-surface-raised);
+  border: 1px solid var(--p-border-strong);
+  border-radius: var(--p-radius);
+  box-shadow: var(--p-shadow-lg);
+  padding: var(--p-space-3);
+  animation: pop-in var(--p-motion) var(--p-ease);
+}
+
+.picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--p-space-2);
+}
+
+.picker-title {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.picker-nav {
+  background: transparent;
+  border: 1px solid var(--p-border);
+  color: var(--p-text);
+  border-radius: var(--p-radius-sm);
+  min-width: 36px;
+  min-height: 36px;
+  cursor: pointer;
+  font-size: var(--p-text-lg);
+  line-height: 1;
+}
+
+.picker-nav:hover {
+  background: var(--p-surface);
+}
+
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.picker-weekdays {
+  color: var(--p-text-faint);
+  font-size: var(--p-text-xs);
+  text-align: center;
+  margin-bottom: var(--p-space-1);
+}
+
+.picker-day {
+  aspect-ratio: 1;
+  min-height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--p-text);
+  border-radius: var(--p-radius-sm);
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+  transition: background var(--p-motion-fast) var(--p-ease);
+}
+
+.picker-day:hover {
+  background: var(--p-surface);
+}
+
+.picker-day-today {
+  box-shadow: inset 0 0 0 1px var(--p-border-strong);
+}
+
+.picker-day-selected {
+  background: var(--p-primary);
+  color: var(--p-background);
+  font-weight: 600;
+}
+
+.picker-foot {
+  margin-top: var(--p-space-2);
+  text-align: right;
+}
+
+.picker-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Thème ---------- */
+.theme-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-4);
+}
+
+.theme-swatch {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  font-size: var(--p-text-sm);
+}
+
+.theme-dot {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--p-radius-sm);
+  border: 1px solid var(--p-border-strong);
+  cursor: pointer;
+  padding: 0;
+  background: none;
+}
+
+.theme-preview {
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  padding: var(--p-space-4);
+  background: var(--p-surface);
+  display: grid;
+  gap: var(--p-space-3);
+}
+
+/* ---------- Animations ---------- */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes slide-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+
+/* Une carte apparaît une fois, à l'arrivée sur la page — pas à chaque
+   rafraîchissement silencieux, qui ferait clignoter la liste entière. */
+.card {
+  animation: fade-in var(--p-motion) var(--p-ease);
+}
+
+/* ═══════════════════════ RESPONSIVE ═══════════════════════ */
+
+/* Tablette : barre latérale compacte, grilles plus souples. */
+@media (max-width: 1200px) {
+  :root {
+    --sidebar-width: 210px;
+  }
+
+  .grid-cards {
+    grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  }
+}
+
+/* Mobile et petite tablette : la barre latérale devient un tiroir. */
+@media (max-width: 900px) {
+  .topbar {
+    display: flex;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(17rem, 84vw);
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform var(--p-motion-slow) var(--p-ease);
+    box-shadow: var(--p-shadow-lg);
+  }
+
+  .drawer-open .sidebar {
+    transform: none;
+  }
+
+  .drawer-open .drawer-scrim {
+    display: block;
+  }
+
+  .main-content {
+    padding: var(--p-space-4);
+  }
+
+  /* Une seule colonne : deux champs côte à côte sur 375 px sont illisibles. */
+  .event-form,
+  .inline-form,
+  .grid-cards {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .detail-list {
+    grid-template-columns: 1fr;
+  }
+
+  /* Un tableau défile DANS son cadre, jamais la page : un défilement
+     horizontal du document entier casse la lecture. */
+  .table-wrap,
+  table {
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
+  }
+
+  .event-row {
+    flex-wrap: wrap;
+  }
+
+  .event-row-when {
+    min-width: 100%;
+    font-size: var(--p-text-xs);
+  }
+
+  .btn-small {
+    min-height: 40px;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-content {
+    padding: var(--p-space-3);
+  }
+
+  h1 {
+    font-size: var(--p-text-xl);
+  }
+
+  .contract-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .segmented {
+    width: 100%;
+  }
+
+  .segment {
+    flex: 1;
+  }
+}
+
+/* Grand écran : le contenu ne s'étire pas indéfiniment. */
+@media (min-width: 1600px) {
+  .main-content > .page {
+    max-width: 1400px;
+  }
+}
+
+/* Les polices suivent le thème. */
+h1,
+h2,
+h3,
+.sidebar-title {
+  font-family: var(--p-font-heading);
+}
+
+body {
+  font-family: var(--p-font-body);
+}

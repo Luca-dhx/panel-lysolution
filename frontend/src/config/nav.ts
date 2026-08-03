@@ -41,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/versions', label: 'Versions', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/integrated-apis', label: 'Intégrations API', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/deployment', label: 'Déploiement', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/theme', label: 'Thème du Panel', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/actions', label: 'Exécutions', section: 'DEVELOPPEUR', devOnly: true },
 ];
 

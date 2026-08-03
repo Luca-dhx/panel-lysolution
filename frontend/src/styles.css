@@ -2,27 +2,7 @@
    Panel L.Y Solution — feuille de style globale (thème sombre)
    ============================================================ */
 
-:root {
-  --bg: #0f1420;
-  --bg-elevated: #161d2e;
-  --bg-sidebar: #0b101a;
-  --bg-input: #0d1320;
-  --border: #26304a;
-  --border-strong: #35415f;
-  --text: #e6eaf2;
-  --text-muted: #8b94ab;
-  --accent: #4f7cff;
-  --accent-hover: #6b90ff;
-  --ok: #2ea36b;
-  --ok-bg: rgba(46, 163, 107, 0.15);
-  --warn: #d99a2b;
-  --warn-bg: rgba(217, 154, 43, 0.14);
-  --danger: #d9534f;
-  --danger-bg: rgba(217, 83, 79, 0.14);
-  --radius: 8px;
-  --sidebar-width: 250px;
-  font-size: 15px;
-}
+/* Les tokens vivent dans `tokens.css` — source unique des couleurs. */
 
 * {
   box-sizing: border-box;

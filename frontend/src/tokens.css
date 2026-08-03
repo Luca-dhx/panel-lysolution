@@ -1,0 +1,135 @@
+/**
+ * TOKENS DU PANEL — la seule source des couleurs, espacements et rythmes.
+ *
+ * ── QUATRE COULEURS, LE RESTE EST DÉRIVÉ ────────────────────────────────────
+ * C'est la convention du thème de la vitrine SB Auto, reprise telle quelle :
+ * `background`, `foreground`, `primary`, `accent`. Toutes les autres nuances —
+ * surfaces, bordures, texte atténué, survols — sont calculées par `color-mix`.
+ *
+ * Douze couleurs réglables à la main produisent, une fois sur deux, un thème
+ * incohérent : un texte atténué qui ne s'accorde plus au fond, une bordure
+ * invisible sur une surface. Quatre couleurs dérivées restent cohérentes par
+ * construction, et il n'y a qu'un endroit à changer.
+ *
+ * ── AUCUNE COULEUR EN DUR AILLEURS ──────────────────────────────────────────
+ * Les composants n'écrivent jamais de code hexadécimal : ils lisent ces
+ * variables. Un test le vérifie sur les pages refondues.
+ *
+ * Les quatre couleurs et les deux polices sont posées à l'exécution par le
+ * thème enregistré ; les valeurs ci-dessous sont les défauts.
+ */
+:root {
+  /* ── Base éditable (écrasée par le thème) ────────────────────────────── */
+  --p-background: #0f1420;
+  --p-foreground: #e6eaf2;
+  --p-primary: #4f7cff;
+  --p-accent: #2ea36b;
+  --p-radius: 8px;
+  --p-font-heading: 'Inter', system-ui, sans-serif;
+  --p-font-body: 'Inter', system-ui, sans-serif;
+
+  /* ── Surfaces dérivées ───────────────────────────────────────────────── */
+  --p-surface: color-mix(in srgb, var(--p-background) 92%, var(--p-foreground));
+  --p-surface-raised: color-mix(in srgb, var(--p-background) 86%, var(--p-foreground));
+  --p-surface-sunken: color-mix(in srgb, var(--p-background) 97%, var(--p-foreground));
+  --p-sidebar: color-mix(in srgb, var(--p-background) 96%, #000000);
+
+  /* ── Bordures et texte ───────────────────────────────────────────────── */
+  --p-border: color-mix(in srgb, var(--p-background) 80%, var(--p-foreground));
+  --p-border-strong: color-mix(in srgb, var(--p-background) 68%, var(--p-foreground));
+  --p-text: var(--p-foreground);
+  --p-text-muted: color-mix(in srgb, var(--p-foreground) 62%, var(--p-background));
+  --p-text-faint: color-mix(in srgb, var(--p-foreground) 40%, var(--p-background));
+
+  /* ── États ───────────────────────────────────────────────────────────── */
+  --p-primary-hover: color-mix(in srgb, var(--p-primary) 82%, var(--p-foreground));
+  --p-primary-soft: color-mix(in srgb, var(--p-primary) 18%, transparent);
+  --p-ok: var(--p-accent);
+  --p-ok-soft: color-mix(in srgb, var(--p-accent) 16%, transparent);
+  --p-warn: #d99a2b;
+  --p-warn-soft: color-mix(in srgb, #d99a2b 16%, transparent);
+  --p-danger: #d9534f;
+  --p-danger-soft: color-mix(in srgb, #d9534f 16%, transparent);
+
+  /* ── Rayons ──────────────────────────────────────────────────────────── */
+  --p-radius-sm: calc(var(--p-radius) * 0.6);
+  --p-radius-lg: calc(var(--p-radius) * 1.6);
+  --p-radius-full: 999px;
+
+  /* ── Espacements — une échelle, pas des valeurs au hasard ────────────── */
+  --p-space-1: 0.25rem;
+  --p-space-2: 0.5rem;
+  --p-space-3: 0.75rem;
+  --p-space-4: 1rem;
+  --p-space-5: 1.5rem;
+  --p-space-6: 2rem;
+  --p-space-7: 3rem;
+
+  /* ── Texte ───────────────────────────────────────────────────────────── */
+  --p-text-xs: 0.75rem;
+  --p-text-sm: 0.875rem;
+  --p-text-base: 1rem;
+  --p-text-lg: 1.125rem;
+  --p-text-xl: 1.5rem;
+  --p-text-2xl: 2rem;
+
+  /* ── Ombres ──────────────────────────────────────────────────────────── */
+  --p-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --p-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  --p-shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.38);
+
+  /* ── Mouvement — court et fonctionnel ────────────────────────────────── */
+  --p-motion-fast: 120ms;
+  --p-motion: 200ms;
+  --p-motion-slow: 320ms;
+  --p-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* ── Gabarit ─────────────────────────────────────────────────────────── */
+  --sidebar-width: 250px;
+  --p-header-height: 3.5rem;
+
+  /* ────────────────────────────────────────────────────────────────────────
+   * COMPATIBILITÉ — les anciens noms restent valides et pointent vers les
+   * tokens dérivés. Renommer 1500 lignes de règles d'un coup aurait multiplié
+   * le risque sans rien apporter : ce qui compte est que toutes les couleurs
+   * viennent DÉSORMAIS du thème, pas qu'elles changent de nom le même jour.
+   * ──────────────────────────────────────────────────────────────────────── */
+  --bg: var(--p-background);
+  --bg-elevated: var(--p-surface);
+  --bg-sidebar: var(--p-sidebar);
+  --bg-input: var(--p-surface-sunken);
+  --border: var(--p-border);
+  --border-strong: var(--p-border-strong);
+  --text: var(--p-text);
+  --text-muted: var(--p-text-muted);
+  --accent: var(--p-primary);
+  --accent-hover: var(--p-primary-hover);
+  --ok: var(--p-ok);
+  --ok-bg: var(--p-ok-soft);
+  --warn: var(--p-warn);
+  --warn-bg: var(--p-warn-soft);
+  --danger: var(--p-danger);
+  --danger-bg: var(--p-danger-soft);
+  --radius: var(--p-radius);
+}
+
+/**
+ * Un utilisateur qui a demandé moins d'animations en a demandé MOINS, pas
+ * moins vite : on coupe, on ne raccourcit pas.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --p-motion-fast: 0ms;
+    --p-motion: 0ms;
+    --p-motion-slow: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,4 +1,17 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+/**
+ * COQUILLE DE L'APPLICATION — barre latérale à gauche, contenu à droite.
+ *
+ * ── SUR MOBILE, LA BARRE DEVIENT UN TIROIR ──────────────────────────────────
+ * Une barre latérale fixe de 250 px sur un écran de 320 px, c'est 78 % de la
+ * largeur perdue. Sous 900 px elle se replie : une barre supérieure porte le
+ * bouton de menu, et la navigation s'ouvre par-dessus le contenu.
+ *
+ * Le tiroir se ferme dès qu'on choisit une page — sinon il faut deux gestes
+ * pour un seul déplacement — ainsi qu'à Échap et au clic sur le voile. Le
+ * défilement du fond est bloqué pendant l'ouverture.
+ */
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { SECTION_LABELS, SECTION_ORDER, navItemsFor } from '@/config/nav';
 import { usePanelVersion } from '@/lib/usePanelVersion';
@@ -7,6 +20,22 @@ export function Layout() {
   const { user, logout } = useAuth();
   const { version } = usePanelVersion();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [tiroir, setTiroir] = useState(false);
+
+  // Changer de page ferme le tiroir : on a obtenu ce qu'on venait chercher.
+  useEffect(() => { setTiroir(false); }, [location.pathname]);
+
+  useEffect(() => {
+    if (!tiroir) return undefined;
+    const clavier = (e: KeyboardEvent) => { if (e.key === 'Escape') setTiroir(false); };
+    document.addEventListener('keydown', clavier);
+    document.body.classList.add('no-scroll');
+    return () => {
+      document.removeEventListener('keydown', clavier);
+      document.body.classList.remove('no-scroll');
+    };
+  }, [tiroir]);
 
   const handleLogout = () => {
     logout();
@@ -14,8 +43,26 @@ export function Layout() {
   };
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={tiroir ? 'app-shell drawer-open' : 'app-shell'}>
+      {/* Barre supérieure — mobile et tablette uniquement. */}
+      <header className="topbar">
+        <button
+          type="button"
+          className="topbar-burger"
+          aria-label={tiroir ? 'Fermer le menu' : 'Ouvrir le menu'}
+          aria-expanded={tiroir}
+          aria-controls="navigation-principale"
+          onClick={() => setTiroir((o) => !o)}
+        >
+          <span aria-hidden="true">{tiroir ? '✕' : '☰'}</span>
+        </button>
+        <span className="topbar-title">Panel L.Y Solution</span>
+      </header>
+
+      {/* Voile : ferme le tiroir et empêche de cliquer au travers. */}
+      <div className="drawer-scrim" role="presentation" onClick={() => setTiroir(false)} />
+
+      <aside className="sidebar" id="navigation-principale">
         <div className="sidebar-header">
           <h1 className="sidebar-title">Panel L.Y Solution</h1>
           <p className="sidebar-subtitle">Administration du parc</p>
