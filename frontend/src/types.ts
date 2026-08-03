@@ -70,6 +70,8 @@ export interface PublicProject {
   business: {
     presentation: BusinessPresentation | null;
     contract: BusinessContract | null;
+    /** Présente sur la FICHE seulement — la liste ne l'affiche pas. */
+    team?: TeamMember[];
   };
 }
 
@@ -90,6 +92,15 @@ export interface BusinessAmount {
   amountIncludingTax: number | null;
   currency: string | null;
   interval?: string | null;
+}
+
+export interface TeamMember {
+  entityId: string;
+  name: string | null;
+  email: string;
+  role: string;
+  createdAt: string | null;
+  receivedAt: string;
 }
 
 export interface BusinessDocument {

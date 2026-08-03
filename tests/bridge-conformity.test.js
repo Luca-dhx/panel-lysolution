@@ -88,9 +88,10 @@ section('Types d’entités synchronisées');
   check('les types appliqués sont ceux de la table de projecteurs',
     JSON.stringify([...contract.APPLIED_ENTITY_TYPES].sort())
       === JSON.stringify([...PROJECTED_ENTITY_TYPES].sort()));
-  check('DIAGNOSTIC, PROJECT_PRESENTATION et CONTRACT sont appliqués',
-    contract.APPLIED_ENTITY_TYPES.length === 3
-    && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT'].every((t) => contract.APPLIED_ENTITY_TYPES.includes(t)));
+  check('DIAGNOSTIC, PROJECT_PRESENTATION, CONTRACT et TEAM_MEMBER sont appliqués',
+    contract.APPLIED_ENTITY_TYPES.length === 4
+    && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT', 'TEAM_MEMBER']
+      .every((t) => contract.APPLIED_ENTITY_TYPES.includes(t)));
   check('statuts d’accusé conformes', ['APPLIED', 'DUPLICATE', 'IGNORED', 'REJECTED'].every(
     (s) => contract.ACK_STATUS[s] === s && panelSpec.includes(s),
   ));

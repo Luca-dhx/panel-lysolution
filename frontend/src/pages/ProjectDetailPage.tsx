@@ -23,7 +23,7 @@ import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
-import type { PublicProject } from '@/types';
+import type { PublicProject, TeamMember } from '@/types';
 import {
   connectionState,
   isBusinessSynchronized,
@@ -228,6 +228,8 @@ function OverviewTab({
         <ContractCard project={project} contract={null} />
       )}
 
+      <TeamCard team={project.business?.team ?? []} />
+
       <Card title="Suivi">
         <dl className="detail-list">
           <div>
@@ -389,3 +391,55 @@ function DeveloperTab({ project }: { project: PublicProject }) {
 }
 
 export default ProjectDetailPage;
+
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ÉQUIPE DU PROJET — en LECTURE SEULE.
+ *
+ * Ces comptes appartiennent au projet. Le Panel les affiche pour savoir à qui
+ * l'on parle ; il n'en crée, n'en modifie et n'en supprime aucun. Aucune
+ * action de gestion à distance n'est proposée, et ce n'est pas un oubli.
+ *
+ * Ni « dernière connexion » ni « statut actif » : le projet ne tient pas ces
+ * informations. Afficher une colonne vide serait moins honnête que ne pas
+ * l'afficher du tout.
+ */
+function TeamCard({ team }: { team: TeamMember[] }) {
+  if (team.length === 0) {
+    return (
+      <Card title="Équipe du projet">
+        <p className="muted">
+          Aucun compte synchronisé. L’équipe remonte automatiquement dès que le projet la publie.
+        </p>
+      </Card>
+    );
+  }
+
+  const initiales = (m: TeamMember) => {
+    const base = (m.name || m.email).trim();
+    const mots = base.split(/[\s@.]+/).filter(Boolean);
+    return (mots[0]?.[0] ?? '?').toUpperCase() + (mots[1]?.[0] ?? '').toUpperCase();
+  };
+
+  return (
+    <Card title="Équipe du projet">
+      <ul className="team-list">
+        {team.map((m) => (
+          <li key={m.entityId} className="team-row">
+            <span className="project-avatar project-avatar-small">{initiales(m)}</span>
+            <span className="team-row-main">
+              <span className="team-row-name">{m.name || m.email}</span>
+              <span className="muted">{m.email}</span>
+            </span>
+            <span className="badge badge-muted">{m.role}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="muted">
+        Ces comptes appartiennent au projet : ils se gèrent dans son Manager, pas ici.
+      </p>
+    </Card>
+  );
+}

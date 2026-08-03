@@ -154,6 +154,7 @@ export const APPLIED_ENTITY_TYPES = Object.freeze([
   'DIAGNOSTIC',
   'PROJECT_PRESENTATION',
   'CONTRACT',
+  'TEAM_MEMBER',
 ]);
 
 export const EMITTERS = Object.freeze({ PANEL: 'PANEL', PROJECT: 'PROJECT' });
@@ -367,6 +368,26 @@ export const projectPresentationPayloadSchema = z
  * d'expiration : elle n'existe nulle part, et l'inventer serait pire que de
  * ne rien montrer.
  */
+/**
+ * TEAM_MEMBER — l'équipe du projet, telle que le projet la tient.
+ *
+ * Schéma FERMÉ, et c'est ici que se joue la protection : un projet qui
+ * publierait par mégarde un mot de passe haché, un jeton ou un secret verrait
+ * son écriture REFUSÉE. La liste blanche vaut mieux qu'une liste noire — on
+ * n'a pas à deviner le nom du champ sensible de demain.
+ *
+ * Ni `lastLoginAt` ni statut actif : le modèle source ne les porte pas.
+ */
+export const teamMemberPayloadSchema = z
+  .object({
+    sourceUserId: z.string().min(1),
+    email: z.string().min(1),
+    name: z.string().min(1).optional(),
+    role: z.string().min(1),
+    createdAt: z.string().nullable().optional(),
+  })
+  .strict();
+
 export const contractPayloadSchema = z
   .object({
     sourceContractId: z.string().min(1),

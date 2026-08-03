@@ -147,6 +147,8 @@ section('Bootstrap 1.1 avec Manifest joint');
 }
 
 const AUTH = { ...H, authorization: `Bearer ${bridgeToken}` };
+let jwtUtilisateur = null;
+let projetMetier = null;
 
 section('Heartbeat — POST /bridge/v1/heartbeats');
 {
@@ -323,6 +325,7 @@ section('Surface interne /api : gardes et santé');
     && login.json.data.user.role === 'DEV');
 
   const jwt = login.json.data.token;
+  jwtUtilisateur = jwt;
   const me = await call('GET', '/api/auth/me', { headers: { authorization: `Bearer ${jwt}` } });
   check('GET /api/auth/me', me.status === 200 && me.json.data.user.email === 'dev@panel.test');
 
@@ -405,6 +408,7 @@ section('LOT 1B — projecteurs métier : identité et contrat');
   });
   const projectId = site.record.projectId;
   const auth = { ...H, authorization: `Bearer ${paired.json.data.bridgeToken}` };
+  projetMetier = { projectId, auth };
   const entityId = uuid();
 
   const push = (change) => call('POST', '/bridge/v1/sync/push', {
@@ -514,6 +518,69 @@ section('LOT 1B — projecteurs métier : identité et contrat');
   check('un tombstone CONTRACT est appliqué', removed.json?.data?.results?.[0]?.status === 'APPLIED');
   check('…et la projection disparaît',
     (await PanelProjectContract.countDocuments({ projectId })) === 0);
+}
+
+section('LOT 2B — équipe du projet : lecture seule, rien de sensible');
+{
+  const { projectId, auth } = projetMetier;
+  const push = (change) => call('POST', '/bridge/v1/sync/push', {
+    headers: auth, body: { changes: [change] },
+  });
+  const { PanelProjectMember } = await import(
+    '../backend/src/models/PanelProjectProjection.model.js'
+  );
+  const membre = (id, extra = {}) => ({
+    writeId: uuid(), entityType: 'TEAM_MEMBER', entityId: id, deleted: false,
+    modifiedAt: iso(), emitter: 'PROJECT',
+    payload: { sourceUserId: 'u-1', email: 'chef@garage.test', name: 'Chef', role: 'ADMIN', ...extra },
+  });
+
+  const idMembre = uuid();
+  const applique = await push(membre(idMembre));
+  check('TEAM_MEMBER appliqué', applique.json?.data?.results?.[0]?.status === 'APPLIED');
+  const ligne = await PanelProjectMember.findOne({ projectId, entityId: idMembre }).lean();
+  check('…projeté avec son e-mail et son rôle',
+    ligne?.email === 'chef@garage.test' && ligne.role === 'ADMIN');
+
+  // La liste blanche fait le travail : un champ sensible fait REFUSER l'écriture.
+  for (const [nom, sensible] of [
+    ['un mot de passe', { password: '$2a$10$abcdefghijklmnopqrstuv' }],
+    ['un jeton', { token: 'secret-token' }],
+    ['une dernière connexion inventée', { lastLoginAt: iso() }],
+    ['un statut inventé', { active: true }],
+  ]) {
+    // eslint-disable-next-line no-await-in-loop
+    const refus = await push(membre(uuid(), sensible));
+    check(`${nom} → écriture REFUSÉE`,
+      refus.json?.data?.results?.[0]?.status === 'REJECTED');
+  }
+  check('…et aucune ligne parasite n’a été créée',
+    (await PanelProjectMember.countDocuments({ projectId })) === 1);
+
+  // Un second membre, puis le départ du premier.
+  const idSecond = uuid();
+  await push(membre(idSecond, { sourceUserId: 'u-2', email: 'apprenti@garage.test', role: 'ADMIN' }));
+  check('deux membres coexistent',
+    (await PanelProjectMember.countDocuments({ projectId })) === 2);
+
+  const depart = await push({
+    writeId: uuid(), entityType: 'TEAM_MEMBER', entityId: idMembre, deleted: true,
+    payload: null, modifiedAt: iso(1000), emitter: 'PROJECT',
+  });
+  check('un tombstone efface le membre parti',
+    depart.json?.data?.results?.[0]?.status === 'APPLIED');
+  check('…et lui seul',
+    (await PanelProjectMember.countDocuments({ projectId })) === 1
+    && !(await PanelProjectMember.exists({ projectId, entityId: idMembre })));
+
+  // La fiche projet expose l'équipe — en lecture seule.
+  const fiche = await call('GET', `/api/projects/${projectId}`, { headers: { authorization: `Bearer ${jwtUtilisateur}` } });
+  const equipe = fiche.json?.data?.project?.business?.team;
+  check('la fiche expose l’équipe', Array.isArray(equipe) && equipe.length === 1);
+  check('…sans rien de sensible',
+    !/password|token|secret/i.test(JSON.stringify(equipe)));
+  check('aucune route d’écriture d’équipe n’existe',
+    (await call('POST', `/api/projects/${projectId}/team`, { headers: { authorization: `Bearer ${jwtUtilisateur}` }, body: {} })).status === 404);
 }
 
 await close();

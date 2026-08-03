@@ -23,10 +23,12 @@ import {
   contractPayloadSchema,
   nowIso,
   projectPresentationPayloadSchema,
+  teamMemberPayloadSchema,
 } from '../../bridge/bridgeContract.js';
 import { PanelDiagnostic } from '../../models/PanelSyncState.model.js';
 import {
   PanelProjectContract,
+  PanelProjectMember,
   PanelProjectPresentation,
 } from '../../models/PanelProjectProjection.model.js';
 
@@ -146,11 +148,44 @@ async function applyContract({ projectId, change }) {
   );
 }
 
+/**
+ * TEAM_MEMBER — un membre de l'équipe du projet.
+ *
+ * Contrairement à l'identité et au contrat, c'est une COLLECTION : une ligne
+ * par membre, identifiée par l'`entityId` que le projet lui donne. Un
+ * tombstone efface la ligne — c'est ainsi qu'un départ se propage.
+ */
+async function applyTeamMember({ projectId, change }) {
+  if (change.deleted) {
+    await PanelProjectMember.deleteOne({ projectId, entityId: change.entityId });
+    return;
+  }
+  const m = parsePayload(teamMemberPayloadSchema, change.payload, 'TEAM_MEMBER');
+  await PanelProjectMember.updateOne(
+    { projectId, entityId: change.entityId },
+    {
+      $set: {
+        projectId,
+        entityId: change.entityId,
+        sourceUserId: m.sourceUserId,
+        email: m.email,
+        name: m.name ?? null,
+        role: m.role,
+        createdAt: m.createdAt ?? null,
+        sourceModifiedAt: change.modifiedAt,
+        receivedAt: nowIso(),
+      },
+    },
+    { upsert: true },
+  );
+}
+
 /** Table FERMÉE — le cœur n'applique que ce qui y figure. */
 export const PROJECTORS = Object.freeze({
   DIAGNOSTIC: applyDiagnostic,
   PROJECT_PRESENTATION: applyProjectPresentation,
   CONTRACT: applyContract,
+  TEAM_MEMBER: applyTeamMember,
 });
 
 /** Types réellement appliqués — dérivés de la table, jamais réécrits à côté. */
@@ -178,6 +213,9 @@ export const PROJECTED_ENTITY_TYPES = Object.freeze(Object.keys(PROJECTORS));
 export const PROJECTION_PRESENT = Object.freeze({
   PROJECT_PRESENTATION: ({ projectId }) => PanelProjectPresentation.exists({ projectId }),
   CONTRACT: ({ projectId }) => PanelProjectContract.exists({ projectId }),
+  // Une collection : la présence se juge SUR LA LIGNE, pas sur le projet.
+  TEAM_MEMBER: ({ projectId, change }) =>
+    PanelProjectMember.exists({ projectId, entityId: change.entityId }),
 });
 
 /**
@@ -190,7 +228,7 @@ export async function needsRepair(projectId, change) {
   if (change.deleted === true) return false;
   const probe = PROJECTION_PRESENT[change.entityType];
   if (!probe) return false;
-  return !(await probe({ projectId }));
+  return !(await probe({ projectId, change }));
 }
 
 export default { PROJECTORS, PROJECTED_ENTITY_TYPES, ENTITY_PAYLOAD_INVALID };

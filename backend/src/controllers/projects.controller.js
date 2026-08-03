@@ -8,6 +8,7 @@ import {
   getProjectOrThrow,
   listProjects,
   loadBusinessProjections,
+  loadProjectTeam,
   removeProject,
   toPublicProject,
   updateManifest,
@@ -38,11 +39,22 @@ export async function list(_req, res) {
 
 export async function detail(req, res) {
   const record = await getProjectOrThrow(req.params.projectId);
-  const projections = await loadBusinessProjections([record.projectId]);
-  return ok(res, {
-    project: toPublicProject(record, Date.now(), projections.get(record.projectId)),
-    conformity: describeConformity(record),
-  });
+  const [projections, team] = await Promise.all([
+    loadBusinessProjections([record.projectId]),
+    loadProjectTeam(record.projectId),
+  ]);
+  const project = toPublicProject(record, Date.now(), projections.get(record.projectId));
+  // L'équipe n'est pas une propriété du registre : elle est jointe ICI, sur la
+  // fiche seule, parce que c'est le seul écran qui la montre.
+  project.business.team = team.map((m) => ({
+    entityId: m.entityId,
+    name: m.name,
+    email: m.email,
+    role: m.role,
+    createdAt: m.createdAt,
+    receivedAt: m.receivedAt,
+  }));
+  return ok(res, { project, conformity: describeConformity(record) });
 }
 
 /**

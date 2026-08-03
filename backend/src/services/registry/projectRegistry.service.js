@@ -310,6 +310,17 @@ export function toPublicProject(record, now = Date.now(), projections = {}) {
  * Charge les projections métier d'un LOT de projets en deux requêtes, puis les
  * distribue. Une requête par projet ferait N+1 sur la page « Projets clients ».
  */
+/**
+ * ÉQUIPE d'un projet — lue seulement sur la FICHE.
+ *
+ * Pas dans la liste : charger l'équipe de tout le parc pour afficher des
+ * cartes qui ne la montrent pas serait payer un coût sans contrepartie.
+ */
+export async function loadProjectTeam(projectId) {
+  const { PanelProjectMember } = await import('../../models/PanelProjectProjection.model.js');
+  return PanelProjectMember.find({ projectId }).sort({ role: 1, email: 1 }).lean();
+}
+
 export async function loadBusinessProjections(projectIds) {
   const { PanelProjectContract, PanelProjectPresentation } = await import(
     '../../models/PanelProjectProjection.model.js'

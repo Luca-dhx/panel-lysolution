@@ -102,10 +102,35 @@ const contractSchema = new mongoose.Schema(
   { minimize: false, versionKey: false },
 );
 
+/**
+ * MEMBRE de l'équipe d'un projet — projection en LECTURE SEULE.
+ *
+ * Le Panel ne crée, ne modifie et ne supprime aucun compte : ces lignes sont
+ * le reflet de ce que le projet publie. Clé (projectId, entityId) : deux
+ * projets peuvent avoir des membres homonymes, ils ne se mélangent pas.
+ */
+const memberSchema = new mongoose.Schema(
+  {
+    projectId: { type: String, required: true, index: true },
+    entityId: { type: String, required: true },
+    sourceUserId: { type: String, required: true },
+    email: { type: String, required: true },
+    name: { type: String, default: null },
+    role: { type: String, required: true },
+    createdAt: { type: String, default: null },
+    sourceModifiedAt: { type: String, required: true },
+    receivedAt: { type: String, required: true },
+  },
+  { minimize: false, versionKey: false },
+);
+memberSchema.index({ projectId: 1, entityId: 1 }, { unique: true });
+
+export const PanelProjectMember = mongoose.model('PanelProjectMember', memberSchema);
+
 export const PanelProjectPresentation = mongoose.model(
   'PanelProjectPresentation',
   presentationSchema,
 );
 export const PanelProjectContract = mongoose.model('PanelProjectContract', contractSchema);
 
-export default { PanelProjectPresentation, PanelProjectContract };
+export default { PanelProjectPresentation, PanelProjectContract, PanelProjectMember };
