@@ -2,17 +2,20 @@
  * BOÎTE DE CONFIRMATION — « cette réunion a-t-elle eu lieu ? »
  *
  * ── POURQUOI ELLE EXISTE ────────────────────────────────────────────────────
- * Le temps ne confirme rien. Un rendez-vous dont l'heure est passée est « à
- * confirmer », pas « tenu ». Sans cette question, l'historique se remplirait
- * de réunions qui n'ont jamais eu lieu — et deviendrait inutilisable
+ * Le temps ne confirme rien. Une réunion dont l'heure est passée est « à
+ * confirmer », pas « tenue ». Sans cette question, l'historique se remplirait
+ * de rendez-vous qui n'ont jamais eu lieu — et deviendrait inutilisable
  * exactement le jour où l'on en aurait besoin.
  *
  * ── QUATRE RÉPONSES, PAS DEUX ───────────────────────────────────────────────
- * « Oui » et « non » ne suffisent pas : une réunion se reporte aussi, et l'on
- * n'a pas toujours le temps d'écrire un compte rendu tout de suite. « Plus
- * tard » est donc une réponse légitime — elle laisse l'événement dû et recule
- * la relance de deux heures, au lieu de faire réapparaître la même boîte à
- * chaque rafraîchissement.
+ * Une réunion se reporte aussi, et l'on n'a pas toujours le temps d'écrire un
+ * compte rendu sur-le-champ. « Plus tard » est donc une réponse légitime : elle
+ * laisse l'attente en place et recule la relance de deux heures, au lieu de
+ * reposer la même question à chaque rafraîchissement.
+ *
+ * « Reporter » agit sur la RÉUNION, pas sur l'événement : c'est le rendez-vous
+ * qu'on déplace. L'attente de confirmation disparaît alors — il n'y a plus
+ * rien à constater.
  */
 import { useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
@@ -28,6 +31,9 @@ const MOTIFS: { value: MissedReason; label: string }[] = [
 
 const heure = (iso: string) =>
   new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+const lignes = (texte: string) => texte.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+const virgules = (texte: string) => texte.split(',').map((l) => l.trim()).filter(Boolean);
 
 type Volet = null | 'oui' | 'non' | 'reporter';
 
@@ -63,16 +69,13 @@ export function EventConfirmation({
     }
   };
 
-  const quoi = event.type === 'MEETING' ? 'La réunion' : 'L’événement';
   const avecQui = event.projectName || 'ce projet';
 
   return (
     <div className="alert alert-warning event-confirm">
       <p>
-        <strong>{quoi} avec {avecQui}</strong> était prévu{event.type === 'MEETING' ? 'e' : ''} le{' '}
-        {formatDateTime(event.scheduledAt)} à {heure(event.scheduledAt)}.
-        <br />
-        A-t-{event.type === 'MEETING' ? 'elle' : 'il'} bien eu lieu ?
+        <strong>La réunion avec {avecQui}</strong> prévue le {formatDateTime(event.occurredAt)} à{' '}
+        {heure(event.occurredAt)} a-t-elle bien eu lieu ?
       </p>
       <p className="muted">{event.title}</p>
 
@@ -81,12 +84,17 @@ export function EventConfirmation({
       {volet === null ? (
         <div className="contract-actions">
           <button type="button" className="btn btn-primary btn-small" onClick={() => setVolet('oui')}>
-            Oui, {event.type === 'MEETING' ? 'elle' : 'il'} a eu lieu
+            Oui, elle a eu lieu
           </button>
           <button type="button" className="btn btn-secondary btn-small" onClick={() => setVolet('non')}>
-            Non, {event.type === 'MEETING' ? 'elle' : 'il'} n’a pas eu lieu
+            Non, elle n’a pas eu lieu
           </button>
-          <button type="button" className="btn btn-secondary btn-small" onClick={() => setVolet('reporter')}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            disabled={!event.sourceMeetingId}
+            onClick={() => setVolet('reporter')}
+          >
             Reporter
           </button>
           <button
@@ -136,11 +144,11 @@ export function EventConfirmation({
               type="button"
               className="btn btn-primary btn-small"
               disabled={enCours}
-              onClick={() => void agir(() => api.completeEvent(event._id, {
+              onClick={() => void agir(() => api.confirmEvent(event._id, {
                 notes,
                 outcome,
-                nextActions: actions.split('\n').map((a) => a.trim()).filter(Boolean),
-                externalParticipants: participants.split(',').map((p) => p.trim()).filter(Boolean),
+                nextActions: lignes(actions),
+                externalParticipants: virgules(participants),
                 ...(heureReelle ? { occurredAt: new Date(heureReelle).toISOString() } : {}),
               }))}
             >
@@ -196,17 +204,17 @@ export function EventConfirmation({
             />
           </label>
           <p className="muted">
-            L’événement d’origine est clos et relié au nouveau : l’historique garde la trace des
-            deux dates.
+            La réunion d’origine est close et reliée à la nouvelle. Cette question disparaît :
+            il n’y a plus rien à constater.
           </p>
           <div className="contract-actions">
             <button
               type="button"
               className="btn btn-primary btn-small"
               disabled={enCours || !nouvelleDate}
-              onClick={() => void agir(() => api.rescheduleEvent(event._id, {
+              onClick={() => void agir(() => api.rescheduleMeeting(event.sourceMeetingId as string, {
                 scheduledAt: new Date(nouvelleDate).toISOString(),
-                reason: 'Reporté',
+                reason: 'Reportée',
               }))}
             >
               {enCours ? 'Report…' : 'Reporter'}

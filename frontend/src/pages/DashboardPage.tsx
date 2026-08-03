@@ -15,9 +15,9 @@
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { useProjects } from '@/lib/useProjects';
-import { useEvents, usePendingEvents } from '@/lib/useEvents';
+import { useMeetings, usePendingEvents } from '@/lib/useEvents';
 import { EventConfirmation } from '@/components/EventConfirmation';
-import { EventRow } from '@/pages/AgendaPage';
+import { MeetingRow } from '@/components/EventLists';
 import { useIsDev } from '@/auth/RequireDev';
 import {
   lastContact,
@@ -164,8 +164,8 @@ export default DashboardPage;
  */
 function AgendaDuJour() {
   const { events: enAttente, reload: rechargerAttente } = usePendingEvents();
-  const { events: aujourdhui } = useEvents('today');
-  const { events: aVenir } = useEvents('upcoming');
+  const { meetings: aujourdhui } = useMeetings('today');
+  const { meetings: aVenir } = useMeetings('upcoming');
 
   const prochains = aVenir.slice(0, 5);
   if (enAttente.length === 0 && aujourdhui.length === 0 && prochains.length === 0) return null;
@@ -181,9 +181,9 @@ function AgendaDuJour() {
       ) : null}
 
       {aujourdhui.length > 0 ? (
-        <Card title="Aujourd’hui">
+        <Card title="Réunions du jour">
           <ul className="event-list">
-            {aujourdhui.map((e) => <EventRow key={e._id} event={e} />)}
+            {aujourdhui.map((m) => <MeetingRow key={m._id} meeting={m} />)}
           </ul>
         </Card>
       ) : null}
@@ -191,7 +191,7 @@ function AgendaDuJour() {
       {prochains.length > 0 ? (
         <Card title="Prochains rendez-vous">
           <ul className="event-list">
-            {prochains.map((e) => <EventRow key={e._id} event={e} />)}
+            {prochains.map((m) => <MeetingRow key={m._id} meeting={m} />)}
           </ul>
           <p><Link to="/agenda">Voir tout l’agenda →</Link></p>
         </Card>

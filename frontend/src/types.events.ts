@@ -1,48 +1,66 @@
-/** Agenda et événements de suivi — données PROPRES au Panel. */
+/**
+ * Agenda et historique — données PROPRES au Panel.
+ *
+ * Deux objets distincts, et la distinction n'est pas cosmétique : une réunion
+ * se déplace, s'annule, se reporte — elle vit dans l'agenda. Un événement est
+ * daté au passé et ne bouge plus — c'est de l'histoire.
+ */
 
-export type EventType = 'MEETING' | 'CALL' | 'VIDEO_CALL' | 'MEAL' | 'FOLLOW_UP' | 'OTHER';
-export type EventStatus = 'PLANNED' | 'DUE' | 'COMPLETED' | 'MISSED' | 'CANCELLED';
+export type MeetingStatus = 'PLANNED' | 'DONE_PENDING_CONFIRMATION' | 'CANCELLED' | 'RESCHEDULED';
+export type MeetingScope = 'upcoming' | 'today' | 'to_confirm' | 'past';
+
+export type EventType = 'MEETING_OCCURRED' | 'CALL' | 'VIDEO_CALL' | 'MEAL' | 'FOLLOW_UP' | 'OTHER';
+export type EventStatus = 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'MISSED' | 'CANCELLED';
 export type MissedReason = 'CANCELLED' | 'CLIENT_ABSENT' | 'TEAM_ABSENT' | 'OTHER';
-export type EventScope = 'today' | 'upcoming' | 'to_confirm' | 'past';
 
-export interface EventTransition {
-  at: string;
-  from: string | null;
-  to: string;
-  actorEmail: string | null;
-  actorRole: string | null;
-  reason: string | null;
+export interface Participant {
+  email: string | null;
+  name: string | null;
+}
+
+export interface Meeting {
+  _id: string;
+  projectId: string;
+  projectName: string | null;
+  title: string;
+  description: string;
+  scheduledAt: string;
+  durationMinutes: number;
+  location: string;
+  status: MeetingStatus;
+  internalParticipants: Participant[];
+  externalParticipants: string[];
+  rescheduledFromMeetingId: string | null;
+  rescheduledToMeetingId: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  createdBy: string | null;
+  createdAt: string;
 }
 
 export interface ProjectEvent {
   _id: string;
   projectId: string;
   projectName: string | null;
+  sourceMeetingId: string | null;
   type: EventType;
   title: string;
-  description: string;
-  scheduledAt: string;
-  durationMinutes: number;
+  occurredAt: string;
   status: EventStatus;
-  internalParticipants: { email: string | null; name: string | null }[];
+  internalParticipants: Participant[];
   externalParticipants: string[];
-  occurredAt: string | null;
-  completedAt: string | null;
-  cancelledAt: string | null;
-  missedReason: MissedReason | null;
   notes: string;
   outcome: string;
   nextActions: string[];
-  reportOfEventId: string | null;
-  rescheduledToEventId: string | null;
+  missedReason: MissedReason | null;
+  confirmedBy: string | null;
+  confirmedAt: string | null;
   remindAfter: string | null;
-  transitions: EventTransition[];
   createdBy: string | null;
   createdAt: string;
 }
 
 export interface ProjectEventsSummary {
-  next: ProjectEvent | null;
-  toConfirm: ProjectEvent[];
+  pending: ProjectEvent[];
   history: ProjectEvent[];
 }

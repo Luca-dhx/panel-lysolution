@@ -20,9 +20,10 @@ import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
-import { EventForm } from '@/components/EventForm';
-import { EventRow } from '@/pages/AgendaPage';
-import { useProjectEvents } from '@/lib/useEvents';
+import { EventRow, MeetingRow } from '@/components/EventLists';
+import { MeetingForm, PastEventForm } from '@/components/EventForms';
+import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
+import { useMeetings, useProjectEvents } from '@/lib/useEvents';
 import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
@@ -45,7 +46,7 @@ import {
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
-type Tab = 'overview' | 'dev';
+type Tab = 'overview' | 'events' | 'dev';
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -127,6 +128,13 @@ export function ProjectDetailPage() {
         >
           Vue d’ensemble
         </button>
+        <button
+          type="button"
+          className={tab === 'events' ? 'tab tab-active' : 'tab'}
+          onClick={() => setTab('events')}
+        >
+          Événements
+        </button>
         {isDev ? (
           <button
             type="button"
@@ -141,6 +149,7 @@ export function ProjectDetailPage() {
       {tab === 'overview' ? (
         <OverviewTab project={project} url={url} since={since} link={link} />
       ) : null}
+      {tab === 'events' ? <EventsTab project={project} /> : null}
       {tab === 'dev' && isDev ? <DeveloperTab project={project} /> : null}
     </div>
   );
@@ -231,8 +240,6 @@ function OverviewTab({
       ) : (
         <ContractCard project={project} contract={null} />
       )}
-
-      <ProjectEventsCard projectId={project.projectId} />
 
       <TeamCard team={project.business?.team ?? []} />
 
@@ -459,54 +466,102 @@ function TeamCard({ team }: { team: TeamMember[] }) {
  * Ces rendez-vous appartiennent au Panel. Le client n'en reçoit rien : ce sont
  * nos notes de suivi, pas les siennes.
  */
-function ProjectEventsCard({ projectId }: { projectId: string }) {
+/**
+ * ONGLET ÉVÉNEMENTS — l'histoire de CE client, et rien d'autre.
+ *
+ * Toutes les lectures sont bornées au projet courant. Afficher, même par
+ * accident, un rendez-vous pris avec un autre client serait une fuite : ces
+ * notes sont internes, mais elles nomment des tiers.
+ *
+ * Réunions et événements restent séparés à l'écran, comme dans le modèle.
+ */
+function EventsTab({ project }: { project: PublicProject }) {
+  const projectId = project.projectId;
+  const nom = projectDisplayName(project);
   const { summary, isInitialLoading, reload } = useProjectEvents(projectId);
-  const [ouvert, setOuvert] = useState(false);
+  const { meetings, reload: rechargerReunions } = useMeetings('upcoming', projectId);
+  const [volet, setVolet] = useState<null | 'reunion' | 'evenement'>(null);
+  const [filtreType, setFiltreType] = useState('');
+  const [filtreStatut, setFiltreStatut] = useState('');
+
+  const toutRecharger = () => { void reload(); void rechargerReunions(); };
 
   if (isInitialLoading) {
-    return <Card title="Suivi et rendez-vous"><p className="muted">Chargement…</p></Card>;
+    return <Card title="Événements"><p className="muted">Chargement…</p></Card>;
   }
 
-  const aConfirmer = summary?.toConfirm ?? [];
-  const historique = summary?.history ?? [];
+  const enAttente = summary?.pending ?? [];
+  const historique = (summary?.history ?? []).filter(
+    (e) => (!filtreType || e.type === filtreType) && (!filtreStatut || e.status === filtreStatut),
+  );
 
   return (
-    <Card title="Suivi et rendez-vous">
-      {aConfirmer.map((e) => (
-        <EventConfirmation key={e._id} event={e} onResolved={() => void reload()} />
-      ))}
-
-      <dl className="detail-list">
-        <div>
-          <dt>Prochain rendez-vous</dt>
-          <dd>
-            {summary?.next
-              ? `${formatDateTime(summary.next.scheduledAt)} — ${summary.next.title}`
-              : <span className="muted">aucun de prévu</span>}
-          </dd>
-        </div>
-      </dl>
-
-      {ouvert ? (
-        <EventForm
-          projectId={projectId}
-          onCreated={() => { setOuvert(false); void reload(); }}
-          onCancel={() => setOuvert(false)}
-        />
-      ) : (
-        <button type="button" className="btn btn-secondary btn-small" onClick={() => setOuvert(true)}>
-          Planifier un événement
+    <>
+      <div className="contract-actions">
+        <button type="button" className="btn btn-primary btn-small" onClick={() => setVolet('reunion')}>
+          Planifier une réunion
         </button>
-      )}
+        <button type="button" className="btn btn-secondary btn-small" onClick={() => setVolet('evenement')}>
+          Ajouter un événement passé
+        </button>
+      </div>
 
-      {historique.length > 0 ? (
-        <>
-          <h3 className="section-title">Historique</h3>
-          <ul className="event-list">
-            {historique.map((e) => <EventRow key={e._id} event={e} />)}
-          </ul>
-        </>
+      {volet === 'reunion' ? (
+        <MeetingForm
+          projectId={projectId}
+          projectName={nom}
+          onCreated={() => { setVolet(null); toutRecharger(); }}
+          onCancel={() => setVolet(null)}
+        />
       ) : null}
-    </Card>
+      {volet === 'evenement' ? (
+        <PastEventForm
+          projectId={projectId}
+          projectName={nom}
+          onCreated={() => { setVolet(null); toutRecharger(); }}
+          onCancel={() => setVolet(null)}
+        />
+      ) : null}
+
+      {enAttente.length > 0 ? (
+        <Card title={`À confirmer (${enAttente.length})`}>
+          {enAttente.map((e) => (
+            <EventConfirmation key={e._id} event={e} onResolved={toutRecharger} />
+          ))}
+        </Card>
+      ) : null}
+
+      <Card title="Réunions à venir">
+        {meetings.length === 0 ? (
+          <p className="muted">Aucune réunion prévue avec ce client.</p>
+        ) : (
+          <ul className="event-list">
+            {meetings.map((m) => <MeetingRow key={m._id} meeting={m} showProject={false} />)}
+          </ul>
+        )}
+      </Card>
+
+      <Card title="Historique">
+        <div className="contract-actions">
+          <select value={filtreType} onChange={(e) => setFiltreType(e.target.value)}>
+            <option value="">Tous les types</option>
+            {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <select value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)}>
+            <option value="">Tous les états</option>
+            {['CONFIRMED', 'MISSED', 'CANCELLED'].map((s) => (
+              <option key={s} value={s}>{eventStatusState(s as never).label}</option>
+            ))}
+          </select>
+        </div>
+        {historique.length === 0 ? (
+          <p className="muted">Rien n’a encore été consigné pour ce client.</p>
+        ) : (
+          <ul className="event-list">
+            {historique.map((e) => <EventRow key={e._id} event={e} showProject={false} />)}
+          </ul>
+        )}
+      </Card>
+    </>
   );
 }

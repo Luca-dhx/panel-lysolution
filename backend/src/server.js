@@ -10,6 +10,7 @@ import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
+import { migrateLegacyEvents } from './services/events/eventsMigration.js';
 
 async function start() {
   await connectDatabase();
@@ -26,6 +27,12 @@ async function start() {
 
   const backend = await resolveBackendUrl();
   logger.info(`URL publique du Panel : ${backend.url ?? '(non configurée)'} [source ${backend.source}]`);
+
+  // Reprise de l'ancien modèle d'agenda, s'il en reste quelque chose. Avant
+  // l'ordonnanceur : il ne doit pas travailler sur des reliques.
+  await migrateLegacyEvents().catch((err) => {
+    logger.warn(`Migration de l’agenda impossible : ${err.message}`);
+  });
 
   // ÉCHÉANCES : un événement devient « à confirmer » même si personne n'a le
   // Panel ouvert. La détection est donc ici, pas dans un navigateur.

@@ -10,7 +10,7 @@ import type {
   HeartbeatRow, HeartbeatStats, SearchFacets, TimelineEvent,
 } from '@/types.supervision';
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
-import type { EventScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
+import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
@@ -192,30 +192,48 @@ export const api = {
     URL.revokeObjectURL(url);
   },
 
-  /* ── AGENDA ET ÉVÉNEMENTS — données PROPRES au Panel, aucun pont ─────── */
-  listEvents: (scope: EventScope, projectId?: string) =>
-    request<{ events: ProjectEvent[] }>(
-      `/api/events?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
+  /* ── AGENDA (réunions) et HISTORIQUE (événements) — aucun pont ────────── */
+  listMeetings: (scope: MeetingScope, projectId?: string) =>
+    request<{ meetings: Meeting[] }>(
+      `/api/meetings?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
     ),
+
+  planMeeting: (body: Record<string, unknown>) =>
+    request<{ meeting: Meeting }>('/api/meetings', { method: 'POST', body }),
+
+  cancelMeeting: (meetingId: string, reason?: string) =>
+    request<{ meeting: Meeting }>(`/api/meetings/${meetingId}/cancel`, {
+      method: 'POST', body: { reason },
+    }),
+
+  rescheduleMeeting: (meetingId: string, body: Record<string, unknown>) =>
+    request<{ previous: Meeting; next: Meeting }>(`/api/meetings/${meetingId}/reschedule`, {
+      method: 'POST', body,
+    }),
+
+  /** `projectId` est exigé : la vue globale se demande avec `scope=all`. */
+  listEvents: (params: { projectId?: string; type?: string; status?: string; all?: boolean }) => {
+    const q = new URLSearchParams();
+    if (params.projectId) q.set('projectId', params.projectId);
+    if (params.type) q.set('type', params.type);
+    if (params.status) q.set('status', params.status);
+    if (params.all) q.set('scope', 'all');
+    return request<{ events: ProjectEvent[] }>(`/api/events?${q.toString()}`);
+  },
 
   pendingEvents: () => request<{ events: ProjectEvent[] }>('/api/events/pending'),
 
   projectEvents: (projectId: string) =>
     request<ProjectEventsSummary>(`/api/events/project/${projectId}`),
 
-  createEvent: (body: Record<string, unknown>) =>
+  addPastEvent: (body: Record<string, unknown>) =>
     request<{ event: ProjectEvent }>('/api/events', { method: 'POST', body }),
 
-  completeEvent: (eventId: string, body: Record<string, unknown>) =>
-    request<{ event: ProjectEvent }>(`/api/events/${eventId}/complete`, { method: 'POST', body }),
+  confirmEvent: (eventId: string, body: Record<string, unknown>) =>
+    request<{ event: ProjectEvent }>(`/api/events/${eventId}/confirm`, { method: 'POST', body }),
 
   missEvent: (eventId: string, body: Record<string, unknown>) =>
     request<{ event: ProjectEvent }>(`/api/events/${eventId}/miss`, { method: 'POST', body }),
-
-  rescheduleEvent: (eventId: string, body: Record<string, unknown>) =>
-    request<{ previous: ProjectEvent; next: ProjectEvent }>(
-      `/api/events/${eventId}/reschedule`, { method: 'POST', body },
-    ),
 
   snoozeEvent: (eventId: string) =>
     request<{ event: ProjectEvent }>(`/api/events/${eventId}/snooze`, { method: 'POST' }),

@@ -29,7 +29,7 @@ export function createApp() {
   app.use('/bridge/v1', bridgeRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectsRoutes);
-  app.use('/api/events', eventsRoutes);
+  app.use('/api', eventsRoutes);
   app.use('/api/system-configuration', networkRoutes);
   app.use('/api/supervision', supervisionRoutes);
   app.use('/api/diagnostic', diagnosticRoutes);

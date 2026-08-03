@@ -6,6 +6,9 @@
  * ouvert. Faire dépendre la détection d'un onglet ferait qu'un lundi matin
  * sans connexion effacerait toutes les échéances du week-end.
  *
+ * À l'échéance, une réunion passe « à confirmer » et engendre UN événement en
+ * attente. Elle n'est jamais déclarée tenue : seul un humain le sait.
+ *
  * ── CADENCE ─────────────────────────────────────────────────────────────────
  * Une minute. Un rendez-vous ne se compte pas à la seconde, et une requête
  * indexée par minute ne coûte rien. Le premier passage a lieu au démarrage :
@@ -18,7 +21,7 @@
  * `unref` — il n'empêche jamais le processus de se terminer.
  */
 import logger from '../../utils/logger.js';
-import { markDueEvents } from './events.service.js';
+import { convertDueMeetings } from './meetings.service.js';
 
 const TICK_MS = 60_000;
 
@@ -33,11 +36,11 @@ export async function runEventCycle() {
   if (enCours) return { skipped: true };
   enCours = true;
   try {
-    return { due: await markDueEvents() };
+    return await convertDueMeetings();
   } catch (err) {
     // Une échéance ratée sera revue au cycle suivant : inutile de bruire.
     logger.warn(`Cycle des événements interrompu : ${err.message}`);
-    return { due: 0, error: err.message };
+    return { meetings: 0, events: 0, error: err.message };
   } finally {
     enCours = false;
   }
