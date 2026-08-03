@@ -226,12 +226,12 @@ section('Sync push — POST /bridge/v1/sync/push');
     headers: AUTH,
     body: {
       changes: [{
-        writeId: uuid(), entityType: 'CONTRACT', entityId: uuid(), deleted: false,
+        writeId: uuid(), entityType: 'INVOICE', entityId: uuid(), deleted: false,
         payload: {}, modifiedAt: iso(), emitter: 'PROJECT',
       }],
     },
   });
-  check('type réservé (CONTRACT) → REJECTED, jamais un 500',
+  check('type réservé (INVOICE) → REJECTED, jamais un 500',
     reserved.status === 200 && reserved.json.data.results[0].status === 'REJECTED');
   check('…avec le code BRIDGE_ENTITY_TYPE_UNSUPPORTED',
     reserved.json.data.results[0].code === 'BRIDGE_ENTITY_TYPE_UNSUPPORTED');
@@ -384,6 +384,110 @@ section('Surface interne /api : gardes et santé');
   });
   check('origine inconnue : aucun en-tête CORS',
     corsRejected.headers.get('access-control-allow-origin') === null);
+}
+
+section('LOT 1B — projecteurs métier : identité et contrat');
+{
+  const { PanelProjectPresentation, PanelProjectContract } = await import(
+    '../backend/src/models/PanelProjectProjection.model.js'
+  );
+  // Projet NEUF : l'appairage précédent a été révoqué plus haut dans ce fichier.
+  const site = await registry.declareProject({
+    publicBackendUrl: 'https://garage-nord.test', projectName: 'Garage du Nord',
+  });
+  const paired = await call('POST', '/bridge/v1/pairings', {
+    headers: H,
+    body: {
+      contractVersion: CONTRACT_VERSION, projectKey: 'garage-nord',
+      projectName: 'Garage du Nord', environment: 'TEST', softwareVersion: '1.0.0',
+      publicBackendUrl: 'https://garage-nord.test', pairingCode: site.pairingCode,
+    },
+  });
+  const projectId = site.record.projectId;
+  const auth = { ...H, authorization: `Bearer ${paired.json.data.bridgeToken}` };
+  const entityId = uuid();
+
+  const push = (change) => call('POST', '/bridge/v1/sync/push', {
+    headers: auth, body: { changes: [change] },
+  });
+
+  // --- PROJECT_PRESENTATION ---------------------------------------------
+  const presentation = {
+    writeId: uuid(), entityType: 'PROJECT_PRESENTATION', entityId, deleted: false,
+    modifiedAt: iso(), emitter: 'PROJECT',
+    payload: {
+      companyName: 'Garage du Nord', tagline: 'Depuis 1998',
+      logoUrl: 'https://api.exemple.test/uploads/logo.png',
+      contacts: { email: 'contact@exemple.test', phone: '+33 3 20 11 22 33' },
+      project: { name: 'garage-nord', description: 'Depuis 1998' },
+      network: { website: 'https://garage-nord.test', manager: 'https://manager.garage-nord.test' },
+    },
+  };
+  const applied = await push(presentation);
+  check('PROJECT_PRESENTATION appliqué', applied.json?.data?.results?.[0]?.status === 'APPLIED');
+
+  const stored = await PanelProjectPresentation.findOne({ projectId }).lean();
+  check('…projeté avec le nom commercial', stored?.companyName === 'Garage du Nord');
+  check('…les contacts', stored?.contacts?.email === 'contact@exemple.test');
+  check('…et les URLs nommées', stored?.network?.website === 'https://garage-nord.test');
+
+  // Rejouer le MÊME writeId : idempotence.
+  const replay = await push(presentation);
+  check('rejouer la même écriture → DUPLICATE', replay.json?.data?.results?.[0]?.status === 'DUPLICATE');
+  check('…sans créer de seconde projection',
+    (await PanelProjectPresentation.countDocuments({ projectId })) === 1);
+
+  // Une écriture PLUS ANCIENNE ne doit pas écraser l'état courant.
+  const older = await push({
+    ...presentation, writeId: uuid(), modifiedAt: iso(-600_000),
+    payload: { ...presentation.payload, companyName: 'Ancien nom' },
+  });
+  check('une écriture ANTÉRIEURE est ignorée (dernier écrit gagne)',
+    older.json?.data?.results?.[0]?.status === 'IGNORED');
+  check('…et le nom courant est intact',
+    (await PanelProjectPresentation.findOne({ projectId }).lean())?.companyName === 'Garage du Nord');
+
+  // Payload invalide : refus SANS écriture partielle.
+  const invalid = await push({
+    writeId: uuid(), entityType: 'PROJECT_PRESENTATION', entityId, deleted: false,
+    modifiedAt: iso(60_000), emitter: 'PROJECT',
+    payload: { companyName: 'X', logoUrl: '/uploads/pas-une-url' },
+  });
+  check('payload non conforme → REJECTED',
+    invalid.json?.data?.results?.[0]?.status === 'REJECTED');
+  check('…avec le code ENTITY_PAYLOAD_INVALID',
+    invalid.json?.data?.results?.[0]?.code === 'ENTITY_PAYLOAD_INVALID');
+  check('…et AUCUNE écriture partielle',
+    (await PanelProjectPresentation.findOne({ projectId }).lean())?.companyName === 'Garage du Nord');
+
+  // --- CONTRACT ----------------------------------------------------------
+  const contract = await push({
+    writeId: uuid(), entityType: 'CONTRACT', entityId, deleted: false,
+    modifiedAt: iso(), emitter: 'PROJECT',
+    payload: {
+      sourceContractId: 'c-1', status: 'ACTIVE', reference: 'CTR-2026-0001',
+      activatedAt: iso(-86_400_000),
+      pricing: {
+        subscription: { amountIncludingTax: 4900, currency: 'EUR', interval: 'month' },
+        launchFee: { amountIncludingTax: 99000, currency: 'EUR' },
+      },
+    },
+  });
+  check('CONTRACT appliqué', contract.json?.data?.results?.[0]?.status === 'APPLIED');
+  const storedContract = await PanelProjectContract.findOne({ projectId }).lean();
+  check('…statut projeté', storedContract?.status === 'ACTIVE');
+  check('…montant de l’abonnement', storedContract?.pricing?.subscription?.amountIncludingTax === 4900);
+  check('…périodicité', storedContract?.pricing?.subscription?.interval === 'month');
+  check('…frais de mise en service', storedContract?.pricing?.launchFee?.amountIncludingTax === 99000);
+
+  // Tombstone : plus aucun contrat pertinent.
+  const removed = await push({
+    writeId: uuid(), entityType: 'CONTRACT', entityId, deleted: true,
+    payload: null, modifiedAt: iso(120_000), emitter: 'PROJECT',
+  });
+  check('un tombstone CONTRACT est appliqué', removed.json?.data?.results?.[0]?.status === 'APPLIED');
+  check('…et la projection disparaît',
+    (await PanelProjectContract.countDocuments({ projectId })) === 0);
 }
 
 await close();

@@ -264,7 +264,7 @@ export async function recordHeartbeat(record, heartbeat) {
 
 
 // Projection publique d'une fiche : jamais un hash, jamais un secret chiffré.
-export function toPublicProject(record, now = Date.now()) {
+export function toPublicProject(record, now = Date.now(), projections = {}) {
   const capabilities = interpretCapabilities(record.manifest);
   return {
     projectId: record.projectId,
@@ -297,7 +297,31 @@ export function toPublicProject(record, now = Date.now()) {
     // « jamais constatée », ce qui n'est pas « rien appliqué ».
     appliedConfiguration: record.appliedConfiguration ?? null,
     note: record.note ?? null,
+    // PROJECTIONS MÉTIER (Lot 1b) — poussées par le projet, rafraîchies à
+    // chaque modification. `null` = jamais reçue, ce qui n'est pas « vide ».
+    business: {
+      presentation: projections.presentation ?? null,
+      contract: projections.contract ?? null,
+    },
   };
+}
+
+/**
+ * Charge les projections métier d'un LOT de projets en deux requêtes, puis les
+ * distribue. Une requête par projet ferait N+1 sur la page « Projets clients ».
+ */
+export async function loadBusinessProjections(projectIds) {
+  const { PanelProjectContract, PanelProjectPresentation } = await import(
+    '../../models/PanelProjectProjection.model.js'
+  );
+  const [presentations, contracts] = await Promise.all([
+    PanelProjectPresentation.find({ projectId: { $in: projectIds } }).lean(),
+    PanelProjectContract.find({ projectId: { $in: projectIds } }).lean(),
+  ]);
+  const byId = new Map(projectIds.map((id) => [id, { presentation: null, contract: null }]));
+  for (const p of presentations) if (byId.has(p.projectId)) byId.get(p.projectId).presentation = p;
+  for (const c of contracts) if (byId.has(c.projectId)) byId.get(c.projectId).contract = c;
+  return byId;
 }
 
 /**

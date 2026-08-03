@@ -23,6 +23,9 @@ import { useIsDev } from '@/auth/RequireDev';
 import type { PublicProject } from '@/types';
 import {
   connectionState,
+  contractState,
+  formatAmount,
+  formatInterval,
   lastContact,
   linkState,
   projectAlert,
@@ -158,6 +161,7 @@ function OverviewTab({
   const site = siteState(project);
   const lastSync = project.runtime.bridgeStats?.lastSyncAt ?? null;
   const contacts = projectContacts(project);
+  const contract = project.business?.contract ?? null;
 
   return (
     <>
@@ -221,6 +225,45 @@ function OverviewTab({
         </Card>
       ) : null}
 
+      {contract ? (
+        <Card title="Contrat">
+          <dl className="detail-list">
+            <div>
+              <dt>Statut</dt>
+              <dd>
+                <span className={toneBadgeClass(contractState(contract.status).tone)}>
+                  {contractState(contract.status).label}
+                </span>
+              </dd>
+            </div>
+            {contract.reference ? (
+              <div><dt>Référence</dt><dd>{contract.reference}</dd></div>
+            ) : null}
+            {formatAmount(contract.pricing.subscription) ? (
+              <div>
+                <dt>Abonnement</dt>
+                <dd>
+                  {formatAmount(contract.pricing.subscription)}
+                  {formatInterval(contract.pricing.subscription?.interval)
+                    ? ` ${formatInterval(contract.pricing.subscription?.interval)}`
+                    : ''}
+                </dd>
+              </div>
+            ) : null}
+            {formatAmount(contract.pricing.launchFee) ? (
+              <div><dt>Frais de mise en service</dt><dd>{formatAmount(contract.pricing.launchFee)}</dd></div>
+            ) : null}
+            {contract.activatedAt ? (
+              <div><dt>Activé le</dt><dd>{formatDateTime(contract.activatedAt)}</dd></div>
+            ) : null}
+          </dl>
+        </Card>
+      ) : (
+        <Card title="Contrat">
+          <p className="muted">Aucun contrat actif synchronisé.</p>
+        </Card>
+      )}
+
       <Card title="Suivi">
         <dl className="detail-list">
           <div>
@@ -245,8 +288,8 @@ function OverviewTab({
 
       {/* Ce qui manque est DIT, jamais simulé par un encart vide. */}
       <div className="alert alert-info">
-        Le contrat, les factures, les rendez-vous et l’historique des échanges ne sont pas encore
-        remontés depuis le site : ils apparaîtront ici une fois la synchronisation métier en place.
+        Les factures, les rendez-vous et l’historique des échanges ne sont pas encore remontés
+        depuis le site : ils apparaîtront ici une fois leur synchronisation en place.
       </div>
     </>
   );

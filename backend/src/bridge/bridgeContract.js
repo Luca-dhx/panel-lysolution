@@ -139,11 +139,22 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
   'INTEGRATED_API_MODE',
   'EVENT',
   'MEETING',
+  // >= 1.4.x — IDENTITE COMMERCIALE poussee par le projet. Le manifeste
+  // ne la porte qu'au (re)chargement ; cette entite la fait remonter a
+  // CHAQUE modification, sans action humaine.
+  'PROJECT_PRESENTATION',
 ]);
 
-// Seuls types appliqués en Phase 2B — les autres répondent REJECTED
-// (BRIDGE_ENTITY_TYPE_UNSUPPORTED), jamais un 500.
-export const APPLIED_ENTITY_TYPES = Object.freeze(['DIAGNOSTIC']);
+// Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
+// (BRIDGE_ENTITY_TYPE_UNSUPPORTED), jamais un 500. Cette liste DOIT rester
+// alignée sur la table de projecteurs (`services/sync/projectors.js`) : elle
+// est ce que le Panel déclare, la table est ce qu'il sait faire. Un test de
+// synchronisation vérifie qu'elles ne divergent pas.
+export const APPLIED_ENTITY_TYPES = Object.freeze([
+  'DIAGNOSTIC',
+  'PROJECT_PRESENTATION',
+  'CONTRACT',
+]);
 
 export const EMITTERS = Object.freeze({ PANEL: 'PANEL', PROJECT: 'PROJECT' });
 
@@ -308,6 +319,81 @@ export const syncChangeSchema = z
     payload: z.unknown().nullable().optional(),
     modifiedAt: isoDate,
     emitter: z.enum([EMITTERS.PANEL, EMITTERS.PROJECT]),
+  })
+  .strict();
+
+/**
+ * PAYLOADS MÉTIER — le transport reste générique (`payload: z.unknown()`),
+ * mais chaque type appliqué valide STRICTEMENT son contenu avant projection.
+ *
+ * Sans cela, un projet plus récent — ou fautif — écrirait n'importe quoi dans
+ * les collections du Panel, et l'erreur ne se verrait qu'à l'affichage. Un
+ * payload non conforme est REJETÉ, sans écriture partielle.
+ */
+export const projectPresentationPayloadSchema = z
+  .object({
+    companyName: z.string().min(1).optional(),
+    tagline: z.string().min(1).optional(),
+    logoUrl: z.string().url().optional(),
+    faviconUrl: z.string().url().optional(),
+    contacts: z
+      .object({
+        email: z.string().min(1).optional(),
+        phone: z.string().min(1).optional(),
+        website: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    project: z
+      .object({
+        name: z.string().min(1).optional(),
+        description: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+    network: z
+      .object({
+        website: z.string().min(1).optional(),
+        manager: z.string().min(1).optional(),
+        backend: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+/**
+ * CONTRAT projeté — strictement ce que le Panel affiche. Pas de date
+ * d'expiration : elle n'existe nulle part, et l'inventer serait pire que de
+ * ne rien montrer.
+ */
+export const contractPayloadSchema = z
+  .object({
+    sourceContractId: z.string().min(1),
+    status: z.string().min(1),
+    reference: z.string().nullable().optional(),
+    createdAt: z.string().nullable().optional(),
+    activatedAt: z.string().nullable().optional(),
+    pricing: z
+      .object({
+        subscription: z
+          .object({
+            amountIncludingTax: z.number().nullable().optional(),
+            currency: z.string().nullable().optional(),
+            interval: z.string().nullable().optional(),
+          })
+          .strict()
+          .optional(),
+        launchFee: z
+          .object({
+            amountIncludingTax: z.number().nullable().optional(),
+            currency: z.string().nullable().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

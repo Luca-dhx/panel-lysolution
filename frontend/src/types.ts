@@ -63,6 +63,44 @@ export interface PublicProject {
   appliedConfiguration: AppliedConfiguration | null;
   /** Note de supervision saisie côté Panel, jamais transmise au projet. */
   note: string | null;
+  /**
+   * PROJECTIONS MÉTIER poussées par le projet (Lot 1b). `null` = jamais reçue,
+   * ce qui n'est pas « vide » : le Panel ne suppose rien à leur place.
+   */
+  business: {
+    presentation: BusinessPresentation | null;
+    contract: BusinessContract | null;
+  };
+}
+
+export interface BusinessPresentation {
+  companyName: string | null;
+  tagline: string | null;
+  logoUrl: string | null;
+  faviconUrl: string | null;
+  contacts: { email: string | null; phone: string | null; website: string | null };
+  projectName: string | null;
+  description: string | null;
+  network: { website: string | null; manager: string | null; backend: string | null };
+  sourceModifiedAt: string;
+  receivedAt: string;
+}
+
+export interface BusinessAmount {
+  amountIncludingTax: number | null;
+  currency: string | null;
+  interval?: string | null;
+}
+
+export interface BusinessContract {
+  sourceContractId: string;
+  status: string;
+  reference: string | null;
+  createdAt: string | null;
+  activatedAt: string | null;
+  pricing: { subscription: BusinessAmount | null; launchFee: BusinessAmount | null };
+  sourceModifiedAt: string;
+  receivedAt: string;
 }
 
 /** Descripteur publié par le projet (voir `describeProject` côté Panel). */

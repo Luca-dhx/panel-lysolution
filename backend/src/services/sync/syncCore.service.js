@@ -5,6 +5,7 @@
 // survivent à un redémarrage (une relivraison après reboot répond DUPLICATE,
 // jamais une double application).
 // Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
+import { ENTITY_PAYLOAD_INVALID, PROJECTORS } from './projectors.js';
 import {
   ACK_STATUS,
   APPLIED_ENTITY_TYPES,
@@ -64,7 +65,7 @@ export async function applyIncoming(projectId, changes) {
       continue;
     }
 
-    if (!APPLIED_ENTITY_TYPES.includes(change.entityType)) {
+    if (!PROJECTORS[change.entityType]) {
       // Type réservé à un lot de Phase 3 : refus propre, writeId NON consigné
       // (le jour où le lot est livré, une relivraison sera appliquée).
       results.push({
@@ -87,13 +88,28 @@ export async function applyIncoming(projectId, changes) {
       continue;
     }
 
+    // PROJECTION — le seul endroit spécifique au type, et il est délégué.
+    // Un payload non conforme est REJETÉ avant toute écriture : ni reçu, ni
+    // état d'entité, ni projection partielle. Le writeId n'est pas consigné,
+    // de sorte qu'une correction du projet soit relivrée et appliquée.
+    try {
+      await PROJECTORS[change.entityType]({ projectId, change });
+    } catch (err) {
+      results.push({
+        writeId: change.writeId,
+        status: ACK_STATUS.REJECTED,
+        code: err?.details?.code ?? ENTITY_PAYLOAD_INVALID,
+        message: err?.message ?? 'Payload refusé.',
+      });
+      continue;
+    }
+
     await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
     await PanelSyncEntityState.updateOne(
       { projectId, entityType: change.entityType, entityId: change.entityId },
       { $set: { modifiedAt: change.modifiedAt } },
       { upsert: true },
     );
-    await PanelDiagnostic.create({ projectId, change, receivedAt: nowIso() });
     results.push({ writeId: change.writeId, status: ACK_STATUS.APPLIED, code: null, message: null });
   }
 

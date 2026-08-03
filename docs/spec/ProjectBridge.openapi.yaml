@@ -583,6 +583,7 @@ components:
                   - INTEGRATED_API_MODE
                   - EVENT
                   - MEETING
+                  - PROJECT_PRESENTATION
             operations:
               type: array
               items: { type: string }
@@ -708,6 +709,7 @@ components:
             - INTEGRATED_API_MODE
             - EVENT
             - MEETING
+            - PROJECT_PRESENTATION
         entityId: { type: string, format: uuid }
         deleted: { type: boolean }
         payload: { nullable: true }

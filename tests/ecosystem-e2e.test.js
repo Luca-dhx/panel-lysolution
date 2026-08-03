@@ -79,7 +79,7 @@ const { createApp } = await import('../backend/src/app.js');
 const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
 await seedFromEnv();
 
-const panelServer = await listen(createApp());
+let panelServer = await listen(createApp());
 const PANEL_URL = `http://127.0.0.1:${panelServer.port}`;
 check(`Panel démarré sur ${PANEL_URL}`, panelServer.port > 0);
 
@@ -189,7 +189,7 @@ section('Démarrage du PROJET (backend réel, base distincte, autre port)');
 // Le projet tourne dans un processus séparé : ses variables d'environnement
 // et ses singletons Mongoose ne doivent PAS entrer en collision avec ceux du
 // Panel, qui vivent déjà dans ce processus.
-const projectProc = await startProject({
+let projectProc = await startProject({
   projectRoot,
   mongoUri: projectMongo.getUri(),
   panelUrl: PANEL_URL,
@@ -410,6 +410,99 @@ check('le projet a OUBLIÉ l’API révoquée',
   (afterRevoke.json.data.integratedApis ?? []).length === 0);
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+section('LOT 1B — Synchronisation AUTOMATIQUE de l’identité et du contrat');
+
+// Le Panel ne doit plus dépendre d'un « Rafraîchir le Manifest » : une
+// modification faite dans le Manager doit remonter d'elle-même.
+const PanelPresentation = (await import('../backend/src/models/PanelProjectProjection.model.js'))
+  .PanelProjectPresentation;
+const PanelContract = (await import('../backend/src/models/PanelProjectProjection.model.js'))
+  .PanelProjectContract;
+
+/** Attend qu'une condition devienne vraie — la synchronisation est asynchrone. */
+async function eventually(label, predicate, { timeoutMs = 15_000, stepMs = 400 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await predicate()) return true;
+    if (Date.now() > deadline) {
+      console.error(`    (délai dépassé : ${label})`);
+      return false;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+}
+
+// L'amorçage post-appairage a déjà dû livrer identité et contrat.
+check('après appairage, l’identité est arrivée SANS action manuelle',
+  await eventually('présentation initiale', async () =>
+    (await PanelPresentation.countDocuments({ projectId })) === 1));
+
+// ── Modification RÉELLE via la route du Manager ──────────────────────────
+const NOUVEAU_NOM = 'Garage du Nord — Synchro Auto';
+const majCompany = await http('PUT', `${projectProc.baseUrl}/api/company`, {
+  headers: projectProc.auth,
+  body: { name: NOUVEAU_NOM, tagline: 'Entretien et réparation depuis 1998' },
+});
+check('la sauvegarde du Manager réussit immédiatement', majCompany.status === 200);
+
+const t0 = Date.now();
+const nomArrive = await eventually('nom commercial', async () => {
+  const p = await PanelPresentation.findOne({ projectId }).lean();
+  return p?.companyName === NOUVEAU_NOM;
+});
+check('le nom commercial remonte AUTOMATIQUEMENT au Panel', nomArrive);
+if (nomArrive) console.log(`    (propagation observée en ~${Date.now() - t0} ms)`);
+
+const projete = await PanelPresentation.findOne({ projectId }).lean();
+check('…avec le slogan', projete?.tagline === 'Entretien et réparation depuis 1998');
+check('…et aucun clic « Rafraîchir le Manifest » n’a été nécessaire', true);
+
+// ── Coupure du Panel, modification, redémarrage du projet ────────────────
+await panelServer.close();
+
+const horsLigne = await http('PUT', `${projectProc.baseUrl}/api/company`, {
+  headers: projectProc.auth,
+  body: { name: 'Garage du Nord — Hors ligne', tagline: 'Modifié Panel éteint' },
+});
+check('Panel ÉTEINT : la sauvegarde métier réussit quand même', horsLigne.status === 200);
+
+// On laisse la mise en file se faire, puis on redémarre le projet : l'outbox
+// est durable, elle doit survivre.
+await new Promise((r) => setTimeout(r, 1500));
+await projectProc.stop();
+// Le projet redémarre AVEC son ordonnanceur — c'est la configuration réelle,
+// et c'est lui qui doit rattraper tout seul. Cadence courte pour ne pas faire
+// durer la recette ; en production elle se compte en dizaines de secondes.
+const projectAgain = await startProject({
+  projectRoot,
+  mongoUri: projectMongo.getUri(),
+  panelUrl: PANEL_URL,
+  env: { PANEL_SCHEDULER_ENABLED: 'true', PANEL_SYNC_INTERVAL_S: '2', PANEL_HEARTBEAT_INTERVAL_S: '5' },
+});
+check('le projet redémarre', projectAgain.port > 0);
+
+// Le Panel revient. Aucune action humaine : le rattrapage doit se faire seul.
+const panelBack = await listen(createApp(), panelServer.port);
+check('le Panel redémarre sur le même port', panelBack.port === panelServer.port);
+
+const rattrape = await eventually('rattrapage après reconnexion', async () => {
+  const p = await PanelPresentation.findOne({ projectId }).lean();
+  return p?.companyName === 'Garage du Nord — Hors ligne';
+}, { timeoutMs: 40_000, stepMs: 1000 });
+check('RATTRAPAGE : la modification faite Panel éteint finit par arriver', rattrape);
+
+await panelBack.close();
+await projectAgain.stop();
+// On rend la main au scénario suivant avec un Panel vivant et le projet initial.
+const panelResumed = await listen(createApp(), panelServer.port);
+projectProc = await startProject({
+  projectRoot, mongoUri: projectMongo.getUri(), panelUrl: PANEL_URL,
+});
+panelServer = panelResumed;
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 section('LOT 6 — Récupération après interruption du Panel');
 
 await panelServer.close();
@@ -495,7 +588,7 @@ async function http(method, url, { headers = {}, body } = {}) {
  * même processus les ferait se marcher dessus — et le test ne prouverait plus
  * que deux applications distinctes savent se parler.
  */
-async function startProject({ projectRoot: root, mongoUri, panelUrl }) {
+async function startProject({ projectRoot: root, mongoUri, panelUrl, env: envOverrides = {} }) {
   const { spawn } = await import('node:child_process');
   const bootPath = path.join(here, 'helpers', 'project-e2e-boot.mjs');
 
@@ -521,6 +614,7 @@ async function startProject({ projectRoot: root, mongoUri, panelUrl }) {
       // des minuteurs de fond rendraient les assertions non déterministes.
       PANEL_SCHEDULER_ENABLED: 'false',
       PORT: '0',
+      ...envOverrides,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -25,6 +25,9 @@ import { useIsDev } from '@/auth/RequireDev';
 import type { ProbeResult } from '@/types.company';
 import {
   connectionState,
+  contractState,
+  formatAmount,
+  formatInterval,
   lastContact,
   projectDescription,
   projectDisplayName,
@@ -213,6 +216,8 @@ export function ProjectsPage() {
             const url = projectSiteUrl(project);
             const domain = projectDomain(project);
             const logoUrl = projectLogoUrl(project);
+            const contract = project.business?.contract ?? null;
+            const abonnement = formatAmount(contract?.pricing?.subscription ?? null);
             const description = projectDescription(project);
             return (
               <Card key={project.projectId}>
@@ -241,6 +246,22 @@ export function ProjectsPage() {
                         <span>{domain}</span>
                       ) : null}
                     </div>
+
+                    {contract ? (
+                      <div className="project-row-meta">
+                        <span className={toneBadgeClass(contractState(contract.status).tone)}>
+                          {contractState(contract.status).label}
+                        </span>
+                        {abonnement ? (
+                          <span>
+                            {abonnement}
+                            {formatInterval(contract.pricing.subscription?.interval)
+                              ? ` ${formatInterval(contract.pricing.subscription?.interval)}`
+                              : ''}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                     {project.note ? <p className="cell-secondary">{project.note}</p> : null}
                   </div>

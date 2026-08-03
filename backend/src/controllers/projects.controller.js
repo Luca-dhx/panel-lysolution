@@ -7,6 +7,7 @@ import {
   describeConformity,
   getProjectOrThrow,
   listProjects,
+  loadBusinessProjections,
   removeProject,
   toPublicProject,
   updateManifest,
@@ -21,13 +22,18 @@ import { probeProjectUrl } from '../services/registry/probe.service.js';
 export async function list(_req, res) {
   const now = Date.now();
   const records = await listProjects();
-  return ok(res, { projects: records.map((record) => toPublicProject(record, now)) });
+  const projections = await loadBusinessProjections(records.map((r) => r.projectId));
+  return ok(res, {
+    projects: records.map((record) =>
+      toPublicProject(record, now, projections.get(record.projectId))),
+  });
 }
 
 export async function detail(req, res) {
   const record = await getProjectOrThrow(req.params.projectId);
+  const projections = await loadBusinessProjections([record.projectId]);
   return ok(res, {
-    project: toPublicProject(record),
+    project: toPublicProject(record, Date.now(), projections.get(record.projectId)),
     conformity: describeConformity(record),
   });
 }

@@ -25,6 +25,7 @@ const panelSpec = fs.readFileSync(path.join(root, 'docs/spec/PanelBridge.openapi
 const projectSpec = fs.readFileSync(path.join(root, 'docs/spec/ProjectBridge.openapi.yaml'), 'utf8');
 
 const contract = await import('../backend/src/bridge/bridgeContract.js');
+const { PROJECTED_ENTITY_TYPES } = await import('../backend/src/services/sync/projectors.js');
 const { PROJECT_BRIDGE_CLIENT_METHODS, ProjectBridgeClient } = await import(
   '../backend/src/bridge/ProjectBridgeClient.js'
 );
@@ -76,13 +77,20 @@ section('Catalogues d’erreurs BRIDGE_*');
 
 section('Types d’entités synchronisées');
 {
-  check('12 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 12);
+  check('13 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 13);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => projectSpec.includes(`- ${t}`)));
-  check('Phase 2B : seul DIAGNOSTIC est appliqué',
-    contract.APPLIED_ENTITY_TYPES.length === 1 && contract.APPLIED_ENTITY_TYPES[0] === 'DIAGNOSTIC');
+  // Ce que le Panel DÉCLARE appliquer doit être exactement ce qu'il SAIT
+  // projeter : deux listes qui divergent, et un projet se voit refuser une
+  // écriture que le Panel prétendait accepter.
+  check('les types appliqués sont ceux de la table de projecteurs',
+    JSON.stringify([...contract.APPLIED_ENTITY_TYPES].sort())
+      === JSON.stringify([...PROJECTED_ENTITY_TYPES].sort()));
+  check('DIAGNOSTIC, PROJECT_PRESENTATION et CONTRACT sont appliqués',
+    contract.APPLIED_ENTITY_TYPES.length === 3
+    && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT'].every((t) => contract.APPLIED_ENTITY_TYPES.includes(t)));
   check('statuts d’accusé conformes', ['APPLIED', 'DUPLICATE', 'IGNORED', 'REJECTED'].every(
     (s) => contract.ACK_STATUS[s] === s && panelSpec.includes(s),
   ));

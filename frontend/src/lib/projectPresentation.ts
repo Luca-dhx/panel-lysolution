@@ -29,6 +29,10 @@ import type { PublicProject } from '@/types';
  * comme titre donnerait des libellés de trois lignes.
  */
 export function projectDisplayName(project: PublicProject): string {
+  // La projection POUSSÉE prime : elle arrive à chaque modification, alors que
+  // le manifeste n'est relu qu'à l'appairage ou sur action manuelle.
+  const pushed = project.business?.presentation?.companyName?.trim();
+  if (pushed) return pushed;
   const commercial = project.descriptor?.presentation?.companyName?.trim();
   if (commercial) return commercial;
   const fromManifest = project.descriptor?.name?.trim();
@@ -44,6 +48,8 @@ export function projectDisplayName(project: PublicProject): string {
  * identique, sur chaque duplicata.
  */
 export function projectDescription(project: PublicProject): string | null {
+  const pushed = project.business?.presentation?.tagline?.trim();
+  if (pushed) return pushed;
   const tagline = project.descriptor?.presentation?.tagline?.trim();
   if (tagline) return tagline;
   const d = project.descriptor?.description?.trim();
@@ -56,6 +62,8 @@ export function projectDescription(project: PublicProject): string | null {
  * l'absence de logo, l'appelant affiche les initiales.
  */
 export function projectLogoUrl(project: PublicProject): string | null {
+  const pushed = project.business?.presentation?.logoUrl?.trim();
+  if (pushed) return pushed;
   const logo = project.descriptor?.presentation?.logoUrl?.trim();
   return logo && logo.length > 0 ? logo : null;
 }
@@ -66,6 +74,14 @@ export function projectContacts(project: PublicProject): {
   phone?: string;
   website?: string;
 } | null {
+  const pushed = project.business?.presentation?.contacts;
+  if (pushed && Object.values(pushed).some(Boolean)) {
+    return {
+      ...(pushed.email ? { email: pushed.email } : {}),
+      ...(pushed.phone ? { phone: pushed.phone } : {}),
+      ...(pushed.website ? { website: pushed.website } : {}),
+    };
+  }
   const c = project.descriptor?.presentation?.contacts;
   return c && Object.keys(c).length > 0 ? c : null;
 }
@@ -93,6 +109,8 @@ export function projectInitials(project: PublicProject): string {
  * TEXTE, sans prétendre être cliquable.
  */
 export function projectSiteUrl(project: PublicProject): string | null {
+  const pushed = project.business?.presentation?.network?.website?.trim();
+  if (pushed) return pushed;
   const site = project.descriptor?.urls?.website?.trim();
   return site && site.length > 0 ? site : null;
 }
@@ -261,4 +279,54 @@ export function toneBadgeClass(tone: Tone): string {
   if (tone === 'warn') return 'badge badge-warn';
   if (tone === 'error') return 'badge badge-danger';
   return 'badge badge-muted';
+}
+
+/* -------------------------------------------------------------------------- */
+/*  CONTRAT — tel que le projet le publie                                     */
+/* -------------------------------------------------------------------------- */
+
+/** Statut de contrat, en français. Les codes restent côté Développeur. */
+export function contractState(status: string): ReadableState {
+  switch (status) {
+    case 'ACTIVE':
+      return { label: 'Contrat actif', tone: 'ok' };
+    case 'CANCEL_AT_PERIOD_END':
+      return { label: 'Résilié — actif jusqu’à l’échéance', tone: 'warn' };
+    case 'ENDED':
+      return { label: 'Contrat terminé', tone: 'error' };
+    case 'CANCELLED':
+      return { label: 'Contrat annulé', tone: 'error' };
+    case 'FAILED':
+      return { label: 'Contrat en échec', tone: 'error' };
+    case 'INACTIVE':
+    case 'ACTIVATION_IN_PROGRESS':
+      return { label: 'En cours d’activation', tone: 'warn' };
+    case 'PENDING_DEV_SIGNATURE':
+    case 'DRAFT':
+      return { label: 'En préparation', tone: 'neutral' };
+    default:
+      return { label: status, tone: 'neutral' };
+  }
+}
+
+/** Montants en CENTIMES côté projet — on les rend lisibles, jamais bruts. */
+export function formatAmount(amount: { amountIncludingTax: number | null; currency: string | null } | null): string | null {
+  if (!amount || amount.amountIncludingTax === null) return null;
+  const value = amount.amountIncludingTax / 100;
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: amount.currency || 'EUR',
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${amount.currency ?? ''}`.trim();
+  }
+}
+
+/** « par mois » / « par an » — jamais `interval: 'month'`. */
+export function formatInterval(interval: string | null | undefined): string | null {
+  if (!interval) return null;
+  if (/month/i.test(interval)) return 'par mois';
+  if (/year|annual/i.test(interval)) return 'par an';
+  return interval;
 }
