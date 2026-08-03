@@ -24,10 +24,21 @@ import type { BusinessContract, ContractOperation, PublicProject } from '@/types
 
 const CANCEL_NOW = 'contract.cancel_now';
 
-/** État du document, en français, sans jargon de signature électronique. */
-function documentState(contract: BusinessContract): { label: string; tone: 'ok' | 'warn' | 'neutral' } {
+/**
+ * État du document, en français, sans jargon de signature électronique.
+ *
+ * « Momentanément indisponible » n'est pas « non généré » : le document
+ * existe, c'est le lien avec le projet qui est rompu. Confondre les deux ferait
+ * croire qu'un contrat n'a jamais été produit alors qu'il attend simplement
+ * que le site revienne.
+ */
+function documentState(
+  contract: BusinessContract,
+  joignable: boolean,
+): { label: string; tone: 'ok' | 'warn' | 'neutral' } {
   const doc = contract.document;
   if (!doc?.available) return { label: 'Non généré', tone: 'neutral' };
+  if (!joignable) return { label: 'Momentanément indisponible', tone: 'warn' };
   if (doc.kind === 'SIGNED') return { label: 'Signé', tone: 'ok' };
   if (doc.signatureStatus === 'ONGOING') return { label: 'En attente de signature', tone: 'warn' };
   if (doc.signatureStatus === 'DECLINED') return { label: 'Signature refusée', tone: 'warn' };
@@ -76,7 +87,9 @@ export function ContractCard({
   }
 
   const doc = contract.document;
-  const etatDoc = documentState(contract);
+  // Le projet doit être relié pour que le document puisse être RÉCUPÉRÉ.
+  const joignable = project.pairing.status === 'PAIRED';
+  const etatDoc = documentState(contract, joignable);
   const statut = contractState(contract.status);
 
   const telecharger = async () => {
@@ -147,7 +160,7 @@ export function ContractCard({
         </div>
       </dl>
 
-      {doc?.available ? (
+      {doc?.available && joignable ? (
         <button
           type="button"
           className="btn btn-secondary btn-small"
@@ -156,6 +169,11 @@ export function ContractCard({
         >
           {telechargement ? 'Récupération…' : 'Télécharger le contrat'}
         </button>
+      ) : doc?.available ? (
+        <p className="muted">
+          Le document existe, mais le lien avec le projet est rompu : il sera de nouveau
+          téléchargeable dès le retour du site.
+        </p>
       ) : (
         <p className="muted">
           Le projet n’a publié aucun document. Il reste consultable dans son Manager.
