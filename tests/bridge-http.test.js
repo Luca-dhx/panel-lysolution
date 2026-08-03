@@ -480,6 +480,32 @@ section('LOT 1B — projecteurs métier : identité et contrat');
   check('…périodicité', storedContract?.pricing?.subscription?.interval === 'month');
   check('…frais de mise en service', storedContract?.pricing?.launchFee?.amountIncludingTax === 99000);
 
+  // ── RÉPARATION : le reçu existe, la projection a disparu ────────────────
+  // C'est exactement l'impasse observée en production : une écriture refusée
+  // pour un payload invalide, corrigée à la source, revient avec un état déjà
+  // consigné. Sans réparation, l'accusé la retire de la file du projet sans
+  // que rien ne soit jamais écrit ici.
+  await PanelProjectPresentation.deleteMany({ projectId });
+  const reparation = await push(presentation); // MÊME writeId, MÊME état
+  check('reçu déjà connu mais projection absente → on APPLIQUE (réparation)',
+    reparation.json?.data?.results?.[0]?.status === 'APPLIED');
+  const recree = await PanelProjectPresentation.findOne({ projectId }).lean();
+  check('…la projection est effectivement recréée', recree?.companyName === 'Garage du Nord');
+
+  // Une fois réparée, la déduplication REDEVIENT stricte.
+  const apresReparation = await push(presentation);
+  check('la même écriture rejouée ensuite redevient un DUPLICATE',
+    apresReparation.json?.data?.results?.[0]?.status === 'DUPLICATE');
+
+  // Un payload invalide reste refusé : la réparation n'assouplit rien.
+  const nomNul = await push({
+    writeId: uuid(), entityType: 'PROJECT_PRESENTATION', entityId, deleted: false,
+    modifiedAt: iso(30_000), emitter: 'PROJECT',
+    payload: { companyName: 'X', project: { name: null } },
+  });
+  check('un champ optionnel à null reste REFUSÉ (piège Mongoose undefined → null)',
+    nomNul.json?.data?.results?.[0]?.status === 'REJECTED');
+
   // Tombstone : plus aucun contrat pertinent.
   const removed = await push({
     writeId: uuid(), entityType: 'CONTRACT', entityId, deleted: true,

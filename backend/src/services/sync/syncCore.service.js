@@ -5,7 +5,7 @@
 // survivent à un redémarrage (une relivraison après reboot répond DUPLICATE,
 // jamais une double application).
 // Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
-import { ENTITY_PAYLOAD_INVALID, PROJECTORS } from './projectors.js';
+import { ENTITY_PAYLOAD_INVALID, PROJECTORS, needsRepair } from './projectors.js';
 import {
   ACK_STATUS,
   APPLIED_ENTITY_TYPES,
@@ -60,7 +60,11 @@ export async function applyIncoming(projectId, changes) {
       continue;
     }
 
-    if (await PanelSyncReceipt.exists({ projectId, writeId: change.writeId })) {
+    // Déjà vue — sauf si la projection correspondante MANQUE. Un accusé ne doit
+    // jamais retirer une écriture de la file du projet tant que rien n'a été
+    // écrit ici : ce serait perdre la donnée en silence, définitivement.
+    if (await PanelSyncReceipt.exists({ projectId, writeId: change.writeId })
+        && !(await needsRepair(projectId, change))) {
       results.push({ writeId: change.writeId, status: ACK_STATUS.DUPLICATE, code: null, message: null });
       continue;
     }
@@ -82,7 +86,10 @@ export async function applyIncoming(projectId, changes) {
       entityType: change.entityType,
       entityId: change.entityId,
     }).lean();
-    if (known && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()) {
+    // Perdante du dernier-écrit-gagne — même réserve : on ne se tait que si
+    // l'état gagnant est RÉELLEMENT projeté.
+    if (known && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()
+        && !(await needsRepair(projectId, change))) {
       await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
       results.push({ writeId: change.writeId, status: ACK_STATUS.IGNORED, code: null, message: null });
       continue;
@@ -104,12 +111,26 @@ export async function applyIncoming(projectId, changes) {
       continue;
     }
 
-    await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
-    await PanelSyncEntityState.updateOne(
-      { projectId, entityType: change.entityType, entityId: change.entityId },
-      { $set: { modifiedAt: change.modifiedAt } },
+    // `updateOne` + upsert plutôt que `create` : une réparation rejoue un
+    // writeId déjà consigné, et un reçu en double ne doit pas faire échouer
+    // l'écriture qu'on vient précisément de réussir.
+    await PanelSyncReceipt.updateOne(
+      { projectId, writeId: change.writeId },
+      { $setOnInsert: { projectId, writeId: change.writeId, receivedAt: nowIso() } },
       { upsert: true },
     );
+    // Le curseur du dernier-écrit-gagne n'AVANCE jamais à reculons : une
+    // réparation peut rejouer un état plus ancien que le curseur connu, et le
+    // rabaisser rouvrirait la porte à des écritures déjà écartées.
+    const avance = !known
+      || new Date(change.modifiedAt).getTime() > new Date(known.modifiedAt).getTime();
+    if (avance) {
+      await PanelSyncEntityState.updateOne(
+        { projectId, entityType: change.entityType, entityId: change.entityId },
+        { $set: { modifiedAt: change.modifiedAt } },
+        { upsert: true },
+      );
+    }
     results.push({ writeId: change.writeId, status: ACK_STATUS.APPLIED, code: null, message: null });
   }
 

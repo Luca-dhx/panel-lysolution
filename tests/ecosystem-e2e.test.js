@@ -537,6 +537,34 @@ check('…dont l’adresse du site arrive au Panel',
     return p?.network?.website === SITE;
   }));
 
+// ── RÉPARATION RÉELLE : projection effacée côté Panel, reçu conservé ────────
+// Le cas de production : le Panel n'a rien projeté alors que le projet croit
+// avoir livré. Une simple modification dans le Manager doit suffire à réparer.
+await PanelPresentation.deleteMany({ projectId });
+check('la projection d’identité a bien été effacée côté Panel',
+  (await PanelPresentation.countDocuments({ projectId })) === 0);
+
+const RENOMME = 'SB Auto 07';
+const majFinale = await http('PUT', `${projectProc.baseUrl}/api/company`, {
+  headers: projectProc.auth,
+  body: { name: RENOMME, tagline: 'Entretien et réparation depuis 1998' },
+});
+check('la modification du Manager réussit', majFinale.status === 200);
+check('la projection est RECRÉÉE sans aucune action manuelle',
+  await eventually('réparation', async () =>
+    (await PanelPresentation.findOne({ projectId }).lean())?.companyName === RENOMME));
+
+const apresReparation = await http('GET', `${PANEL_URL}/api/projects/${projectId}`, { headers: AUTH });
+const ficheReparee = apresReparation.json?.data?.project;
+check('GET /api/projects/:id expose « SB Auto 07 »',
+  ficheReparee?.business?.presentation?.companyName === RENOMME);
+check('…sans REFRESH_MANIFEST : le manifeste garde son ancienne valeur',
+  ficheReparee?.manifest?.presentation?.companyName !== RENOMME);
+check('…et sans réappairage : le lien est resté PAIRED',
+  ficheReparee?.pairing?.status === 'PAIRED');
+check('aucune écriture d’identité refusée sur tout le scénario',
+  (await outbox.countDocuments({ entityType: 'PROJECT_PRESENTATION', status: 'REJECTED' })) === 0);
+
 await projectDb.close();
 
 // ── Coupure du Panel, modification, redémarrage du projet ────────────────

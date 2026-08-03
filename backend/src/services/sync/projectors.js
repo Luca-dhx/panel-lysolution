@@ -142,4 +142,41 @@ export const PROJECTORS = Object.freeze({
 /** Types réellement appliqués — dérivés de la table, jamais réécrits à côté. */
 export const PROJECTED_ENTITY_TYPES = Object.freeze(Object.keys(PROJECTORS));
 
+/**
+ * « La projection de cette entité existe-t-elle pour ce projet ? »
+ *
+ * ── À QUOI CELA SERT ────────────────────────────────────────────────────────
+ * Le cœur écarte une écriture déjà vue (`DUPLICATE`) ou plus ancienne que
+ * l'état connu (`IGNORED`). Ces deux raccourcis supposent que ce qui a été
+ * accusé a été ÉCRIT. Cette supposition peut être fausse : une écriture
+ * refusée pour un payload invalide, puis corrigée à la source, revient avec un
+ * état déjà consigné ; l'accusé retire alors l'écriture de la file du projet
+ * sans que rien ne soit jamais projeté. La donnée est perdue en silence, et
+ * plus rien ne la ramène.
+ *
+ * On vérifie donc, avant de se taire, que la projection est bien là. Sinon on
+ * applique — c'est une RÉPARATION, pas un doublon.
+ *
+ * Un type absent de cette table (`DIAGNOSTIC`, qui est un journal, pas un
+ * état) garde la déduplication stricte : le rejouer créerait des lignes en
+ * double.
+ */
+export const PROJECTION_PRESENT = Object.freeze({
+  PROJECT_PRESENTATION: ({ projectId }) => PanelProjectPresentation.exists({ projectId }),
+  CONTRACT: ({ projectId }) => PanelProjectContract.exists({ projectId }),
+});
+
+/**
+ * Faut-il appliquer alors que le cœur s'apprêtait à passer son tour ?
+ *
+ * Un tombstone est exclu : « absente » est précisément l'état qu'il vise, le
+ * réappliquer sans fin n'apprendrait rien.
+ */
+export async function needsRepair(projectId, change) {
+  if (change.deleted === true) return false;
+  const probe = PROJECTION_PRESENT[change.entityType];
+  if (!probe) return false;
+  return !(await probe({ projectId }));
+}
+
 export default { PROJECTORS, PROJECTED_ENTITY_TYPES, ENTITY_PAYLOAD_INVALID };
