@@ -21,8 +21,9 @@
 import { useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { ParticipantsField, participantsPrets } from '@/components/Participants';
 import { DateField, TimeField, joinIso, splitIso } from '@/components/DateTimeField';
-import type { MissedReason, ProjectEvent } from '@/types.events';
+import type { MissedReason, Participant, ProjectEvent } from '@/types.events';
 
 const MOTIFS: { value: MissedReason; label: string }[] = [
   { value: 'CANCELLED', label: 'Annulée' },
@@ -35,7 +36,6 @@ const heure = (iso: string) =>
   new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
 const lignes = (texte: string) => texte.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-const virgules = (texte: string) => texte.split(',').map((l) => l.trim()).filter(Boolean);
 
 type Volet = null | 'oui' | 'non' | 'reporter';
 
@@ -56,7 +56,9 @@ export function EventConfirmation({
   const reel = splitIso(event.occurredAt);
   const [dateReelle, setDateReelle] = useState(reel.date);
   const [heureReelle, setHeureReelle] = useState(reel.time);
-  const [participants, setParticipants] = useState(event.externalParticipants.join(', '));
+  // Les personnes attendues, prêtes à être corrigées : on confirme QUI était
+  // là, et un absent se retire d'un bouton au lieu de se découper dans un texte.
+  const [participants, setParticipants] = useState<Participant[]>(event.participants ?? []);
   const [motif, setMotif] = useState<MissedReason>('CLIENT_ABSENT');
   const [nouvelleDate, setNouvelleDate] = useState('');
   const [nouvelleHeure, setNouvelleHeure] = useState(reel.time);
@@ -119,15 +121,11 @@ export function EventConfirmation({
             <span className="field-label">Prochaines actions (une par ligne)</span>
             <textarea rows={2} value={actions} onChange={(e) => setActions(e.target.value)} />
           </label>
-          <label className="field">
-            <span className="field-label">Participants</span>
-            <input
-              type="text"
-              value={participants}
-              onChange={(e) => setParticipants(e.target.value)}
-              placeholder="séparés par des virgules"
-            />
-          </label>
+          <ParticipantsField
+            participants={participants}
+            onChange={setParticipants}
+            hint="Personne n’était noté. Ajoutez celles et ceux qui étaient là."
+          />
           <DateField label="Date réelle" value={dateReelle} onChange={setDateReelle} />
           <TimeField label="Heure réelle" value={heureReelle} onChange={setHeureReelle} />
           <div className="contract-actions">
@@ -139,7 +137,7 @@ export function EventConfirmation({
                 notes,
                 outcome,
                 nextActions: lignes(actions),
-                externalParticipants: virgules(participants),
+                participants: participantsPrets(participants),
                 ...(joinIso(dateReelle, heureReelle)
                   ? { occurredAt: joinIso(dateReelle, heureReelle) }
                   : {}),

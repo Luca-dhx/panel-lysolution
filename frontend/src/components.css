@@ -120,6 +120,43 @@ body.no-scroll {
   font-weight: 600;
 }
 
+/* ---------- Participants (liste d'items) ---------- */
+.participants-field {
+  gap: var(--p-space-3);
+  margin-top: var(--p-space-3);
+}
+
+.participants {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--p-space-3);
+}
+
+/* Une personne = un bloc encadré. Sur un écran large les trois champs tiennent
+   côte à côte ; ils retombent seuls en colonne quand la place manque. */
+.participant {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--p-space-3);
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+}
+
+/* Le type et le retrait occupent toute la largeur : ce sont les deux actions
+   qui portent sur la personne entière, pas sur un de ses champs. */
+.participant-head {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--p-space-2);
+}
+
 /* ---------- Sélecteur de date ---------- */
 .picker {
   position: relative;
@@ -369,6 +406,20 @@ body.no-scroll {
 
   .btn-small {
     min-height: 40px;
+  }
+
+  /* Un participant, une colonne : trois champs côte à côte sur 375 px ne se
+     lisent pas, et le bouton « Retirer » doit rester atteignable au pouce. */
+  .participant {
+    grid-template-columns: 1fr;
+  }
+
+  .participant .segmented {
+    width: 100%;
+  }
+
+  .participant .segment {
+    flex: 1;
   }
 }
 

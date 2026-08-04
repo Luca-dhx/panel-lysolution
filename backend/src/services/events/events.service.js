@@ -24,6 +24,7 @@ import {
 } from '../../models/PanelProjectEvent.model.js';
 import { MEETING_STATUS, PanelMeeting } from '../../models/PanelMeeting.model.js';
 import { applyPatch } from './revisions.js';
+import { normalizeParticipants, refuseLegacyParticipants } from './participants.js';
 
 /** Valide une transition SANS l'appliquer. */
 function assertTransition(from, to) {
@@ -53,9 +54,10 @@ export async function createPastEvent(data, actor = {}) {
   const {
     projectId, projectName = null, type = 'CALL', title,
     occurredAt, notes = '', outcome = '', nextActions = [],
-    internalParticipants = [], externalParticipants = [],
+    participants = [],
   } = data ?? {};
 
+  refuseLegacyParticipants(data ?? {});
   if (!projectId) throw ApiError.badRequest('PANEL_EVENT_PROJECT_REQUIRED', 'Projet requis.');
   if (!title || !String(title).trim()) {
     throw ApiError.badRequest('PANEL_EVENT_TITLE_REQUIRED', 'Un intitulé est requis.');
@@ -86,8 +88,7 @@ export async function createPastEvent(data, actor = {}) {
     notes,
     outcome,
     nextActions: nextActions.filter(Boolean),
-    internalParticipants,
-    externalParticipants,
+    participants: normalizeParticipants(participants),
     confirmedBy: actor.email ?? null,
     confirmedAt: new Date(),
     createdBy: actor.email ?? null,
@@ -112,6 +113,7 @@ async function closeSourceMeeting(event) {
 
 /** « Oui, elle a eu lieu » — la seule voie vers CONFIRMED, et elle est humaine. */
 export async function confirmEvent(eventId, data = {}, actor = {}) {
+  refuseLegacyParticipants(data);
   const event = await loadOrThrow(eventId);
   transition(event, EVENT_STATUS.CONFIRMED);
 
@@ -121,8 +123,9 @@ export async function confirmEvent(eventId, data = {}, actor = {}) {
   if (typeof data.notes === 'string') event.notes = data.notes;
   if (typeof data.outcome === 'string') event.outcome = data.outcome;
   if (Array.isArray(data.nextActions)) event.nextActions = data.nextActions.filter(Boolean);
-  if (Array.isArray(data.internalParticipants)) event.internalParticipants = data.internalParticipants;
-  if (Array.isArray(data.externalParticipants)) event.externalParticipants = data.externalParticipants;
+  // Qui était VRAIMENT là : la liste prévue se corrige au moment de confirmer,
+  // personne par personne, sans avoir à la retaper.
+  if (data.participants !== undefined) event.participants = normalizeParticipants(data.participants);
 
   event.confirmedBy = actor.email ?? null;
   event.confirmedAt = new Date();
@@ -159,6 +162,7 @@ export async function missEvent(eventId, { reason = 'OTHER', notes = '' } = {}, 
  * consigné avec son avant et son après.
  */
 export async function updateEvent(eventId, data = {}, actor = {}) {
+  refuseLegacyParticipants(data);
   const event = await loadOrThrow(eventId);
   const patch = {};
 
@@ -182,8 +186,7 @@ export async function updateEvent(eventId, data = {}, actor = {}) {
   if (data.notes !== undefined) patch.notes = data.notes;
   if (data.outcome !== undefined) patch.outcome = data.outcome;
   if (data.nextActions !== undefined) patch.nextActions = data.nextActions.filter(Boolean);
-  if (data.internalParticipants !== undefined) patch.internalParticipants = data.internalParticipants;
-  if (data.externalParticipants !== undefined) patch.externalParticipants = data.externalParticipants;
+  if (data.participants !== undefined) patch.participants = normalizeParticipants(data.participants);
 
   // Reclasser reste possible, mais passe par la machine à états — et se
   // retrouve dans le journal comme n'importe quelle autre correction.

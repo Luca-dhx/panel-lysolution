@@ -52,8 +52,30 @@ export const MEETING_TRANSITIONS = Object.freeze({
   RESCHEDULED: [],
 });
 
-const participantSchema = new mongoose.Schema(
-  { email: { type: String, default: null }, name: { type: String, default: null } },
+/**
+ * PARTICIPANTS — une LISTE de personnes, jamais une chaîne.
+ *
+ * Le champ portait avant deux formes : des objets « interne » à moitié vides
+ * et un tableau de chaînes « externe » que l'interface fabriquait en découpant
+ * un texte sur les virgules. Le séparateur manuel n'existait que dans la tête
+ * de celui qui saisissait — et rendait impossible de corriger ou de retirer
+ * UNE personne sans réécrire la ligne entière.
+ *
+ * `id` est ce qui rend chaque participant modifiable et supprimable seul ;
+ * `type` remplace les deux anciennes listes, parce qu'interne ou externe est
+ * une propriété de la personne, pas deux tableaux à tenir en parallèle.
+ */
+export const PARTICIPANT_TYPES = Object.freeze(['INTERNAL', 'EXTERNAL']);
+
+export const participantSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    type: { type: String, enum: PARTICIPANT_TYPES, required: true },
+    /** Toujours renseigné : un participant sans rien à dire n'est pas persisté. */
+    name: { type: String, required: true, trim: true },
+    email: { type: String },
+    phone: { type: String },
+  },
   { _id: false },
 );
 
@@ -115,8 +137,7 @@ const meetingSchema = new mongoose.Schema(
       index: true,
     },
 
-    internalParticipants: { type: [participantSchema], default: [] },
-    externalParticipants: { type: [String], default: [] },
+    participants: { type: [participantSchema], default: [] },
 
     // REPORT — les deux sens. Sans le retour, l'ancienne réunion serait un
     // cul-de-sac : on lirait « reportée » sans jamais savoir vers quand.

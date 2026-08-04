@@ -24,9 +24,21 @@ export type EventType = 'MEETING_OCCURRED' | 'CALL' | 'VIDEO_CALL' | 'MEAL' | 'F
 export type EventStatus = 'PENDING_CONFIRMATION' | 'CONFIRMED' | 'MISSED' | 'CANCELLED';
 export type MissedReason = 'CANCELLED' | 'CLIENT_ABSENT' | 'TEAM_ABSENT' | 'OTHER';
 
+/**
+ * PARTICIPANTS — une liste de personnes, jamais un texte à virgules.
+ *
+ * `id` rend chaque participant modifiable et supprimable seul ; `type` remplace
+ * les deux anciennes listes (internes / externes), parce qu'être interne ou
+ * externe est une propriété de la personne, pas deux tableaux à tenir.
+ */
+export type ParticipantType = 'INTERNAL' | 'EXTERNAL';
+
 export interface Participant {
-  email: string | null;
-  name: string | null;
+  id: string;
+  type: ParticipantType;
+  name: string;
+  email?: string;
+  phone?: string;
 }
 
 export interface Meeting {
@@ -45,8 +57,7 @@ export interface Meeting {
   phone: string;
   meetingUrl: string;
   status: MeetingStatus;
-  internalParticipants: Participant[];
-  externalParticipants: string[];
+  participants: Participant[];
   rescheduledFromMeetingId: string | null;
   rescheduledToMeetingId: string | null;
   cancelledAt: string | null;
@@ -65,8 +76,7 @@ export interface ProjectEvent {
   title: string;
   occurredAt: string;
   status: EventStatus;
-  internalParticipants: Participant[];
-  externalParticipants: string[];
+  participants: Participant[];
   notes: string;
   outcome: string;
   nextActions: string[];

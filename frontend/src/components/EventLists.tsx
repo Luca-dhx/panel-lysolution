@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { formatDateTime } from '@/lib/format';
 import { toneBadgeClass } from '@/lib/projectPresentation';
 import { TYPE_LABELS, eventStatusState, meetingStatusState } from '@/components/eventLabels';
+import { ParticipantsSummary } from '@/components/Participants';
 import type { Meeting, ProjectEvent } from '@/types.events';
 
 /**
@@ -41,6 +42,7 @@ export function MeetingRow({
           {meeting.durationMinutes ? `${meeting.durationMinutes} min` : ''}
           {` · ${lieuLisible(meeting)}`}
         </span>
+        <ParticipantsSummary participants={meeting.participants} />
       </span>
       <span className={toneBadgeClass(etat.tone)}>{etat.label}</span>
       {onEdit ? (
@@ -83,6 +85,7 @@ export function EventRow({
           {showProject && event.projectName ? ` · ${event.projectName}` : ''}
         </span>
         {event.outcome ? <span className="muted">{event.outcome}</span> : null}
+        <ParticipantsSummary participants={event.participants} />
       </span>
       <span className={toneBadgeClass(etat.tone)}>{etat.label}</span>
       {onEdit ? (

@@ -10,7 +10,7 @@ import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
-import { migrateLegacyEvents } from './services/events/eventsMigration.js';
+import { migrateLegacyEvents, migrateParticipants } from './services/events/eventsMigration.js';
 
 async function start() {
   await connectDatabase();
@@ -32,6 +32,13 @@ async function start() {
   // l'ordonnanceur : il ne doit pas travailler sur des reliques.
   await migrateLegacyEvents().catch((err) => {
     logger.warn(`Migration de l’agenda impossible : ${err.message}`);
+  });
+
+  // Puis les participants : les anciennes chaînes séparées par des virgules
+  // deviennent des personnes identifiées. APRÈS la reprise ci-dessus, qui peut
+  // encore fabriquer des objets à partir de reliques.
+  await migrateParticipants().catch((err) => {
+    logger.warn(`Migration des participants impossible : ${err.message}`);
   });
 
   // ÉCHÉANCES : un événement devient « à confirmer » même si personne n'a le

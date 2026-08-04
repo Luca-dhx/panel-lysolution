@@ -41,6 +41,7 @@
 import logger from '../../utils/logger.js';
 import { MEETING_STATUS, PanelMeeting } from '../../models/PanelMeeting.model.js';
 import { EVENT_STATUS, PanelProjectEvent } from '../../models/PanelProjectEvent.model.js';
+import { mergeParticipants, participantsFromLegacy } from './participants.js';
 
 /** Statuts qui n'existent QUE dans l'ancien modèle : ils identifient une relique. */
 const ANCIENS_STATUTS = ['PLANNED', 'DUE', 'COMPLETED'];
@@ -82,8 +83,7 @@ export async function migrateLegacyEvents() {
         description: doc.description ?? '',
         scheduledAt: quand,
         durationMinutes: doc.durationMinutes ?? 60,
-        internalParticipants: doc.internalParticipants ?? [],
-        externalParticipants: doc.externalParticipants ?? [],
+        participants: participantsFromLegacy(doc),
         status: statut,
         cancelledAt: doc.cancelledAt ?? null,
         createdBy: doc.createdBy ?? null,
@@ -102,8 +102,7 @@ export async function migrateLegacyEvents() {
           title: doc.title ?? 'Réunion',
           occurredAt: quand,
           status: EVENT_STATUS.PENDING_CONFIRMATION,
-          internalParticipants: doc.internalParticipants ?? [],
-          externalParticipants: doc.externalParticipants ?? [],
+          participants: participantsFromLegacy(doc),
           createdBy: doc.createdBy ?? null,
         });
         evenements += 1;
@@ -125,8 +124,7 @@ export async function migrateLegacyEvents() {
       title: doc.title ?? 'Événement',
       occurredAt: doc.occurredAt ?? quand,
       status: NOUVEAU_STATUT[doc.status] ?? EVENT_STATUS.CONFIRMED,
-      internalParticipants: doc.internalParticipants ?? [],
-      externalParticipants: doc.externalParticipants ?? [],
+      participants: participantsFromLegacy(doc),
       notes: doc.notes ?? '',
       outcome: doc.outcome ?? '',
       nextActions: doc.nextActions ?? [],
@@ -148,4 +146,84 @@ export async function migrateLegacyEvents() {
   return { meetings: reunions, events: evenements, examined: anciens.length };
 }
 
-export default { migrateLegacyEvents };
+/**
+ * MIGRATION DES PARTICIPANTS — du texte séparé par des virgules vers une liste.
+ *
+ * ── CE QUI EXISTAIT ─────────────────────────────────────────────────────────
+ * Deux champs par réunion et par événement : `internalParticipants` (des objets
+ * nom/courriel) et `externalParticipants`, un tableau de chaînes que l'interface
+ * remplissait en découpant un champ texte sur les virgules. Rien n'empêchait
+ * qu'une seule entrée contienne « Jean Dupont, Marie Martin ».
+ *
+ * ── TRANSFORMATION ──────────────────────────────────────────────────────────
+ *
+ * | Ancien                                | Devient                            |
+ * |---------------------------------------|------------------------------------|
+ * | externalParticipants: ['a@b.fr']      | { EXTERNAL, name: 'a@b.fr', email } |
+ * | externalParticipants: ['Jean, Marie'] | DEUX participants EXTERNAL         |
+ * | internalParticipants: [{name, email}] | { INTERNAL, name, email }          |
+ * | valeur vide ou blanche                | rien — elle ne désignait personne   |
+ *
+ * Une ancienne valeur à virgules devient PLUSIEURS participants : c'est ce
+ * qu'elle voulait dire. Les nouvelles saisies, elles, refusent la virgule —
+ * l'API ne laisse pas refabriquer la chaîne qu'on vient de démonter.
+ *
+ * ── SÛRETÉ ──────────────────────────────────────────────────────────────────
+ * Un seul `updateOne` par document écrit la nouvelle liste ET retire les
+ * anciens champs : il n'existe aucun instant où l'un est parti sans que l'autre
+ * soit arrivé. Rien n'est perdu — tout ce que l'ancienne donnée disait se
+ * retrouve dans un participant, y compris une adresse électronique seule, qui
+ * devient à la fois le courriel et le nom affiché faute d'en savoir plus.
+ *
+ * ── IDEMPOTENTE ─────────────────────────────────────────────────────────────
+ * Le filtre exige la PRÉSENCE d'un ancien champ : après un passage, il n'en
+ * reste aucun, un second passage n'examine donc rien. Et si une exécution est
+ * interrompue entre deux documents, la reprise ne voit que ceux qui n'ont pas
+ * encore été traités. Une base déjà convertie n'est jamais touchée.
+ *
+ * Le cas tordu — un document portant DÉJÀ des participants et ENCORE un ancien
+ * champ — se règle par fusion sans doublon, jamais par écrasement : personne ne
+ * disparaît, et personne n'apparaît deux fois.
+ */
+export async function migrateParticipants() {
+  let examines = 0;
+  let convertis = 0;
+  let participants = 0;
+
+  for (const model of [PanelMeeting, PanelProjectEvent]) {
+    // Collection BRUTE : les anciens champs ne font plus partie du schéma,
+    // Mongoose ne les lirait tout simplement pas.
+    const collection = model.collection;
+    // eslint-disable-next-line no-await-in-loop
+    const anciens = await collection.find({
+      $or: [
+        { internalParticipants: { $exists: true } },
+        { externalParticipants: { $exists: true } },
+      ],
+    }).toArray();
+    examines += anciens.length;
+
+    for (const doc of anciens) {
+      const liste = mergeParticipants(doc.participants ?? [], participantsFromLegacy(doc));
+      // eslint-disable-next-line no-await-in-loop
+      await collection.updateOne(
+        { _id: doc._id },
+        {
+          $set: { participants: liste },
+          $unset: { internalParticipants: '', externalParticipants: '' },
+        },
+      );
+      convertis += 1;
+      participants += liste.length;
+    }
+  }
+
+  if (examines > 0) {
+    logger.info(
+      `Migration des participants : ${convertis} objet(s) repris — ${participants} participant(s) structuré(s).`,
+    );
+  }
+  return { examined: examines, converted: convertis, participants };
+}
+
+export default { migrateLegacyEvents, migrateParticipants };

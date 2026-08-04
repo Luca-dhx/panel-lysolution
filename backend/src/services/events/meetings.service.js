@@ -23,6 +23,7 @@ import {
   REMOTE_KINDS,
 } from '../../models/PanelMeeting.model.js';
 import { applyPatch } from './revisions.js';
+import { normalizeParticipants, refuseLegacyParticipants } from './participants.js';
 import { EVENT_STATUS, PanelProjectEvent } from '../../models/PanelProjectEvent.model.js';
 
 function transition(meeting, to) {
@@ -116,10 +117,11 @@ export async function createMeeting(data, actor = {}) {
   const {
     projectId, projectName = null, title, description = '',
     scheduledAt, durationMinutes = 60,
-    internalParticipants = [], externalParticipants = [],
+    participants = [],
     rescheduledFromMeetingId = null,
   } = data ?? {};
 
+  refuseLegacyParticipants(data ?? {});
   if (!projectId) throw ApiError.badRequest('PANEL_MEETING_PROJECT_REQUIRED', 'Projet requis.');
   if (!title || !String(title).trim()) {
     throw ApiError.badRequest('PANEL_MEETING_TITLE_REQUIRED', 'Un intitulé est requis.');
@@ -136,8 +138,7 @@ export async function createMeeting(data, actor = {}) {
     scheduledAt: new Date(scheduledAt),
     durationMinutes,
     ...normalizeMode(data ?? {}),
-    internalParticipants,
-    externalParticipants,
+    participants: normalizeParticipants(participants),
     rescheduledFromMeetingId,
     status: MEETING_STATUS.PLANNED,
     createdBy: actor.email ?? null,
@@ -159,6 +160,7 @@ async function loadOrThrow(meetingId) {
  * avant et son après.
  */
 export async function updateMeeting(meetingId, data = {}, actor = {}) {
+  refuseLegacyParticipants(data);
   const meeting = await loadOrThrow(meetingId);
   const patch = {};
 
@@ -175,8 +177,10 @@ export async function updateMeeting(meetingId, data = {}, actor = {}) {
     patch.scheduledAt = new Date(data.scheduledAt);
   }
   if (data.durationMinutes !== undefined) patch.durationMinutes = Number(data.durationMinutes);
-  if (data.internalParticipants !== undefined) patch.internalParticipants = data.internalParticipants;
-  if (data.externalParticipants !== undefined) patch.externalParticipants = data.externalParticipants;
+  // La liste entière est remplacée : ajouter, corriger et retirer un
+  // participant sont trois formes du même geste côté écran, et un correctif
+  // partiel demanderait de rejouer des opérations dans l'ordre.
+  if (data.participants !== undefined) patch.participants = normalizeParticipants(data.participants);
 
   // Le mode se corrige d'un bloc : changer d'avis sur le lieu doit effacer ce
   // qui n'a plus de sens, pas empiler deux réponses contradictoires.
@@ -232,8 +236,9 @@ export async function rescheduleMeeting(meetingId, { scheduledAt, reason = null 
     remoteKind: ancienne.remoteKind,
     phone: ancienne.phone,
     meetingUrl: ancienne.meetingUrl,
-    internalParticipants: ancienne.internalParticipants,
-    externalParticipants: ancienne.externalParticipants,
+    // Les mêmes personnes, avec les mêmes identifiants : reporter ne rebat pas
+    // les cartes, c'est le même rendez-vous un autre jour.
+    participants: ancienne.toObject().participants,
     rescheduledFromMeetingId: String(ancienne._id),
   }, actor);
 
@@ -283,8 +288,9 @@ export async function convertDueMeetings(now = new Date()) {
         title: meeting.title,
         occurredAt: meeting.scheduledAt,
         status: EVENT_STATUS.PENDING_CONFIRMATION,
-        internalParticipants: meeting.internalParticipants,
-        externalParticipants: meeting.externalParticipants,
+        // Les personnes attendues deviennent les personnes présumées présentes.
+        // La confirmation permettra de corriger la liste, une par une.
+        participants: meeting.toObject().participants,
         createdBy: null, // la conversion n'a pas d'auteur humain
       });
       crees += 1;

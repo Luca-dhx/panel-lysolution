@@ -9,9 +9,9 @@
  * Les deux servent aussi à MODIFIER : corriger une erreur de saisie ne devrait
  * jamais obliger à supprimer et resaisir.
  *
- * Aucun carnet de contacts : les participants externes se saisissent
- * librement. En fabriquer un ici créerait une donnée que personne ne tient à
- * jour.
+ * Aucun carnet de contacts : les participants se saisissent librement, mais
+ * sous forme de LISTE — une personne, une ligne. En fabriquer un carnet ici
+ * créerait une donnée que personne ne tient à jour.
  */
 import { useState } from 'react';
 import { Card } from '@/components/ui';
@@ -19,10 +19,10 @@ import { api, errorMessage } from '@/lib/api';
 import { useProjects } from '@/lib/useProjects';
 import { projectDisplayName } from '@/lib/projectPresentation';
 import { TYPE_LABELS } from '@/components/eventLabels';
+import { ParticipantsField, participantsPrets } from '@/components/Participants';
 import { DateField, DurationField, TimeField, joinIso, splitIso } from '@/components/DateTimeField';
-import type { EventType, Meeting, ProjectEvent } from '@/types.events';
+import type { EventType, Meeting, Participant, ProjectEvent } from '@/types.events';
 
-const virgules = (t: string) => t.split(',').map((l) => l.trim()).filter(Boolean);
 const lignes = (t: string) => t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
 /** Types saisissables à la main. `MEETING_OCCURRED` naît d'une réunion. */
@@ -80,7 +80,7 @@ export function MeetingForm({
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
   const [durationMinutes, setDuration] = useState(meeting?.durationMinutes ?? 60);
-  const [externes, setExternes] = useState(meeting?.externalParticipants.join(', ') ?? '');
+  const [participants, setParticipants] = useState<Participant[]>(meeting?.participants ?? []);
 
   // Mode — le sélecteur pilote quels champs existent, pas seulement lesquels
   // sont visibles : le serveur efface ce qui n'a plus de sens.
@@ -116,7 +116,7 @@ export function MeetingForm({
       ...(mode === 'ONSITE'
         ? { address, addressComplement, accessNotes }
         : { remoteKind, ...(remoteKind === 'CALL' ? { phone } : { meetingUrl }) }),
-      externalParticipants: virgules(externes),
+      participants: participantsPrets(participants),
       ...(meeting && reason.trim() ? { reason: reason.trim() } : {}),
     };
     try {
@@ -233,12 +233,13 @@ export function MeetingForm({
         </>
       )}
 
+      <ParticipantsField
+        participants={participants}
+        onChange={setParticipants}
+        hint="Personne pour l’instant. Ajoutez celles et ceux qui sont attendus."
+      />
+
       <div className="event-form">
-        <label className="field">
-          <span className="field-label">Participants externes</span>
-          <input type="text" value={externes} onChange={(e) => setExternes(e.target.value)}
-            placeholder="séparés par des virgules" />
-        </label>
         <label className="field">
           <span className="field-label">Ordre du jour</span>
           <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -290,7 +291,7 @@ export function PastEventForm({
   const [notes, setNotes] = useState(event?.notes ?? '');
   const [outcome, setOutcome] = useState(event?.outcome ?? '');
   const [actions, setActions] = useState(event?.nextActions.join('\n') ?? '');
-  const [externes, setExternes] = useState(event?.externalParticipants.join(', ') ?? '');
+  const [participants, setParticipants] = useState<Participant[]>(event?.participants ?? []);
   const [reason, setReason] = useState('');
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -312,7 +313,7 @@ export function PastEventForm({
       notes,
       outcome,
       nextActions: lignes(actions),
-      externalParticipants: virgules(externes),
+      participants: participantsPrets(participants),
       ...(event && reason.trim() ? { reason: reason.trim() } : {}),
     };
     try {
@@ -358,11 +359,6 @@ export function PastEventForm({
         <DateField label="Date" value={date} onChange={setDate} />
         <TimeField label="Heure" value={time} onChange={setTime} />
         <label className="field">
-          <span className="field-label">Participants externes</span>
-          <input type="text" value={externes} onChange={(e) => setExternes(e.target.value)}
-            placeholder="séparés par des virgules" />
-        </label>
-        <label className="field">
           <span className="field-label">Compte rendu</span>
           <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
@@ -381,6 +377,12 @@ export function PastEventForm({
           </label>
         ) : null}
       </div>
+
+      <ParticipantsField
+        participants={participants}
+        onChange={setParticipants}
+        hint="Personne pour l’instant. Ajoutez celles et ceux qui étaient là."
+      />
 
       <div className="contract-actions">
         <button type="button" className="btn btn-primary btn-small" disabled={!pret || enCours}

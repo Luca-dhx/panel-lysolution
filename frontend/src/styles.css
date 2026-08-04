@@ -358,6 +358,10 @@ code {
 input[type='text'],
 input[type='email'],
 input[type='password'],
+/* Téléphone et lien : mêmes champs de saisie que les autres. Les oublier ici
+   les laissait au rendu brut du navigateur, hors du thème. */
+input[type='tel'],
+input[type='url'],
 textarea {
   background: var(--bg-input);
   border: 1px solid var(--border-strong);

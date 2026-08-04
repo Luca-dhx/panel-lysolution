@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { revisionSchema } from './PanelMeeting.model.js';
+import { participantSchema, revisionSchema } from './PanelMeeting.model.js';
 
 /**
  * ÉVÉNEMENT — ce qui S'EST PASSÉ avec un client.
@@ -57,11 +57,6 @@ export const MISSED_REASONS = Object.freeze([
   'CANCELLED', 'CLIENT_ABSENT', 'TEAM_ABSENT', 'OTHER',
 ]);
 
-const participantSchema = new mongoose.Schema(
-  { email: { type: String, default: null }, name: { type: String, default: null } },
-  { _id: false },
-);
-
 const eventSchema = new mongoose.Schema(
   {
     projectId: { type: String, required: true, index: true },
@@ -83,8 +78,8 @@ const eventSchema = new mongoose.Schema(
       index: true,
     },
 
-    internalParticipants: { type: [participantSchema], default: [] },
-    externalParticipants: { type: [String], default: [] },
+    /** Mêmes personnes, même forme que sur la réunion — voir PanelMeeting. */
+    participants: { type: [participantSchema], default: [] },
 
     notes: { type: String, default: '' },
     outcome: { type: String, default: '' },

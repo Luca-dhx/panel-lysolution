@@ -67,6 +67,7 @@ section('2. Aucune couleur en dur dans les écrans refondus');
     'frontend/src/components/DateTimeField.tsx',
     'frontend/src/components/EventForms.tsx',
     'frontend/src/components/EventLists.tsx',
+    'frontend/src/components/Participants.tsx',
     'frontend/src/components/Layout.tsx',
     'frontend/src/pages/ThemePage.tsx',
     'frontend/src/pages/AgendaPage.tsx',
@@ -184,6 +185,17 @@ section('6. Responsive : tiroir mobile, tableaux contenus');
   check('les cibles tactiles font au moins 44 px', /min-height: 44px/.test(css));
   check('les formulaires passent en UNE colonne sur mobile',
     /@media \(max-width: 900px\)[\s\S]{0,1400}grid-template-columns: 1fr/.test(css));
+  // Une liste de participants tient trois champs par personne : sur un mobile,
+  // ils DOIVENT retomber en colonne, sinon aucun n'est lisible.
+  const bloc900 = css.slice(
+    css.indexOf('@media (max-width: 900px)'),
+    css.indexOf('@media (max-width: 480px)'),
+  );
+  check('un participant passe en une seule colonne sur mobile',
+    /\.participant \{\s*grid-template-columns: 1fr;/.test(bloc900));
+  check('…et son sélecteur de type occupe toute la largeur',
+    /\.participant \.segmented \{\s*width: 100%;/.test(bloc900));
+
   check('un tableau défile dans son cadre, pas la page',
     /table[\s\S]{0,120}overflow-x: auto/.test(css));
   check('une taille tablette est prévue', css.includes('@media (max-width: 1200px)'));
