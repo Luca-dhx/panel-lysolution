@@ -117,10 +117,24 @@ export async function applyIncoming(projectId, changes) {
       && Boolean(known.generation)
       && known.generation !== generation.generation;
 
-    // Perdante du dernier-écrit-gagne — même réserve : on ne se tait que si
-    // l'état gagnant est RÉELLEMENT projeté.
+    /**
+     * PERDANTE DU DERNIER-ÉCRIT-GAGNE — mais seulement si elle est STRICTEMENT
+     * plus ancienne.
+     *
+     * La comparaison était `<=`, et cela a coûté cher : une écriture portant le
+     * MÊME horodatage que le curseur était écartée, alors qu'elle disait autre
+     * chose. C'est exactement ce qui se passe quand la FORME de la photographie
+     * change sans que la donnée métier ne bouge — un contrat résilié republié
+     * avec, cette fois, la distinction courant/historique. Le Panel accusait
+     * réception, la file se vidait, et la nouvelle information était perdue pour
+     * de bon.
+     *
+     * Une écriture déjà vue est écartée plus haut, sur son `writeId` : à égalité
+     * d'horodatage, un writeId différent est une information nouvelle, pas un
+     * doublon.
+     */
     if (known && !nouvelleGeneration
-        && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()
+        && new Date(change.modifiedAt).getTime() < new Date(known.modifiedAt).getTime()
         && !(await needsRepair(projectId, change))) {
       await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
       results.push({ writeId: change.writeId, status: ACK_STATUS.IGNORED, code: null, message: null });
