@@ -17,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
+import { ThemedFilter } from '@/components/ThemedSelect';
 import { company as api, errorMessage } from '@/lib/api';
 import { useProjects } from '@/lib/useProjects';
 import type { IntegratedApi } from '@/types.company';
@@ -132,13 +133,15 @@ function ApiCard({ api: item, projects, busy, run }: {
       {/* — Identifiants ————————————————————————————————— */}
       <Disclosure title="Identifiants">
         <div className="filter-row">
-          <label className="filter">
-            <span className="filter-label">Mode</span>
-            <select value={mode} onChange={(e) => { setMode(e.target.value as 'TEST' | 'PROD'); setValues({}); }}>
-              <option value="TEST">TEST</option>
-              <option value="PROD">PROD</option>
-            </select>
-          </label>
+          <ThemedFilter
+            label="Mode"
+            value={mode}
+            onChange={(v) => { setMode(v as 'TEST' | 'PROD'); setValues({}); }}
+            options={[
+              { value: 'TEST', label: 'TEST' },
+              { value: 'PROD', label: 'PROD' },
+            ]}
+          />
         </div>
 
         {set.keys.length === 0 ? (
@@ -238,17 +241,16 @@ function ApiCard({ api: item, projects, busy, run }: {
         {available.length > 0 ? (
           <>
             <div className="filter-row">
-              <label className="filter">
-                <span className="filter-label">Projet</span>
-                <select value={grantProject} onChange={(e) => setGrantProject(e.target.value)}>
-                  <option value="">—</option>
-                  {available.map((p) => (
-                    <option key={p.projectId} value={p.projectId}>
-                      {p.projectName} ({p.runtime?.environment ?? 'env. inconnu'})
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ThemedFilter
+                label="Projet"
+                value={grantProject}
+                placeholder="Choisir un projet…"
+                onChange={setGrantProject}
+                options={available.map((p) => ({
+                  value: p.projectId,
+                  label: `${p.projectName} (${p.runtime?.environment ?? 'env. inconnu'})`,
+                }))}
+              />
             </div>
             {set.keys.length > 0 ? (
               <fieldset className="key-selection">

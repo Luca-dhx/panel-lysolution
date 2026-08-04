@@ -17,6 +17,18 @@
  * « Reporter » agit sur la RÉUNION, pas sur l'événement : c'est le rendez-vous
  * qu'on déplace. L'attente de confirmation disparaît alors — il n'y a plus
  * rien à constater.
+ *
+ * ── UN SEUL CHAMP DE COMPTE RENDU ───────────────────────────────────────────
+ * Le formulaire en demandait trois : le compte rendu, « ce qui en ressort », et
+ * les prochaines actions une par ligne. Trois façons d'écrire la même chose,
+ * dont deux qui restaient vides — et une question de cinq secondes devenue un
+ * formulaire qu'on repousse. Or repousser la confirmation, c'est exactement ce
+ * que cet écran doit empêcher.
+ *
+ * Il ne reste que le compte rendu, FACULTATIF : on peut confirmer sans rien
+ * écrire. Ce qui a été saisi autrefois n'est pas perdu pour autant — l'historique
+ * continue de l'afficher, et le formulaire de modification d'un événement garde
+ * ces champs pour qui veut les compléter.
  */
 import { useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
@@ -35,8 +47,6 @@ const MOTIFS: { value: MissedReason; label: string }[] = [
 const heure = (iso: string) =>
   new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
-const lignes = (texte: string) => texte.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-
 type Volet = null | 'oui' | 'non' | 'reporter';
 
 export function EventConfirmation({
@@ -51,8 +61,6 @@ export function EventConfirmation({
   const [erreur, setErreur] = useState<string | null>(null);
 
   const [notes, setNotes] = useState('');
-  const [outcome, setOutcome] = useState('');
-  const [actions, setActions] = useState('');
   const reel = splitIso(event.occurredAt);
   const [dateReelle, setDateReelle] = useState(reel.date);
   const [heureReelle, setHeureReelle] = useState(reel.time);
@@ -110,16 +118,15 @@ export function EventConfirmation({
       {volet === 'oui' ? (
         <div className="event-form">
           <label className="field">
-            <span className="field-label">Compte rendu</span>
-            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </label>
-          <label className="field">
-            <span className="field-label">Ce qui en ressort</span>
-            <input type="text" value={outcome} onChange={(e) => setOutcome(e.target.value)} />
-          </label>
-          <label className="field">
-            <span className="field-label">Prochaines actions (une par ligne)</span>
-            <textarea rows={2} value={actions} onChange={(e) => setActions(e.target.value)} />
+            <span className="field-label">
+              Compte rendu <span className="muted">(facultatif)</span>
+            </span>
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Ce qui s’est dit, si vous voulez le garder."
+            />
           </label>
           <ParticipantsField
             participants={participants}
@@ -133,10 +140,10 @@ export function EventConfirmation({
               type="button"
               className="btn btn-primary btn-small"
               disabled={enCours}
+              // Un compte rendu vide n'est pas envoyé : écrire une chaîne vide
+              // dans l'historique, c'est prétendre qu'on a répondu.
               onClick={() => void agir(() => api.confirmEvent(event._id, {
-                notes,
-                outcome,
-                nextActions: lignes(actions),
+                ...(notes.trim() ? { notes: notes.trim() } : {}),
                 participants: participantsPrets(participants),
                 ...(joinIso(dateReelle, heureReelle)
                   ? { occurredAt: joinIso(dateReelle, heureReelle) }

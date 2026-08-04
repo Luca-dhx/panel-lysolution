@@ -23,6 +23,9 @@ import { EventConfirmation } from '@/components/EventConfirmation';
 import { EventRow, MeetingRow } from '@/components/EventLists';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
+import { Icon } from '@/components/Icon';
+import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
+import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
 import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
@@ -113,7 +116,13 @@ export function ProjectDetailPage() {
             </div>
           </div>
           {url ? (
-            <a className="btn btn-secondary btn-small" href={url} target="_blank" rel="noreferrer">
+            <a
+              className="btn btn-secondary btn-small"
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Icon name="box-arrow-up-right" size={14} />
               Ouvrir le site
             </a>
           ) : null}
@@ -187,7 +196,9 @@ function OverviewTab({
             <dt>Adresse publique</dt>
             <dd>
               {url ? (
-                <a href={url} target="_blank" rel="noreferrer">{url.replace(/^https?:\/\//, '')}</a>
+                <LinkChip icon="globe" href={url} external title={url}>
+                  {sansProtocole(url)}
+                </LinkChip>
               ) : (
                 <span className="muted">non communiquée</span>
               )}
@@ -210,30 +221,37 @@ function OverviewTab({
 
       {contacts ? (
         <Card title="Contacts">
-          <dl className="detail-list">
+          {/* Une présentation commune : icône, libellé, valeur cliquable. Les
+              liens nus du navigateur étaient le seul endroit du Panel qui
+              ignorait le thème — et débordaient sur mobile. */}
+          <div className="link-list">
             {contacts.email ? (
-              <div>
-                <dt>E-mail</dt>
-                <dd><a href={`mailto:${contacts.email}`}>{contacts.email}</a></dd>
-              </div>
+              <LinkRow
+                icon="envelope"
+                label="E-mail"
+                value={contacts.email}
+                href={`mailto:${contacts.email}`}
+              />
             ) : null}
             {contacts.phone ? (
-              <div>
-                <dt>Téléphone</dt>
-                <dd><a href={`tel:${contacts.phone.replace(/\s+/g, '')}`}>{contacts.phone}</a></dd>
-              </div>
+              <LinkRow
+                icon="telephone"
+                label="Téléphone"
+                value={contacts.phone}
+                href={lienTelephone(contacts.phone)}
+              />
             ) : null}
             {contacts.website ? (
-              <div>
-                <dt>Site web</dt>
-                <dd>
-                  <a href={contacts.website} target="_blank" rel="noreferrer">
-                    {contacts.website.replace(/^[a-z]+:\/\//, '')}
-                  </a>
-                </dd>
-              </div>
+              <LinkRow
+                icon="globe"
+                label="Site web"
+                value={sansProtocole(contacts.website)}
+                href={contacts.website}
+                title={contacts.website}
+                external
+              />
             ) : null}
-          </dl>
+          </div>
         </Card>
       ) : null}
 
@@ -558,17 +576,30 @@ function EventsTab({ project }: { project: PublicProject }) {
       </Card>
 
       <Card title="Historique">
-        <div className="contract-actions">
-          <select value={filtreType} onChange={(e) => setFiltreType(e.target.value)}>
-            <option value="">Tous les types</option>
-            {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-          <select value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)}>
-            <option value="">Tous les états</option>
-            {['CONFIRMED', 'MISSED', 'CANCELLED'].map((s) => (
-              <option key={s} value={s}>{eventStatusState(s as never).label}</option>
-            ))}
-          </select>
+        <div className="filter-row">
+          <ThemedFilter
+            label="Type"
+            value={filtreType}
+            placeholder="Tous les types"
+            onChange={setFiltreType}
+            options={[
+              { value: '', label: 'Tous les types' },
+              ...Object.entries(TYPE_LABELS).map(([k, v]) => ({ value: k, label: v })),
+            ]}
+          />
+          <ThemedFilter
+            label="État"
+            value={filtreStatut}
+            placeholder="Tous les états"
+            onChange={setFiltreStatut}
+            options={[
+              { value: '', label: 'Tous les états' },
+              ...['CONFIRMED', 'MISSED', 'CANCELLED'].map((s) => ({
+                value: s,
+                label: eventStatusState(s as never).label,
+              })),
+            ]}
+          />
         </div>
         {historique.length === 0 ? (
           <p className="muted">Rien n’a encore été consigné pour ce client.</p>

@@ -22,6 +22,7 @@ const TESTS = [
   'contract-actions.test.js',
   'events.test.js',
   'panel-ui.test.js',
+  'panel-meetings-ui.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
   'live-refresh.test.js',

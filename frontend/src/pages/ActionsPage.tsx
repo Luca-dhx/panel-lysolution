@@ -14,6 +14,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { Metric } from '@/components/supervision';
 import { ModeBadge, StateBadge, duration } from '@/components/execution';
+import { ThemedFilter } from '@/components/ThemedSelect';
 import { executions as api, errorMessage } from '@/lib/api';
 import type { ExecutionRow, ExecutionStats } from '@/types.execution';
 
@@ -96,21 +97,27 @@ export function ActionsPage() {
       {/* — Niveau 1b : l'historique ——————————————————————— */}
       <Card title="Historique">
         <div className="filter-row">
-          <label className="filter">
-            <span className="filter-label">État</span>
-            <select value={state} onChange={(e) => setFilter('state', e.target.value)}>
-              <option value="">tous</option>
-              {STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </label>
-          <label className="filter">
-            <span className="filter-label">Mode</span>
-            <select value={mode} onChange={(e) => setFilter('mode', e.target.value)}>
-              <option value="">tous</option>
-              <option value="SIMULATION">Simulation</option>
-              <option value="EXECUTION">Exécution réelle</option>
-            </select>
-          </label>
+          <ThemedFilter
+            label="État"
+            value={state}
+            placeholder="Tous"
+            onChange={(v) => setFilter('state', v)}
+            options={[
+              { value: '', label: 'Tous' },
+              ...STATES.map((s) => ({ value: s, label: s })),
+            ]}
+          />
+          <ThemedFilter
+            label="Mode"
+            value={mode}
+            placeholder="Tous"
+            onChange={(v) => setFilter('mode', v)}
+            options={[
+              { value: '', label: 'Tous' },
+              { value: 'SIMULATION', label: 'Simulation' },
+              { value: 'EXECUTION', label: 'Exécution réelle' },
+            ]}
+          />
           {projectId ? (
             <button type="button" className="btn btn-small" onClick={() => setFilter('projectId', '')}>
               Retirer le filtre projet

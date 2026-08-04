@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { HealthBadge, LivenessBadge, formatDuration, orUnknown } from '@/components/supervision';
+import { ThemedFilter } from '@/components/ThemedSelect';
 import { errorMessage, supervision } from '@/lib/api';
 import type { FleetResult, SearchFacets } from '@/types.supervision';
 
@@ -85,15 +86,17 @@ export function FleetPage() {
             const options = facets?.[facet] ?? [];
             if (options.length === 0) return null;
             return (
-              <label key={key} className="filter">
-                <span className="filter-label">{label}</span>
-                <select value={filters[key] ?? ''} onChange={(e) => setFilter(key, e.target.value)}>
-                  <option value="">Tous</option>
-                  {options.map((option) => (
-                    <option key={option} value={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
+              <ThemedFilter
+                key={key}
+                label={label}
+                value={filters[key] ?? ''}
+                placeholder="Tous"
+                onChange={(v) => setFilter(key, v)}
+                options={[
+                  { value: '', label: 'Tous' },
+                  ...options.map((option) => ({ value: option, label: option })),
+                ]}
+              />
             );
           })}
           {activeFilters > 0 ? (

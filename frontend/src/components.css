@@ -120,6 +120,321 @@ body.no-scroll {
   font-weight: 600;
 }
 
+/* ---------- Icônes ---------- */
+/* `currentColor` : une icône prend la couleur du texte qu'elle accompagne, et
+   suit donc le thème sans qu'on ait rien à recalculer. */
+.icon {
+  flex: none;
+  vertical-align: -0.125em;
+}
+
+/* ---------- Liens et coordonnées ---------- */
+.link-list {
+  display: grid;
+  gap: var(--p-space-3);
+  margin-top: var(--p-space-2);
+}
+
+.link-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-3);
+  min-width: 0;
+}
+
+.link-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border-radius: var(--p-radius-sm);
+  background: var(--p-surface-sunken);
+  border: 1px solid var(--p-border);
+  color: var(--p-text-muted);
+}
+
+.link-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.link-row-label {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+/* Une adresse longue se TRONQUE — elle ne pousse pas la colonne hors de
+   l'écran. L'adresse entière reste dans l'infobulle et dans le lien. */
+.link-row-value,
+.link-action-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* Un lien qui ne ressemble plus au bleu souligné du navigateur : il porte la
+   couleur du thème, se souligne au survol seulement, et garde un focus net. */
+.link-action,
+.link-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  color: var(--p-primary);
+  text-decoration: none;
+  min-width: 0;
+  transition: color var(--p-motion-fast) var(--p-ease),
+    border-color var(--p-motion-fast) var(--p-ease);
+}
+
+.link-action:hover,
+.link-chip:hover {
+  color: var(--p-text);
+  text-decoration: underline;
+}
+
+.link-action:focus-visible,
+.link-chip:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 2px;
+  border-radius: var(--p-radius-sm);
+}
+
+.link-chip {
+  padding: var(--p-space-1) var(--p-space-2);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-full);
+  background: var(--p-surface-sunken);
+  font-size: var(--p-text-sm);
+  max-width: 100%;
+}
+
+.link-chip:hover {
+  border-color: var(--p-primary);
+  text-decoration: none;
+}
+
+.link-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-external {
+  opacity: 0.7;
+}
+
+/* ---------- Carte de réunion ---------- */
+.meeting-card {
+  display: grid;
+  gap: var(--p-space-3);
+  padding: var(--p-space-4);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-raised);
+  list-style: none;
+}
+
+.meeting-card + .meeting-card {
+  margin-top: var(--p-space-3);
+}
+
+.meeting-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-3);
+}
+
+/* L'icône de mode : ce qu'on voit AVANT de lire. */
+.meeting-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: var(--p-radius);
+  background: var(--p-primary-soft);
+  color: var(--p-primary);
+}
+
+.meeting-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.meeting-card-name {
+  font-weight: 600;
+  font-family: var(--p-font-heading);
+}
+
+.meeting-card-project,
+.meeting-fact,
+.meeting-place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  min-width: 0;
+}
+
+.meeting-card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2) var(--p-space-4);
+}
+
+.meeting-place {
+  margin: 0;
+  flex-wrap: wrap;
+}
+
+.meeting-place-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meeting-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}
+
+.meeting-join {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  text-decoration: none;
+}
+
+/* ---------- Sélecteur thémé (filtres) ---------- */
+.tselect {
+  position: relative;
+  min-width: 11rem;
+}
+
+.tselect-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--p-space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--p-space-2) var(--p-space-3);
+  background: var(--p-surface-sunken);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-sm);
+  color: var(--p-text);
+  font-size: var(--p-text-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color var(--p-motion-fast) var(--p-ease);
+}
+
+.tselect-trigger:hover:not(:disabled),
+.tselect-open {
+  border-color: var(--p-primary);
+}
+
+.tselect-trigger:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 2px;
+}
+
+.tselect-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tselect-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tselect-placeholder {
+  color: var(--p-text-muted);
+}
+
+/* Le chevron pivote : l'état ouvert se lit sans compter sur le menu. */
+.tselect-chevron {
+  transition: transform var(--p-motion) var(--p-ease);
+  color: var(--p-text-muted);
+}
+
+.tselect-open .tselect-chevron {
+  transform: rotate(180deg);
+}
+
+.tselect-menu {
+  position: absolute;
+  z-index: 55;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  max-width: min(20rem, calc(100vw - 2rem));
+  /* Le menu reste DANS l'écran : au-delà, il défile en lui-même. */
+  max-height: 15rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--p-space-1);
+  list-style: none;
+  background: var(--p-surface-raised);
+  border: 1px solid var(--p-border-strong);
+  border-radius: var(--p-radius);
+  box-shadow: var(--p-shadow-lg);
+  animation: tselect-in var(--p-motion) var(--p-ease);
+}
+
+/* Pas la place dessous : il s'ouvre vers le haut. */
+.tselect-menu-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+/* Une VRAIE sortie : le menu s'efface au lieu de disparaître d'un coup. */
+.tselect-menu-closing {
+  animation: tselect-out var(--p-motion-fast) var(--p-ease) forwards;
+  pointer-events: none;
+}
+
+.tselect-option {
+  padding: var(--p-space-2) var(--p-space-3);
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  border-radius: var(--p-radius-sm);
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+}
+
+.tselect-option-active {
+  background: var(--p-surface);
+}
+
+.tselect-option-selected {
+  color: var(--p-primary);
+  font-weight: 600;
+}
+
+@keyframes tselect-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes tselect-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(-4px) scale(0.98); }
+}
+
 /* ---------- Assistant de création (fenêtre + étapes) ---------- */
 /* Le voile reprend celui du tiroir de navigation : même noir translucide, même
    rôle — éteindre ce qui est derrière sans le repeindre. */
@@ -580,6 +895,36 @@ body.no-scroll {
   .wizard-foot .btn {
     width: 100%;
     text-align: center;
+  }
+
+  /* Une réunion tient sur une colonne : les faits s'empilent, et l'action
+     principale prend toute la largeur — c'est elle qu'on vient chercher. */
+  .meeting-card-facts {
+    flex-direction: column;
+    gap: var(--p-space-2);
+  }
+
+  .meeting-card-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .meeting-card-actions .btn {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    min-height: 44px;
+  }
+
+  /* Le sélecteur occupe la largeur de son filtre, et son menu ne déborde
+     jamais de l'écran. */
+  .tselect,
+  .filter {
+    width: 100%;
+  }
+
+  .tselect-menu {
+    max-width: 100%;
   }
 
   .participant .segmented {

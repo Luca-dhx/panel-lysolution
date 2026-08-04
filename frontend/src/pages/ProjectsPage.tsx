@@ -24,6 +24,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { ProjectWizard } from '@/components/ProjectWizard';
+import { LinkChip, sansProtocole } from '@/components/Links';
 import { useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
@@ -134,9 +135,9 @@ export function ProjectsPage() {
                       ) : null}
                       {since ? <span>Dernier contact {since}</span> : null}
                       {url ? (
-                        <a href={url} target="_blank" rel="noreferrer">
-                          {url.replace(/^[a-z]+:\/\//, '')}
-                        </a>
+                        <LinkChip icon="globe" href={url} external title={url}>
+                          {sansProtocole(url)}
+                        </LinkChip>
                       ) : domain ? (
                         <span>{domain}</span>
                       ) : null}

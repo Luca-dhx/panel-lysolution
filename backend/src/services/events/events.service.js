@@ -120,8 +120,16 @@ export async function confirmEvent(eventId, data = {}, actor = {}) {
   if (data.occurredAt && !Number.isNaN(new Date(data.occurredAt).getTime())) {
     event.occurredAt = new Date(data.occurredAt);
   }
-  if (typeof data.notes === 'string') event.notes = data.notes;
-  if (typeof data.outcome === 'string') event.outcome = data.outcome;
+  // COMPTE RENDU FACULTATIF. Confirmer qu'une réunion a eu lieu est un CONSTAT,
+  // pas une rédaction : l'écran ne demande plus qu'un champ, et n'envoie rien
+  // s'il est vide. Une chaîne vide écraserait ici un compte rendu existant —
+  // « je n'ai rien à ajouter » deviendrait « efface ce qui était écrit ».
+  //
+  // `outcome` et `nextActions` ne sont plus DEMANDÉS à la confirmation, mais
+  // restent acceptés : le formulaire de modification les propose toujours, et
+  // les événements d'avant les portent encore.
+  if (typeof data.notes === 'string' && data.notes.trim()) event.notes = data.notes.trim();
+  if (typeof data.outcome === 'string' && data.outcome.trim()) event.outcome = data.outcome.trim();
   if (Array.isArray(data.nextActions)) event.nextActions = data.nextActions.filter(Boolean);
   // Qui était VRAIMENT là : la liste prévue se corrige au moment de confirmer,
   // personne par personne, sans avoir à la retaper.
