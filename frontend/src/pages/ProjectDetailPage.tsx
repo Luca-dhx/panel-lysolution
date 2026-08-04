@@ -73,7 +73,10 @@ export function ProjectDetailPage() {
     return (
       <div className="page">
         <div className="alert alert-error">{error ?? 'Projet introuvable.'}</div>
-        <p><Link to="/projects">← Retour aux projets clients</Link></p>
+        <Link className="link-back" to="/projects">
+          <Icon name="chevron-down" size={14} />
+          Retour aux projets clients
+        </Link>
       </div>
     );
   }
@@ -88,7 +91,14 @@ export function ProjectDetailPage() {
 
   return (
     <div className="page">
-      <p className="breadcrumb"><Link to="/projects">← Projets clients</Link></p>
+      <p className="breadcrumb">
+        {/* Une ACTION de navigation, pas du texte cliquable : ni bleu, ni
+            souligné, avec une cible confortable et un focus net. */}
+        <Link className="link-back" to="/projects">
+          <Icon name="chevron-down" size={14} />
+          Projets clients
+        </Link>
+      </p>
 
       {/* ── EN-TÊTE ─────────────────────────────────────────────────────── */}
       <header className="page-header">

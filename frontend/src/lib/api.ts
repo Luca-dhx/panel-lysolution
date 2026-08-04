@@ -170,6 +170,16 @@ export const api = {
    * Un simple lien ne suffirait pas : la route exige le jeton du Panel, et un
    * `<a href>` ne porte aucun en-tête. On récupère donc le flux, puis on
    * déclenche l'enregistrement — le fichier ne fait que passer.
+   *
+   * ── CE QUI NE MARCHAIT PAS ────────────────────────────────────────────
+   * Le lien était créé mais JAMAIS inséré dans le document, et l'URL objet
+   * révoquée dans la foulée du clic. Firefox ignore le clic d'un lien absent
+   * du document ; et révoquer avant que le navigateur ne se soit emparé du
+   * flux annule un téléchargement qui n'a pas encore commencé. Le clic
+   * paraissait sans effet, sans la moindre erreur.
+   *
+   * Une réponse d'erreur lue en `blob()` produisait par ailleurs un « PDF »
+   * de trois lignes de JSON : on vérifie donc que c'est bien un fichier.
    */
   async downloadContractDocument(projectId: string, filename: string): Promise<void> {
     const token = tokenStore.get();
@@ -184,13 +194,31 @@ export const api = {
         corps?.code,
       );
     }
+    const type = res.headers.get('content-type') ?? '';
+    if (/application\/json|text\/html/i.test(type)) {
+      const corps = await res.json().catch(() => null);
+      throw new ApiError(res.status, corps?.message ?? 'Le serveur n’a pas renvoyé de fichier.');
+    }
+
+    // Le nom vient du serveur quand il le donne : c'est lui qui sait s'il rend
+    // l'original ou le signé.
+    const disposition = res.headers.get('content-disposition') ?? '';
+    const trouve = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
+
     const blob = await res.blob();
+    if (blob.size === 0) throw new ApiError(502, 'Le document reçu est vide.');
+
     const url = URL.createObjectURL(blob);
     const lien = document.createElement('a');
     lien.href = url;
-    lien.download = filename || 'contrat.pdf';
+    lien.download = trouve ? decodeURIComponent(trouve[1].trim()) : (filename || 'contrat.pdf');
+    lien.rel = 'noopener';
+    lien.style.display = 'none';
+    document.body.appendChild(lien);
     lien.click();
-    URL.revokeObjectURL(url);
+    lien.remove();
+    // Après le clic, jamais avant.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   },
 
   /* ── THÈME DU PANEL ──────────────────────────────────────────────────── */

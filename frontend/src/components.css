@@ -120,6 +120,72 @@ body.no-scroll {
   font-weight: 600;
 }
 
+/* ---------- Liens : le Panel n'a plus de bleu souligné ---------- */
+/**
+ * Le Panel ne stylait PAS ses liens : chaque `<a>` hors barre latérale
+ * retombait donc sur le rendu par défaut du navigateur — bleu, souligné. Et
+ * comme `.btn` ne remettait pas `text-decoration`, un lien habillé en bouton
+ * gardait son soulignement : le « Voir » des cartes projet ressemblait à un
+ * lien HTML posé sur un bouton.
+ *
+ * Règle : un lien prend la couleur du thème et ne se souligne qu'au survol.
+ * Un lien habillé en bouton, ou en action de navigation, ne se souligne jamais.
+ */
+a {
+  color: var(--p-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+a:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 2px;
+  border-radius: var(--p-radius-sm);
+}
+
+.btn,
+.btn:hover,
+.nav-link,
+.nav-link:hover {
+  text-decoration: none;
+}
+
+/* Action de NAVIGATION — retour, ouverture d'une fiche, passage à une autre
+   liste. Ce n'est pas du texte cliquable au fil d'une phrase : c'est un geste,
+   il se présente comme tel. */
+.link-nav,
+.link-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  font-weight: 600;
+  text-decoration: none;
+  padding: var(--p-space-1) 0;
+  transition: color var(--p-motion-fast) var(--p-ease);
+}
+
+.link-nav:hover,
+.link-back:hover {
+  color: var(--p-primary);
+  text-decoration: none;
+}
+
+.link-nav:focus-visible,
+.link-back:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 3px;
+  border-radius: var(--p-radius-sm);
+}
+
+.link-back .icon {
+  transform: rotate(90deg);
+}
+
 /* ---------- Icônes ---------- */
 /* `currentColor` : une icône prend la couleur du texte qu'elle accompagne, et
    suit donc le thème sans qu'on ait rien à recalculer. */
@@ -226,6 +292,55 @@ body.no-scroll {
 
 .link-external {
   opacity: 0.7;
+}
+
+/* ---------- Carte projet (liste générale) ---------- */
+/* Basse et aérée : une identité, deux ou trois pastilles, une adresse, une
+   action. Le survol se contente de lever légèrement la bordure — une carte de
+   liste n'a pas à s'animer pour dire qu'elle est cliquable. */
+.project-card {
+  display: grid;
+  gap: var(--p-space-3);
+  transition: border-color var(--p-motion-fast) var(--p-ease);
+}
+
+.project-card:hover {
+  border-color: var(--p-border-strong);
+}
+
+.project-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-3);
+  min-width: 0;
+}
+
+.project-card-identity {
+  min-width: 0;
+}
+
+/* Un slogan tient sur deux lignes : au-delà, il déforme la grille de cartes. */
+.project-card-tagline {
+  margin: 2px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.project-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}
+
+.project-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--p-space-2);
+  min-width: 0;
 }
 
 /* ---------- Carte de réunion ---------- */
@@ -926,6 +1041,7 @@ body.no-scroll {
   .tselect-menu {
     max-width: 100%;
   }
+
 
   .participant .segmented {
     width: 100%;

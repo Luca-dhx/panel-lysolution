@@ -29,12 +29,8 @@ import { useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import {
-  connectionState,
   contractState,
-  formatAmount,
-  formatInterval,
   isBusinessSynchronized,
-  lastContact,
   projectDescription,
   projectDisplayName,
   projectInitials,
@@ -99,19 +95,26 @@ export function ProjectsPage() {
         />
       ) : (
         <div className="grid-cards">
+          {/* ── LA CARTE DIT PEU, ET C'EST LE POINT ───────────────────────────
+              Elle portait l'état du site, l'état du lien avec le Panel, la date
+              du dernier contact, le statut du contrat, le montant de
+              l'abonnement, sa périodicité et la note interne. Sept informations
+              pour répondre à une question — « de qui s'agit-il, et est-ce que ça
+              va ? » —, et un empilement de pastilles où plus rien ne ressort.
+
+              Ne reste que ce qui aide à CHOISIR sur quelle fiche cliquer :
+              l'identité, l'état du site, l'état du contrat, l'adresse. Le reste
+              appartient à la fiche, où il est lisible. */}
           {projects.map((project) => {
             const site = siteState(project);
-            const link = connectionState(project);
-            const since = lastContact(project);
             const url = projectSiteUrl(project);
             const domain = projectDomain(project);
             const logoUrl = projectLogoUrl(project);
             const contract = project.business?.contract ?? null;
-            const abonnement = formatAmount(contract?.pricing?.subscription ?? null);
             const description = projectDescription(project);
             return (
-              <Card key={project.projectId}>
-                <div className="project-row">
+              <Card key={project.projectId} className="project-card">
+                <div className="project-card-head">
                   {/* Le logo vient du projet, en URL absolue ; à défaut, les
                       initiales — jamais une image manquante. */}
                   {logoUrl ? (
@@ -119,49 +122,35 @@ export function ProjectsPage() {
                   ) : (
                     <span className="project-avatar">{projectInitials(project)}</span>
                   )}
-
-                  <div className="project-row-main">
+                  <div className="project-card-identity">
                     <p className="project-row-title">{projectDisplayName(project)}</p>
-                    {description ? <p className="muted">{description}</p> : null}
-
-                    <div className="project-row-meta">
-                      <span className={toneBadgeClass(site.tone)}>{site.label}</span>
-                      <span className={toneBadgeClass(link.tone)}>{link.label}</span>
-                      {/* Un projet relié qui n'a jamais rien poussé affiche son
-                          manifeste : on le DIT, sinon une panne de
-                          synchronisation ressemble à une donnée à jour. */}
-                      {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
-                        <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
-                      ) : null}
-                      {since ? <span>Dernier contact {since}</span> : null}
-                      {url ? (
-                        <LinkChip icon="globe" href={url} external title={url}>
-                          {sansProtocole(url)}
-                        </LinkChip>
-                      ) : domain ? (
-                        <span>{domain}</span>
-                      ) : null}
-                    </div>
-
-                    {contract ? (
-                      <div className="project-row-meta">
-                        <span className={toneBadgeClass(contractState(contract.status).tone)}>
-                          {contractState(contract.status).label}
-                        </span>
-                        {abonnement ? (
-                          <span>
-                            {abonnement}
-                            {formatInterval(contract.pricing.subscription?.interval)
-                              ? ` ${formatInterval(contract.pricing.subscription?.interval)}`
-                              : ''}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {project.note ? <p className="cell-secondary">{project.note}</p> : null}
+                    {description ? <p className="muted project-card-tagline">{description}</p> : null}
                   </div>
+                </div>
 
+                <div className="project-card-meta">
+                  <span className={toneBadgeClass(site.tone)}>{site.label}</span>
+                  {contract ? (
+                    <span className={toneBadgeClass(contractState(contract.status).tone)}>
+                      {contractState(contract.status).label}
+                    </span>
+                  ) : null}
+                  {/* Un projet relié qui n'a jamais rien poussé affiche son
+                      manifeste : on le DIT, sinon une panne de synchronisation
+                      ressemble à une donnée à jour. */}
+                  {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
+                    <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
+                  ) : null}
+                </div>
+
+                <div className="project-card-foot">
+                  {url ? (
+                    <LinkChip icon="globe" href={url} external title={url}>
+                      {sansProtocole(url)}
+                    </LinkChip>
+                  ) : domain ? (
+                    <span className="muted">{domain}</span>
+                  ) : <span />}
                   <Link className="btn btn-secondary btn-small" to={`/projects/${project.projectId}`}>
                     Voir
                   </Link>
