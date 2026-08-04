@@ -294,6 +294,94 @@ a:focus-visible {
   opacity: 0.7;
 }
 
+/* ---------- Bandeau de fraîcheur ---------- */
+/* Il précède TOUTE donnée métier : ce qui suit est-il encore vrai ? Une
+   pastille grise perdue au milieu des autres ne suffisait pas à le dire. */
+.freshness-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-4);
+  padding: var(--p-space-4);
+  margin-bottom: var(--p-space-4);
+  border: 1px solid var(--p-warning, var(--p-border-strong));
+  border-left-width: 4px;
+  border-radius: var(--p-radius);
+  background: var(--p-surface-raised);
+}
+
+.freshness-banner-danger {
+  border-color: var(--p-danger, var(--p-primary));
+}
+
+.freshness-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+  color: var(--p-text-muted);
+}
+
+.freshness-banner-body {
+  display: grid;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+.freshness-banner-title {
+  margin: 0;
+  font-family: var(--p-font-heading);
+  font-size: var(--p-text-lg);
+  font-weight: 700;
+}
+
+.freshness-banner-body p {
+  margin: 0;
+}
+
+.freshness-banner-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: var(--p-space-2) var(--p-space-4);
+  margin: var(--p-space-2) 0 0;
+}
+
+.freshness-banner-facts dt {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+.freshness-banner-facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Une valeur qui reste lisible, mais qui ne prétend plus être actuelle. */
+.stale-value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+
+.stale-value-label,
+.stale-value-waiting {
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+}
+
+.stale-value-waiting {
+  width: 100%;
+  font-weight: 600;
+}
+
+.stale-value-badge {
+  font-weight: 400;
+}
+
 /* ---------- Carte projet (liste générale) ---------- */
 /* Basse et aérée : une identité, deux ou trois pastilles, une adresse, une
    action. Le survol se contente de lever légèrement la bordure — une carte de

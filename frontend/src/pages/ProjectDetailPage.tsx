@@ -25,6 +25,7 @@ import { EventTimeline } from '@/components/EventTimeline';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
+import { DernierEtatConnu, FreshnessBanner } from '@/components/FreshnessBanner';
 import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
@@ -32,6 +33,7 @@ import { formatDateTime } from '@/lib/format';
 import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
+import { getProjectDataFreshness } from '@/lib/projectFreshness';
 import type { PublicProject, TeamMember } from '@/types';
 import type { Meeting, ProjectEvent } from '@/types.events';
 import { api } from '@/lib/api';
@@ -89,6 +91,9 @@ export function ProjectDetailPage() {
   const description = projectDescription(project);
   const alert = projectAlert(project);
   const since = lastContact(project);
+  // UNE seule règle de fraîcheur pour toute la fiche : identité, contrat,
+  // équipe et document s'y réfèrent, aucun ne décide dans son coin.
+  const fraicheur = getProjectDataFreshness(project);
 
   return (
     <div className="page">
@@ -140,6 +145,9 @@ export function ProjectDetailPage() {
         </div>
       </header>
 
+      {/* AVANT toute donnée métier : ce qui suit est-il encore vrai ? */}
+      <FreshnessBanner fraicheur={fraicheur} />
+
       {alert ? <div className={`alert alert-${alert.tone === 'error' ? 'error' : 'warning'}`}>{alert.message}</div> : null}
 
       <div className="tabs">
@@ -169,7 +177,7 @@ export function ProjectDetailPage() {
       </div>
 
       {tab === 'overview' ? (
-        <OverviewTab project={project} url={url} since={since} link={link} />
+        <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
       {tab === 'dev' && isDev ? <DeveloperTab project={project} /> : null}
@@ -184,11 +192,13 @@ function OverviewTab({
   url,
   since,
   link,
+  fraicheur,
 }: {
   project: PublicProject;
   url: string | null;
   since: string | null;
   link: { label: string; tone: 'ok' | 'warn' | 'error' | 'neutral' };
+  fraicheur: ReturnType<typeof getProjectDataFreshness>;
 }) {
   const site = siteState(project);
   const lastSync = project.runtime.bridgeStats?.lastSyncAt ?? null;
@@ -272,7 +282,7 @@ function OverviewTab({
         <ContractCard project={project} contract={null} />
       )}
 
-      <TeamCard team={project.business?.team ?? []} />
+      <TeamCard team={project.business?.team ?? []} fraicheur={fraicheur} />
 
       <Card title="Suivi">
         <dl className="detail-list">
@@ -450,7 +460,16 @@ export default ProjectDetailPage;
  * informations. Afficher une colonne vide serait moins honnête que ne pas
  * l'afficher du tout.
  */
-function TeamCard({ team }: { team: TeamMember[] }) {
+function TeamCard({
+  team,
+  fraicheur,
+}: {
+  team: TeamMember[];
+  fraicheur: ReturnType<typeof getProjectDataFreshness>;
+}) {
+  // Une équipe reçue d'un AUTRE environnement n'est pas l'équipe actuelle :
+  // ce sont des personnes qui n'ont peut-être aucun compte sur cette instance.
+  const perimee = !fraicheur.isBusinessDataFresh;
   if (team.length === 0) {
     return (
       <Card title="Équipe du projet">
@@ -469,6 +488,13 @@ function TeamCard({ team }: { team: TeamMember[] }) {
 
   return (
     <Card title="Équipe du projet">
+      {perimee ? (
+        <p className="muted">
+          <DernierEtatConnu fraicheur={fraicheur} attente="Équipe actuelle : en attente de synchronisation">
+            {`${team.length} utilisateur${team.length > 1 ? 's' : ''}`}
+          </DernierEtatConnu>
+        </p>
+      ) : null}
       <ul className="team-list">
         {team.map((m) => (
           <li key={m.entityId} className="team-row">

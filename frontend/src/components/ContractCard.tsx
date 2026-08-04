@@ -14,6 +14,8 @@ import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { DernierEtatConnu } from '@/components/FreshnessBanner';
+import { actionsDistantesPossibles, getProjectDataFreshness } from '@/lib/projectFreshness';
 import {
   contractState,
   formatAmount,
@@ -54,6 +56,8 @@ export function ContractCard({
   project: PublicProject;
   contract: BusinessContract | null;
 }) {
+  // UNE seule règle de fraîcheur, partagée avec toute la fiche.
+  const fraicheur = getProjectDataFreshness(project);
   const [operations, setOperations] = useState<ContractOperation[]>([]);
   const [reachable, setReachable] = useState(true);
   const [environment, setEnvironment] = useState<string | null>(null);
@@ -88,8 +92,13 @@ export function ContractCard({
   }
 
   const doc = contract.document;
-  // Le projet doit être relié pour que le document puisse être RÉCUPÉRÉ.
-  const joignable = project.pairing.status === 'PAIRED';
+  /**
+   * JOIGNABLE veut dire : relié, ET qui répond, ET dont les données viennent
+   * de l'instance qui répond. Un projet redéployé en TEST reste « appairé »
+   * alors que ce qu'on affiche décrit encore PROD : proposer un
+   * téléchargement ou une résiliation sur cette base agirait à l'aveugle.
+   */
+  const joignable = project.pairing.status === 'PAIRED' && actionsDistantesPossibles(fraicheur);
   const etatDoc = documentState(contract, joignable);
   const statut = contractState(contract.status);
 
@@ -129,7 +138,11 @@ export function ContractCard({
       <dl className="detail-list">
         <div>
           <dt>Statut</dt>
-          <dd><span className={toneBadgeClass(statut.tone)}>{statut.label}</span></dd>
+          <dd>
+            <DernierEtatConnu fraicheur={fraicheur} attente="Statut actuel : en attente de synchronisation">
+              <span className={toneBadgeClass(statut.tone)}>{statut.label}</span>
+            </DernierEtatConnu>
+          </dd>
         </div>
         {contract.reference ? (
           <div><dt>Référence</dt><dd>{contract.reference}</dd></div>

@@ -18,6 +18,17 @@
  */
 import mongoose from 'mongoose';
 
+/**
+ * D'OÙ vient cette photographie — l'environnement et la génération du projet
+ * au moment où elle a été reçue. Sans cela, une projection PROD conservée
+ * après un redéploiement en TEST se présentait comme l'état courant.
+ */
+const SOURCE_FIELDS = {
+  sourceEnvironment: { type: String, default: null },
+  sourceGeneration: { type: String, default: null },
+  sourceSoftwareVersion: { type: String, default: null },
+};
+
 const contactsSchema = new mongoose.Schema(
   {
     email: { type: String, default: null },
@@ -49,6 +60,7 @@ const presentationSchema = new mongoose.Schema(
     description: { type: String, default: null },
     network: { type: networkSchema, default: () => ({}) },
     sourceModifiedAt: { type: String, required: true },
+    ...SOURCE_FIELDS,
     receivedAt: { type: String, required: true },
   },
   { minimize: false, versionKey: false },
@@ -98,6 +110,7 @@ const contractSchema = new mongoose.Schema(
       launchFee: { type: amountSchema, default: null },
     },
     sourceModifiedAt: { type: String, required: true },
+    ...SOURCE_FIELDS,
     receivedAt: { type: String, required: true },
   },
   { minimize: false, versionKey: false },
@@ -120,6 +133,7 @@ const memberSchema = new mongoose.Schema(
     role: { type: String, required: true },
     createdAt: { type: String, default: null },
     sourceModifiedAt: { type: String, required: true },
+    ...SOURCE_FIELDS,
     receivedAt: { type: String, required: true },
   },
   { minimize: false, versionKey: false },

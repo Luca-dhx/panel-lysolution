@@ -72,6 +72,8 @@ export interface PublicProject {
     contract: BusinessContract | null;
     /** Présente sur la FICHE seulement — la liste ne l'affiche pas. */
     team?: TeamMember[];
+    /** Génération de la source : dit si ces projections sont encore actuelles. */
+    freshness?: BusinessFreshness | null;
   };
 }
 
@@ -105,6 +107,18 @@ export interface TeamMember {
 
 export type DocumentStatus =
   | 'NONE' | 'GENERATED' | 'PENDING_SIGNATURE' | 'SIGNED' | 'UNAVAILABLE';
+
+/**
+ * D'où viennent les projections affichées, et le projet est-il encore le même.
+ * Voir `getProjectDataFreshness` : c'est la seule règle d'interprétation.
+ */
+export interface BusinessFreshness {
+  runtimeEnvironment: string | null;
+  runtimeGeneration: string | null;
+  projectionEnvironment: string | null;
+  projectionGeneration: string | null;
+  lastSyncAt: string | null;
+}
 
 export interface BusinessDocument {
   available: boolean;

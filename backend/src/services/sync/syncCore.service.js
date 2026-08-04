@@ -6,6 +6,8 @@
 // jamais une double application).
 // Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
 import { ENTITY_PAYLOAD_INVALID, PROJECTORS, needsRepair } from './projectors.js';
+import { currentGeneration, stampOf } from './projectGeneration.js';
+import { registryStore } from '../registry/registryStore.js';
 import {
   ACK_STATUS,
   APPLIED_ENTITY_TYPES,
@@ -38,6 +40,18 @@ async function nextJournalSeq() {
 // jamais un échec global silencieux.
 export async function applyIncoming(projectId, changes) {
   const results = [];
+
+  /**
+   * LA GÉNÉRATION DE LA SOURCE — lue UNE fois pour tout le lot.
+   *
+   * Elle dit de quel monde viennent ces écritures : quel environnement, quel
+   * appairage. C'est elle qui permet de distinguer « une écriture plus
+   * ancienne » — qu'on écarte — d'« une écriture venue d'un autre monde », qui
+   * remplace tout ce que le précédent avait laissé.
+   */
+  const record = await registryStore.getById(projectId);
+  const generation = currentGeneration(record);
+  const stamp = stampOf(record, nowIso());
 
   for (const change of changes) {
     // Sémantique du contrat, vérifiée par écriture (la forme l'a déjà été).
@@ -86,9 +100,27 @@ export async function applyIncoming(projectId, changes) {
       entityType: change.entityType,
       entityId: change.entityId,
     }).lean();
+    /**
+     * CHANGEMENT DE GÉNÉRATION — le dernier-écrit-gagne ne s'applique plus.
+     *
+     * Comparer deux dates suppose qu'elles mesurent la même histoire. Après un
+     * redéploiement de PROD vers TEST, ce n'est plus vrai : la nouvelle
+     * instance repart d'une autre base, et son contrat — pourtant le seul
+     * valable — peut porter une date plus ancienne que celui qu'il remplace.
+     * Le Panel l'écartait alors comme « périmé », et gardait indéfiniment
+     * l'état PROD.
+     *
+     * Une écriture venue d'une génération différente de celle du curseur gagne
+     * donc toujours. À l'intérieur d'une même génération, rien ne change.
+     */
+    const nouvelleGeneration = Boolean(known)
+      && Boolean(known.generation)
+      && known.generation !== generation.generation;
+
     // Perdante du dernier-écrit-gagne — même réserve : on ne se tait que si
     // l'état gagnant est RÉELLEMENT projeté.
-    if (known && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()
+    if (known && !nouvelleGeneration
+        && new Date(change.modifiedAt).getTime() <= new Date(known.modifiedAt).getTime()
         && !(await needsRepair(projectId, change))) {
       await PanelSyncReceipt.create({ projectId, writeId: change.writeId, receivedAt: nowIso() });
       results.push({ writeId: change.writeId, status: ACK_STATUS.IGNORED, code: null, message: null });
@@ -100,7 +132,7 @@ export async function applyIncoming(projectId, changes) {
     // état d'entité, ni projection partielle. Le writeId n'est pas consigné,
     // de sorte qu'une correction du projet soit relivrée et appliquée.
     try {
-      await PROJECTORS[change.entityType]({ projectId, change });
+      await PROJECTORS[change.entityType]({ projectId, change, stamp });
     } catch (err) {
       results.push({
         writeId: change.writeId,
@@ -123,11 +155,12 @@ export async function applyIncoming(projectId, changes) {
     // réparation peut rejouer un état plus ancien que le curseur connu, et le
     // rabaisser rouvrirait la porte à des écritures déjà écartées.
     const avance = !known
+      || nouvelleGeneration
       || new Date(change.modifiedAt).getTime() > new Date(known.modifiedAt).getTime();
     if (avance) {
       await PanelSyncEntityState.updateOne(
         { projectId, entityType: change.entityType, entityId: change.entityId },
-        { $set: { modifiedAt: change.modifiedAt } },
+        { $set: { modifiedAt: change.modifiedAt, generation: generation.generation } },
         { upsert: true },
       );
     }

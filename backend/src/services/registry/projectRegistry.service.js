@@ -11,6 +11,7 @@ import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
+import { currentGeneration } from '../sync/projectGeneration.js';
 import {
   generateProjectKey,
   normalizeBackendUrl,
@@ -336,7 +337,39 @@ export function toPublicProject(record, now = Date.now(), projections = {}) {
     business: {
       presentation: projections.presentation ?? null,
       contract: projections.contract ?? null,
+      /**
+       * FRAÎCHEUR — d'où viennent ces projections, et sont-elles encore de ce
+       * monde ? Un projet redéployé de PROD vers TEST garde son `projectId`,
+       * mais tout le reste a changé : les données reçues sous PROD ne
+       * décrivent plus rien. L'écran doit pouvoir le dire, et pour cela il
+       * lui faut la génération de la source à côté de la génération courante.
+       */
+      freshness: describeFreshness(record, projections),
     },
+  };
+}
+
+/**
+ * Ce que le frontend a besoin de savoir pour ne JAMAIS présenter une ancienne
+ * photographie comme l'état actuel. Aucune décision d'affichage ici : on
+ * fournit les faits, l'écran les met en forme (voir `getProjectDataFreshness`).
+ */
+function describeFreshness(record, projections) {
+  const { environment, generation } = currentGeneration(record);
+  // La photographie la plus récemment reçue, quelle que soit l'entité : c'est
+  // elle qui date la dernière synchronisation complète du projet.
+  const recues = [projections.presentation, projections.contract]
+    .filter(Boolean)
+    .map((p) => p.receivedAt)
+    .filter(Boolean)
+    .sort();
+  const source = projections.contract ?? projections.presentation ?? null;
+  return {
+    runtimeEnvironment: environment,
+    runtimeGeneration: generation,
+    projectionEnvironment: source?.sourceEnvironment ?? null,
+    projectionGeneration: source?.sourceGeneration ?? null,
+    lastSyncAt: recues.length > 0 ? recues[recues.length - 1] : null,
   };
 }
 

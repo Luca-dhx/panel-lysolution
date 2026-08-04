@@ -26,6 +26,7 @@ import {
   teamMemberPayloadSchema,
 } from '../../bridge/bridgeContract.js';
 import { PanelDiagnostic } from '../../models/PanelSyncState.model.js';
+export { stampOf } from './projectGeneration.js';
 import {
   PanelProjectContract,
   PanelProjectMember,
@@ -65,7 +66,7 @@ async function applyDiagnostic({ projectId, change }) {
  * photographie précédente. C'est un état, pas un historique — et le cœur a
  * déjà écarté les écritures plus anciennes (LWW).
  */
-async function applyProjectPresentation({ projectId, change }) {
+async function applyProjectPresentation({ projectId, change, stamp }) {
   if (change.deleted) {
     await PanelProjectPresentation.deleteOne({ projectId });
     return;
@@ -93,7 +94,7 @@ async function applyProjectPresentation({ projectId, change }) {
           backend: p.network?.backend ?? null,
         },
         sourceModifiedAt: change.modifiedAt,
-        receivedAt: nowIso(),
+        ...stamp,
       },
     },
     { upsert: true },
@@ -106,7 +107,7 @@ async function applyProjectPresentation({ projectId, change }) {
  * Un tombstone (`deleted`) signifie « plus aucun contrat pertinent » : on
  * efface la projection plutôt que de laisser un contrat périmé à l'écran.
  */
-async function applyContract({ projectId, change }) {
+async function applyContract({ projectId, change, stamp }) {
   if (change.deleted) {
     await PanelProjectContract.deleteOne({ projectId });
     return;
@@ -142,7 +143,7 @@ async function applyContract({ projectId, change }) {
           launchFee: c.pricing?.launchFee ?? null,
         },
         sourceModifiedAt: change.modifiedAt,
-        receivedAt: nowIso(),
+        ...stamp,
       },
     },
     { upsert: true },
@@ -156,7 +157,7 @@ async function applyContract({ projectId, change }) {
  * par membre, identifiée par l'`entityId` que le projet lui donne. Un
  * tombstone efface la ligne — c'est ainsi qu'un départ se propage.
  */
-async function applyTeamMember({ projectId, change }) {
+async function applyTeamMember({ projectId, change, stamp }) {
   if (change.deleted) {
     await PanelProjectMember.deleteOne({ projectId, entityId: change.entityId });
     return;
@@ -174,11 +175,27 @@ async function applyTeamMember({ projectId, change }) {
         role: m.role,
         createdAt: m.createdAt ?? null,
         sourceModifiedAt: change.modifiedAt,
-        receivedAt: nowIso(),
+        ...stamp,
       },
     },
     { upsert: true },
   );
+
+  // ── LE ROSTER NE SE MÉLANGE PAS ENTRE GÉNÉRATIONS ──────────────────────
+  // Un membre est une LIGNE : rien ne l'efface sinon un tombstone nommant son
+  // `entityId`. Après un redéploiement PROD → TEST, la nouvelle instance ne
+  // connaît pas les membres de l'ancienne : elle ne peut pas les enterrer, et
+  // ils restaient donc affichés comme l'équipe actuelle.
+  //
+  // Dès qu'un membre d'une NOUVELLE génération arrive, les lignes des
+  // générations précédentes sont retirées : c'est la photographie qui remplace
+  // la photographie, et non deux équipes superposées.
+  if (stamp?.sourceGeneration) {
+    await PanelProjectMember.deleteMany({
+      projectId,
+      sourceGeneration: { $ne: stamp.sourceGeneration },
+    });
+  }
 }
 
 /** Table FERMÉE — le cœur n'applique que ce qui y figure. */

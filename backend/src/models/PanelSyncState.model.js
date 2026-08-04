@@ -22,6 +22,15 @@ const entityStateSchema = new mongoose.Schema(
     entityType: { type: String, required: true },
     entityId: { type: String, required: true },
     modifiedAt: { type: String, required: true },
+    /**
+     * La GÉNÉRATION de la source au moment de l'écriture retenue.
+     *
+     * Le curseur du dernier-écrit-gagne compare des dates ; comparer des dates
+     * n'a de sens qu'à l'intérieur d'une même génération. Un projet redéployé
+     * de PROD vers TEST repart d'une autre base : son contrat peut être plus
+     * ANCIEN que celui qu'il remplace, et devait pourtant gagner.
+     */
+    generation: { type: String, default: null },
   },
   { versionKey: false },
 );
