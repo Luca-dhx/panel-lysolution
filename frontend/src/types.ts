@@ -103,11 +103,17 @@ export interface TeamMember {
   receivedAt: string;
 }
 
+export type DocumentStatus =
+  | 'NONE' | 'GENERATED' | 'PENDING_SIGNATURE' | 'SIGNED' | 'UNAVAILABLE';
+
 export interface BusinessDocument {
   available: boolean;
-  kind?: 'ORIGINAL' | 'SIGNED' | null;
+  /** L'état RÉEL, constaté par le projet en croisant sa base et son stockage. */
+  status: DocumentStatus;
+  downloadAvailable: boolean;
   filename?: string | null;
-  pageCount?: number;
+  pages?: number;
+  sha256?: string | null;
   version?: number;
   signatureStatus?: string | null;
   signedAt?: string | null;

@@ -129,9 +129,10 @@ await call('POST', '/bridge/v1/sync/push', {
         reference: 'CTR-2026-0001',
         document: {
           available: true,
-          kind: 'SIGNED',
+          status: 'SIGNED',
+          downloadAvailable: true,
           filename: 'contrat-CTR-2026-0001.pdf',
-          pageCount: 4,
+          pages: 4,
           version: 2,
           signatureStatus: 'DONE',
           downloadPath: '/api/project-bridge/v1/contracts/ctr-1/document',
@@ -147,7 +148,8 @@ section('1. Le document est DÉCRIT, jamais stocké');
   const fiche = await call('GET', `/api/projects/${projectId}`, { headers: AUTH });
   const doc = fiche.json?.data?.project?.business?.contract?.document;
   check('la fiche annonce un document disponible', doc?.available === true);
-  check('…signé', doc.kind === 'SIGNED' && doc.signatureStatus === 'DONE');
+  check('…signé et téléchargeable',
+    doc.status === 'SIGNED' && doc.downloadAvailable === true);
   check('…avec son nom lisible', doc.filename === 'contrat-CTR-2026-0001.pdf');
   check('aucun chemin disque n’apparaît dans la fiche',
     !/storage[/\\]contracts/.test(JSON.stringify(fiche.json)));

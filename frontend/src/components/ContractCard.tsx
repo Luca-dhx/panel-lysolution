@@ -37,12 +37,13 @@ function documentState(
   joignable: boolean,
 ): { label: string; tone: 'ok' | 'warn' | 'neutral' } {
   const doc = contract.document;
-  if (!doc?.available) return { label: 'Non généré', tone: 'neutral' };
+  // C'est le PROJET qui constate l'état, en croisant sa base et son stockage.
+  // Le Panel ne le déduit plus : il l'affiche.
+  if (!doc || doc.status === 'NONE') return { label: 'Non généré', tone: 'neutral' };
+  if (doc.status === 'UNAVAILABLE') return { label: 'Momentanément indisponible', tone: 'warn' };
   if (!joignable) return { label: 'Momentanément indisponible', tone: 'warn' };
-  if (doc.kind === 'SIGNED') return { label: 'Signé', tone: 'ok' };
-  if (doc.signatureStatus === 'ONGOING') return { label: 'En attente de signature', tone: 'warn' };
-  if (doc.signatureStatus === 'DECLINED') return { label: 'Signature refusée', tone: 'warn' };
-  if (doc.signatureStatus === 'EXPIRED') return { label: 'Signature expirée', tone: 'warn' };
+  if (doc.status === 'SIGNED') return { label: 'Signé', tone: 'ok' };
+  if (doc.status === 'PENDING_SIGNATURE') return { label: 'En attente de signature', tone: 'warn' };
   return { label: 'Généré, non signé', tone: 'warn' };
 }
 
@@ -155,12 +156,12 @@ export function ContractCard({
           <dd>
             <span className={toneBadgeClass(etatDoc.tone)}>{etatDoc.label}</span>
             {doc?.available && doc.signedAt ? ` · signé le ${formatDateTime(doc.signedAt)}` : ''}
-            {doc?.available && doc.pageCount ? ` · ${doc.pageCount} pages` : ''}
+            {doc?.pages ? ` · ${doc.pages} pages` : ''}
           </dd>
         </div>
       </dl>
 
-      {doc?.available && joignable ? (
+      {doc?.downloadAvailable && joignable ? (
         <button
           type="button"
           className="btn btn-secondary btn-small"

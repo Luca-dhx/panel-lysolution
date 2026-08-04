@@ -405,16 +405,22 @@ export const contractPayloadSchema = z
     document: z
       .object({
         available: z.boolean(),
-        kind: z.enum(['ORIGINAL', 'SIGNED']),
-        filename: z.string().min(1),
+        /**
+         * L'état RÉEL du document, tel que le projet le constate en croisant
+         * sa base et son stockage. `UNAVAILABLE` n'est pas `NONE` : le premier
+         * dit « référencé mais introuvable », le second « jamais produit ».
+         */
+        status: z.enum(['NONE', 'GENERATED', 'PENDING_SIGNATURE', 'SIGNED', 'UNAVAILABLE']),
+        downloadAvailable: z.boolean(),
+        filename: z.string().min(1).optional(),
         contentType: z.string().min(1).optional(),
-        pageCount: z.number().int().nonnegative().optional(),
-        checksum: z.string().nullable().optional(),
+        pages: z.number().int().nonnegative().optional(),
+        sha256: z.string().nullable().optional(),
         version: z.number().int().nonnegative().optional(),
         signatureStatus: z.string().min(1).optional(),
         signedAt: z.string().nullable().optional(),
         generatedAt: z.string().nullable().optional(),
-        downloadPath: z.string().startsWith('/'),
+        downloadPath: z.string().startsWith('/').optional(),
       })
       .strict()
       .optional(),

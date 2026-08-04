@@ -80,10 +80,11 @@ const contractSchema = new mongoose.Schema(
      */
     document: {
       available: { type: Boolean, default: false },
-      kind: { type: String, default: null },
+      status: { type: String, default: 'NONE' },
+      downloadAvailable: { type: Boolean, default: false },
       filename: { type: String, default: null },
-      pageCount: { type: Number, default: 0 },
-      checksum: { type: String, default: null },
+      pages: { type: Number, default: 0 },
+      sha256: { type: String, default: null },
       version: { type: Number, default: 0 },
       signatureStatus: { type: String, default: null },
       signedAt: { type: String, default: null },
