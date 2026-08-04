@@ -20,7 +20,8 @@ import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
-import { EventRow, MeetingRow } from '@/components/EventLists';
+import { MeetingRow } from '@/components/EventLists';
+import { EventTimeline } from '@/components/EventTimeline';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
@@ -614,11 +615,9 @@ function EventsTab({ project }: { project: PublicProject }) {
         {historique.length === 0 ? (
           <p className="muted">Rien n’a encore été consigné pour ce client.</p>
         ) : (
-          <ul className="event-list">
-            {historique.map((e) => (
-              <EventRow key={e._id} event={e} showProject={false} onEdit={setEvenementEdite} />
-            ))}
-          </ul>
+          // La chronologie remplace la liste : compacte, dépliable au clic.
+          // Les notes internes ne s'affichent qu'une fois l'entrée ouverte.
+          <EventTimeline events={historique} onEdit={setEvenementEdite} />
         )}
       </Card>
     </>

@@ -25,6 +25,7 @@
     "test:events": "node ../tests/events.test.js",
     "test:panel-ux": "node ../tests/panel-ux.test.js",
     "test:panel-meetings-ui": "node ../tests/panel-meetings-ui.test.js",
+    "test:panel-timeline-ui": "node ../tests/panel-timeline-ui.test.js",
     "test:architecture": "node ../tests/architecture.test.js",
     "test:manifest": "node ../tests/manifest.test.js",
     "test:capabilities": "node ../tests/capabilities.test.js",

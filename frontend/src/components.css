@@ -430,6 +430,169 @@ a:focus-visible {
   text-decoration: none;
 }
 
+/* ---------- Timeline des événements ---------- */
+.timeline {
+  list-style: none;
+  margin: var(--p-space-3) 0 0;
+  padding: 0;
+  position: relative;
+}
+
+/* UNE ligne verticale, continue : c'est elle qui fait la chronologie. Elle
+   s'arrête au dernier repère plutôt que de pendre dans le vide. */
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 0.95rem;
+  top: 0.6rem;
+  bottom: 0.6rem;
+  width: 1px;
+  background: var(--p-border);
+}
+
+.timeline-item {
+  position: relative;
+  padding-left: 2.75rem;
+}
+
+.timeline-mark {
+  position: absolute;
+  left: 0;
+  top: 0.35rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--p-radius-full);
+  background: var(--p-surface-sunken);
+  border: 1px solid var(--p-border);
+  color: var(--p-text-muted);
+}
+
+.timeline-item-open .timeline-mark {
+  border-color: var(--p-primary);
+  color: var(--p-primary);
+}
+
+/* L'entrée entière est le bouton : la cible est large, au doigt comme à la
+   souris, et le clavier n'a qu'un seul arrêt par événement. */
+.timeline-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-3);
+  width: 100%;
+  min-height: 44px;
+  padding: var(--p-space-2) 0;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--p-border);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.timeline-entry:hover .timeline-title {
+  color: var(--p-primary);
+}
+
+.timeline-entry:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 2px;
+  border-radius: var(--p-radius-sm);
+}
+
+.timeline-entry-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-title {
+  font-weight: 600;
+  transition: color var(--p-motion-fast) var(--p-ease);
+}
+
+.timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-1) var(--p-space-3);
+  font-size: var(--p-text-sm);
+}
+
+/* Le résumé tient sur UNE ligne : le compte rendu complet s'ouvre au clic. */
+.timeline-resume {
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.timeline-chevron {
+  color: var(--p-text-faint);
+  transition: transform var(--p-motion) var(--p-ease);
+  margin-top: 0.35rem;
+}
+
+.timeline-item-open .timeline-chevron {
+  transform: rotate(180deg);
+}
+
+.timeline-detail {
+  display: grid;
+  gap: var(--p-space-3);
+  padding: var(--p-space-3) 0 var(--p-space-4);
+  animation: timeline-open var(--p-motion) var(--p-ease);
+}
+
+.timeline-block {
+  display: grid;
+  gap: var(--p-space-1);
+}
+
+.timeline-block p,
+.timeline-block ul {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.timeline-block-label {
+  font-size: var(--p-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--p-text-muted);
+}
+
+.timeline-revisions,
+.timeline-revision ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--p-space-1);
+}
+
+.timeline-revision {
+  padding: var(--p-space-2) 0;
+  border-top: 1px dashed var(--p-border);
+  font-size: var(--p-text-sm);
+}
+
+.timeline-actions {
+  padding: var(--p-space-2) 0 0 2.75rem;
+}
+
+@keyframes timeline-open {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
 /* ---------- Sélecteur thémé (filtres) ---------- */
 .tselect {
   position: relative;
@@ -1040,6 +1203,29 @@ a:focus-visible {
 
   .tselect-menu {
     max-width: 100%;
+  }
+
+  /* La chronologie se resserre : le repère reste, la marge fond. Aucune
+     information ne disparaît, rien ne déborde. */
+  .timeline-item {
+    padding-left: 2.25rem;
+  }
+
+  .timeline-mark {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .timeline::before {
+    left: 0.85rem;
+  }
+
+  .timeline-entry {
+    flex-wrap: wrap;
+  }
+
+  .timeline-actions {
+    padding-left: 2.25rem;
   }
 
 

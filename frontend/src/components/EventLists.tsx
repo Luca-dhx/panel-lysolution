@@ -2,7 +2,7 @@
 import { Link } from 'react-router-dom';
 import { formatDateTime } from '@/lib/format';
 import { toneBadgeClass } from '@/lib/projectPresentation';
-import { TYPE_LABELS, eventStatusState, meetingStatusState } from '@/components/eventLabels';
+import { TYPE_LABELS, eventStatusState, meetingImminence } from '@/components/eventLabels';
 import { ParticipantsSummary } from '@/components/Participants';
 import { Icon } from '@/components/Icon';
 import type { IconName } from '@/components/Icon';
@@ -68,7 +68,10 @@ export function MeetingRow({
   onEdit?: (m: Meeting) => void;
   onCancel?: (m: Meeting) => void;
 }) {
-  const etat = meetingStatusState(meeting.status);
+  // Une réunion proche le DIT : « Demain », « Dans 20 min ». Le calcul est
+  // dans `meetingImminence`, et il n'y a aucun minuteur ici — le
+  // rafraîchissement vivant de l'agenda suffit à faire évoluer la pastille.
+  const etat = meetingImminence(meeting.scheduledAt, meeting.status);
   const modifiable = meeting.status === 'PLANNED' || meeting.status === 'DONE_PENDING_CONFIRMATION';
   const visio = lienVisio(meeting);
 
@@ -85,7 +88,10 @@ export function MeetingRow({
             </span>
           ) : null}
         </div>
-        <span className={toneBadgeClass(etat.tone)}>{etat.label}</span>
+        <span className={toneBadgeClass(etat.tone)}>
+          {etat.imminent ? <Icon name="clock" size={12} /> : null}
+          {etat.label}
+        </span>
       </div>
 
       <div className="meeting-card-facts">
