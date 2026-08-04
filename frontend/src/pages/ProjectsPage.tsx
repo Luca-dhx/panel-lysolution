@@ -11,19 +11,22 @@
  * les versions et les actions techniques vivent dans l'onglet Développeur de
  * la fiche projet.
  *
- * La DÉCLARATION d'un projet reste réservée aux comptes DEV : elle exige de
+ * La CRÉATION d'un projet reste réservée aux comptes DEV : elle exige de
  * sonder une adresse de backend et de transmettre un code d'appairage — une
  * opération d'infrastructure, pas de gestion.
+ *
+ * Elle tenait auparavant un bloc technique PERMANENT au-dessus de la liste :
+ * champ d'adresse, bouton de test, verdict brut, champ de nom, déclaration.
+ * Tout était offert en même temps, à tout le monde, sans ordre. Il ne reste
+ * qu'un bouton ; le reste se déroule dans l'assistant, étape par étape.
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, CopyField, EmptyState } from '@/components/ui';
-import { api, errorMessage, probeProject } from '@/lib/api';
-import { formatDateTime } from '@/lib/format';
+import { Card, EmptyState } from '@/components/ui';
+import { ProjectWizard } from '@/components/ProjectWizard';
 import { useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
-import type { ProbeResult } from '@/types.company';
 import {
   connectionState,
   contractState,
@@ -41,67 +44,14 @@ import {
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
-interface CreatedCode {
-  projectName: string;
-  pairingCode: string;
-  expiresAt: string;
-}
-
 export function ProjectsPage() {
   const { projects, isInitialLoading, isRefreshing, error, reload } = useProjects();
   const isDev = useIsDev();
   const showRefreshHint = useSustained(isRefreshing, 500);
 
-  const [projectName, setProjectName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [created, setCreated] = useState<CreatedCode | null>(null);
-
-  const [probeUrl, setProbeUrl] = useState('');
-  const [probing, setProbing] = useState(false);
-  const [probeResult, setProbeResult] = useState<ProbeResult | null>(null);
-  const [probeError, setProbeError] = useState<string | null>(null);
-
-  const testConnection = async () => {
-    setProbeError(null);
-    setProbeResult(null);
-    setProbing(true);
-    try {
-      const result = await probeProject(probeUrl.trim());
-      setProbeResult(result);
-      const announced = result.bridgeIdentity?.projectName;
-      if (announced && projectName.trim().length === 0) setProjectName(announced);
-    } catch (err) {
-      setProbeError(errorMessage(err, 'Impossible de joindre cette adresse.'));
-    } finally {
-      setProbing(false);
-    }
-  };
-
-  const submitCreate = async () => {
-    setCreateError(null);
-    setCreating(true);
-    try {
-      const name = projectName.trim();
-      const res = await api.createProject({
-        url: probeUrl.trim(),
-        ...(name.length > 0 ? { projectName: name } : {}),
-      });
-      setCreated({
-        projectName: res.project.projectName,
-        pairingCode: res.pairingCode,
-        expiresAt: res.pairingCodeExpiresAt,
-      });
-      setProjectName('');
-      setProbeUrl('');
-      setProbeResult(null);
-      await reload();
-    } catch (err) {
-      setCreateError(errorMessage(err, 'Impossible de déclarer le projet.'));
-    } finally {
-      setCreating(false);
-    }
-  };
+  // L'assistant vit DANS cette page : la liste n'est jamais démontée, donc
+  // jamais rechargée depuis zéro, et son défilement ne bouge pas.
+  const [assistant, setAssistant] = useState(false);
 
   return (
     <div className="page">
@@ -117,90 +67,21 @@ export function ProjectsPage() {
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      {/* ── DÉCLARATION — réservée aux comptes DEV ─────────────────────────── */}
+      {/* ── UN SEUL POINT D'ENTRÉE — réservé aux comptes DEV ───────────────── */}
       {isDev ? (
-        <Card title="Déclarer un projet">
-          <p className="muted">
-            Renseignez l’adresse du backend, testez la connexion, puis déclarez. L’identifiant
-            technique est généré automatiquement : il ne se saisit pas.
-          </p>
-          <div className="inline-form">
-            <label className="field">
-              <span className="field-label">Adresse du backend</span>
-              <input
-                type="url"
-                value={probeUrl}
-                onChange={(e) => setProbeUrl(e.target.value)}
-                placeholder="https://api.mon-projet.exemple.com"
-              />
-            </label>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              disabled={probing || probeUrl.trim().length === 0}
-              onClick={() => void testConnection()}
-            >
-              {probing ? 'Test en cours…' : 'Tester la connexion'}
-            </button>
-          </div>
-
-          {probeError ? <div className="alert alert-error">{probeError}</div> : null}
-
-          {probeResult ? (
-            <div
-              className={
-                probeResult.compatible && probeResult.alreadyPaired !== true
-                  ? 'alert alert-success'
-                  : probeResult.reachable
-                    ? 'alert alert-warning'
-                    : 'alert alert-error'
-              }
-            >
-              {probeResult.reason}
-            </div>
-          ) : null}
-
-          {probeResult?.compatible && probeResult.alreadyPaired !== true ? (
-            <div className="inline-form">
-              <label className="field">
-                <span className="field-label">
-                  Nom du projet <span className="muted">(pré-rempli, modifiable)</span>
-                </span>
-                <input
-                  type="text"
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="Nom lisible du projet"
-                />
-              </label>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={creating}
-                onClick={() => void submitCreate()}
-              >
-                {creating ? 'Déclaration…' : 'Déclarer le projet'}
-              </button>
-            </div>
-          ) : null}
-
-          {createError ? <div className="alert alert-error">{createError}</div> : null}
-        </Card>
-      ) : null}
-
-      {created ? (
-        <div className="alert alert-warning code-reveal">
-          <strong>Code de connexion pour « {created.projectName} »</strong>
-          <CopyField value={created.pairingCode} label="Code" />
-          <p>Ce code ne sera plus jamais affiché. Expire le {formatDateTime(created.expiresAt)}.</p>
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            onClick={() => setCreated(null)}
-          >
-            J’ai noté le code
+        <div className="contract-actions">
+          <button type="button" className="btn btn-primary" onClick={() => setAssistant(true)}>
+            Créer un projet
           </button>
         </div>
+      ) : null}
+
+      {assistant ? (
+        <ProjectWizard
+          projects={projects}
+          onCreated={reload}
+          onClose={() => setAssistant(false)}
+        />
       ) : null}
 
       {/* ── LISTE MÉTIER ──────────────────────────────────────────────────── */}
@@ -211,7 +92,7 @@ export function ProjectsPage() {
           title="Aucun projet client"
           hint={
             isDev
-              ? 'Déclarez un premier projet à partir de l’adresse de son backend.'
+              ? 'Créez un premier projet à partir de son adresse : l’assistant vous guide.'
               : 'Aucun projet n’a encore été déclaré dans le Panel.'
           }
         />

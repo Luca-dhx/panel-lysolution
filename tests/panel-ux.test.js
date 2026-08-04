@@ -318,10 +318,19 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
   check('la fiche n’affiche plus de chargement après le premier',
     /isInitialLoading\) return/.test(detail));
 
-  // Le formulaire de déclaration ne doit rien devoir au sondage.
-  check('la saisie du formulaire est un état local, jamais réécrit par une réponse',
-    /const \[projectName, setProjectName\] = useState\(''\)/.test(projects)
-    && !/setProjectName\(.*project(s)?\[/.test(projects));
+  // Le formulaire de création ne doit rien devoir au sondage. Il a quitté la
+  // page pour l'assistant (Lot « création guidée ») : la garantie le suit,
+  // elle ne disparaît pas avec le déménagement.
+  const assistant = read('frontend/src/components/ProjectWizard.tsx');
+  check('la page n’héberge plus aucune saisie de création',
+    !/useState\(''\)/.test(projects));
+  check('la saisie de l’assistant est un état local, jamais réécrit par une réponse',
+    /const \[url, setUrl\] = useState\(''\)/.test(assistant)
+    && /const \[nom, setNom\] = useState\(''\)/.test(assistant)
+    && !/setUrl\(.*project(s)?\[/.test(assistant)
+    && !/setNom\(.*project(s)?\[/.test(assistant));
+  check('…et la liste vivante ne sert qu’à CONSTATER, jamais à réécrire la saisie',
+    /projects\.find\(/.test(assistant) && !/setUrl\(projects/.test(assistant));
 
   // Vocabulaire : la mention de rafraîchissement reste en français simple.
   check('aucun vocabulaire technique introduit par l’indicateur',

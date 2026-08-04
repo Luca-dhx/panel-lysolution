@@ -68,6 +68,7 @@ section('2. Aucune couleur en dur dans les écrans refondus');
     'frontend/src/components/EventForms.tsx',
     'frontend/src/components/EventLists.tsx',
     'frontend/src/components/Participants.tsx',
+    'frontend/src/components/ProjectWizard.tsx',
     'frontend/src/components/Layout.tsx',
     'frontend/src/pages/ThemePage.tsx',
     'frontend/src/pages/AgendaPage.tsx',

@@ -14,6 +14,7 @@ const TESTS = [
   'capabilities.test.js',
   'registry.test.js',
   'project-identity.test.js',
+  'project-creation.test.js',
   'domains.test.js',
   'persistence.test.js',
   'bridge-http.test.js',

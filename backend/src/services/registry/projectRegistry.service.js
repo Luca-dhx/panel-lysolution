@@ -34,6 +34,21 @@ function assertValidManifestOrThrow(manifestInput) {
 }
 
 /**
+ * LE refus de doublon — un seul fait, donc un seul message.
+ *
+ * Même adresse, même clé dérivée, même identité annoncée, ou collision d'index
+ * entre deux requêtes simultanées : ce sont cinq chemins vers la même
+ * situation. Cinq messages différents feraient croire à cinq problèmes.
+ */
+function dejaDeclare(existant) {
+  return ApiError.conflict(
+    'PANEL_PROJECT_ALREADY_DECLARED',
+    'Ce projet est déjà déclaré dans le Panel.',
+    { projectId: existant?.projectId ?? null, projectName: existant?.projectName ?? null },
+  );
+}
+
+/**
  * DÉCLARE un projet dans le registre.
  *
  * La CLÉ N'EST PAS UN PARAMÈTRE : elle est générée ici, jamais reçue. Le
@@ -88,13 +103,7 @@ export async function declareProject({
       ? await registryStore.getByKey(bridgeIdentity.projectKey)
       : null);
 
-  if (already) {
-    throw ApiError.conflict(
-      'PANEL_PROJECT_ALREADY_DECLARED',
-      'Ce projet est déjà déclaré dans le Panel.',
-      { projectId: already.projectId, projectName: already.projectName },
-    );
-  }
+  if (already) throw dejaDeclare(already);
 
   let validatedManifest = null;
   if (manifest !== null && manifest !== undefined) {
@@ -134,7 +143,32 @@ export async function declareProject({
     manifest: validatedManifest,
     manifestSource,
   };
-  await registryStore.insert(record);
+
+  // ── LA COURSE ────────────────────────────────────────────────────────────
+  // La relecture ci-dessus ne protège que d'un doublon DÉJÀ écrit : lire puis
+  // écrire, ce sont deux temps. Deux requêtes lancées ensemble — un double
+  // clic, deux onglets — lisaient toutes les deux « rien », et toutes les deux
+  // inséraient.
+  //
+  // Ce qui les départage est déjà là : la clé technique est DÉTERMINISTE (même
+  // adresse et même identité annoncée donnent la même clé) et son index est
+  // unique. La base refuse donc la seconde insertion d'elle-même. Il ne restait
+  // qu'à traduire ce refus dans le langage du métier — sans quoi le second
+  // appelant recevait une erreur brute de base de données là où le premier
+  // arrivé une seconde plus tard lisait une phrase claire.
+  //
+  // On ne pose PAS d'index unique sur l'adresse : elle est aussi réécrite au
+  // bootstrap, où deux fiches distinctes peuvent légitimement annoncer la même
+  // valeur. Une contrainte de base y transformerait un appairage en panne.
+  try {
+    await registryStore.insert(record);
+  } catch (err) {
+    if (err?.code !== 11000) throw err;
+    const gagnant =
+      (await registryStore.getByBackendUrl(normalizedUrl))
+      ?? (await registryStore.getByKey(generated.projectKey));
+    throw dejaDeclare(gagnant ?? { projectId: null, projectName: resolvedName });
+  }
 
   await recordEvent({
     projectId: record.projectId,

@@ -120,6 +120,141 @@ body.no-scroll {
   font-weight: 600;
 }
 
+/* ---------- Assistant de création (fenêtre + étapes) ---------- */
+/* Le voile reprend celui du tiroir de navigation : même noir translucide, même
+   rôle — éteindre ce qui est derrière sans le repeindre. */
+.wizard-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--p-space-5);
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.5);
+  animation: fade-in var(--p-motion) var(--p-ease);
+}
+
+/* Largeur MAÎTRISÉE : une fenêtre pleine page sur un grand écran oblige à
+   balayer la tête de gauche à droite pour lire trois champs. */
+.wizard {
+  width: min(46rem, 100%);
+  margin: auto;
+  background: var(--p-surface-raised);
+  border: 1px solid var(--p-border-strong);
+  border-radius: var(--p-radius);
+  box-shadow: var(--p-shadow-lg);
+  animation: pop-in var(--p-motion) var(--p-ease);
+}
+
+.wizard:focus {
+  outline: none;
+}
+
+.wizard-head,
+.wizard-body,
+.wizard-foot {
+  padding: var(--p-space-4);
+}
+
+.wizard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--p-space-3);
+  border-bottom: 1px solid var(--p-border);
+}
+
+.wizard-head h2 {
+  margin: 0;
+  font-size: var(--p-text-lg);
+}
+
+.wizard-body {
+  display: grid;
+  gap: var(--p-space-4);
+}
+
+.wizard-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-3);
+  border-top: 1px solid var(--p-border);
+}
+
+/* La progression : où l'on en est, et combien il reste. */
+.wizard-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  margin: 0;
+  padding: var(--p-space-3) var(--p-space-4);
+  border-bottom: 1px solid var(--p-border);
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  color: var(--p-text-faint);
+  font-size: var(--p-text-sm);
+}
+
+.wizard-step + .wizard-step::before {
+  content: '→';
+  margin-right: var(--p-space-2);
+  color: var(--p-text-faint);
+}
+
+.wizard-step-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  height: 1.6rem;
+  border-radius: var(--p-radius-full);
+  border: 1px solid var(--p-border);
+}
+
+.wizard-step-active {
+  color: var(--p-text);
+  font-weight: 600;
+}
+
+.wizard-step-active .wizard-step-rank {
+  background: var(--p-primary);
+  border-color: var(--p-primary);
+  color: var(--p-background);
+}
+
+.wizard-step-done {
+  color: var(--p-text-muted);
+}
+
+.wizard-step-done .wizard-step-rank {
+  border-color: var(--p-primary);
+}
+
+.wizard-attente,
+.wizard-details summary {
+  cursor: default;
+}
+
+.wizard-details summary {
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+}
+
+.wizard-pairing-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-3);
+  justify-content: space-between;
+}
+
 /* ---------- Participants (liste d'items) ---------- */
 .participants-field {
   gap: var(--p-space-3);
@@ -338,6 +473,16 @@ body.no-scroll {
   .grid-cards {
     grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
   }
+
+  /* Tablette : l'assistant se resserre et colle au bord haut plutôt que de
+     flotter au milieu d'un écran déjà étroit. */
+  .wizard {
+    width: min(38rem, 100%);
+  }
+
+  .wizard-scrim {
+    padding: var(--p-space-3);
+  }
 }
 
 /* Mobile et petite tablette : la barre latérale devient un tiroir. */
@@ -412,6 +557,29 @@ body.no-scroll {
      lisent pas, et le bouton « Retirer » doit rester atteignable au pouce. */
   .participant {
     grid-template-columns: 1fr;
+  }
+
+  /* L'assistant occupe l'écran : une fenêtre flottante sur 375 px n'est qu'une
+     marge perdue. Les actions passent en pleine largeur, au pouce. */
+  .wizard-scrim {
+    padding: 0;
+  }
+
+  .wizard {
+    width: 100%;
+    min-height: 100%;
+    border: none;
+    border-radius: 0;
+  }
+
+  .wizard-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .wizard-foot .btn {
+    width: 100%;
+    text-align: center;
   }
 
   .participant .segmented {
