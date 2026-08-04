@@ -27,39 +27,33 @@
  * déplacer un élément d'un tableau à l'autre pour corriger une erreur de
  * saisie, alors qu'il suffit ici de changer une valeur.
  *
- * ── DEUX RÈGLES, TENUES ICI ET NULLE PART AILLEURS ──────────────────────────
- * 1. AUCUN participant vide n'est persisté. Une ligne ouverte puis abandonnée
- *    dans le formulaire ne doit pas devenir une personne fantôme dans
- *    l'historique.
- * 2. AUCUNE valeur ne contient de séparateur. Une virgule ou un point-virgule
- *    dans un nom signale qu'on est en train de refabriquer l'ancienne chaîne :
- *    c'est REFUSÉ, avec un message qui dit quoi faire. La migration, elle, fait
- *    l'inverse — elle DÉCOUPE — parce qu'une ancienne valeur « A, B » voulait
- *    bien dire deux personnes.
+ * ── LA VIRGULE N'A PLUS COURS ICI ───────────────────────────────────────────
+ * Ce service a un temps REFUSÉ toute valeur contenant une virgule, pour
+ * empêcher qu'on refabrique l'ancienne chaîne. Cette garde a été retirée : elle
+ * prolongeait dans le code vivant un problème qui n'appartient plus qu'à
+ * l'histoire, et refusait au passage des noms parfaitement légitimes —
+ * « Atelier Dupont, SARL » n'a rien d'une liste déguisée.
+ *
+ * Une fois la migration passée, il n'y a plus de séparateur à surveiller parce
+ * qu'il n'y a plus de champ où il servirait : chaque personne a sa ligne, et une
+ * virgule dans un nom n'est qu'un caractère de plus. La seule connaissance de la
+ * virgule qui subsiste vit dans `eventsMigration.js` — du code de reprise, qui
+ * ne trouve plus rien à faire une fois la base convertie.
+ *
+ * ── LA RÈGLE QUI RESTE ──────────────────────────────────────────────────────
+ * AUCUN participant vide n'est persisté. Une ligne ouverte puis abandonnée dans
+ * le formulaire ne doit pas devenir une personne fantôme dans l'historique.
  */
 import crypto from 'node:crypto';
 import ApiError from '../../utils/ApiError.js';
 import { PARTICIPANT_TYPES } from '../../models/PanelMeeting.model.js';
 
-/** Ce qui trahit une liste déguisée en chaîne. */
-const SEPARATEURS = /[,;]/;
-
 const newId = () => crypto.randomUUID();
 
 const texte = (valeur) => (valeur === null || valeur === undefined ? '' : String(valeur).trim());
 
-function refuseSeparateur(valeur, champ) {
-  if (SEPARATEURS.test(valeur)) {
-    throw ApiError.badRequest(
-      'PANEL_PARTICIPANT_SEPARATOR',
-      `Le champ « ${champ} » contient un séparateur : ajoutez un participant par personne.`,
-    );
-  }
-  return valeur;
-}
-
 /**
- * NORMALISE ce que l'API reçoit. Strict, parce que c'est la frontière.
+ * NORMALISE ce que l'API reçoit.
  *
  * @param {unknown} entree la valeur reçue
  * @returns {object[]} des participants propres, chacun avec un identifiant
@@ -94,11 +88,12 @@ export function normalizeParticipants(entree) {
       );
     }
 
-    const name = refuseSeparateur(texte(brut.name), 'nom');
-    const email = refuseSeparateur(texte(brut.email), 'courriel').toLowerCase();
-    const phone = refuseSeparateur(texte(brut.phone), 'téléphone');
+    const name = texte(brut.name);
+    const email = texte(brut.email).toLowerCase();
+    const phone = texte(brut.phone);
 
-    // RÈGLE 1 — une ligne sans la moindre information n'est pas une personne.
+    // La seule règle : une ligne sans la moindre information n'est pas une
+    // personne.
     if (!name && !email && !phone) continue;
 
     // Un identifiant absent ou déjà pris est REMPLACÉ : deux participants qui
@@ -137,68 +132,8 @@ export function refuseLegacyParticipants(data = {}) {
   }
 }
 
-/**
- * CONVERTIT l'ancien format — et DÉCOUPE là où l'API refuse.
- *
- * Une ancienne valeur « Jean, Marie » voulait dire deux personnes : la scinder
- * restitue l'intention. C'est exactement l'inverse de la règle appliquée aux
- * saisies neuves, et c'est voulu : ici on lit un héritage, là on empêche d'en
- * fabriquer un nouveau.
- *
- * Rien n'est perdu : une valeur qui ressemble à un courriel devient le courriel
- * ET le nom affiché, faute de mieux — c'est tout ce que l'ancienne donnée
- * disait de cette personne.
- *
- * @param {object} doc un document BRUT, tel qu'il est en base
- * @returns {object[]} les participants reconstruits
- */
-export function participantsFromLegacy(doc = {}) {
-  const morceaux = (valeur) => texte(valeur).split(SEPARATEURS).map((p) => p.trim()).filter(Boolean);
-  const construits = [];
-
-  for (const brut of doc.internalParticipants ?? []) {
-    if (!brut) continue;
-    if (typeof brut === 'string') {
-      for (const nom of morceaux(brut)) construits.push({ type: 'INTERNAL', name: nom });
-      continue;
-    }
-    const email = texte(brut.email).toLowerCase();
-    const noms = morceaux(brut.name);
-    if (noms.length === 0 && email) {
-      construits.push({ type: 'INTERNAL', name: email, email });
-    } else if (noms.length === 1) {
-      construits.push({ type: 'INTERNAL', name: noms[0], ...(email ? { email } : {}) });
-    } else {
-      // Plusieurs noms sur une ligne : le courriel n'appartient à personne en
-      // particulier, on ne l'attribue donc à aucun d'eux plutôt qu'à tous.
-      for (const nom of noms) construits.push({ type: 'INTERNAL', name: nom });
-    }
-  }
-
-  for (const brut of doc.externalParticipants ?? []) {
-    if (!brut) continue;
-    if (typeof brut === 'object') {
-      const email = texte(brut.email).toLowerCase();
-      for (const nom of morceaux(brut.name)) {
-        construits.push({ type: 'EXTERNAL', name: nom, ...(email ? { email } : {}) });
-      }
-      if (morceaux(brut.name).length === 0 && email) {
-        construits.push({ type: 'EXTERNAL', name: email, email });
-      }
-      continue;
-    }
-    for (const valeur of morceaux(brut)) {
-      const estCourriel = valeur.includes('@');
-      construits.push({
-        type: 'EXTERNAL',
-        name: valeur,
-        ...(estCourriel ? { email: valeur.toLowerCase() } : {}),
-      });
-    }
-  }
-
-  return construits.map((p) => ({ id: newId(), ...p }));
-}
+/** Un identifiant neuf, pour un participant qui n'en a pas encore. */
+export const nouvelIdentifiant = newId;
 
 /** Deux participants sont le MÊME dès qu'ils disent la même chose. */
 export function participantKey(p) {
@@ -228,7 +163,7 @@ export function mergeParticipants(...listes) {
 export default {
   normalizeParticipants,
   refuseLegacyParticipants,
-  participantsFromLegacy,
   mergeParticipants,
   participantKey,
+  nouvelIdentifiant,
 };

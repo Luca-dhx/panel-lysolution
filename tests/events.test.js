@@ -627,13 +627,18 @@ section('15. Participants : une LISTE d’items, jamais une chaîne');
   check('une ligne vide n’est JAMAIS persistée',
     avecVides.json.data.meeting.participants.length === 2);
 
-  // ── Aucun séparateur manuel ─────────────────────────────────────────────
+  // ── Aucun séparateur manuel : il n'y a plus de séparateur DU TOUT ───────
+  // La structure a remplacé la convention. Une virgule dans un nom n'est plus
+  // un signal, c'est un caractère — et une raison sociale a le droit d'en
+  // contenir une.
   const virgule = await call('PUT', `/api/meetings/${meetingId}`, {
-    headers: AUTH, body: { participants: [{ type: 'EXTERNAL', name: 'Jean, Marie' }] },
+    headers: AUTH, body: { participants: [{ type: 'EXTERNAL', name: 'Atelier Dupont, SARL' }] },
   });
-  check('un nom à virgules est REFUSÉ', virgule.status === 400);
-  check('…avec un code qui dit quoi faire',
-    virgule.json.code === 'PANEL_PARTICIPANT_SEPARATOR');
+  check('un nom contenant une virgule est ACCEPTÉ', virgule.status === 200);
+  check('…comme UN SEUL participant, jamais découpé',
+    virgule.json.data.meeting.participants.length === 1);
+  check('…et rendu tel qu’il a été saisi',
+    virgule.json.data.meeting.participants[0].name === 'Atelier Dupont, SARL');
 
   const chaine = await call('PUT', `/api/meetings/${meetingId}`, {
     headers: AUTH, body: { participants: 'Jean, Marie' },
@@ -757,6 +762,29 @@ section('16. Migration des anciens participants — rien n’est perdu');
   check('une reprise interrompue ne duplique personne',
     fusionne.participants.filter((p) => p.name === 'Jean Dupont').length === 1);
   check('…et n’en perd aucun', fusionne.participants.length === 5);
+
+  // ── La virgule ne vit QUE dans le code de reprise ───────────────────────
+  // Après migration, plus aucune règle métier ne parle de séparateur : le
+  // service qui sert les requêtes ne sait pas ce qu'est une virgule.
+  const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
+  const service = lire('backend/src/services/events/participants.js');
+  const migration = lire('backend/src/services/events/eventsMigration.js');
+
+  check('le service de participants ne découpe plus rien',
+    !/\.split\(/.test(service));
+  check('…ne connaît aucun séparateur', !/SEPARATEUR/i.test(service));
+  check('…et ne refuse plus aucune valeur pour ce motif',
+    !service.includes('PANEL_PARTICIPANT_SEPARATOR'));
+  check('le code de reprise, lui, découpe toujours',
+    /ANCIEN_SEPARATEUR/.test(migration) && /\.split\(ANCIEN_SEPARATEUR\)/.test(migration));
+
+  const backend = [
+    'backend/src/services/events/meetings.service.js',
+    'backend/src/services/events/events.service.js',
+    'backend/src/controllers/events.controller.js',
+  ].map(lire).join('\n');
+  check('aucun service vivant ne parle de séparateur', !/SEPARATEUR|virgule/i.test(backend));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

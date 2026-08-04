@@ -41,7 +41,7 @@
 import logger from '../../utils/logger.js';
 import { MEETING_STATUS, PanelMeeting } from '../../models/PanelMeeting.model.js';
 import { EVENT_STATUS, PanelProjectEvent } from '../../models/PanelProjectEvent.model.js';
-import { mergeParticipants, participantsFromLegacy } from './participants.js';
+import { mergeParticipants, nouvelIdentifiant } from './participants.js';
 
 /** Statuts qui n'existent QUE dans l'ancien modèle : ils identifient une relique. */
 const ANCIENS_STATUTS = ['PLANNED', 'DUE', 'COMPLETED'];
@@ -53,6 +53,85 @@ const NOUVEAU_STATUT = {
   PLANNED: EVENT_STATUS.PENDING_CONFIRMATION,
   DUE: EVENT_STATUS.PENDING_CONFIRMATION,
 };
+
+/* ── LE SEUL ENDROIT DU PANEL QUI CONNAÎT ENCORE LA VIRGULE ────────────────── */
+
+/**
+ * Le séparateur des anciennes saisies.
+ *
+ * Il ne vit QUE dans ce fichier, et ce n'est pas un détail de rangement : le
+ * code de reprise s'adresse à des données qui n'existent plus après son
+ * passage. Le service qui sert les requêtes, lui, n'a plus aucune raison de
+ * savoir ce qu'est une virgule — chaque personne a sa ligne, et « Atelier
+ * Dupont, SARL » est un nom comme un autre.
+ */
+const ANCIEN_SEPARATEUR = /[,;]/;
+
+const texte = (valeur) => (valeur === null || valeur === undefined ? '' : String(valeur).trim());
+
+const morceaux = (valeur) =>
+  texte(valeur).split(ANCIEN_SEPARATEUR).map((p) => p.trim()).filter(Boolean);
+
+/**
+ * CONVERTIT l'ancien format — et DÉCOUPE.
+ *
+ * Une ancienne valeur « Jean, Marie » voulait dire deux personnes : la scinder
+ * restitue l'intention de celui qui l'avait tapée. C'est le seul geste du Panel
+ * qui interprète encore un séparateur, et il ne s'applique qu'à des données
+ * héritées.
+ *
+ * Rien n'est perdu : une valeur qui ressemble à un courriel devient le courriel
+ * ET le nom affiché, faute de mieux — c'est tout ce que l'ancienne donnée
+ * disait de cette personne.
+ *
+ * @param {object} doc un document BRUT, tel qu'il est en base
+ * @returns {object[]} les participants reconstruits
+ */
+function participantsFromLegacy(doc = {}) {
+  const construits = [];
+
+  for (const brut of doc.internalParticipants ?? []) {
+    if (!brut) continue;
+    if (typeof brut === 'string') {
+      for (const nom of morceaux(brut)) construits.push({ type: 'INTERNAL', name: nom });
+      continue;
+    }
+    const email = texte(brut.email).toLowerCase();
+    const noms = morceaux(brut.name);
+    if (noms.length === 0 && email) {
+      construits.push({ type: 'INTERNAL', name: email, email });
+    } else if (noms.length === 1) {
+      construits.push({ type: 'INTERNAL', name: noms[0], ...(email ? { email } : {}) });
+    } else {
+      // Plusieurs noms sur une ligne : le courriel n'appartient à personne en
+      // particulier, on ne l'attribue donc à aucun d'eux plutôt qu'à tous.
+      for (const nom of noms) construits.push({ type: 'INTERNAL', name: nom });
+    }
+  }
+
+  for (const brut of doc.externalParticipants ?? []) {
+    if (!brut) continue;
+    if (typeof brut === 'object') {
+      const email = texte(brut.email).toLowerCase();
+      const noms = morceaux(brut.name);
+      for (const nom of noms) {
+        construits.push({ type: 'EXTERNAL', name: nom, ...(email ? { email } : {}) });
+      }
+      if (noms.length === 0 && email) construits.push({ type: 'EXTERNAL', name: email, email });
+      continue;
+    }
+    for (const valeur of morceaux(brut)) {
+      const estCourriel = valeur.includes('@');
+      construits.push({
+        type: 'EXTERNAL',
+        name: valeur,
+        ...(estCourriel ? { email: valeur.toLowerCase() } : {}),
+      });
+    }
+  }
+
+  return construits.map((p) => ({ id: nouvelIdentifiant(), ...p }));
+}
 
 export async function migrateLegacyEvents() {
   // On travaille sur la collection BRUTE : les anciens documents ne passent
@@ -165,8 +244,8 @@ export async function migrateLegacyEvents() {
  * | valeur vide ou blanche                | rien — elle ne désignait personne   |
  *
  * Une ancienne valeur à virgules devient PLUSIEURS participants : c'est ce
- * qu'elle voulait dire. Les nouvelles saisies, elles, refusent la virgule —
- * l'API ne laisse pas refabriquer la chaîne qu'on vient de démonter.
+ * qu'elle voulait dire. Passé ce point, plus rien dans le Panel n'interprète un
+ * séparateur : ce qu'on tape dans le champ « nom » est un nom, virgule comprise.
  *
  * ── SÛRETÉ ──────────────────────────────────────────────────────────────────
  * Un seul `updateOne` par document écrit la nouvelle liste ET retire les
