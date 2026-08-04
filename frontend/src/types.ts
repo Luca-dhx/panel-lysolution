@@ -129,6 +129,8 @@ export interface BusinessDocument {
   pages?: number;
   sha256?: string | null;
   version?: number;
+  /** Le parcours EXIGE-t-il une signature ? `null`/absent = projection ancienne. */
+  signatureRequired?: boolean | null;
   signatureStatus?: string | null;
   signedAt?: string | null;
   generatedAt?: string | null;

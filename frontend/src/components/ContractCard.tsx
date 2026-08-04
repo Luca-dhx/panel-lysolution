@@ -47,6 +47,14 @@ function documentState(
   if (doc.status === 'UNAVAILABLE') return { label: 'Momentanément indisponible', tone: 'warn' };
   if (!joignable) return { label: 'Momentanément indisponible', tone: 'warn' };
   if (doc.status === 'SIGNED') return { label: 'Signé', tone: 'ok' };
+  /**
+   * SIGNATURE NON REQUISE — ce n'est pas une signature qui manque.
+   *
+   * Le projet dit lui-même si son parcours exige une signature. Sans cette
+   * information, un contrat volontairement dépourvu de procédure s'affichait
+   * « Généré, non signé » : une phrase qui fait chercher une signature absente.
+   */
+  if (doc.signatureRequired === false) return { label: 'Signature non requise', tone: 'ok' };
   if (doc.status === 'PENDING_SIGNATURE') return { label: 'En attente de signature', tone: 'warn' };
   return { label: 'Généré, non signé', tone: 'warn' };
 }

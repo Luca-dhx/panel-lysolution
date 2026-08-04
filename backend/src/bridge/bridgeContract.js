@@ -404,6 +404,8 @@ const contractDocumentSchema = z
       pages: z.number().int().nonnegative().optional(),
       sha256: z.string().nullable().optional(),
       version: z.number().int().nonnegative().optional(),
+      /** Le parcours EXIGE-t-il une signature ? Absent = ancienne projection. */
+      signatureRequired: z.boolean().optional(),
       signatureStatus: z.string().min(1).optional(),
       signedAt: z.string().nullable().optional(),
       generatedAt: z.string().nullable().optional(),

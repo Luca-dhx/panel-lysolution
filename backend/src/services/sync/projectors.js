@@ -135,6 +135,7 @@ async function applyContract({ projectId, change, stamp }) {
             pages: c.document.pages ?? 0,
             sha256: c.document.sha256 ?? null,
             version: c.document.version ?? 0,
+            signatureRequired: c.document.signatureRequired ?? null,
             signatureStatus: c.document.signatureStatus ?? null,
             signedAt: c.document.signedAt ?? null,
             generatedAt: c.document.generatedAt ?? null,

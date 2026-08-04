@@ -84,6 +84,8 @@ const documentSchema = new mongoose.Schema(
     pages: { type: Number, default: 0 },
     sha256: { type: String, default: null },
     version: { type: Number, default: 0 },
+    /** Le parcours EXIGE-t-il une signature ? `null` = projection antérieure. */
+    signatureRequired: { type: Boolean, default: null },
     signatureStatus: { type: String, default: null },
     signedAt: { type: String, default: null },
     generatedAt: { type: String, default: null },
@@ -144,6 +146,7 @@ const contractSchema = new mongoose.Schema(
       pages: { type: Number, default: 0 },
       sha256: { type: String, default: null },
       version: { type: Number, default: 0 },
+      signatureRequired: { type: Boolean, default: null },
       signatureStatus: { type: String, default: null },
       signedAt: { type: String, default: null },
       generatedAt: { type: String, default: null },
