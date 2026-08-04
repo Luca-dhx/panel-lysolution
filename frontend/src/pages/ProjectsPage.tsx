@@ -130,7 +130,10 @@ export function ProjectsPage() {
 
                 <div className="project-card-meta">
                   <span className={toneBadgeClass(site.tone)}>{site.label}</span>
-                  {contract ? (
+                  {/* Sans contrat EN COURS, la liste ne montre aucune pastille
+                      contractuelle : afficher l'état d'un contrat terminé
+                      laisserait croire à un engagement encore en vigueur. */}
+                  {contract?.status && contract.hasCurrent !== false ? (
                     <span className={toneBadgeClass(contractState(contract.status).tone)}>
                       {contractState(contract.status).label}
                     </span>

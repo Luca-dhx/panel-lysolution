@@ -75,14 +75,60 @@ const amountSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const documentSchema = new mongoose.Schema(
+  {
+    available: { type: Boolean, default: false },
+    status: { type: String, default: 'NONE' },
+    downloadAvailable: { type: Boolean, default: false },
+    filename: { type: String, default: null },
+    pages: { type: Number, default: 0 },
+    sha256: { type: String, default: null },
+    version: { type: Number, default: 0 },
+    signatureStatus: { type: String, default: null },
+    signedAt: { type: String, default: null },
+    generatedAt: { type: String, default: null },
+    downloadPath: { type: String, default: null },
+  },
+  { _id: false },
+);
+
+/** Un contrat PASSÉ : tout ce qu'il faut pour le consulter, rien de plus. */
+const previousContractSchema = new mongoose.Schema(
+  {
+    sourceContractId: { type: String, required: true },
+    status: { type: String, required: true },
+    reference: { type: String, default: null },
+    createdAt: { type: String, default: null },
+    activatedAt: { type: String, default: null },
+    endedAt: { type: String, default: null },
+    cancellationReason: { type: String, default: null },
+    document: { type: documentSchema, default: () => ({}) },
+    pricing: {
+      subscription: { type: amountSchema, default: null },
+      launchFee: { type: amountSchema, default: null },
+    },
+  },
+  { _id: false },
+);
+
 const contractSchema = new mongoose.Schema(
   {
     // UN contrat courant par projet. Le projet choisit lequel il publie (règle
     // déterministe côté projet) : le Panel n'arbitre pas entre plusieurs
     // contrats, il reçoit celui qui fait foi.
     projectId: { type: String, required: true, unique: true, index: true },
-    sourceContractId: { type: String, required: true },
-    status: { type: String, required: true },
+    /**
+     * Y A-T-IL UN CONTRAT ACTUEL ?
+     *
+     * `sourceContractId` et `status` n'étaient pas facultatifs : il fallait
+     * donc TOUJOURS un contrat à projeter, et un projet qui venait de résilier
+     * se voyait attribuer son dernier contrat terminé — affiché comme
+     * l'engagement du moment. « Aucun contrat en cours » est un état, il doit
+     * pouvoir s'écrire.
+     */
+    hasCurrent: { type: Boolean, default: true },
+    sourceContractId: { type: String, default: null },
+    status: { type: String, default: null },
     reference: { type: String, default: null },
     /**
      * Le document contractuel n'est jamais STOCKÉ ici, seulement DÉCRIT.
@@ -109,6 +155,12 @@ const contractSchema = new mongoose.Schema(
       subscription: { type: amountSchema, default: null },
       launchFee: { type: amountSchema, default: null },
     },
+    /**
+     * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
+     * Rien n'y est effacé : un contrat résilié reste entièrement consultable,
+     * simplement plus jamais présenté comme celui du moment.
+     */
+    previousContracts: { type: [previousContractSchema], default: [] },
     sourceModifiedAt: { type: String, required: true },
     ...SOURCE_FIELDS,
     receivedAt: { type: String, required: true },

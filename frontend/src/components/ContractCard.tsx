@@ -22,7 +22,9 @@ import {
   formatInterval,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
-import type { BusinessContract, ContractOperation, PublicProject } from '@/types';
+import type {
+  BusinessContract, ContractOperation, PreviousContract, PublicProject,
+} from '@/types';
 
 const CANCEL_NOW = 'contract.cancel_now';
 
@@ -83,11 +85,41 @@ export function ContractCard({
     return () => { annule = true; };
   }, [project.projectId, contract?.sourceContractId]);
 
+  const historique = contract?.previousContracts ?? [];
+
   if (!contract) {
     return (
       <Card title="Contrat">
-        <p className="muted">Aucun contrat actif synchronisé.</p>
+        <p className="muted">Aucun contrat synchronisé.</p>
       </Card>
+    );
+  }
+
+  /**
+   * AUCUN CONTRAT ACTUEL — et c'est une information, pas un trou.
+   *
+   * La carte affichait jusqu'ici l'abonnement, les frais, l'activation, la
+   * signature et le document du dernier contrat TERMINÉ, sous une pastille
+   * « Contrat terminé ». L'état contractuel du moment se mélangeait au détail
+   * d'un contrat mort. Rien de tout cela n'a sa place ici : ces informations
+   * existent toujours, dans l'historique, où elles sont justes.
+   */
+  if (contract.hasCurrent === false || !contract.status) {
+    const dernier = historique[0] ?? null;
+    return (
+      <>
+        <Card title="Contrat">
+          <p className="contract-none">Aucun contrat actif</p>
+          {dernier?.endedAt ? (
+            <p className="muted">Le dernier contrat a pris fin le {formatDateTime(dernier.endedAt)}.</p>
+          ) : dernier ? (
+            <p className="muted">Le dernier contrat est {contractState(dernier.status).label.toLowerCase()}.</p>
+          ) : (
+            <p className="muted">Ce projet n’a jamais eu de contrat.</p>
+          )}
+        </Card>
+        <ContractHistory contracts={historique} project={project} fraicheur={fraicheur} />
+      </>
     );
   }
 
@@ -134,7 +166,8 @@ export function ContractCard({
   };
 
   return (
-    <Card title="Contrat">
+    <>
+      <Card title="Contrat">
       <dl className="detail-list">
         <div>
           <dt>Statut</dt>
@@ -294,6 +327,132 @@ export function ContractCard({
           </div>
         </div>
       ) : null}
+      </Card>
+      <ContractHistory contracts={historique} project={project} fraicheur={fraicheur} />
+    </>
+  );
+}
+
+/**
+ * HISTORIQUE DES CONTRATS — compact, dépliable, complet.
+ *
+ * Un contrat terminé reste entièrement consultable : c'est un engagement qui a
+ * existé, avec ses montants, ses dates et son document signé. Ce qui était faux
+ * n'était pas de le montrer, c'était de le montrer À LA PLACE du contrat
+ * actuel.
+ */
+function ContractHistory({
+  contracts,
+  project,
+  fraicheur,
+}: {
+  contracts: PreviousContract[];
+  project: PublicProject;
+  fraicheur: ReturnType<typeof getProjectDataFreshness>;
+}) {
+  const [ouvert, setOuvert] = useState<string | null>(null);
+  const [telechargement, setTelechargement] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  if (contracts.length === 0) return null;
+
+  // Le document d'un contrat passé se récupère CHEZ LE PROJET : sans lien
+  // vivant, le bouton mentirait.
+  const joignable = project.pairing.status === 'PAIRED' && actionsDistantesPossibles(fraicheur);
+
+  const telecharger = async (nom: string) => {
+    setErreur(null);
+    setTelechargement(true);
+    try {
+      await api.downloadContractDocument(project.projectId, nom);
+    } catch (err) {
+      setErreur(errorMessage(err, 'Le document n’a pas pu être récupéré.'));
+    } finally {
+      setTelechargement(false);
+    }
+  };
+
+  return (
+    <Card title={`Historique des contrats (${contracts.length})`}>
+      {erreur ? <div className="alert alert-error">{erreur}</div> : null}
+      <ul className="contract-history">
+        {contracts.map((c) => {
+          const etat = contractState(c.status);
+          const deplie = ouvert === c.sourceContractId;
+          const doc = c.document;
+          return (
+            <li key={c.sourceContractId} className="contract-history-item">
+              <div className="contract-history-line">
+                <span className="contract-history-ref">{c.reference || 'Sans référence'}</span>
+                <span className={toneBadgeClass(etat.tone)}>{etat.label}</span>
+                <span className="muted">
+                  {c.activatedAt ? formatDateTime(c.activatedAt) : '—'}
+                  {c.endedAt ? ` → ${formatDateTime(c.endedAt)}` : ''}
+                </span>
+                <span className="muted">{formatAmount(c.pricing?.subscription) || '—'}</span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-small"
+                  aria-expanded={deplie}
+                  onClick={() => setOuvert(deplie ? null : c.sourceContractId)}
+                >
+                  {deplie ? 'Masquer' : 'Voir'}
+                </button>
+              </div>
+
+              {deplie ? (
+                <div className="contract-history-detail">
+                  <dl className="detail-list">
+                    {c.createdAt ? (
+                      <div><dt>Créé le</dt><dd>{formatDateTime(c.createdAt)}</dd></div>
+                    ) : null}
+                    {c.activatedAt ? (
+                      <div><dt>Activé le</dt><dd>{formatDateTime(c.activatedAt)}</dd></div>
+                    ) : null}
+                    {c.endedAt ? (
+                      <div><dt>Terminé le</dt><dd>{formatDateTime(c.endedAt)}</dd></div>
+                    ) : null}
+                    {c.cancellationReason ? (
+                      <div><dt>Motif</dt><dd>{c.cancellationReason}</dd></div>
+                    ) : null}
+                    {formatAmount(c.pricing?.subscription) ? (
+                      <div>
+                        <dt>Abonnement</dt>
+                        <dd>
+                          {formatAmount(c.pricing.subscription)}
+                          {formatInterval(c.pricing.subscription?.interval)
+                            ? ` ${formatInterval(c.pricing.subscription?.interval)}`
+                            : ''}
+                        </dd>
+                      </div>
+                    ) : null}
+                    {formatAmount(c.pricing?.launchFee) ? (
+                      <div><dt>Mise en service</dt><dd>{formatAmount(c.pricing.launchFee)}</dd></div>
+                    ) : null}
+                    {doc?.signedAt ? (
+                      <div><dt>Signé le</dt><dd>{formatDateTime(doc.signedAt)}</dd></div>
+                    ) : null}
+                  </dl>
+
+                  {doc?.downloadAvailable && joignable ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-small"
+                      disabled={telechargement}
+                      onClick={() => void telecharger(doc.filename ?? 'contrat.pdf')}
+                    >
+                      {telechargement ? 'Téléchargement…' : 'Télécharger le contrat'}
+                    </button>
+                  ) : doc?.available ? (
+                    <p className="muted">Document momentanément indisponible.</p>
+                  ) : (
+                    <p className="muted">Aucun document n’a été publié pour ce contrat.</p>
+                  )}
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
     </Card>
   );
 }

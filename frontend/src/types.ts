@@ -152,14 +152,33 @@ export interface ContractAction {
   errorMessage: string | null;
 }
 
-export interface BusinessContract {
-  document?: BusinessDocument | null;
+/** Un contrat TERMINÉ — consultable, jamais présenté comme celui du moment. */
+export interface PreviousContract {
   sourceContractId: string;
   status: string;
   reference: string | null;
   createdAt: string | null;
   activatedAt: string | null;
+  endedAt: string | null;
+  cancellationReason: string | null;
+  document?: BusinessDocument | null;
   pricing: { subscription: BusinessAmount | null; launchFee: BusinessAmount | null };
+}
+
+export interface BusinessContract {
+  document?: BusinessDocument | null;
+  /**
+   * Y a-t-il un contrat ACTUEL ? Faux = le projet n'a plus d'engagement en
+   * cours ; les champs ci-dessous sont alors vides, et seul l'historique parle.
+   */
+  hasCurrent?: boolean;
+  sourceContractId: string | null;
+  status: string | null;
+  reference: string | null;
+  createdAt: string | null;
+  activatedAt: string | null;
+  pricing: { subscription: BusinessAmount | null; launchFee: BusinessAmount | null };
+  previousContracts?: PreviousContract[];
   sourceModifiedAt: string;
   receivedAt: string;
 }

@@ -294,6 +294,54 @@ a:focus-visible {
   opacity: 0.7;
 }
 
+/* ---------- Contrat : absence, et historique ---------- */
+/* « Aucun contrat actif » se lit d'un coup : c'est une réponse, pas un vide. */
+.contract-none {
+  margin: 0;
+  font-family: var(--p-font-heading);
+  font-size: var(--p-text-lg);
+  font-weight: 700;
+}
+
+.contract-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--p-space-2);
+}
+
+.contract-history-item {
+  border-bottom: 1px solid var(--p-border);
+  padding-bottom: var(--p-space-2);
+}
+
+.contract-history-item:last-child {
+  border-bottom: none;
+}
+
+/* Une ligne compacte : référence, état, période, montant, et « Voir ». */
+.contract-history-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2) var(--p-space-3);
+  min-height: 44px;
+}
+
+.contract-history-ref {
+  font-weight: 600;
+  flex: 1;
+  min-width: 8rem;
+}
+
+.contract-history-detail {
+  display: grid;
+  gap: var(--p-space-3);
+  padding: var(--p-space-3) 0 var(--p-space-2);
+  animation: timeline-open var(--p-motion) var(--p-ease);
+}
+
 /* ---------- Bandeau de fraîcheur ---------- */
 /* Il précède TOUTE donnée métier : ce qui suit est-il encore vrai ? Une
    pastille grise perdue au milieu des autres ne suffisait pas à le dire. */

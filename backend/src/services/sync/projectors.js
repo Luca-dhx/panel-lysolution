@@ -118,8 +118,14 @@ async function applyContract({ projectId, change, stamp }) {
     {
       $set: {
         projectId,
-        sourceContractId: c.sourceContractId,
-        status: c.status,
+        /**
+         * « Aucun contrat en cours » est un ÉTAT, pas un trou. Le projet le
+         * dit ; le Panel le rend. Sans ce champ, le dernier contrat terminé
+         * était projeté comme l'engagement du moment.
+         */
+        hasCurrent: c.hasCurrentContract ?? Boolean(c.sourceContractId),
+        sourceContractId: c.sourceContractId ?? null,
+        status: c.status ?? null,
         document: c.document
           ? {
             available: c.document.available,
@@ -142,6 +148,22 @@ async function applyContract({ projectId, change, stamp }) {
           subscription: c.pricing?.subscription ?? null,
           launchFee: c.pricing?.launchFee ?? null,
         },
+        // L'histoire est REMPLACÉE d'un bloc, comme le reste de la
+        // photographie : le projet publie la liste, le Panel la reflète.
+        previousContracts: (c.previousContracts ?? []).map((p) => ({
+          sourceContractId: p.sourceContractId,
+          status: p.status,
+          reference: p.reference ?? null,
+          createdAt: p.createdAt ?? null,
+          activatedAt: p.activatedAt ?? null,
+          endedAt: p.endedAt ?? null,
+          cancellationReason: p.cancellationReason ?? null,
+          document: p.document ?? { available: false, status: 'NONE', downloadAvailable: false },
+          pricing: {
+            subscription: p.pricing?.subscription ?? null,
+            launchFee: p.pricing?.launchFee ?? null,
+          },
+        })),
         sourceModifiedAt: change.modifiedAt,
         ...stamp,
       },

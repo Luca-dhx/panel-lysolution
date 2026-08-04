@@ -388,10 +388,68 @@ export const teamMemberPayloadSchema = z
   })
   .strict();
 
+/** Métadonnées d'un document contractuel — partagées par le courant et l'histoire. */
+const contractDocumentSchema = z
+    .object({
+      available: z.boolean(),
+      /**
+       * L'état RÉEL du document, tel que le projet le constate en croisant
+       * sa base et son stockage. `UNAVAILABLE` n'est pas `NONE` : le premier
+       * dit « référencé mais introuvable », le second « jamais produit ».
+       */
+      status: z.enum(['NONE', 'GENERATED', 'PENDING_SIGNATURE', 'SIGNED', 'UNAVAILABLE']),
+      downloadAvailable: z.boolean(),
+      filename: z.string().min(1).optional(),
+      contentType: z.string().min(1).optional(),
+      pages: z.number().int().nonnegative().optional(),
+      sha256: z.string().nullable().optional(),
+      version: z.number().int().nonnegative().optional(),
+      signatureStatus: z.string().min(1).optional(),
+      signedAt: z.string().nullable().optional(),
+      generatedAt: z.string().nullable().optional(),
+      downloadPath: z.string().startsWith('/').optional(),
+    })
+    .strict();
+
+/** Montants d'un contrat — mêmes règles pour le courant et pour l'histoire. */
+const contractPricingSchema = z
+  .object({
+    subscription: z
+      .object({
+        amountIncludingTax: z.number().nullable().optional(),
+        currency: z.string().nullable().optional(),
+        interval: z.string().nullable().optional(),
+      })
+      .strict()
+      .optional(),
+    launchFee: z
+      .object({
+        amountIncludingTax: z.number().nullable().optional(),
+        currency: z.string().nullable().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const contractPayloadSchema = z
   .object({
-    sourceContractId: z.string().min(1),
-    status: z.string().min(1),
+    /**
+     * Y A-T-IL UN CONTRAT ACTUEL ? — dit franchement, jamais deviné.
+     *
+     * La projection ne transportait qu'un contrat « choisi ». Quand le projet
+     * n'en avait plus aucun en cours, elle envoyait quand même le dernier
+     * modifié — donc un contrat résilié — et le Panel l'affichait comme
+     * l'engagement du moment, abonnement et document compris. Le contrat le
+     * plus récent n'est pas forcément le contrat actuel.
+     *
+     * Absent des projections antérieures à cette notion : on ne périme pas ce
+     * qui a été reçu avant, le champ est donc optionnel.
+     */
+    hasCurrentContract: z.boolean().optional(),
+    /** Les champs suivants décrivent le contrat ACTUEL, quand il en existe un. */
+    sourceContractId: z.string().min(1).optional(),
+    status: z.string().min(1).optional(),
     reference: z.string().nullable().optional(),
     /**
      * MÉTADONNÉES du document contractuel — jamais le fichier.
@@ -402,49 +460,33 @@ export const contractPayloadSchema = z
      * un chemin de fichier dans un espace métier serait une fuite, et
      * deviendrait faux au premier changement d'hébergement.
      */
-    document: z
-      .object({
-        available: z.boolean(),
-        /**
-         * L'état RÉEL du document, tel que le projet le constate en croisant
-         * sa base et son stockage. `UNAVAILABLE` n'est pas `NONE` : le premier
-         * dit « référencé mais introuvable », le second « jamais produit ».
-         */
-        status: z.enum(['NONE', 'GENERATED', 'PENDING_SIGNATURE', 'SIGNED', 'UNAVAILABLE']),
-        downloadAvailable: z.boolean(),
-        filename: z.string().min(1).optional(),
-        contentType: z.string().min(1).optional(),
-        pages: z.number().int().nonnegative().optional(),
-        sha256: z.string().nullable().optional(),
-        version: z.number().int().nonnegative().optional(),
-        signatureStatus: z.string().min(1).optional(),
-        signedAt: z.string().nullable().optional(),
-        generatedAt: z.string().nullable().optional(),
-        downloadPath: z.string().startsWith('/').optional(),
-      })
-      .strict()
-      .optional(),
+    document: contractDocumentSchema.optional(),
     createdAt: z.string().nullable().optional(),
     activatedAt: z.string().nullable().optional(),
-    pricing: z
-      .object({
-        subscription: z
+    pricing: contractPricingSchema.optional(),
+    /**
+     * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
+     *
+     * Ils restent entièrement consultables : référence, statut terminal,
+     * dates, montants, document. Rien n'y est inventé — un motif de
+     * résiliation que le projet ne conserve pas n'est pas publié.
+     */
+    previousContracts: z
+      .array(
+        z
           .object({
-            amountIncludingTax: z.number().nullable().optional(),
-            currency: z.string().nullable().optional(),
-            interval: z.string().nullable().optional(),
+            sourceContractId: z.string().min(1),
+            status: z.string().min(1),
+            reference: z.string().nullable().optional(),
+            createdAt: z.string().nullable().optional(),
+            activatedAt: z.string().nullable().optional(),
+            endedAt: z.string().nullable().optional(),
+            cancellationReason: z.string().nullable().optional(),
+            document: contractDocumentSchema.optional(),
+            pricing: contractPricingSchema.optional(),
           })
-          .strict()
-          .optional(),
-        launchFee: z
-          .object({
-            amountIncludingTax: z.number().nullable().optional(),
-            currency: z.string().nullable().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
+          .strict(),
+      )
       .optional(),
   })
   .strict();
