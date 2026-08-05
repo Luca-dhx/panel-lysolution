@@ -69,6 +69,17 @@ export function CompanyPage() {
     />
   );
 
+  /**
+   * L'ADRESSE TELLE QU'ELLE SERA PUBLIÉE — brouillon compris.
+   *
+   * L'aperçu ne s'affiche que sur une URL absolue : un lien relatif pointerait
+   * sur le site du client, ce qui serait pire que pas de lien. La validation
+   * définitive reste côté serveur (`company.validation.js`) ; ici on décide
+   * seulement s'il y a quelque chose à montrer.
+   */
+  const siteWebBrut = ((draft['domains.websiteUrl'] as string) ?? c.domains.websiteUrl ?? '').trim();
+  const siteWeb = /^https?:\/\//i.test(siteWebBrut) ? siteWebBrut : '';
+
   const patch = () => {
     // Le brouillon est à plat (« branding.primaryColor ») ; l'API attend un
     // objet. On reconstruit à l'envoi plutôt que de manipuler un objet
@@ -172,10 +183,31 @@ export function CompanyPage() {
       </Disclosure>
 
       <Disclosure title="Domaines et paramètres">
+        <div className="parameter-form">
+          {/*
+            LE SITE DE L'ENTREPRISE — publié aux projets, et affiché dans leur
+            footer (« Réalisé par … »). Il n'était que consultable ici : sans
+            moyen de le renseigner, aucun projet ne pouvait le montrer.
+            Facultatif : sans lui, le footer affiche le nom sans lien.
+          */}
+          <label className="field">
+            <span className="field-label">Site de l’entreprise</span>
+            {field('domains.websiteUrl', c.domains.websiteUrl)}
+            <span className="field-hint">
+              Affiché dans le footer des sites que vous opérez : « Réalisé par {c.identity.name} ».
+              {siteWeb ? ' Le nom sera cliquable.' : ' Sans adresse, le nom reste affiché sans lien.'}
+            </span>
+          </label>
+          {siteWeb ? (
+            <p className="field-hint">
+              Aperçu :{' '}
+              <a href={siteWeb} target="_blank" rel="noopener noreferrer">{siteWeb}</a>
+            </p>
+          ) : null}
+        </div>
         <DetailList
           items={[
             ['Domaine principal', c.domains.primaryDomain ?? <span className="muted">non renseigné</span>],
-            ['Site', c.domains.websiteUrl ?? <span className="muted">non renseigné</span>],
             ['Langue', c.settings.locale],
             ['Fuseau', c.settings.timezone],
             ['Devise', c.settings.currency],
