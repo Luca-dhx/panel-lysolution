@@ -273,20 +273,6 @@ export async function runPipeline({ transport, target, artifact, options, versio
       return { local };
     });
 
-    // 7bis. Synchronisation de la configuration réseau — APRÈS disponibilité du
-    //       backend, AVANT les healthchecks publics. Écrite dans la base de la
-    //       DESTINATION (jamais la base locale du moteur). Capacité injectée par
-    //       le contrôleur ; en son absence (tests/façade), l'étape est neutre.
-    await step('runtime_config', 'Synchronisation de la configuration réseau', async () => {
-      if (typeof options.runtimeConfigSync !== 'function') return { skipped: true, reason: 'non configuré (façade/test)' };
-      const dbName = String(env).toUpperCase() === 'PROD' ? remoteEnv?.DB_PROD : remoteEnv?.DB_TEST;
-      // backendUrl = URL API CANONIQUE (https://api.<host>) — le domaine API dédié
-      // vient d'être configuré (Nginx + certificat) juste au-dessus.
-      const urls = deriveNetworkUrls({ siteHost: host, apiHost, topology: topo });
-      const res = await options.runtimeConfigSync({ mongoUri: remoteEnv?.MONGODB_URI, dbName, urls, requirePublic: true });
-      return describeRuntimeConfig(res);
-    });
-
     // 8. Validation finale : CHAQUE application publiée répond en HTTPS + bon ENV.
     await step('validate', 'Validation', async () => {
       const pub = await checkPublicHealth(transport, host, healthPublicOpts);
@@ -393,6 +379,34 @@ export async function runPipeline({ transport, target, artifact, options, versio
         apiReachable: api.reachable,
         apiHttp: api.code,
       };
+    });
+
+    /**
+     * 9. CONFIGURATION RÉSEAU CANONIQUE — APRÈS la validation, jamais avant.
+     *
+     * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────
+     * Cette étape s'exécutait AVANT les healthchecks publics. Un déploiement
+     * qui échouait ensuite avait donc déjà réécrit la configuration réseau
+     * partagée : l'ANCIENNE destination, restée saine, se mettait à pointer
+     * vers le nouveau backend en échec. Une vitrine qui fonctionnait était
+     * cassée par un déploiement qui, lui, n'a jamais abouti.
+     *
+     * Écrire une configuration canonique est un acte de PUBLICATION : il ne
+     * peut venir qu'après avoir constaté que la nouvelle destination est
+     * saine. Rien, dans les contrôles publics, n'en dépend — ils interrogent
+     * les hôtes de la topologie, pas la configuration en base.
+     *
+     * Écrite dans la base de la DESTINATION (jamais celle du moteur). Capacité
+     * injectée par le contrôleur ; en son absence, l'étape est neutre.
+     */
+    await step('runtime_config', 'Synchronisation de la configuration réseau', async () => {
+      if (typeof options.runtimeConfigSync !== 'function') return { skipped: true, reason: 'non configuré (façade/test)' };
+      const dbName = String(env).toUpperCase() === 'PROD' ? remoteEnv?.DB_PROD : remoteEnv?.DB_TEST;
+      // backendUrl = URL API CANONIQUE (https://api.<host>) — le domaine API
+      // dédié a été configuré, certifié ET validé plus haut.
+      const urls = deriveNetworkUrls({ siteHost: host, apiHost, topology: topo });
+      const res = await options.runtimeConfigSync({ mongoUri: remoteEnv?.MONGODB_URI, dbName, urls, requirePublic: true });
+      return describeRuntimeConfig(res);
     });
 
     return { ok: true, steps, version, durationMs: clock() - pipelineStart, failedStep: null };
