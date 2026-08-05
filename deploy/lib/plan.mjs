@@ -43,8 +43,16 @@ export function buildPlan(deployConfig, { releaseId }) {
       description: 'Préparer les dossiers, lier les ressources partagées et installer les dépendances',
       commands: [
         `mkdir -p ${paths.releasesDir} ${paths.sharedDir}`,
+        // Le dossier des médias est créé s'il manque — un premier déploiement
+        // ne doit rien exiger de plus qu'un déploiement suivant.
+        `mkdir -p ${paths.sharedUploads}`,
         `mkdir -p ${releaseDir}`,
         `ln -sfn ${paths.envFile} ${releaseDir}/backend/.env`,
+        // Le lien est REFAIT à chaque release (`-n` : on remplace le lien, on
+        // n'écrit pas dedans). `rm -rf` d'abord, sinon `ln` créerait un lien
+        // À L'INTÉRIEUR d'un dossier `uploads` laissé par l'archive.
+        `rm -rf ${releaseDir}/backend/uploads`,
+        `ln -sfn ${paths.sharedUploads} ${releaseDir}/backend/uploads`,
         `cd ${releaseDir}/backend && npm ci --omit=dev`,
       ],
     },

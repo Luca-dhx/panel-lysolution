@@ -98,6 +98,15 @@ export function loadDeployConfig(configPath, overrides = {}, required = false) {
       currentLink: `${siteRoot}/current`,
       sharedDir: `${siteRoot}/shared`,
       envFile: `${siteRoot}/shared/.env`,
+      /**
+       * MÉDIAS IMPORTÉS — hors des releases, comme le stockage des projets.
+       *
+       * Une release est un dossier jetable : y écrire les logos les ferait
+       * disparaître à la mise en production suivante. Ils vivent donc dans
+       * `shared/`, et chaque release y pointe par un lien symbolique refait à
+       * chaque déploiement. Aucune opération manuelle, jamais.
+       */
+      sharedUploads: `${siteRoot}/shared/uploads`,
     },
     urls: deriveUrls(merged.host),
   };

@@ -146,11 +146,11 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
 
   // Le chemin stocké est relatif ; l'URL publiée est absolue.
   check('stockage relatif', /UPLOADS_PUBLIC_PREFIX = '\/uploads'/.test(service));
-  check('publication absolue', /export function resolvePublicMediaUrl/.test(service));
-  check('…sans adresse publique, on ne publie RIEN plutôt qu’un lien brisé',
-    /return null;/.test(service) && /config\.publicUrl/.test(service));
+  check('publication absolue', /export async function resolvePublicMediaUrl/.test(service));
+  check('…sans adresse résolue, on ne publie RIEN plutôt qu’un lien brisé',
+    /return null;/.test(service) && /await resolveBackendUrl\(\)/.test(service));
   check('la résolution a lieu à la publication',
-    /logoUrl: resolvePublicMediaUrl\(branding\.logoUrl\)/.test(companyService));
+    /logoUrl: await resolvePublicMediaUrl\(branding\.logoUrl\)/.test(companyService));
 
   check('le client n’impose pas le Content-Type du multipart',
     /body: form,/.test(client) && !/'Content-Type': 'multipart/.test(client));
@@ -189,6 +189,42 @@ section('8. Présentation — cartes, grille, responsive');
   check('aucune couleur en dur dans ces blocs',
     !/#[0-9a-fA-F]{3,8}\b/.test(css.slice(css.indexOf('.company-block-head'), css.indexOf('.company-logo-preview p'))));
   check('les cibles tactiles tiennent 40 px', /\.company-ref-line \.btn \{[\s\S]{0,80}min-height: 40px/.test(css));
+}
+
+/* -------------------------------------------------------------------------- */
+section('9. Architecture — médias partagés et adresse dérivée, sans réglage manuel');
+{
+  const deployConfig = lire('deploy/lib/config.mjs');
+  const deployPlan = lire('deploy/lib/plan.mjs');
+  const env = lire('backend/src/config/env.js');
+  const service = lire('backend/src/services/upload/upload.service.js');
+  const companyService = lire('backend/src/services/company/company.service.js');
+
+  // Les médias suivent l'architecture du stockage : shared/ + lien symbolique.
+  check('le dossier partagé est déclaré', deployConfig.includes('sharedUploads: `${siteRoot}/shared/uploads`'));
+  check('…créé s’il manque', deployPlan.includes('mkdir -p ${paths.sharedUploads}'));
+  check('…et le lien refait à CHAQUE release',
+    deployPlan.includes('ln -sfn ${paths.sharedUploads} ${releaseDir}/backend/uploads'));
+  check('…après suppression, sinon le lien se créerait DANS le dossier',
+    deployPlan.indexOf('rm -rf ${releaseDir}/backend/uploads')
+      < deployPlan.indexOf('ln -sfn ${paths.sharedUploads}'));
+  check('le code ne connaît qu’un chemin, le sien',
+    /uploads: path\.resolve\(process\.cwd\(\), 'uploads'\)/.test(env));
+  check('…et AUCUNE variable d’environnement dédiée aux médias',
+    !/UPLOADS_DIR/.test(env) && !/UPLOADS_DIR/.test(service));
+
+  // L'adresse publique vient de la configuration existante.
+  check('l’URL est dérivée du résolveur canonique',
+    /const \{ url \} = await resolveBackendUrl\(\);/.test(service));
+  check('…et non d’une variable propre aux médias', !/config\.publicUrl/.test(service));
+  check('la résolution n’a lieu qu’à la PUBLICATION',
+    /export async function companyPublishedProfile/.test(companyService)
+    && /const payload = await companyPublishedProfile\(company\);/.test(companyService));
+  check('…la vue d’administration garde le chemin relatif',
+    !/resolvePublicMediaUrl/.test(companyService.slice(
+      companyService.indexOf('export function companyPublicProfile'),
+      companyService.indexOf('export async function companyPublishedProfile'),
+    )));
 }
 
 console.log(`\n${pass} réussis, ${fail} échoués`);

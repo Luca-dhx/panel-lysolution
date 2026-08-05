@@ -202,17 +202,28 @@ export const config = {
   jwt: { secret: jwtSecret, expiresIn: jwtExpiresIn },
   bridgeEncryptionKey,
   panelName: (process.env.PANEL_NAME ?? '').trim() || 'Panel L.Y Solution',
-  publicUrl: (process.env.PUBLIC_URL ?? '').trim() || null,
   /**
    * Où le Panel écrit les médias qu'il héberge (logo de l'entreprise).
    *
    * Hors du dépôt par défaut : un dossier versionné se ferait écraser à chaque
    * déploiement, et les fichiers importés disparaîtraient.
    */
+  /**
+   * Où le Panel écrit les médias qu'il héberge (logo de l'entreprise).
+   *
+   * `<backend>/uploads` est un LIEN SYMBOLIQUE vers `shared/uploads`, posé par
+   * le déploiement à chaque release — exactement comme le stockage des
+   * projets. Les fichiers survivent donc aux mises en production sans aucune
+   * manipulation, et le code n'a qu'un chemin à connaître : le sien.
+   */
   paths: {
-    uploads: (process.env.UPLOADS_DIR ?? '').trim()
-      || path.resolve(process.cwd(), 'uploads'),
+    uploads: path.resolve(process.cwd(), 'uploads'),
   },
+  // Repli d'AMORÇAGE de la règle de priorité des URLs (cf.
+  // `networkConfig.service.js`) : la configuration système écrite par le
+  // déploiement prime toujours. Ce n'est pas une adresse à renseigner à la
+  // main en exploitation.
+  publicUrl: (process.env.PUBLIC_URL ?? '').trim() || null,
   corsOrigins,
   seedDevEmail,
   seedDevPassword,

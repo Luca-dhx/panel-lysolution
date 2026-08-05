@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
 import { config } from '../../config/env.js';
+import { resolveBackendUrl } from '../network/networkConfig.service.js';
 
 /**
  * MÉDIAS DU PANEL — le logo de l'entreprise, et rien d'autre pour l'instant.
@@ -51,18 +52,25 @@ export async function processImage(buffer, { maxWidth = 1920, prefix = 'img' } =
 /**
  * Rend une adresse publiable par les projets.
  *
+ * ── L'ADRESSE VIENT DE LA CONFIGURATION EXISTANTE ─────────────────────────
+ * Aucune variable d'environnement dédiée : le Panel connaît déjà son domaine.
+ * `resolveBackendUrl()` applique la règle de priorité du projet — configuration
+ * système (écrite par le déploiement, depuis le domaine de la cible), puis
+ * repli d'environnement, puis défaut local — et refuse en PROD une adresse qui
+ * ne serait pas publiquement joignable.
+ *
  * Une valeur déjà absolue est rendue telle quelle : le champ accepte encore une
- * URL externe, et rien ne justifie de la réécrire. Un chemin relatif est
- * préfixé par l'adresse publique du Panel ; sans cette adresse configurée, on
+ * URL externe, et rien ne justifie de la réécrire. Sans adresse résolue, on
  * rend `null` plutôt qu'un lien qui pointerait chez le client.
  */
-export function resolvePublicMediaUrl(valeur) {
+export async function resolvePublicMediaUrl(valeur) {
   const brut = String(valeur ?? '').trim();
   if (!brut) return null;
   if (/^https?:\/\//i.test(brut)) return brut;
   if (!brut.startsWith(UPLOADS_PUBLIC_PREFIX)) return null;
 
-  const base = String(config.publicUrl ?? '').trim().replace(/\/+$/, '');
+  const { url } = await resolveBackendUrl();
+  const base = String(url ?? '').trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(base)) return null;
   return `${base}${brut}`;
 }

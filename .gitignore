@@ -2,4 +2,6 @@ node_modules/
 deploy/deploy.config.json
 
 # Médias importés depuis le Panel (logo d'entreprise) — données, pas du code.
+# En production, ce chemin est un LIEN SYMBOLIQUE vers `shared/uploads`, posé
+# par le déploiement : les fichiers vivent hors des releases et leur survivent.
 /uploads/

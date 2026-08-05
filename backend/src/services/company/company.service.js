@@ -161,7 +161,7 @@ export async function publishConfiguration(companyId, { reason }, actor = {}) {
   }
 
   const company = await getCompanyOrThrow(companyId);
-  const payload = companyPublicProfile(company);
+  const payload = await companyPublishedProfile(company);
 
   const previous = company.publishedVersion === null
     ? null
@@ -280,32 +280,12 @@ export async function getPublishedConfiguration(companyId) {
  * intermédiaire qui pourrait diverger.
  */
 export function companyPublicProfile(company) {
-  /**
-   * LE LOGO EST RENDU ABSOLU ICI, et nulle part ailleurs.
-   *
-   * Il est stocké en chemin relatif (`/uploads/…`) pour survivre à un
-   * changement de domaine du Panel. Mais ce sont les PROJETS qui l'affichent,
-   * depuis d'autres origines : un chemin relatif y pointerait sur le site du
-   * client. La résolution se fait donc au moment de publier — c'est le seul
-   * endroit qui connaît à la fois la valeur stockée et l'adresse publique du
-   * Panel.
-   *
-   * Sans adresse publique configurée, on publie `null` : mieux vaut aucun logo
-   * qu'un lien brisé sur tout le parc.
-   */
-  const branding = plain(company.branding) || {};
-  const brandingPublie = {
-    ...branding,
-    logoUrl: resolvePublicMediaUrl(branding.logoUrl),
-    faviconUrl: resolvePublicMediaUrl(branding.faviconUrl),
-  };
-
   return {
     companyId: company.companyId,
     slug: company.slug,
     environment: company.environment,
     identity: plain(company.identity),
-    branding: brandingPublie,
+    branding: plain(company.branding),
     domains: plain(company.domains),
     contacts: plain(company.contacts),
     legal: plain(company.legal),
@@ -313,6 +293,35 @@ export function companyPublicProfile(company) {
     // Identité DÉVELOPPEUR — le Panel en est l'autorité.
     signer: plain(company.signer) ?? null,
     references: (company.references || []).map((r) => plain(r)),
+  };
+}
+
+/**
+ * LE PROFIL TEL QU'IL PART VERS LES PROJETS.
+ *
+ * Les médias sont stockés en chemin relatif (`/uploads/…`) : le Panel les sert
+ * lui-même, et un changement de domaine ne casse aucune fiche. Mais ce sont
+ * les PROJETS qui les affichent, depuis d'autres origines — un chemin relatif
+ * y pointerait sur le site du client.
+ *
+ * La résolution en URL absolue n'a donc lieu qu'ICI, au moment de figer une
+ * version. La vue d'administration, elle, garde le chemin relatif : le Panel
+ * est sa propre origine, et le réécrire n'apporterait rien.
+ *
+ * L'adresse vient de `resolveBackendUrl()` — la configuration réseau écrite
+ * par le déploiement depuis le domaine de la cible. Aucune variable dédiée :
+ * une variable de plus est une variable qu'on oublie.
+ */
+export async function companyPublishedProfile(company) {
+  const profil = companyPublicProfile(company);
+  const branding = profil.branding || {};
+  return {
+    ...profil,
+    branding: {
+      ...branding,
+      logoUrl: await resolvePublicMediaUrl(branding.logoUrl),
+      faviconUrl: await resolvePublicMediaUrl(branding.faviconUrl),
+    },
   };
 }
 
