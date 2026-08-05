@@ -66,6 +66,43 @@ interface RequestOptions {
   body?: unknown;
 }
 
+/**
+ * IMPORT D'UNE IMAGE — multipart, donc hors du chemin JSON habituel.
+ *
+ * Le `Content-Type` n'est PAS posé à la main : le navigateur doit y écrire la
+ * frontière du multipart, et l'imposer rendrait le corps illisible au serveur.
+ * La réponse porte un chemin relatif (`/uploads/…`) ; c'est le Panel qui le
+ * rendra absolu au moment de publier aux projets.
+ */
+export async function uploadImage(file: File, prefix = 'img'): Promise<{ url: string; filename: string }> {
+  const form = new FormData();
+  form.append('file', file);
+
+  const headers: Record<string, string> = {};
+  const token = tokenStore.get();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/uploads/image?prefix=${encodeURIComponent(prefix)}`, {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+  } catch {
+    throw new ApiError(0, 'Impossible de contacter le serveur du Panel.');
+  }
+
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiError(
+      res.status,
+      payload?.error?.message || payload?.message || "L'image n'a pas pu être importée.",
+    );
+  }
+  return payload as { url: string; filename: string };
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {};
   const token = tokenStore.get();

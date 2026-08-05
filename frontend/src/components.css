@@ -529,28 +529,71 @@ a:focus-visible {
   min-height: 40px;
 }
 
-/* L'aperçu du logo : coller une adresse sans voir ce qu'elle rend revient à
-   publier à l'aveugle sur tout le parc. */
-.company-logo-preview {
+/* La zone d'import : cliquer ou déposer, comme dans le Manager. Le fichier
+   part au serveur du Panel, qui le redimensionne et le sert. */
+.company-logo-drop {
+  position: relative;
   margin-top: var(--p-space-3);
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 96px;
+  min-height: 140px;
   padding: var(--p-space-3);
-  border: 1px dashed var(--p-border);
+  border: 2px dashed var(--p-border);
   border-radius: var(--p-radius);
-  background: var(--p-background);
+  background: var(--p-surface-sunken);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--p-motion-fast) var(--p-ease);
 }
 
-.company-logo-preview img {
-  max-height: 120px;
+.company-logo-drop:hover,
+.company-logo-drop:focus-visible {
+  border-color: var(--p-primary);
+}
+
+.company-logo-drop.is-busy {
+  cursor: progress;
+}
+
+.company-logo-drop img {
+  max-height: 140px;
   max-width: 100%;
   object-fit: contain;
 }
 
-.company-logo-preview p {
-  margin: 0;
+/* La suppression n'apparaît qu'au survol ou au focus : elle ne doit pas
+   attirer l'œil avant l'image elle-même. */
+.company-logo-remove {
+  position: absolute;
+  top: var(--p-space-2);
+  right: var(--p-space-2);
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-full);
+  background: var(--p-surface-raised);
+  color: var(--p-text);
+  font-size: var(--p-text-lg);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--p-motion-fast) var(--p-ease);
+}
+
+.company-logo-drop:hover .company-logo-remove,
+.company-logo-remove:focus-visible {
+  opacity: 1;
+}
+
+.company-logo-veil {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--p-surface-sunken);
+  opacity: 0.85;
   font-size: var(--p-text-sm);
 }
 

@@ -3,6 +3,7 @@
 //   /api        surface interne (frontend, JWT utilisateur, erreurs PANEL_*)
 //   /health     vivacité publique
 import express from 'express';
+import { uploadsDir } from './services/upload/upload.service.js';
 import corsMiddleware from './middlewares/cors.middleware.js';
 import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -14,6 +15,7 @@ import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
+import uploadRoutes from './routes/upload.routes.js';
 import deploymentRoutes from './routes/deployment.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
@@ -37,6 +39,20 @@ export function createApp() {
   app.use('/api/diagnostic', diagnosticRoutes);
   app.use('/api/executions', executionRoutes);
   app.use('/api/company', companyRoutes);
+  app.use('/api/uploads', uploadRoutes);
+  /**
+   * Les médias importés sont servis en STATIQUE, et publiquement.
+   *
+   * Le logo de l'entreprise est affiché par le pied de page de chaque projet :
+   * exiger un jeton le rendrait invisible aux visiteurs. Le dossier ne contient
+   * que des images réécrites par sharp — jamais un fichier déposé tel quel.
+   */
+  app.use('/uploads', express.static(uploadsDir(), {
+    maxAge: '7d',
+    fallthrough: true,
+    index: false,
+    dotfiles: 'deny',
+  }));
   app.use('/api/deployment', deploymentRoutes);
 
   app.use(notFoundHandler);

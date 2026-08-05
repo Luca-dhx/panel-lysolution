@@ -111,12 +111,49 @@ section('4. Les références sont éditables — le bloc était absent');
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
-section('5. Le logo a son aperçu');
+section('5. Le logo s’IMPORTE — même geste que dans le Manager');
 {
-  check('aperçu rendu', /<img src=\{url\} alt="Aperçu du logo" \/>/.test(blocs));
-  check('…seulement sur une adresse affichable', /const affichable = \/\^https\?:\\\/\\\/\/i\.test\(url\)/.test(blocs));
-  check('…sinon la raison est dite', /Adresse non affichable/.test(blocs));
-  check('l’absence de stockage est annoncée', /Le Panel n’héberge pas de fichiers/.test(blocs));
+  const routes = lire('backend/src/routes/upload.routes.js');
+  const service = lire('backend/src/services/upload/upload.service.js');
+  const app = lire('backend/src/app.js');
+  const client = lire('frontend/src/lib/api.ts');
+  const companyService = lire('backend/src/services/company/company.service.js');
+
+  // Le champ URL a disparu : c'était une expérience dégradée née d'une limite
+  // technique, pas d'un choix.
+  check('plus aucun champ « adresse du logo »', !/Adresse du logo/.test(blocs));
+  check('le fichier s’importe', /uploadImage\(file, 'logo'\)/.test(blocs));
+  check('…au clic', /inputRef\.current\?\.click\(\)/.test(blocs));
+  check('…et au glisser-déposer', /onDrop=/.test(blocs) && /dataTransfer\.files/.test(blocs));
+  check('…au clavier aussi', /e\.key === 'Enter'/.test(blocs));
+  check('l’envoi est signalé', /aria-busy=\{envoi\}/.test(blocs) && /Envoi…/.test(blocs));
+  check('l’image se supprime', /Supprimer l’image/.test(blocs));
+  check('un échec dit sa cause', /setErreur\(errorMessage\(err/.test(blocs));
+  check('…et réimporter le même fichier reste possible',
+    /inputRef\.current\.value = ''/.test(blocs));
+
+  // Backend : le Panel héberge désormais ses médias.
+  check('la route d’import existe', /router\.post\('\/image', upload\.single\('file'\)/.test(routes));
+  check('…réservée aux DEV', /router\.use\(requirePanelDev\)/.test(routes));
+  check('…limitée en taille', /fileSize: 12 \* 1024 \* 1024/.test(routes));
+  check('…et aux images', /startsWith\('image\//.test(routes));
+  check('le nom de fichier ne peut pas sortir du dossier', /a-z0-9_-/.test(routes));
+  check('le fichier est RÉÉCRIT, jamais servi tel quel',
+    /sharp\(buffer\)/.test(service) && /\.webp\(/.test(service));
+  check('…et redimensionné', /withoutEnlargement: true/.test(service));
+  check('les médias sont servis en statique', /express\.static\(uploadsDir\(\)/.test(app));
+  check('…sans exposer de fichiers cachés', /dotfiles: 'deny'/.test(app));
+
+  // Le chemin stocké est relatif ; l'URL publiée est absolue.
+  check('stockage relatif', /UPLOADS_PUBLIC_PREFIX = '\/uploads'/.test(service));
+  check('publication absolue', /export function resolvePublicMediaUrl/.test(service));
+  check('…sans adresse publique, on ne publie RIEN plutôt qu’un lien brisé',
+    /return null;/.test(service) && /config\.publicUrl/.test(service));
+  check('la résolution a lieu à la publication',
+    /logoUrl: resolvePublicMediaUrl\(branding\.logoUrl\)/.test(companyService));
+
+  check('le client n’impose pas le Content-Type du multipart',
+    /body: form,/.test(client) && !/'Content-Type': 'multipart/.test(client));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -147,7 +184,7 @@ section('8. Présentation — cartes, grille, responsive');
   check('le signataire est sur deux colonnes dès 640 px',
     /@media \(min-width: 640px\)[\s\S]{0,160}\.company-grid-2 \{[\s\S]{0,80}grid-template-columns: 1fr 1fr/.test(css));
   check('une référence ne déborde pas', /\.company-ref-line input \{[\s\S]{0,120}min-width: 8rem/.test(css));
-  check('l’aperçu du logo est cadré', /\.company-logo-preview img \{[\s\S]{0,140}object-fit: contain/.test(css));
+  check('la zone d’import est cadrée', /\.company-logo-drop img \{[\s\S]{0,140}object-fit: contain/.test(css));
   check('les erreurs ont leur style', /\.field-error \{/.test(css));
   check('aucune couleur en dur dans ces blocs',
     !/#[0-9a-fA-F]{3,8}\b/.test(css.slice(css.indexOf('.company-block-head'), css.indexOf('.company-logo-preview p'))));

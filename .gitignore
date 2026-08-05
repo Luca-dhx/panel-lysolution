@@ -1,2 +1,5 @@
 node_modules/
 deploy/deploy.config.json
+
+# Médias importés depuis le Panel (logo d'entreprise) — données, pas du code.
+/uploads/

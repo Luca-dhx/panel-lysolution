@@ -203,6 +203,16 @@ export const config = {
   bridgeEncryptionKey,
   panelName: (process.env.PANEL_NAME ?? '').trim() || 'Panel L.Y Solution',
   publicUrl: (process.env.PUBLIC_URL ?? '').trim() || null,
+  /**
+   * Où le Panel écrit les médias qu'il héberge (logo de l'entreprise).
+   *
+   * Hors du dépôt par défaut : un dossier versionné se ferait écraser à chaque
+   * déploiement, et les fichiers importés disparaîtraient.
+   */
+  paths: {
+    uploads: (process.env.UPLOADS_DIR ?? '').trim()
+      || path.resolve(process.cwd(), 'uploads'),
+  },
   corsOrigins,
   seedDevEmail,
   seedDevPassword,

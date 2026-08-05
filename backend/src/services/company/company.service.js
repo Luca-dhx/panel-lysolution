@@ -280,16 +280,39 @@ export async function getPublishedConfiguration(companyId) {
  * intermédiaire qui pourrait diverger.
  */
 export function companyPublicProfile(company) {
+  /**
+   * LE LOGO EST RENDU ABSOLU ICI, et nulle part ailleurs.
+   *
+   * Il est stocké en chemin relatif (`/uploads/…`) pour survivre à un
+   * changement de domaine du Panel. Mais ce sont les PROJETS qui l'affichent,
+   * depuis d'autres origines : un chemin relatif y pointerait sur le site du
+   * client. La résolution se fait donc au moment de publier — c'est le seul
+   * endroit qui connaît à la fois la valeur stockée et l'adresse publique du
+   * Panel.
+   *
+   * Sans adresse publique configurée, on publie `null` : mieux vaut aucun logo
+   * qu'un lien brisé sur tout le parc.
+   */
+  const branding = plain(company.branding) || {};
+  const brandingPublie = {
+    ...branding,
+    logoUrl: resolvePublicMediaUrl(branding.logoUrl),
+    faviconUrl: resolvePublicMediaUrl(branding.faviconUrl),
+  };
+
   return {
     companyId: company.companyId,
     slug: company.slug,
     environment: company.environment,
     identity: plain(company.identity),
-    branding: plain(company.branding),
+    branding: brandingPublie,
     domains: plain(company.domains),
     contacts: plain(company.contacts),
     legal: plain(company.legal),
     settings: plain(company.settings),
+    // Identité DÉVELOPPEUR — le Panel en est l'autorité.
+    signer: plain(company.signer) ?? null,
+    references: (company.references || []).map((r) => plain(r)),
   };
 }
 

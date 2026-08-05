@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Card } from '@/components/ui';
+import { errorMessage, uploadImage } from '@/lib/api';
 import { EMPTY_SIGNER, getSignerGaps, isSignerEmpty, isValidEmail } from '@/lib/signer';
 import type { CompanyReference, CompanySigner } from '@/types.company';
 
@@ -9,10 +10,10 @@ import type { CompanyReference, CompanySigner } from '@/types.company';
  * ── POURQUOI CE FICHIER EXISTE ──────────────────────────────────────────────
  * Le Panel est devenu l'autorité de cette identité, mais sa fiche d'entreprise
  * n'offrait que des champs texte bruts : pas d'éditeur de références, pas
- * d'aperçu de logo, aucune validation du signataire. On y saisissait donc à
+ * d'import de logo, aucune validation du signataire. On y saisissait donc à
  * l'aveugle ce que le Manager, lui, présentait proprement. Ces trois blocs
- * portent la même finition, avec ce que le Panel sait faire : il n'a pas de
- * stockage de médias, le logo reste donc une URL — mais avec son aperçu.
+ * portent exactement la même finition — y compris l'import de fichier, pour
+ * lequel le Panel a reçu son propre stockage.
  *
  * Ils écrivent tous dans le BROUILLON de la page : saisir ne publie rien, et
  * cette distinction reste celle qui structure tout l'écran.
@@ -226,9 +227,16 @@ export function ReferencesEditor({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Le Panel n'héberge pas de médias : le logo reste une URL. L'aperçu, lui, est
- * repris du Manager — coller une adresse sans voir ce qu'elle rend revient à
- * publier à l'aveugle sur tous les projets.
+ * LOGO — import de fichier, comme dans le Manager.
+ *
+ * ── POURQUOI CE COMPOSANT A CHANGÉ ──────────────────────────────────────────
+ * Le Panel n'ayant pas de stockage, le logo se saisissait en collant une URL :
+ * une expérience dégradée née d'une limite technique, pas d'un choix. Le Panel
+ * étant l'autorité de cette identité, c'est à lui de s'aligner — il héberge
+ * désormais ses médias (`POST /api/uploads/image`).
+ *
+ * Le chemin rendu est relatif ; le Panel le rend absolu au moment de publier
+ * aux projets, qui l'affichent depuis d'autres origines.
  */
 export function LogoField({
   value,
@@ -237,35 +245,81 @@ export function LogoField({
   value: string | null;
   onChange: (url: string) => void;
 }) {
+  const [envoi, setEnvoi] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const url = (value || '').trim();
-  const affichable = /^https?:\/\//i.test(url);
+
+  const importer = async (file: File | undefined) => {
+    if (!file) return;
+    setEnvoi(true);
+    setErreur(null);
+    try {
+      const { url: chemin } = await uploadImage(file, 'logo');
+      onChange(chemin);
+    } catch (err) {
+      setErreur(errorMessage(err, "L'image n'a pas pu être importée."));
+    } finally {
+      setEnvoi(false);
+      // Sans cela, réimporter le MÊME fichier après une erreur ne déclencherait
+      // aucun évènement : la valeur de l'input n'aurait pas changé.
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
 
   return (
     <Card title="Logo">
-      <div className="parameter-form">
-        <label className="field">
-          <span className="field-label">Adresse du logo</span>
-          <input
-            type="text"
-            value={value ?? ''}
-            placeholder="https://…/logo.png"
-            onChange={(e) => onChange(e.target.value)}
-          />
-          <span className="field-hint muted">
-            Adresse publique en https. Le Panel n’héberge pas de fichiers.
+      <p className="muted">Affiché par les projets. Format libre, redimensionné automatiquement.</p>
+
+      <div
+        className={`company-logo-drop${envoi ? ' is-busy' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-label="Importer une image"
+        aria-busy={envoi}
+        onClick={() => { if (!envoi) inputRef.current?.click(); }}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !envoi) {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!envoi) void importer(e.dataTransfer.files?.[0]);
+        }}
+      >
+        {url ? (
+          <>
+            <img src={url} alt="" />
+            <button
+              type="button"
+              className="company-logo-remove"
+              aria-label="Supprimer l’image"
+              onClick={(e) => { e.stopPropagation(); onChange(''); }}
+            >
+              ×
+            </button>
+          </>
+        ) : (
+          <span className="muted">
+            {envoi ? 'Envoi…' : 'Cliquez ou déposez une image'}
           </span>
-        </label>
+        )}
+        {envoi && url ? <span className="company-logo-veil">Envoi…</span> : null}
       </div>
 
-      <div className="company-logo-preview">
-        {affichable ? (
-          <img src={url} alt="Aperçu du logo" />
-        ) : (
-          <p className="muted">
-            {url ? 'Adresse non affichable : une URL http(s) est attendue.' : 'Aucun logo.'}
-          </p>
-        )}
-      </div>
+      {erreur ? <p className="field-error">{erreur}</p> : null}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => void importer(e.target.files?.[0])}
+      />
     </Card>
   );
 }
