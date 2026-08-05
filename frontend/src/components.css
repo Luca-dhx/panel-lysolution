@@ -444,6 +444,116 @@ a:focus-visible {
   }
 }
 
+/* ---------- Identité développeur : signataire, références, logo ---------- */
+/*
+   Ces blocs étaient de simples champs texte : on y saisissait à l'aveugle une
+   identité que TOUS les projets affichent. Ils reprennent la finition de la
+   page d'origine du Manager, avec ce que le Panel sait faire.
+*/
+.company-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--p-space-2);
+  margin-bottom: var(--p-space-3);
+}
+
+.company-block-head p {
+  margin: 0;
+  flex: 1;
+  min-width: 12rem;
+}
+
+/* Deux colonnes dès qu'il y a la place — la saisie d'un signataire va par
+   paires (prénom/nom, fonction/e-mail). */
+.company-grid-2 {
+  display: grid;
+  gap: var(--p-space-3);
+}
+
+@media (min-width: 640px) {
+  .company-grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.field-error {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--p-text-xs);
+  color: var(--p-danger);
+}
+
+.company-empty {
+  margin: 0;
+  padding: var(--p-space-3) 0;
+  text-align: center;
+}
+
+.company-refs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--p-space-2);
+}
+
+.company-ref {
+  display: grid;
+  gap: var(--p-space-2);
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+}
+
+.company-ref-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+
+/* Le nom occupe l'espace restant ; l'icône garde une largeur lisible. */
+.company-ref-line input {
+  flex: 1;
+  min-width: 8rem;
+}
+
+.company-ref-line input.company-ref-icon {
+  flex: 0 0 9rem;
+  min-width: 7rem;
+}
+
+.company-ref-line .btn {
+  min-height: 40px;
+}
+
+/* L'aperçu du logo : coller une adresse sans voir ce qu'elle rend revient à
+   publier à l'aveugle sur tout le parc. */
+.company-logo-preview {
+  margin-top: var(--p-space-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  padding: var(--p-space-3);
+  border: 1px dashed var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-background);
+}
+
+.company-logo-preview img {
+  max-height: 120px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.company-logo-preview p {
+  margin: 0;
+  font-size: var(--p-text-sm);
+}
+
 /* ---------- Bandeau de fraîcheur ---------- */
 /* Il précède TOUTE donnée métier : ce qui suit est-il encore vrai ? Une
    pastille grise perdue au milieu des autres ne suffisait pas à le dire. */

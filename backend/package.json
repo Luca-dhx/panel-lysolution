@@ -28,6 +28,7 @@
     "test:panel-timeline-ui": "node ../tests/panel-timeline-ui.test.js",
     "test:generation": "node ../tests/generation-change.test.js",
     "test:contract-history": "node ../tests/contract-current-history.test.js",
+    "test:developer-identity": "node ../tests/developer-identity.test.js",
     "test:contract-document": "node --experimental-strip-types --disable-warning=ExperimentalWarning --import ../tests/helpers/registerFrontendLoader.mjs ../tests/contract-document-matrix.test.js",
     "test:architecture": "node ../tests/architecture.test.js",
     "test:manifest": "node ../tests/manifest.test.js",

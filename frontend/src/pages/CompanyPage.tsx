@@ -15,6 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
+import { LogoField, ReferencesEditor, SignerSection } from '@/components/company/DeveloperIdentity';
 import { company as api, errorMessage } from '@/lib/api';
 import type { CompanyState, VersionRow } from '@/types.company';
 
@@ -84,13 +85,22 @@ export function CompanyPage() {
     // Le brouillon est à plat (« branding.primaryColor ») ; l'API attend un
     // objet. On reconstruit à l'envoi plutôt que de manipuler un objet
     // imbriqué à chaque frappe.
-    const body: Record<string, Record<string, unknown>> = {};
+    const body: Record<string, unknown> = {};
     for (const [path, value] of Object.entries(draft)) {
+      // Le signataire et les références sont des BLOCS entiers, pas des
+      // champs : ils s'écrivent tels quels, sans passer par « groupe.clé ».
+      if (!path.includes('.')) { body[path] = value; continue; }
       const [group, key] = path.split('.');
-      body[group] = { ...(body[group] ?? {}), [key]: value === '' ? null : value };
+      const courant = (body[group] as Record<string, unknown>) ?? {};
+      body[group] = { ...courant, [key]: value === '' ? null : value };
     }
     return body;
   };
+
+  // Blocs édités d'un seul tenant — brouillon d'abord, valeur publiée sinon.
+  const signataire = (draft.signer as typeof c.signer) ?? c.signer ?? null;
+  const references = (draft.references as typeof c.references) ?? c.references ?? [];
+  const logo = (draft['branding.logoUrl'] as string) ?? c.branding.logoUrl ?? '';
 
   return (
     <div className="page">
@@ -142,7 +152,6 @@ export function CompanyPage() {
       {/* — Marque ———————————————————————————————————————— */}
       <Card title="Marque">
         <div className="parameter-form">
-          <label className="field"><span className="field-label">Logo (https)</span>{field('branding.logoUrl', c.branding.logoUrl)}</label>
           <label className="field"><span className="field-label">Favicon (https)</span>{field('branding.faviconUrl', c.branding.faviconUrl)}</label>
           <label className="field">
             <span className="field-label">Couleur primaire</span>
@@ -163,6 +172,23 @@ export function CompanyPage() {
         </div>
       </Card>
 
+      {/*
+        IDENTITÉ DÉVELOPPEUR — les blocs repris du Manager, dont le Panel est
+        désormais l'autorité. Ils remplacent les champs texte bruts : on ne
+        publie pas à l'aveugle une identité que tous les projets afficheront.
+      */}
+      <LogoField value={logo} onChange={(url) => setDraft({ ...draft, 'branding.logoUrl': url })} />
+
+      <SignerSection
+        value={signataire}
+        onChange={(signer) => setDraft({ ...draft, signer })}
+      />
+
+      <ReferencesEditor
+        value={references}
+        onChange={(refs) => setDraft({ ...draft, references: refs })}
+      />
+
       {/* — Coordonnées et mentions légales ————————————————— */}
       <Disclosure title="Coordonnées">
         <div className="parameter-form">
@@ -180,38 +206,6 @@ export function CompanyPage() {
           <label className="field"><span className="field-label">Représentant légal</span>{field('legal.legalRepresentative', c.legal.legalRepresentative)}</label>
           <label className="field"><span className="field-label">Hébergeur</span>{field('legal.hostingProvider', c.legal.hostingProvider)}</label>
         </div>
-      </Disclosure>
-
-      {/*
-        SIGNATAIRE — repris de la page « Entreprise développeur » des projets,
-        dont le Panel devient l'autorité. C'est la personne physique qui engage
-        l'entreprise : jamais un compte utilisateur, qui sert à se connecter et
-        non à signer. Tant qu'il n'est pas renseigné, un projet refuse
-        explicitement de valider un contrat — ce qui vaut mieux qu'un
-        signataire deviné.
-      */}
-      <Disclosure title="Signataire des contrats">
-        <div className="parameter-form">
-          <label className="field">
-            <span className="field-label">Prénom</span>
-            {field('signer.firstName', c.signer?.firstName ?? null)}
-          </label>
-          <label className="field">
-            <span className="field-label">Nom</span>
-            {field('signer.lastName', c.signer?.lastName ?? null)}
-          </label>
-          <label className="field">
-            <span className="field-label">Fonction</span>
-            {field('signer.jobTitle', c.signer?.jobTitle ?? null)}
-          </label>
-          <label className="field">
-            <span className="field-label">E-mail</span>
-            {field('signer.email', c.signer?.email ?? null)}
-          </label>
-        </div>
-        <p className="field-hint">
-          Publié aux projets. Sans signataire complet, un projet refusera de valider un contrat.
-        </p>
       </Disclosure>
 
       <Disclosure title="Domaines et paramètres">
