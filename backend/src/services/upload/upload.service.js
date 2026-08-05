@@ -1,4 +1,5 @@
 import path from 'node:path';
+import ApiError from '../../utils/ApiError.js';
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
 import { config } from '../../config/env.js';
@@ -68,10 +69,8 @@ const NOM_MEDIA = /^[a-z0-9_-]{1,32}-\d{10,}-\d{1,12}\.webp$/i;
 export async function deleteImage(filename) {
   const nom = String(filename ||'').trim();
   if (!NOM_MEDIA.test(nom)) {
-    const err = new Error("Nom de média invalide.");
-    err.status = 400;
-    err.code = "PANEL_MEDIA_INVALID_NAME";
-    throw err;
+    throw ApiError.badRequest('PANEL_MEDIA_INVALID_NAME',
+      'Nom de média invalide : la forme attendue est celle produite à l’import.');
   }
 
   const dossier = uploadsDir();
@@ -82,10 +81,10 @@ export async function deleteImage(filename) {
   // comparaison de chemins résolus, non.
   const racine = path.resolve(dossier);
   if (path.dirname(path.resolve(cible)) !== racine) {
-    const err = new Error("Chemin de média hors du dossier autorisé.");
-    err.status = 400;
-    err.code = "PANEL_MEDIA_PATH_ESCAPE";
-    throw err;
+    // Le message ne cite AUCUN chemin : révéler l'arborescence du serveur
+    // renseignerait précisément celui qui vient de tenter d’en sortir.
+    throw ApiError.badRequest('PANEL_MEDIA_PATH_ESCAPE',
+      'Chemin de média hors du dossier autorisé.');
   }
 
   try {
