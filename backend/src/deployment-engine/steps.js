@@ -26,12 +26,23 @@ export const CANONICAL_STEPS = [
   { id: 'artifact.build', label: 'Préparation de la nouvelle version', critical: true },
   { id: 'artifact.upload', label: 'Transfert du projet', critical: true },
   { id: 'dependencies.install', label: 'Installation & configuration', critical: true },
+  { id: 'uploads.migrate', label: 'Migration des médias persistants', critical: true },
   { id: 'nginx.configure', label: 'Configuration du routage web', critical: true },
   { id: 'https.configure', label: 'Activation HTTPS', critical: true },
   { id: 'services.start', label: 'Démarrage des services', critical: true },
   { id: 'services.verify', label: 'Vérification des services', critical: true },
-  { id: 'runtime.sync', label: 'Synchronisation de la configuration réseau', critical: true },
+  /**
+   * L'ORDRE DE CETTE LISTE EST CELUI DE L'EXÉCUTION — il pilote l'affichage, le
+   * rapport et l'historique.
+   *
+   * `runtime.sync` PUBLIE la configuration réseau canonique, partagée avec les
+   * emplacements antérieurs du projet ; `public.healthcheck` CONSTATE que la
+   * nouvelle destination est saine. Publier ne peut pas précéder constater :
+   * quand c'était le cas, un déploiement qui échouait avait déjà fait pointer
+   * l'ancienne vitrine, restée saine, vers un backend en échec.
+   */
   { id: 'public.healthcheck', label: 'Vérification publique finale', critical: true },
+  { id: 'runtime.sync', label: 'Synchronisation de la configuration réseau', critical: true },
   { id: 'deployment.finalize', label: 'Finalisation', critical: false },
 ];
 
@@ -55,6 +66,7 @@ export const RAW_TO_CANONICAL = {
   // Pipeline distant.
   upload: 'artifact.upload',
   dirs: 'dependencies.install',
+  uploads_migrate: 'uploads.migrate',
   nginx: 'nginx.configure',
   certbot: 'https.configure',
   runtime_config: 'runtime.sync',

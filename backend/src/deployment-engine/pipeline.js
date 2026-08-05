@@ -17,6 +17,7 @@ import { ensureCertificate } from './certbot.js';
 import { restartBackend } from './pm2.js';
 import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact } from './health.js';
 import { deriveNetworkUrls, describeRuntimeConfig } from './runtimeConfig.js';
+import { migrateUploads } from './uploads.js';
 import { planTopology } from './topology.js';
 import { DeploymentError } from './errors.js';
 import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
@@ -25,13 +26,17 @@ import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
 export const PIPELINE_STEPS = [
   'upload',
   'dirs',
+  'uploads_migrate',
   'nginx',
   'certbot',
   'reload',
   'pm2',
   'health',
-  'runtime_config',
+  // L'ordre de cette liste est celui de l'EXÉCUTION : elle alimente l'affichage
+  // et l'historique. `runtime_config` publie, `validate` constate — publier ne
+  // peut pas précéder constater, ici comme dans le corps du pipeline.
   'validate',
+  'runtime_config',
 ];
 
 /**
@@ -226,7 +231,41 @@ export async function runPipeline({ transport, target, artifact, options, versio
       return { backendDir, envKeys, commit: artifact.manifest?.shortCommit || null, branch: artifact.manifest?.branch || null };
     });
 
-    // 3. Configuration Nginx PHASE HTTP — sert le challenge ACME (HTTP-01) et le
+    /**
+     * 3. MÉDIAS PERSISTANTS D'UN EMPLACEMENT ANTÉRIEUR — avant toute validation.
+     *
+     * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────
+     * Quand un projet change de domaine, sa base le suit mais ses médias
+     * restent sur le disque de l'ancienne destination. La nouvelle vitrine
+     * référençait des fichiers absents et répondait 404 sur chacun.
+     *
+     * La source n'est PAS cherchée ici : elle est fournie par l'appelant, qui
+     * la tire de l'historique des emplacements du projet. Le moteur ne scanne
+     * jamais `/var/www/*` et ne rapproche jamais deux destinations par leur
+     * nom de domaine, leur base ou leur serveur — deux projets distincts
+     * peuvent partager les trois.
+     *
+     * Placée AVANT `validate` : le contrôle des médias publics doit constater
+     * l'état final, migration comprise. En l'absence de capacité injectée
+     * (façade, test), l'étape est neutre.
+     */
+    await step('uploads_migrate', 'Migration des médias persistants', async () => {
+      if (typeof options.resolveUploadsSources !== 'function') {
+        return { skipped: true, reason: 'non configuré (façade/test)' };
+      }
+      const plan = await options.resolveUploadsSources({ host, siteRoot, sharedUploads });
+      if (!plan || !plan.identityId) {
+        return { skipped: true, reason: 'aucune identité de projet déclarée' };
+      }
+      return migrateUploads(transport, {
+        destination: sharedUploads,
+        identityId: plan.identityId,
+        sources: plan.sources || [],
+        remoteRoot,
+      });
+    });
+
+    // 4. Configuration Nginx PHASE HTTP — sert le challenge ACME (HTTP-01) et le
     //    site en HTTP. Écrase toute config précédente (même invalide). Indispensable
     //    AVANT certbot : la config HTTPS référence des certificats pas encore émis.
     // Racines et hôtes servis : une entrée par application du profil.
@@ -237,25 +276,25 @@ export async function runPipeline({ transport, target, artifact, options, versio
       return { ...nginxResult, siteServerName: host, servedHosts: topo.servedHosts, apiServerName: apiHost };
     });
 
-    // 4. Certificat TLS : hôte principal (wildcard ou dédié) + CHAQUE hôte dérivé
+    // 5. Certificat TLS : hôte principal (wildcard ou dédié) + CHAQUE hôte dérivé
     //    du profil (jamais couvert par un wildcard à un niveau) via HTTP-01.
     //    Nginx sert déjà le challenge sur le port 80 (phase HTTP ci-dessus).
     await step('certbot', 'Certificat HTTPS', async () =>
       ensureCertificate(transport, target, { email, dedicatedHosts: topo.dedicatedCertHosts })
     );
 
-    // 5. Configuration Nginx PHASE HTTPS complète — les certificats existent
+    // 6. Configuration Nginx PHASE HTTPS complète — les certificats existent
     //    désormais : `nginx -t` passe, on bascule le site en HTTPS puis on recharge.
     await step('reload', 'Activation HTTPS', async () => applyNginxConfig(transport, target, nginxOpts));
 
-    // 6. (Re)démarrage backend via PM2.
+    // 7. (Re)démarrage backend via PM2.
     let pm2Info;
     await step('pm2', 'Redémarrage du backend (PM2)', async () => {
       pm2Info = await restartBackend(transport, { host, backendDir, port: backendPort, env });
       return pm2Info;
     });
 
-    // 7. Health check LOCAL (le backend PM2 répond sur son port).
+    // 8. Health check LOCAL (le backend PM2 répond sur son port).
     let health = {};
     await step('health', 'Health check', async () => {
       const local = await checkLocalHealth(transport, backendPort, healthLocalOpts);
@@ -273,7 +312,7 @@ export async function runPipeline({ transport, target, artifact, options, versio
       return { local };
     });
 
-    // 8. Validation finale : CHAQUE application publiée répond en HTTPS + bon ENV.
+    // 9. Validation finale : CHAQUE application publiée répond en HTTPS + bon ENV.
     await step('validate', 'Validation', async () => {
       const pub = await checkPublicHealth(transport, host, healthPublicOpts);
       health.public = pub;
@@ -382,7 +421,7 @@ export async function runPipeline({ transport, target, artifact, options, versio
     });
 
     /**
-     * 9. CONFIGURATION RÉSEAU CANONIQUE — APRÈS la validation, jamais avant.
+     * 10. CONFIGURATION RÉSEAU CANONIQUE — APRÈS la validation, jamais avant.
      *
      * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────
      * Cette étape s'exécutait AVANT les healthchecks publics. Un déploiement
