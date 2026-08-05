@@ -71,7 +71,6 @@ function healthyVps(topo) {
     .on('test -w /var/www', { stdout: 'WRITABLE' })
     .on(/df -Pk/, { stdout: '2000000' })
     .on('fullchain.pem', { stdout: 'OK' })
-    .on('pm2 jlist', { stdout: '[]' })
     .on(/127\.0\.0\.1.*health/, { stdout: '200' })
     .on(/https:\/\/.*\/health/, { stdout: '{"success":true,"data":{"env":"PROD"}}\n200' })
     // Contrôle d'artefact web : index + JS + version.json servis == build.

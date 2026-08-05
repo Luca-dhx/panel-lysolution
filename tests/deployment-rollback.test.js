@@ -15,6 +15,7 @@ import {
   currentRelease,
   verifyReleaseIntegrity,
 } from '../backend/src/deployment-engine/rollback.js';
+import { pm2AppName } from '../backend/src/deployment-engine/pm2.js';
 
 let pass = 0;
 let fail = 0;
@@ -30,10 +31,12 @@ const section = (t) => console.log(`\n${t}`);
  * `healthyReleases` : releases dont le backend répond au health check.
  */
 function makeTransport({ releases = {}, current = null, healthyReleases = null, failSwitch = false } = {}) {
-  const state = { current, commands: [], restarts: [] };
+  // `pm2Path` : chemin que PM2 a mémorisé. `null` = aucun process de ce nom.
+  const state = { current, commands: [], restarts: [], pm2Path: null };
   const healthy = healthyReleases ?? Object.keys(releases);
   const tx = {
     kind: 'fake',
+
     async exec(cmd) {
       state.commands.push(cmd);
 
@@ -57,9 +60,33 @@ function makeTransport({ releases = {}, current = null, healthyReleases = null, 
         const ok = rel && (rel.complete !== false || /test -d [^/]*\/releases\/[^/\s]+ &&/.test(cmd));
         return { code: 0, stdout: ok ? 'OK' : 'KO', stderr: '' };
       }
-      if (/pm2 jlist/.test(cmd)) return { code: 0, stdout: '[]', stderr: '' };
+
+      /**
+       * ÉTAT PM2 MODÉLISÉ — répondre « aucun process » à jamais ne l'était pas.
+       *
+       * PM2 mémorise le chemin du script au premier `start` ; le moteur relit
+       * ensuite cette liste pour PROUVER qu'il exécute bien le fichier
+       * déployé. Un double qui n'enregistre rien simule un PM2 impossible.
+       */
+      if (/pm2 jlist/.test(cmd)) {
+        const liste = state.pm2Path === null ? [] : [{
+          name: pm2AppName('site.exemple.com'),
+          pm2_env: {
+            pm_exec_path: state.pm2Path,
+            pm_cwd: state.pm2Path.replace(/\/src\/server\.js$/, ''),
+          },
+        }];
+        return { code: 0, stdout: JSON.stringify(liste), stderr: '' };
+      }
+      if (/pm2 delete/.test(cmd)) {
+        state.pm2Path = null;
+        return { code: 0, stdout: '', stderr: '' };
+      }
       if (/pm2 (start|reload)/.test(cmd)) {
         state.restarts.push(state.current);
+        // Seul `start` fixe le chemin ; `reload` relance celui déjà mémorisé.
+        const demarrage = cmd.match(/cd (\S+) &&[\s\S]*pm2 start (\S+) --name/);
+        if (demarrage) state.pm2Path = `${demarrage[1]}/${demarrage[2]}`;
         return { code: 0, stdout: '', stderr: '' };
       }
       if (/pm2 save/.test(cmd)) return { code: 0, stdout: '', stderr: '' };

@@ -23,6 +23,8 @@ export class FakeTransport extends Transport {
     super();
     this.responses = opts.responses ? [...opts.responses] : [];
     this.defaultResponse = opts.defaultResponse || { code: 0, stdout: '', stderr: '' };
+    /** Nom de process PM2 → chemin du script réellement enregistré. */
+    this.pm2 = new Map(opts.pm2 ? Object.entries(opts.pm2) : []);
     this.commands = []; // historique des commandes exécutées
     this.files = new Map(); // FS virtuel : remotePath -> content
     this.uploads = []; // historique des uploads
@@ -50,10 +52,48 @@ export class FakeTransport extends Transport {
     return null;
   }
 
+  /**
+   * ÉTAT PM2 SIMULÉ — parce que PM2 en a un, et qu'il décide de tout.
+   *
+   * PM2 mémorise le chemin du script au premier `start` : ni `reload` ni
+   * `restart` ne le recalculent. Un double qui répondait « 0 » à tout ne
+   * pouvait donc pas révéler qu'un rechargement relance l'ancien fichier —
+   * exactement le défaut observé en production, où deux déploiements verts
+   * ont laissé tourner un backend vieux de plusieurs commits.
+   *
+   * Ce double modélise donc le strict nécessaire : `start` enregistre un
+   * chemin, `delete` l'oublie, `reload` ne change RIEN, `jlist` le rend.
+   * Une règle explicite passée par `.on()` reste prioritaire.
+   */
+  _pm2(command) {
+    if (!command.includes('pm2')) return null;
+
+    if (command.includes('pm2 jlist')) {
+      const liste = [...this.pm2.entries()].map(([name, execPath]) => ({
+        name,
+        pm2_env: { pm_exec_path: execPath, pm_cwd: execPath.replace(/\/src\/server\.js$/, '') },
+      }));
+      return { code: 0, stdout: JSON.stringify(liste), stderr: '' };
+    }
+
+    const suppression = command.match(/pm2 delete (\S+)/);
+    if (suppression) this.pm2.delete(suppression[1]);
+
+    const demarrage = command.match(/cd (\S+) &&[\s\S]*pm2 start (\S+) --name (\S+)/);
+    if (demarrage) this.pm2.set(demarrage[3], `${demarrage[1]}/${demarrage[2]}`);
+
+    // `reload` : volontairement SANS effet sur le chemin mémorisé.
+    return { code: 0, stdout: '', stderr: '' };
+  }
+
   async exec(command, opts = {}) {
     this.commands.push({ command, opts });
     const rule = this._resolve(command);
     if (rule && rule.throw) throw rule.throw;
+    if (!rule) {
+      const pm2 = this._pm2(command);
+      if (pm2) return pm2;
+    }
     if (rule) {
       return {
         code: rule.code ?? 0,
