@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto';
 import PanelCompany from '../../models/PanelCompany.model.js';
 import PanelCompanyVersion from '../../models/PanelCompanyVersion.model.js';
 import ApiError from '../../utils/ApiError.js';
+import config from '../../config/env.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { listProjects } from '../registry/projectRegistry.service.js';
 import { emitChange } from '../sync/syncCore.service.js';
@@ -73,8 +74,49 @@ export function listCompanies() {
 /* -------------------------------------------------------------------------- */
 
 /** Crée l'entreprise. Elle naît NON publiée : saisir n'est pas diffuser. */
+/**
+ * L'IDENTIFIANT INTERNE — dérivé du nom, jamais demandé.
+ *
+ * Il voyage jusqu'aux projets et doit rester stable et unique, mais rien
+ * n'oblige un utilisateur à l'inventer : c'est une contrainte de machine, pas
+ * une décision d'entreprise. On le dérive du nom, et on le rend unique en
+ * suffixant si besoin.
+ */
+async function derivedSlug(nom) {
+  const base = String(nom ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')   // accents
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50) || 'entreprise';
+
+  let candidat = base;
+  // Boucle bornée : au-delà, c'est un symptôme, pas un cas d'usage.
+  for (let n = 2; n <= 50; n += 1) {
+    if (!(await PanelCompany.exists({ slug: candidat }))) return candidat;
+    candidat = `${base}-${n}`.slice(0, 60);
+  }
+  throw ApiError.conflict('PANEL_COMPANY_SLUG_EXHAUSTED',
+    'Identifiant introuvable : trop d’entreprises portent déjà ce nom.');
+}
+
 export async function createCompany(input, actor = {}) {
-  const validation = validateCompanyInput(input, { creating: true });
+  /**
+   * LE MODE N'EST PAS UN CHOIX D'UTILISATEUR.
+   *
+   * L'environnement est celui du Panel qui tourne : un Panel de recette ne
+   * peut pas héberger une entreprise de production, et lui poser la question
+   * revenait à lui demander de deviner une contrainte technique — avec le
+   * risque de se tromper une fois pour toutes.
+   *
+   * L'identifiant se dérive du nom pour la même raison.
+   */
+  const demande = { ...(input ?? {}) };
+  demande.environment = config.env;
+  if (!demande.slug) demande.slug = await derivedSlug(demande.identity?.name);
+
+  const validation = validateCompanyInput(demande, { creating: true });
   if (!validation.valid) {
     throw ApiError.badRequest('PANEL_COMPANY_INVALID',
       `Entreprise refusée parce que ${validation.errors.length} champ(s) sont invalides : ${validation.errors.join(' ')}`,

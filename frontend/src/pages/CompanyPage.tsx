@@ -19,6 +19,41 @@ import { LogoField, ReferencesEditor, SignerSection } from '@/components/company
 import { company as api, errorMessage } from '@/lib/api';
 import type { CompanyState, VersionRow } from '@/types.company';
 
+/**
+ * FICHE VIERGE — la même forme que celle du serveur, sans aucune valeur.
+ *
+ * Elle n'existe que le temps de la première saisie : le formulaire s'édite
+ * ainsi à l'identique avant et après la création, sans écran intermédiaire ni
+ * champ technique. `slug` et `environment` sont vides à dessein — le serveur
+ * les déduit, l'interface ne les montre jamais.
+ */
+const EMPTY_COMPANY = {
+  companyId: '',
+  slug: '',
+  environment: '',
+  identity: { name: '', legalName: null, tagline: null, description: null },
+  branding: {
+    logoUrl: null, logoDarkUrl: null, faviconUrl: null,
+    primaryColor: null, secondaryColor: null, accentColor: null, fontFamily: null,
+  },
+  domains: { primaryDomain: null, websiteUrl: null, wildcardBases: [] },
+  contacts: {
+    email: null, phone: null, supportEmail: null,
+    address: { line1: null, line2: null, postalCode: null, city: null, country: null },
+  },
+  legal: {
+    legalForm: null, siret: null, vatNumber: null,
+    legalRepresentative: null, hostingProvider: null,
+  },
+  settings: { locale: 'fr-FR', timezone: 'Europe/Paris', currency: 'EUR' },
+  signer: null,
+  references: [],
+  active: true,
+  publishedVersion: null,
+  publishedAt: null,
+  hasUnpublishedChanges: false,
+} as unknown as NonNullable<CompanyState['company']>;
+
 export function CompanyPage() {
   const [state, setState] = useState<CompanyState | null>(null);
   const [versions, setVersions] = useState<VersionRow[]>([]);
@@ -27,6 +62,9 @@ export function CompanyPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // La fiche n'existe pas encore, mais on la remplit déjà : l'enregistrement
+  // final la créera. Aucun état intermédiaire n'est persisté côté serveur.
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -59,8 +97,46 @@ export function CompanyPage() {
   if (error && !state) return <div className="page"><div className="alert alert-error">{error}</div></div>;
   if (!state) return <div className="page"><p className="muted">Chargement…</p></div>;
 
-  if (!state.company) return <CompanyCreation onCreated={load} />;
-  const c = state.company;
+  /**
+   * PREMIÈRE FOIS — un état vide, puis le formulaire. Rien d'autre.
+   *
+   * ── CE QUI A ÉTÉ SUPPRIMÉ ─────────────────────────────────────────────────
+   * Un écran de création demandait un identifiant et un environnement avant
+   * de laisser entrer dans la fiche. Deux notions techniques posées à
+   * quelqu'un qui veut simplement décrire son entreprise, et deux occasions
+   * de se tromper une fois pour toutes : l'identifiant voyage jusqu'aux
+   * projets, l'environnement ne peut pas être choisi puisqu'il est celui du
+   * Panel qui tourne. Le serveur les déduit désormais tous les deux.
+   *
+   * Il reste un formulaire, le même avant et après la création — comme les
+   * réglages de n'importe quel outil.
+   */
+  if (!state.company && !creating) {
+    return (
+      <div className="page">
+        <header className="page-head">
+          <h1>Mon entreprise</h1>
+          <p className="muted">
+            Votre identité, partagée avec les projets que vous opérez.
+          </p>
+        </header>
+        <EmptyState
+          title="Aucune entreprise configurée"
+          hint="Le Panel ne peut pas se présenter aux projets tant qu’il ne sait pas qui il représente."
+        />
+        <div className="action-buttons">
+          <button type="button" className="btn" onClick={() => setCreating(true)}>
+            Créer mon entreprise
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Avant la création, le formulaire s'édite sur une fiche vierge : mêmes
+  // champs, mêmes règles, seul le bouton final diffère.
+  const existe = Boolean(state.company);
+  const c = state.company ?? EMPTY_COMPANY;
 
   const field = (path: string, value: string | null) => (
     <input
@@ -78,6 +154,10 @@ export function CompanyPage() {
    * définitive reste côté serveur (`company.validation.js`) ; ici on décide
    * seulement s'il y a quelque chose à montrer.
    */
+  // Le nom est la seule chose exigée pour créer : tout le reste se complète
+  // ensuite, comme dans n'importe quel réglage.
+  const nomSaisi = String((draft['identity.name'] as string) ?? c.identity.name ?? '').trim().length > 0;
+
   const siteWebBrut = ((draft['domains.websiteUrl'] as string) ?? c.domains.websiteUrl ?? '').trim();
   const siteWeb = /^https?:\/\//i.test(siteWebBrut) ? siteWebBrut : '';
 
@@ -105,20 +185,25 @@ export function CompanyPage() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>Mon entreprise — {c.identity.name}</h1>
+        <h1>Mon entreprise{c.identity.name ? ` — ${c.identity.name}` : ''}</h1>
         <p className="muted">
-          Informations de L.Y Solution partagées avec les projets connectés. Ce n’est pas la
-          fiche d’une entreprise cliente : c’est notre identité, publiée vers les sites.
+          Votre identité, partagée avec les projets que vous opérez.
         </p>
-        <div className="execution-head">
-          <span className="badge badge-neutral">{c.environment}</span>
-          <span className="badge badge-muted">{c.slug}</span>
-          {c.publishedVersion === null ? (
-            <span className="badge badge-warn">Jamais publiée</span>
-          ) : (
-            <span className="badge badge-ok">Version {c.publishedVersion} publiée</span>
-          )}
-        </div>
+        {/*
+          L'identifiant interne et l'environnement ne sont plus affichés ici :
+          l'un est une clé technique que personne n'a à connaître, l'autre est
+          déjà indiqué en permanence dans l'en-tête du Panel. Seul l'état de
+          publication reste — c'est une information, pas un réglage.
+        */}
+        {existe ? (
+          <div className="execution-head">
+            {c.publishedVersion === null ? (
+              <span className="badge badge-warn">Jamais publiée</span>
+            ) : (
+              <span className="badge badge-ok">Version {c.publishedVersion} publiée</span>
+            )}
+          </div>
+        ) : null}
       </header>
 
       {/* — Le bandeau qui évite le malentendu central ————————— */}
@@ -242,17 +327,36 @@ export function CompanyPage() {
       </Disclosure>
 
       <div className="action-buttons">
+        {/*
+          UN SEUL BOUTON, deux chemins. À la première fois il crée la fiche ;
+          ensuite il enregistre le brouillon. L'utilisateur, lui, fait le même
+          geste : il décrit son entreprise et il enregistre.
+        */}
         <button
-          type="button" className="btn" disabled={busy || Object.keys(draft).length === 0}
+          type="button"
+          className="btn"
+          disabled={busy || (existe ? Object.keys(draft).length === 0 : !nomSaisi)}
           onClick={() => run(async () => {
+            if (!existe) {
+              // L'identifiant interne et l'environnement sont déduits par le
+              // serveur : rien à demander, rien à afficher.
+              await api.create(patch());
+              setCreating(false);
+              return 'Entreprise créée. Rien n’a encore été diffusé aux projets.';
+            }
             await api.update(patch());
             return 'Brouillon enregistré. Rien n’a été diffusé aux projets.';
           })}
         >
-          Enregistrer le brouillon
+          {existe ? 'Enregistrer le brouillon' : 'Créer mon entreprise'}
         </button>
-        {Object.keys(draft).length > 0 ? (
+        {existe && Object.keys(draft).length > 0 ? (
           <button type="button" className="btn btn-small" onClick={() => setDraft({})}>Annuler les modifications</button>
+        ) : null}
+        {!existe ? (
+          <button type="button" className="btn btn-small" onClick={() => { setCreating(false); setDraft({}); }}>
+            Annuler
+          </button>
         ) : null}
       </div>
 
@@ -323,70 +427,3 @@ export function CompanyPage() {
   );
 }
 
-/** Premier démarrage : le Panel ne sait pas encore qui il représente. */
-function CompanyCreation({ onCreated }: { onCreated: () => void }) {
-  const [form, setForm] = useState({ name: '', slug: '', environment: 'TEST' });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.create({
-        slug: form.slug,
-        environment: form.environment as 'TEST' | 'PROD',
-        identity: { name: form.name, legalName: null, tagline: null, description: null },
-      });
-      onCreated();
-    } catch (err) {
-      setError(errorMessage(err, 'Création refusée.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="page">
-      <header className="page-head">
-        <h1>Mon entreprise</h1>
-        <p className="muted">
-          Informations de L.Y Solution partagées avec les projets connectés.
-        </p>
-      </header>
-      <EmptyState
-        title="Aucune entreprise configurée"
-        hint="Le Panel ne peut pas se présenter aux projets tant qu’il ne sait pas qui il représente."
-      />
-      <Card title="Créer l’entreprise">
-        <div className="parameter-form">
-          <label className="field">
-            <span className="field-label">Nom</span>
-            <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          </label>
-          <label className="field">
-            <span className="field-label">Identifiant</span>
-            <input type="text" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
-            <span className="field-hint muted">Minuscules, chiffres et tirets — ex. ly-solution. Il voyage jusqu’aux projets.</span>
-          </label>
-          <label className="field">
-            <span className="field-label">Environnement</span>
-            <select value={form.environment} onChange={(e) => setForm({ ...form, environment: e.target.value })}>
-              <option value="TEST">TEST</option>
-              <option value="PROD">PROD</option>
-            </select>
-          </label>
-        </div>
-        {error ? <div className="alert alert-error">{error}</div> : null}
-        <div className="action-buttons">
-          <button type="button" className="btn" disabled={busy || !form.name || !form.slug} onClick={() => void submit()}>
-            Créer
-          </button>
-        </div>
-        <p className="muted read-only-note">
-          La création ne diffuse rien : l’entreprise naît non publiée.
-        </p>
-      </Card>
-    </div>
-  );
-}
