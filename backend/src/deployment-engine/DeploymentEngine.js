@@ -286,10 +286,20 @@ export class DeploymentEngine {
       seq += 1;
       onEvent({ type, sequenceNumber: seq, timestamp: new Date().toISOString(), deploymentRunId: deploymentRunId || null, ...payload });
     };
+    /**
+     * INVARIANT — toute étape passée à `running` reçoit exactement une issue.
+     *
+     * Une étape ouverte et jamais refermée, c'est un écran figé sur « en
+     * cours » : ni succès, ni erreur, ni rapport, et rien à relancer. On tient
+     * donc la liste des étapes ouvertes, et `finish()` refuse de rendre la main
+     * tant qu'il en reste une.
+     */
+    const ouvertes = new Set();
     const emitStep = (stepId, status, extra = {}) => {
       const meta = canonicalStep(stepId);
       recorder.markStep(stepId, { status, ...extra });
-      if (status === 'running') recorder.setCurrentStep(stepId);
+      if (status === 'running') { recorder.setCurrentStep(stepId); ouvertes.add(stepId); }
+      else ouvertes.delete(stepId);
       const typeMap = { running: 'step.started', ok: 'step.succeeded', warning: 'step.warning', error: 'step.failed', skipped: 'step.skipped' };
       emit(typeMap[status] || 'step.progress', {
         stepId,
@@ -307,6 +317,17 @@ export class DeploymentEngine {
     let errorSummary = null;
 
     const finish = () => {
+      // Filet de dernier recours : si une étape est restée ouverte (chemin de
+      // sortie oublié, exception inattendue), on la termine EN ERREUR plutôt
+      // que de publier un rapport où elle reste « en cours » pour l'éternité.
+      for (const stepId of Array.from(ouvertes)) {
+        emitStep(stepId, 'error', {
+          errorCode: 'STEP_UNTERMINATED',
+          publicMessage: 'Étape interrompue sans résultat.',
+          technicalMessage: `L'étape ${stepId} s'est terminée sans issue explicite.`,
+        });
+        if (!finalStepId) finalStepId = stepId;
+      }
       recorder.finalize({ status: finalStatus, finalStepId, errorSummary });
       const structuredReport = recorder.toStructured();
       const markdownReport = redactor.truncate(renderMarkdown(structuredReport), 200_000);
@@ -367,7 +388,16 @@ export class DeploymentEngine {
       }
 
       // -------------------- Préflight (canonique) — DNS sauté (phase dédiée) --------------------
-      recorder.setCurrentStep('server.preflight');
+      /**
+       * La connexion s'ouvre MAINTENANT — l'écran doit le dire maintenant.
+       *
+       * `runPreflight` ouvre la session SSH dès sa première commande, mais les
+       * étapes canoniques n'étaient annoncées qu'APRÈS son retour : pendant
+       * toute la connexion, « Connexion sécurisée au serveur » restait au
+       * repos, et une connexion qui traînait ressemblait à un écran figé sans
+       * rien en cours. L'issue, elle, reste décidée par la boucle ci-dessous.
+       */
+      emitStep('ssh.connect', 'running');
       const preflight = await runPreflight({
         transport: tx,
         url,
@@ -386,7 +416,7 @@ export class DeploymentEngine {
         if (applicable.length === 0) {
           continue;
         }
-        emitStep(stepId, 'running');
+        if (!ouvertes.has(stepId)) emitStep(stepId, 'running');
         const requiredFail = applicable.find((c) => c.required && !c.ok);
         const softFail = applicable.find((c) => !c.required && !c.ok);
         if (requiredFail) {
