@@ -16,6 +16,7 @@ import { buildRemoteEnv } from '../../deployment-engine/deployEnv.js';
 import { canonicalStep } from '../../deployment-engine/steps.js';
 import { syncRuntimeNetworkConfiguration } from '../../deployment-engine/runtimeConfig.js';
 import config from '../../config/env.js';
+import * as identity from './projectIdentity.service.js';
 
 /** Opérations que le Panel sait exécuter sur une destination. */
 export const OPERATIONS = Object.freeze({
@@ -39,7 +40,7 @@ export const OPERATIONS = Object.freeze({
  * @returns {Promise<{status, summary, error, version?, releaseId?, deployedUrl?, steps?}>}
  */
 export async function executeOperation({
-  operationType, target, sshPassword, releaseId = null, user = null,
+  operationType, target, sshPassword, releaseId = null, user = null, runId = null,
   onStep = () => {}, onLog = () => {}, engine: injectedEngine = null,
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
@@ -72,7 +73,7 @@ export async function executeOperation({
       case OPERATIONS.SIMULATION:
         return await simulation({ engine, target, sessionId, step, log });
       case OPERATIONS.DEPLOYMENT:
-        return await deployWithFullReport({ engine, target, sessionId, step, log, user });
+        return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId });
       case OPERATIONS.ROLLBACK:
         return await rollback({ engine, target, sessionId, releaseId, step, log });
       default:
@@ -216,7 +217,7 @@ async function simulation({ engine, target, sessionId, step, log }) {
  * les prérequis ne sont plus des actions de l'opérateur, ce sont des étapes
  * de CETTE opération.
  */
-async function deployWithFullReport({ engine, target, sessionId, step, log, user }) {
+async function deployWithFullReport({ engine, target, sessionId, step, log, user, runId = null }) {
   const parsedTarget = engine.parseUrl(target.url);
   // `buildRemoteEnv` retourne une ENVELOPPE { remoteEnv, dbName, env, sourcePath } :
   // seul `.remoteEnv` porte les variables. Étaler l'enveloppe n'envoyait aucune
@@ -228,6 +229,52 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
   };
 
   log(`Déploiement de ${target.url} en ${target.environment} (port ${target.backendPort}).`);
+
+  /**
+   * IDENTITÉ DU PROJET DÉPLOYÉ — et, par elle, le droit de récupérer les
+   * médias persistants de ses emplacements antérieurs.
+   *
+   * Une destination sans parenté déclarée reçoit ici sa PROPRE identité :
+   * elle devient son propre projet et n'hérite de rien. C'est volontairement
+   * le choix conservateur — rapprocher deux destinations reste un acte
+   * déclaré, jamais une déduction depuis la base, le domaine ou le serveur.
+   */
+  let projectIdentityId = null;
+  try {
+    const ident = await identity.ensureOwnIdentity(target, { actor: user ?? null, reason: 'déploiement' });
+    projectIdentityId = ident.identityId;
+  } catch (err) {
+    log(`Identité de projet indisponible (${err.message}) — aucune migration de médias ne sera tentée.`, 'WARNING');
+  }
+
+  /**
+   * Emplacement de CE déploiement, enregistré au moment où le moteur en
+   * connaît les chemins réels. Il ne deviendra une source de migration
+   * qu'une fois le déploiement vérifié (`HEALTHY`) : un emplacement qui a
+   * échoué avant le transfert n'a peut-être reçu aucun fichier, et en faire
+   * une source reviendrait à migrer du vide en croyant migrer des médias.
+   */
+  let locationId = null;
+  const resolveUploadsSources = async ({ host, siteRoot, sharedUploads }) => {
+    if (!projectIdentityId) return null;
+    const loc = await identity.recordLocation({
+      projectIdentityId,
+      targetId: target.targetId,
+      host,
+      siteRoot,
+      sharedUploadsPath: sharedUploads,
+      sharedStoragePath: `${siteRoot}/shared/storage`,
+      sshHost: target.sshHost ?? null,
+      environment: target.environment,
+      deploymentRunId: runId ?? null,
+    });
+    locationId = loc?._id ?? null;
+    return identity.resolveUploadsSources({
+      projectIdentityId,
+      targetId: target.targetId,
+      sharedUploadsPath: sharedUploads,
+    });
+  };
 
   const result = await engine.deployWithReport({
     url: target.url,
@@ -248,6 +295,9 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
       // (comme SB Auto). Sans cette capacité, l'étape `runtime.sync` se déclarait
       // réussie sans rien faire — une étape verte sans action.
       runtimeConfigSync: syncRuntimeNetworkConfiguration,
+      // Le moteur ne cherche JAMAIS de source de médias : elle lui est
+      // fournie, tirée de l'historique des emplacements de CE projet.
+      resolveUploadsSources,
     },
     // Le moteur émet un évènement par transition d'étape. On le transcrit
     // dans le run persisté — c'est ce que l'interface relit.
@@ -278,6 +328,16 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
   // dans les deux dépôts (29_ENGINE_GOVERNANCE). On repasse donc une couche
   // côté Panel — défense en profondeur, et aucun fork.
   const redactPanelSecrets = buildPanelRedactor();
+
+  // EMPLACEMENT DU PROJET — n'est promu en source de migration que si le
+  // déploiement a été VÉRIFIÉ. Sinon il reste marqué en échec et ne servira
+  // jamais de référence à une copie de médias.
+  if (locationId) {
+    try {
+      if (result.ok) await identity.markLocationHealthy(locationId, { deploymentRunId: runId ?? null });
+      else await identity.markLocationFailed(locationId);
+    } catch { /* la trace d'emplacement ne doit jamais casser un déploiement */ }
+  }
 
   return {
     status: result.ok ? 'ok' : (result.status === 'warning' ? 'warning' : 'error'),

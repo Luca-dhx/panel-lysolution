@@ -91,6 +91,7 @@ try {
     target,
     sshPassword,
     releaseId,
+    runId,
     user: process.env.PANEL_DEPLOY_USER || null,
     onStep: (step) => enqueueStep(step),
     onLog: (message, level) => runs.appendLog(runId, message, level),
