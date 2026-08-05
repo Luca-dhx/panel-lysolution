@@ -62,10 +62,14 @@ section('2. Le formulaire brut a disparu au profit des blocs du Manager');
   check('plus de champ texte pour le signataire',
     !/field\('signer\.firstName'/.test(rendu) && !/field\('signer\.email'/.test(rendu));
   check('plus de champ texte pour le logo', !/field\('branding\.logoUrl'/.test(rendu));
-  check('le logo a sa propre carte, hors du bloc « Marque »',
-    page.indexOf('<LogoField') > page.indexOf('Card title="Marque"'));
-  check('les trois blocs sont importés d’un module dédié',
-    /import \{ LogoField, ReferencesEditor, SignerSection \} from '@\/components\/company\/DeveloperIdentity'/.test(page));
+  // Le bloc « Marque » a disparu : couleurs et police n'étaient consommées
+  // par personne, et le favicon — qui l'est — a rejoint la configuration
+  // technique, là où l'on ne le prend plus pour une décision de design.
+  check('le bloc « Marque » n’existe plus', !/Card title="Marque"/.test(page));
+  check('le logo a sa propre carte', /<LogoField/.test(page));
+  check('les quatre blocs sont importés d’un module dédié',
+    /import \{[\s\S]{0,120}LogoField, ReferencesEditor, SignerSection, TeamEditor,[\s\S]{0,80}from '@\/components\/company\/DeveloperIdentity'/.test(page));
+  check('…et l’équipe est réellement montée dans la page', /<TeamEditor/.test(page));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -102,13 +106,18 @@ section('4. Les références sont éditables — le bloc était absent');
   check('suppression', /const retirer = \(i: number\) =>/.test(blocs));
   check('…qui renumérote l’ordre', /\.map\(\(r, idx\) => \(\{ \.\.\.r, order: idx \}\)\)/.test(blocs));
   check('bascule texte / lien', /type: r\.type === 'TEXT' \? 'LINK' : 'TEXT'/.test(blocs));
-  check('icône Bootstrap', /placeholder="Icône \(bi-star\)"/.test(blocs));
+  // L'icône ne se saisit PLUS de mémoire : elle se choisit dans une grille.
+  // Un nom tapé au jugé donnait un carré vide chez le client, sans signal ici.
+  check('l’icône se choisit, elle ne se tape pas',
+    /<IconPicker/.test(blocs) && !/placeholder="Icône/.test(blocs));
+  check('…et la valeur par défaut vient du catalogue',
+    /icon: ICONE_PAR_DEFAUT/.test(blocs) && !/icon: 'bi-star'/.test(blocs));
   // Le libellé ne contient plus d'URL littérale : la garde d'architecture
   // interdit toute adresse absolue dans le frontend, et une simple aide de
   // saisie ne justifie pas de l'affaiblir.
   check('valeur contextuelle selon le type',
     /r\.type === 'LINK' \? 'Adresse du lien' : 'Valeur'/.test(blocs));
-  check('état vide explicite', /Aucune référence\. Ajoutez des liens/.test(blocs));
+  check('état vide explicite', /Aucune référence\. Ajoutez les liens/.test(blocs));
   check('une adresse invalide est signalée pendant la saisie',
     /!\/\^https\?:\\\/\\\/\/i\.test\(r\.value \|\| ''\)/.test(blocs));
 }
@@ -125,12 +134,15 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
   // Le champ URL a disparu : c'était une expérience dégradée née d'une limite
   // technique, pas d'un choix.
   check('plus aucun champ « adresse du logo »', !/Adresse du logo/.test(blocs));
-  check('le fichier s’importe', /uploadImage\(file, 'logo'\)/.test(blocs));
+  // Le composant sert au logo ET aux portraits d'équipe : le dossier suit
+  // l'usage. Deux composants jumeaux auraient divergé au premier correctif.
+  check('le fichier s’importe',
+    /uploadImage\(file, kind === 'avatar' \? 'avatar' : 'logo'\)/.test(blocs));
   check('…au clic', /inputRef\.current\?\.click\(\)/.test(blocs));
   check('…et au glisser-déposer', /onDrop=/.test(blocs) && /dataTransfer\.files/.test(blocs));
   check('…au clavier aussi', /e\.key === 'Enter'/.test(blocs));
   check('l’envoi est signalé', /aria-busy=\{envoi\}/.test(blocs) && /Envoi…/.test(blocs));
-  check('l’image se supprime', /Supprimer l’image/.test(blocs));
+  check('l’image se supprime', /aria-label=\{`Supprimer \$\{label\}`\}/.test(blocs));
   check('un échec dit sa cause', /setErreur\(errorMessage\(err/.test(blocs));
   check('…et réimporter le même fichier reste possible',
     /inputRef\.current\.value = ''/.test(blocs));
@@ -168,8 +180,22 @@ section('6. Le brouillon accepte des blocs entiers, pas seulement des champs');
   check('les références aussi', /setDraft\(\{ \.\.\.draft, references: refs \}\)/.test(page));
   check('le brouillon prime sur la valeur publiée',
     /\(draft\.signer as typeof c\.signer\) \?\? c\.signer \?\? null/.test(page));
-  check('la distinction saisir / publier est conservée',
-    /hasUnpublishedChanges/.test(page) && /Publiez pour les diffuser/.test(page));
+  check('l’équipe est un bloc, comme le signataire',
+    /setDraft\(\{ \.\.\.draft, team \}\)/.test(page));
+
+  /**
+   * SAISIR ET PUBLIER SONT DÉSORMAIS LE MÊME GESTE.
+   *
+   * Le brouillon ne servait qu'à créer un état où ce que l'écran montre n'est
+   * pas ce que les projets appliquent — exactement le malentendu qu'il
+   * prétendait éviter. Il reste UN bouton, et il diffuse.
+   */
+  check('un seul bouton d’enregistrement', (page.match(/onClick=\{enregistrer\}/g) || []).length === 1);
+  check('…qui publie du même geste', !/api\.publish\(/.test(page));
+  check('plus aucune raison de publication demandée',
+    !/Raison de cette publication/.test(page) && !/setReason/.test(page));
+  check('enregistrer sans changement est un succès, pas une erreur',
+    /if \(!r\.published\) return 'Aucune modification à diffuser\.'/.test(page));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -183,11 +209,35 @@ section('7. Le Bridge publie l’intégralité de cette identité');
 /* ────────────────────────────────────────────────────────────────────────── */
 section('8. Présentation — cartes, grille, responsive');
 {
-  check('les blocs sont des cartes', (blocs.match(/<Card title=/g) || []).length === 3);
+  // Quatre blocs désormais : logo, signataire, références, ÉQUIPE. Cette
+  // dernière vivait dans chaque projet — donc en autant d'exemplaires
+  // divergents qu'il y avait de projets.
+  check('les blocs sont des cartes', (blocs.match(/<Card title=/g) || []).length === 4);
+  check('l’équipe est éditable ici', /export function TeamEditor/.test(blocs));
+  check('…avec prénom et nom SÉPARÉS',
+    /field-label">Prénom</.test(blocs) && /field-label">Nom</.test(blocs));
+  check('…une photo importée, pas une URL collée',
+    /<ImageField[\s\S]{0,220}kind="avatar"/.test(blocs));
+  check('…des références propres à la personne',
+    /<ReferenceRows[\s\S]{0,120}m\.references/.test(blocs));
+  check('…un retrait qui n’efface pas',
+    /Retirer de l’affichage/.test(blocs) && /Réafficher/.test(blocs));
+  check('…et un ordre renuméroté après chaque retrait',
+    /membres\.filter\(\(_, idx\) => idx !== i\)\.map\(\(m, idx\) => \(\{ \.\.\.m, order: idx \}\)\)/.test(blocs));
+
+  // Les lignes de références sont MUTUALISÉES : l'entreprise et chaque membre
+  // partagent le même composant, sinon un correctif manquerait à l'un des deux.
+  check('les références ne sont écrites qu’une fois',
+    (blocs.match(/export function ReferenceRows/g) || []).length === 1
+    && (blocs.match(/<ReferenceRows/g) || []).length === 2);
   check('le signataire est sur deux colonnes dès 640 px',
     /@media \(min-width: 640px\)[\s\S]{0,160}\.company-grid-2 \{[\s\S]{0,80}grid-template-columns: 1fr 1fr/.test(css));
   check('une référence ne déborde pas', /\.company-ref-line input \{[\s\S]{0,120}min-width: 8rem/.test(css));
-  check('la zone d’import est cadrée', /\.company-logo-drop img \{[\s\S]{0,140}object-fit: contain/.test(css));
+  check('la zone d’import est cadrée', /\.company-image-drop img \{[\s\S]{0,140}object-fit: contain/.test(css));
+  check('…et un portrait est rond et recadré',
+    /\.company-image-drop\.is-avatar img \{[\s\S]{0,160}object-fit: cover/.test(css));
+  check('un membre retiré se voit au premier coup d’œil',
+    /\.company-member\.is-inactive \{[\s\S]{0,120}opacity/.test(css));
   check('les erreurs ont leur style', /\.field-error \{/.test(css));
   check('aucune couleur en dur dans ces blocs',
     !/#[0-9a-fA-F]{3,8}\b/.test(css.slice(css.indexOf('.company-block-head'), css.indexOf('.company-logo-preview p'))));

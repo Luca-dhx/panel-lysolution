@@ -17,7 +17,7 @@ import type {
 } from '@/types.execution';
 import type {
   Company, CompanyState, IntegratedApi, ProbeResult, PublishResult,
-  VersionDetail, VersionRow,
+  VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
   DeploymentOverview, DeploymentRun, DeploymentTarget, PanelSelfInfo,
@@ -464,16 +464,24 @@ export const executions = {
 export const company = {
   current: () => request<CompanyState>('/api/company'),
 
+  /**
+   * CRÉER — et diffuser aussitôt.
+   *
+   * Une entreprise créée mais non publiée n'existe pour aucun projet. Créer,
+   * c'est déclarer qui l'on est ; il n'y a rien à retenir avant de le dire.
+   */
   create: (body: Partial<Company>) =>
-    request<Company>('/api/company', { method: 'POST', body }),
+    request<SaveResult>('/api/company', { method: 'POST', body }),
 
-  /** Modifie le BROUILLON. Rien n'est diffusé. */
+  /**
+   * ENREGISTRER — c'est-à-dire DIFFUSER.
+   *
+   * Il n'y a plus de brouillon : ce que l'écran montre est ce que les projets
+   * appliquent. Enregistrer sans rien avoir changé rend `published: false` —
+   * un succès silencieux, pas une erreur.
+   */
   update: (body: Record<string, unknown>) =>
-    request<Company>('/api/company', { method: 'PATCH', body }),
-
-  /** Fige une version et la diffuse. Une raison est exigée. */
-  publish: (reason: string) =>
-    request<PublishResult>('/api/company/publish', { method: 'POST', body: { reason } }),
+    request<SaveResult>('/api/company', { method: 'PATCH', body }),
 
   versions: () =>
     request<{ currentVersion: number | null; items: VersionRow[] }>('/api/company/versions'),

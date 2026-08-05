@@ -1,8 +1,10 @@
 import { useRef, useState } from 'react';
+import { IconPicker } from './IconPicker';
+import { ICONE_PAR_DEFAUT } from './referenceIcons';
 import { Card } from '@/components/ui';
 import { errorMessage, uploadImage } from '@/lib/api';
 import { EMPTY_SIGNER, getSignerGaps, isSignerEmpty, isValidEmail } from '@/lib/signer';
-import type { CompanyReference, CompanySigner } from '@/types.company';
+import type { CompanyReference, CompanySigner, CompanyTeamMember } from '@/types.company';
 
 /**
  * IDENTITÉ DÉVELOPPEUR — les blocs repris du Manager, adaptés au Panel.
@@ -144,27 +146,60 @@ export function ReferencesEditor({
   value: CompanyReference[];
   onChange: (references: CompanyReference[]) => void;
 }) {
+  return (
+    <Card title={`Références (${(value ?? []).length})`}>
+      <ReferenceRows
+        value={value}
+        onChange={onChange}
+        description="Liens et informations affichés par les projets."
+        vide="Aucune référence. Ajoutez les liens et informations que vos projets afficheront."
+      />
+    </Card>
+  );
+}
+
+/**
+ * LES LIGNES DE RÉFÉRENCES — sans carte autour.
+ *
+ * Extraites parce que DEUX porteurs en ont besoin : l'entreprise, et chaque
+ * membre de l'équipe. Les recopier aurait garanti qu'un correctif appliqué à
+ * l'une manque à l'autre — c'est précisément ce qui rend deux formulaires
+ * jumeaux dangereux.
+ */
+export function ReferenceRows({
+  value,
+  onChange,
+  titre,
+  description,
+  vide,
+}: {
+  value: CompanyReference[];
+  onChange: (references: CompanyReference[]) => void;
+  titre?: string;
+  description?: string;
+  vide?: string;
+}) {
   const refs = value ?? [];
 
   const set = (i: number, patch: Partial<CompanyReference>) =>
     onChange(refs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const ajouter = () =>
-    onChange([...refs, { type: 'TEXT', icon: 'bi-star', name: '', value: '', order: refs.length }]);
+    onChange([...refs, { type: 'TEXT', icon: ICONE_PAR_DEFAUT, name: '', value: '', order: refs.length }]);
   const retirer = (i: number) =>
     // L'ordre est renuméroté : un trou ferait remonter une référence sans
     // qu'on l'ait demandé au prochain enregistrement.
     onChange(refs.filter((_, idx) => idx !== i).map((r, idx) => ({ ...r, order: idx })));
 
   return (
-    <Card title={`Références (${refs.length})`}>
+    <>
       <div className="company-block-head">
-        <p className="muted">Liens et informations affichés par les projets.</p>
+        <p className="muted">{titre ?? description}</p>
         <button type="button" className="btn btn-small" onClick={ajouter}>Ajouter</button>
       </div>
 
       {refs.length === 0 ? (
         <p className="muted company-empty">
-          Aucune référence. Ajoutez des liens ou des informations (icônes Bootstrap Icons).
+          {vide ?? 'Aucune référence.'}
         </p>
       ) : (
         <ul className="company-refs">
@@ -181,12 +216,11 @@ export function ReferencesEditor({
                 >
                   {r.type === 'LINK' ? 'Lien' : 'Texte'}
                 </button>
-                <input
-                  type="text"
-                  className="company-ref-icon"
-                  placeholder="Icône (bi-star)"
-                  value={r.icon ?? ''}
-                  onChange={(e) => set(i, { icon: e.target.value })}
+                {/* L'icône se CHOISIT : la saisir de mémoire donnait un carré
+                    vide chez le client, sans le moindre signal ici. */}
+                <IconPicker
+                  value={r.icon ?? ICONE_PAR_DEFAUT}
+                  onChange={(icon) => set(i, { icon })}
                 />
                 <input
                   type="text"
@@ -218,12 +252,12 @@ export function ReferencesEditor({
           ))}
         </ul>
       )}
-    </Card>
+    </>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/*  Logo                                                                      */
+/*  Images                                                                    */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -245,6 +279,36 @@ export function LogoField({
   value: string | null;
   onChange: (url: string) => void;
 }) {
+  return (
+    <Card title="Logo">
+      <p className="muted">Affiché par les projets. Format libre, redimensionné automatiquement.</p>
+      <ImageField value={value} onChange={onChange} kind="logo" label="le logo" />
+    </Card>
+  );
+}
+
+/**
+ * UNE IMAGE QU'ON DÉPOSE — logo d'entreprise ou portrait d'un membre.
+ *
+ * Le même geste dans les deux cas : cliquer ou déposer, jamais coller une
+ * adresse. Deux composants jumeaux auraient divergé au premier correctif —
+ * l'un aurait gardé le bug de la réimportation du même fichier, l'autre non.
+ *
+ * `kind` ne change que la FORME du cadre (carré pour un logo, rond pour un
+ * portrait) et le dossier de destination côté serveur. Le reste est identique,
+ * y compris la remise à zéro de l'input après un échec.
+ */
+export function ImageField({
+  value,
+  onChange,
+  kind,
+  label,
+}: {
+  value: string | null;
+  onChange: (url: string) => void;
+  kind: 'logo' | 'avatar';
+  label: string;
+}) {
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -256,7 +320,7 @@ export function LogoField({
     setEnvoi(true);
     setErreur(null);
     try {
-      const { url: chemin } = await uploadImage(file, 'logo');
+      const { url: chemin } = await uploadImage(file, kind === 'avatar' ? 'avatar' : 'logo');
       onChange(chemin);
     } catch (err) {
       setErreur(errorMessage(err, "L'image n'a pas pu être importée."));
@@ -269,14 +333,12 @@ export function LogoField({
   };
 
   return (
-    <Card title="Logo">
-      <p className="muted">Affiché par les projets. Format libre, redimensionné automatiquement.</p>
-
+    <>
       <div
-        className={`company-logo-drop${envoi ? ' is-busy' : ''}`}
+        className={`company-image-drop is-${kind}${envoi ? ' is-busy' : ''}`}
         role="button"
         tabIndex={0}
-        aria-label="Importer une image"
+        aria-label={`Importer ${label}`}
         aria-busy={envoi}
         onClick={() => { if (!envoi) inputRef.current?.click(); }}
         onKeyDown={(e) => {
@@ -296,8 +358,8 @@ export function LogoField({
             <img src={url} alt="" />
             <button
               type="button"
-              className="company-logo-remove"
-              aria-label="Supprimer l’image"
+              className="company-image-remove"
+              aria-label={`Supprimer ${label}`}
               onClick={(e) => { e.stopPropagation(); onChange(''); }}
             >
               ×
@@ -308,7 +370,7 @@ export function LogoField({
             {envoi ? 'Envoi…' : 'Cliquez ou déposez une image'}
           </span>
         )}
-        {envoi && url ? <span className="company-logo-veil">Envoi…</span> : null}
+        {envoi && url ? <span className="company-image-veil">Envoi…</span> : null}
       </div>
 
       {erreur ? <p className="field-error">{erreur}</p> : null}
@@ -320,7 +382,7 @@ export function LogoField({
         hidden
         onChange={(e) => void importer(e.target.files?.[0])}
       />
-    </Card>
+    </>
   );
 }
 
@@ -345,5 +407,183 @@ function Champ({
         <span className="field-hint muted">{hint}</span>
       ) : null}
     </label>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Équipe                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * L'ÉQUIPE DE L'AGENCE — celle qu'un client voit sur sa page Support.
+ *
+ * ── POURQUOI ELLE VIT ICI DÉSORMAIS ────────────────────────────────────────
+ * Chaque projet tenait sa propre liste, éditée sur place. Deux projets opérés
+ * par la même agence pouvaient donc annoncer deux équipes différentes, et un
+ * départ devait être répercuté autant de fois qu'il y avait de projets. Une
+ * seule liste, publiée par le Panel, supprime les deux problèmes d'un coup.
+ *
+ * ── RETIRER N'EST PAS SUPPRIMER ────────────────────────────────────────────
+ * Un membre inactif reste dans la fiche mais disparaît des pages Support. Un
+ * départ n'est pas une faute de saisie : effacer la personne obligerait à tout
+ * ressaisir si elle revient, et ferait perdre la trace de qui était là.
+ */
+export function TeamEditor({
+  value,
+  onChange,
+}: {
+  value: CompanyTeamMember[];
+  onChange: (team: CompanyTeamMember[]) => void;
+}) {
+  const membres = value ?? [];
+
+  const set = (i: number, patch: Partial<CompanyTeamMember>) =>
+    onChange(membres.map((m, idx) => (idx === i ? { ...m, ...patch } : m)));
+
+  const ajouter = () =>
+    onChange([...membres, {
+      firstName: '', lastName: '', role: '', email: '', phone: '',
+      photoUrl: null, active: true, references: [], order: membres.length,
+    }]);
+
+  // L'ordre est renuméroté après chaque retrait : un trou ferait remonter
+  // quelqu'un sans qu'on l'ait demandé au prochain enregistrement.
+  const retirer = (i: number) =>
+    onChange(membres.filter((_, idx) => idx !== i).map((m, idx) => ({ ...m, order: idx })));
+
+  /** Déplace un membre, et réécrit l'ordre de toute la liste. */
+  const deplacer = (i: number, delta: number) => {
+    const j = i + delta;
+    if (j < 0 || j >= membres.length) return;
+    const copie = [...membres];
+    [copie[i], copie[j]] = [copie[j], copie[i]];
+    onChange(copie.map((m, idx) => ({ ...m, order: idx })));
+  };
+
+  const actifs = membres.filter((m) => m.active !== false).length;
+
+  return (
+    <Card title={`Équipe (${membres.length})`}>
+      <div className="company-block-head">
+        <p className="muted">
+          Les personnes affichées sur la page Support de vos projets.
+          {membres.length > actifs ? ` ${membres.length - actifs} retirée(s) de l’affichage.` : ''}
+        </p>
+        <button type="button" className="btn btn-small" onClick={ajouter}>Ajouter</button>
+      </div>
+
+      {membres.length === 0 ? (
+        <p className="muted company-empty">
+          Aucun membre. Vos projets afficheront une page Support sans interlocuteur.
+        </p>
+      ) : (
+        <ul className="company-team">
+          {membres.map((m, i) => (
+            <li key={i} className={`company-member${m.active === false ? ' is-inactive' : ''}`}>
+              <div className="company-member-head">
+                <ImageField
+                  value={m.photoUrl}
+                  onChange={(photoUrl) => set(i, { photoUrl: photoUrl || null })}
+                  kind="avatar"
+                  label={`Photo de ${m.firstName || 'ce membre'}`}
+                />
+                <div className="company-member-fields">
+                  <div className="parameter-form">
+                    <label className="field">
+                      <span className="field-label">Prénom</span>
+                      <input
+                        type="text"
+                        value={m.firstName ?? ''}
+                        onChange={(e) => set(i, { firstName: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Nom</span>
+                      <input
+                        type="text"
+                        value={m.lastName ?? ''}
+                        onChange={(e) => set(i, { lastName: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Fonction</span>
+                      <input
+                        type="text"
+                        value={m.role ?? ''}
+                        onChange={(e) => set(i, { role: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">E-mail</span>
+                      <input
+                        type="email"
+                        value={m.email ?? ''}
+                        onChange={(e) => set(i, { email: e.target.value })}
+                      />
+                    </label>
+                    <label className="field">
+                      <span className="field-label">Téléphone</span>
+                      <input
+                        type="tel"
+                        value={m.phone ?? ''}
+                        onChange={(e) => set(i, { phone: e.target.value })}
+                      />
+                    </label>
+                  </div>
+
+                  {/* Un e-mail mal formé sera refusé à l'enregistrement : le
+                      dire pendant la saisie évite un aller-retour. */}
+                  {(m.email || '').trim() && !isValidEmail(m.email || '') ? (
+                    <p className="field-error">Adresse e-mail invalide.</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <ReferenceRows
+                value={m.references ?? []}
+                onChange={(references) => set(i, { references })}
+                titre={`Contacts directs de ${m.firstName || 'ce membre'}`}
+              />
+
+              <div className="company-member-actions">
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  onClick={() => set(i, { active: m.active === false })}
+                >
+                  {m.active === false ? 'Réafficher' : 'Retirer de l’affichage'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={i === 0}
+                  aria-label={`Monter ${m.firstName || 'ce membre'}`}
+                  onClick={() => deplacer(i, -1)}
+                >
+                  Monter
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={i === membres.length - 1}
+                  aria-label={`Descendre ${m.firstName || 'ce membre'}`}
+                  onClick={() => deplacer(i, 1)}
+                >
+                  Descendre
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small btn-danger"
+                  aria-label={`Supprimer ${m.firstName || 'ce membre'}`}
+                  onClick={() => retirer(i)}
+                >
+                  Supprimer
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }

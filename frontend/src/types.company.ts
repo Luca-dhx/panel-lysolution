@@ -74,6 +74,29 @@ export interface CompanyReference {
   order: number;
 }
 
+/**
+ * UN MEMBRE DE L’ÉQUIPE — affiché sur la page Support des projets.
+ *
+ * Prénom et nom sont SÉPARÉS : une page affiche « Prénom NOM », un message
+ * s’adresse au prénom. Les recoller est trivial, les séparer ne l’est pas.
+ *
+ * `active` retire quelqu’un de l’affichage sans effacer son passage : un
+ * départ n’est pas une erreur de saisie.
+ */
+export interface CompanyTeamMember {
+  firstName: string | null;
+  lastName: string | null;
+  /** La fonction montrée au client, pas un rôle technique. */
+  role: string | null;
+  email: string | null;
+  phone: string | null;
+  photoUrl: string | null;
+  active: boolean;
+  /** Canaux propres à la personne : ligne directe, profil, agenda. */
+  references: CompanyReference[];
+  order: number;
+}
+
 export interface Company {
   companyId: string;
   slug: string;
@@ -83,6 +106,8 @@ export interface Company {
   signer: CompanySigner | null;
   /** Liens et informations affichés par les projets. */
   references: CompanyReference[];
+  /** L’équipe visible par les clients. */
+  team: CompanyTeamMember[];
   branding: CompanyBranding;
   domains: CompanyDomains;
   contacts: CompanyContacts;
@@ -120,6 +145,21 @@ export interface VersionDetail {
   changes: Array<{ path: string; from: unknown; to: unknown }>;
   publishedAt: string;
   publishedByEmail: string | null;
+}
+
+/**
+ * CE QUE REND UN ENREGISTREMENT — qui publie du même geste.
+ *
+ * `published` distingue « une version a été diffusée » de « rien n'avait
+ * changé ». Le second cas est un succès : enregistrer deux fois de suite est
+ * un geste anodin, pas une faute à signaler.
+ */
+export interface SaveResult {
+  company: Company;
+  published: boolean;
+  version: number | null;
+  changes: { path: string; from: unknown; to: unknown }[];
+  recipients: number;
 }
 
 export interface PublishResult {

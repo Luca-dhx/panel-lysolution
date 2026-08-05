@@ -154,7 +154,9 @@ section('4. L’écran ne montre plus rien de technique');
   // Un seul formulaire, deux chemins d'enregistrement.
   check('le bouton crée la première fois', /await api\.create\(patch\(\)\)/.test(rendu));
   check('…et enregistre ensuite', /await api\.update\(patch\(\)\)/.test(rendu));
-  check('…le libellé suit', /existe \? 'Enregistrer le brouillon' : 'Créer mon entreprise'/.test(rendu));
+  // Un seul libellé désormais : le geste est le même dans les deux cas, et
+  // c'est le contexte (fiche absente ou non) qui décide de la route appelée.
+  check('…sous un libellé unique', /busy \? 'Enregistrement…' : 'Enregistrer'/.test(rendu));
   check('le nom est la seule exigence pour créer', /: !nomSaisi/.test(rendu));
   check('la fiche vierge a la forme du serveur', /const EMPTY_COMPANY = \{/.test(page));
   check('…sans slug ni environnement renseignés',
@@ -172,11 +174,19 @@ section('5. Aucun autre écran ne dépend du mode ni d’une sélection d’entr
   check('l’environnement reste indiqué globalement, une seule fois',
     /version\.environment/.test(layout));
 
-  // La distinction saisir / publier n'a pas été perdue en route.
+  /**
+   * PUBLIER N'EST PLUS UN ACTE SÉPARÉ.
+   *
+   * Il l'était, avec une justification écrite exigée. En pratique elle valait
+   * « maj » ou « correction » : un péage sans information. Le versionnement
+   * reste entier côté serveur, avec le diff exact — ce qui se relit vraiment.
+   */
   const page = lire('frontend/src/pages/CompanyPage.tsx');
-  check('publier reste un acte distinct', /Publier la configuration/.test(page));
-  check('…et exige toujours une raison', /Raison de cette publication/.test(page));
-  check('le bandeau de brouillon non publié subsiste', /hasUnpublishedChanges/.test(page));
+  check('plus de bloc de publication séparé', !/Publier la configuration/.test(page));
+  check('…ni de raison exigée', !/Raison de cette publication/.test(page));
+  check('…ni d’appel de publication depuis l’écran', !/api\.publish\(/.test(page));
+  check('l’historique des versions reste consultable', /Historique des versions/.test(page));
+  check('…et la restauration reste possible', /api\.restore\(v\.version\)/.test(page));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

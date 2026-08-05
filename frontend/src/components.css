@@ -520,9 +520,133 @@ a:focus-visible {
   min-width: 8rem;
 }
 
-.company-ref-line input.company-ref-icon {
-  flex: 0 0 9rem;
-  min-width: 7rem;
+/* ── SÉLECTEUR D’ICÔNE ──────────────────────────────────────────────────
+   Le champ texte a laissé place à une grille : on choisit ce qu’on voit.
+   Le déclencheur garde la hauteur des boutons de la ligne pour que rien ne
+   se décale quand on passe d’une référence à l’autre. */
+.icon-picker {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.icon-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-height: 40px;
+  font-size: 1.05rem;
+  color: var(--p-foreground);
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-sm);
+  cursor: pointer;
+  transition: border-color var(--p-motion-fast) var(--p-ease),
+    background var(--p-motion-fast) var(--p-ease);
+}
+
+.icon-picker-trigger:hover,
+.icon-picker-trigger[aria-expanded='true'] {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+}
+
+.icon-picker-panel {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + var(--p-space-1));
+  left: 0;
+  width: min(24rem, 90vw);
+  padding: var(--p-space-3);
+  display: grid;
+  gap: var(--p-space-3);
+  background: var(--p-surface-raised);
+  border: 1px solid var(--p-border-strong);
+  border-radius: var(--p-radius);
+  box-shadow: var(--p-shadow-lg);
+}
+
+.icon-picker-search {
+  width: 100%;
+}
+
+/* La grille défile ; le champ de recherche et la saisie manuelle restent
+   visibles. Sans cette hauteur bornée, le panneau dépassait l’écran et la
+   porte de sortie devenait inatteignable. */
+.icon-picker-grid-wrap {
+  max-height: 16rem;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--p-space-3);
+}
+
+.icon-picker-cat h4 {
+  margin: 0 0 var(--p-space-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--p-text-muted);
+}
+
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.25rem, 1fr));
+  gap: var(--p-space-1);
+}
+
+.icon-picker-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  font-size: 1.05rem;
+  color: var(--p-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--p-radius-sm);
+  cursor: pointer;
+  transition: background var(--p-motion-fast) var(--p-ease);
+}
+
+.icon-picker-cell:hover {
+  background: var(--p-primary-soft);
+}
+
+.icon-picker-cell.is-selected {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+}
+
+.icon-picker-empty {
+  margin: 0;
+  padding: var(--p-space-2) 0;
+}
+
+.icon-picker-manual {
+  padding-top: var(--p-space-2);
+  border-top: 1px solid var(--p-border);
+  display: grid;
+  gap: var(--p-space-2);
+}
+
+/* Le nom exact se déplie : laissé ouvert, il réintroduirait le champ de slug
+   que le sélecteur vient de remplacer. La cible reste tactile (44 px). */
+.icon-picker-advanced-toggle {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0;
+  font-size: 0.8125rem;
+  color: var(--p-text-muted);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.icon-picker-advanced-toggle:hover {
+  color: var(--p-foreground);
 }
 
 .company-ref-line .btn {
@@ -531,7 +655,7 @@ a:focus-visible {
 
 /* La zone d'import : cliquer ou déposer, comme dans le Manager. Le fichier
    part au serveur du Panel, qui le redimensionne et le sert. */
-.company-logo-drop {
+.company-image-drop {
   position: relative;
   margin-top: var(--p-space-3);
   display: flex;
@@ -547,16 +671,16 @@ a:focus-visible {
   transition: border-color var(--p-motion-fast) var(--p-ease);
 }
 
-.company-logo-drop:hover,
-.company-logo-drop:focus-visible {
+.company-image-drop:hover,
+.company-image-drop:focus-visible {
   border-color: var(--p-primary);
 }
 
-.company-logo-drop.is-busy {
+.company-image-drop.is-busy {
   cursor: progress;
 }
 
-.company-logo-drop img {
+.company-image-drop img {
   max-height: 140px;
   max-width: 100%;
   object-fit: contain;
@@ -564,7 +688,7 @@ a:focus-visible {
 
 /* La suppression n'apparaît qu'au survol ou au focus : elle ne doit pas
    attirer l'œil avant l'image elle-même. */
-.company-logo-remove {
+.company-image-remove {
   position: absolute;
   top: var(--p-space-2);
   right: var(--p-space-2);
@@ -581,12 +705,12 @@ a:focus-visible {
   transition: opacity var(--p-motion-fast) var(--p-ease);
 }
 
-.company-logo-drop:hover .company-logo-remove,
-.company-logo-remove:focus-visible {
+.company-image-drop:hover .company-image-remove,
+.company-image-remove:focus-visible {
   opacity: 1;
 }
 
-.company-logo-veil {
+.company-image-veil {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1669,4 +1793,76 @@ h3,
 
 body {
   font-family: var(--p-font-body);
+}
+
+/* Le portrait d’un membre : même zone de dépôt, cadre rond et compact. Le
+   logo garde sa largeur pleine — les deux ne se ressemblent que dans le
+   geste, pas dans la place qu’ils occupent. */
+.company-image-drop.is-avatar {
+  width: 5.5rem;
+  height: 5.5rem;
+  min-height: 0;
+  flex: 0 0 auto;
+  border-radius: var(--p-radius-full);
+}
+
+.company-image-drop.is-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: var(--p-radius-full);
+}
+
+/* ── ÉQUIPE ─────────────────────────────────────────────────────────────── */
+.company-team {
+  display: grid;
+  gap: var(--p-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.company-member {
+  display: grid;
+  gap: var(--p-space-3);
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+}
+
+/* Retiré de l’affichage : la fiche reste lisible et modifiable, mais on voit
+   au premier coup d’œil qu’aucun client ne la verra. */
+.company-member.is-inactive {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.company-member-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-3);
+}
+
+.company-member-fields {
+  flex: 1;
+  min-width: 0;
+}
+
+.company-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  padding-top: var(--p-space-2);
+  border-top: 1px solid var(--p-border);
+}
+
+@media (max-width: 640px) {
+  .company-member-head {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .company-member-fields {
+    width: 100%;
+  }
 }
