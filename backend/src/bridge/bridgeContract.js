@@ -532,6 +532,10 @@ export const companyProfileSchema = z
     // désormais l'autorité de l'identité développeur — signataire compris.
     signer: z.record(z.string(), z.any()).nullable().optional(),
     references: z.array(z.record(z.string(), z.any())).optional(),
+    // L'ÉQUIPE — additive elle aussi. Un Panel antérieur ne l'envoie pas, et
+    // le projet affiche alors une équipe vide : une information manquante,
+    // jamais une équipe inventée.
+    team: z.array(z.record(z.string(), z.any())).optional(),
   })
   .passthrough();
 

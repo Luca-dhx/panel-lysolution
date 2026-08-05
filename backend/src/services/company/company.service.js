@@ -189,6 +189,44 @@ export async function updateCompany(companyId, patch, actor = {}) {
   return getCompanyOrThrow(companyId);
 }
 
+/**
+ * ENREGISTRER — c’est-à-dire DIFFUSER. Un seul geste.
+ *
+ * ── CE QUI A ÉTÉ SUPPRIMÉ, ET POURQUOI ─────────────────────────────────────
+ * L’écran distinguait « enregistrer un brouillon » de « publier », le second
+ * exigeant une justification écrite. Deux gestes pour une intention unique :
+ * décrire son entreprise. Le brouillon n’était utile à personne — il ne
+ * servait qu’à créer un état où ce qu’on voit à l’écran n’est pas ce que les
+ * projets appliquent, c’est-à-dire exactement le malentendu qu’on cherchait
+ * à éviter.
+ *
+ * Enregistrer écrit la fiche ET publie la version. Le versionnement reste
+ * entier : chaque enregistrement fige une version immuable avec son diff.
+ *
+ * Enregistrer sans avoir rien changé ne DOIT PAS échouer : c’est un geste
+ * anodin, pas une erreur. On le dit, on ne le punit pas.
+ */
+const RIEN_A_PUBLIER = 'PANEL_COMPANY_NOTHING_TO_PUBLISH';
+
+export async function saveCompany(companyId, patch, actor = {}) {
+  const company = await updateCompany(companyId, patch, actor);
+  try {
+    const result = await publishConfiguration(companyId, {}, actor);
+    return { company: describeCompany(await getCompanyOrThrow(companyId)), published: true, ...result };
+  } catch (err) {
+    if (err?.code === RIEN_A_PUBLIER) {
+      return {
+        company: describeCompany(company),
+        published: false,
+        version: company.publishedVersion,
+        changes: [],
+        recipients: 0,
+      };
+    }
+    throw err;
+  }
+}
+
 /* -------------------------------------------------------------------------- */
 /*  PUBLICATION                                                               */
 /* -------------------------------------------------------------------------- */
@@ -201,13 +239,19 @@ export async function updateCompany(companyId, patch, actor = {}) {
  * projets appairés la reçoivent. Les IntegratedAPI, elles, sont nominatives
  * — voir `integratedApi.service.js`.
  *
- * @param {string} reason  pourquoi cette version existe — exigé
+ * ── LA JUSTIFICATION N’EST PLUS DEMANDÉE ───────────────────────────────────
+ * Publier exigeait une phrase saisie à la main. En pratique elle valait
+ * « maj », « correction », « test » — un péage sans information, franchi
+ * machinalement, qui transformait un enregistrement en formalité.
+ *
+ * Le versionnement, lui, reste entier : chaque publication fige une version
+ * immuable, datée, attribuée, avec le DIFF exact des champs modifiés. C’est
+ * ce diff qui se relit dans six mois — il dit ce qui a changé, ce qu’une
+ * phrase libre ne disait jamais vraiment.
+ *
+ * @param {string} [reason]  motif facultatif ; à défaut, il est déduit du diff
  */
-export async function publishConfiguration(companyId, { reason }, actor = {}) {
-  if (!reason || !String(reason).trim()) {
-    throw ApiError.badRequest('PANEL_COMPANY_PUBLISH_REASON_REQUIRED',
-      'Publication refusée parce qu’aucune raison n’a été fournie : une version sans raison ne se relit pas dans six mois.');
-  }
+export async function publishConfiguration(companyId, { reason } = {}, actor = {}) {
 
   const company = await getCompanyOrThrow(companyId);
   const payload = await companyPublishedProfile(company);
@@ -229,7 +273,8 @@ export async function publishConfiguration(companyId, { reason }, actor = {}) {
     companyId,
     version,
     payload: { ...payload, version },
-    reason: String(reason).trim(),
+    // Trace lisible sans rien demander : ce qui a changé, et combien.
+    reason: String(reason ?? '').trim() || resumerChangements(changes),
     changes,
     publishedAt: at,
     publishedBy: actor.userId ?? null,
@@ -252,6 +297,23 @@ export async function publishConfiguration(companyId, { reason }, actor = {}) {
   });
 
   return { version, publishedAt: at, changes, recipients };
+}
+
+/**
+ * RÉSUMÉ AUTOMATIQUE d’une publication — ce qui remplace la phrase saisie.
+ *
+ * Il nomme les blocs touchés plutôt que de compter des champs : « identité,
+ * équipe » se relit, « 7 changements » non. Au-delà de trois blocs on abrège,
+ * parce qu’une énumération complète cesse d’être lisible.
+ */
+function resumerChangements(changes) {
+  if (!changes?.length) return 'Première publication.';
+  const blocs = [...new Set(changes.map((c) => String(c.path ?? c.field ?? '').split('.')[0]).filter(Boolean))];
+  if (!blocs.length) return `${changes.length} changement(s).`;
+  const nommes = blocs.slice(0, 3).join(', ');
+  return blocs.length > 3
+    ? `Modification de ${nommes} et ${blocs.length - 3} autre(s) bloc(s).`
+    : `Modification de ${nommes}.`;
 }
 
 /** Diffuse la configuration publiée à tout le parc appairé. */
@@ -342,6 +404,13 @@ export function companyPublicProfile(company) {
     // Identité DÉVELOPPEUR — le Panel en est l'autorité.
     signer: plain(company.signer) ?? null,
     references: (company.references || []).map((r) => plain(r)),
+    // L’ÉQUIPE — publiée avec le reste. Les membres retirés voyagent aussi :
+    // c’est le projet qui décide de ne pas les afficher, et un membre
+    // réactivé n’a alors pas à être ressaisi.
+    team: (company.team || []).map((m) => ({
+      ...plain(m),
+      references: (m.references || []).map((r) => plain(r)),
+    })),
   };
 }
 
@@ -371,6 +440,13 @@ export async function companyPublishedProfile(company) {
       logoUrl: await resolvePublicMediaUrl(branding.logoUrl),
       faviconUrl: await resolvePublicMediaUrl(branding.faviconUrl),
     },
+    // Les portraits suivent exactement la règle du logo : relatifs dans le
+    // Panel, absolus dès qu’ils partent — un projet les affiche depuis une
+    // autre origine.
+    team: await Promise.all((profil.team || []).map(async (m) => ({
+      ...m,
+      photoUrl: await resolvePublicMediaUrl(m.photoUrl),
+    }))),
   };
 }
 
@@ -455,7 +531,7 @@ export function diffPayloads(before, after, prefix = '') {
 
 export default {
   getActiveCompany, getActiveCompanyOrThrow, getCompanyOrThrow, listCompanies,
-  createCompany, updateCompany, publishConfiguration, restoreVersion,
+  createCompany, updateCompany, saveCompany, publishConfiguration, restoreVersion,
   listVersions, getVersion, getPublishedConfiguration,
   companyPublicProfile, describeCompany, diffPayloads,
 };

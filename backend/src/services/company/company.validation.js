@@ -92,6 +92,29 @@ const referencesSchema = z.array(z.object({
   order: z.number().int().min(0).default(0),
 })).default([]);
 
+/**
+ * ÉQUIPE — les personnes qu’un client verra sur sa page Support.
+ *
+ * Tout est facultatif sauf la cohérence de ce qui est saisi : un e-mail
+ * renseigné doit être un e-mail, une photo doit être une adresse. Exiger
+ * davantage empêcherait d’enregistrer une fiche en cours de constitution,
+ * pour un bénéfice nul — c’est l’affichage qui décide quoi montrer.
+ */
+const teamSchema = z.array(z.object({
+  firstName: nullableString(120),
+  lastName: nullableString(120),
+  role: nullableString(120),
+  email: email('team.email'),
+  phone: nullableString(40),
+  photoUrl: url('team.photoUrl'),
+  active: z.boolean().default(true),
+  references: referencesSchema,
+  order: z.number().int().min(0).default(0),
+}).partial({
+  // `active` et `order` gardent leur défaut ; les autres peuvent manquer.
+  firstName: true, lastName: true, role: true, email: true, phone: true, photoUrl: true,
+})).default([]);
+
 const domainsSchema = z.object({
   primaryDomain: domain('domains.primaryDomain'),
   websiteUrl: url('domains.websiteUrl'),
@@ -148,6 +171,7 @@ const companySchema = z.object({
   settings: settingsSchema,
   signer: signerSchema,
   references: referencesSchema,
+  team: teamSchema,
   environment: z.enum(['TEST', 'PROD'], {
     errorMap: () => ({ message: 'environment : TEST ou PROD attendu.' }),
   }),

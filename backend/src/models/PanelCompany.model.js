@@ -83,6 +83,42 @@ const referenceSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/**
+ * UN MEMBRE DE L’ÉQUIPE — la personne qu’un client verra sur sa page Support.
+ *
+ * ── POURQUOI CE BLOC A CHANGÉ DE MAISON ────────────────────────────────────
+ * Chaque projet tenait sa propre liste, éditée sur place. Deux projets opérés
+ * par la même agence pouvaient donc annoncer deux équipes différentes, et un
+ * départ devait être répercuté autant de fois qu’il y avait de projets. Le
+ * Panel publie désormais une liste unique.
+ *
+ * `firstName` / `lastName` sont séparés là où les projets ne connaissaient
+ * qu'un nom complet : une page Support affiche « Prénom NOM », un e-mail
+ * s'adresse au prénom, et recoller deux champs est trivial quand les séparer
+ * ne l’est pas.
+ *
+ * `active` retire quelqu’un de l’affichage sans effacer son passage — un
+ * départ n’est pas une erreur de saisie.
+ */
+const teamMemberSchema = new mongoose.Schema(
+  {
+    firstName: { type: String, default: '', trim: true },
+    lastName: { type: String, default: '', trim: true },
+    // La fonction telle qu’elle est montrée au client, pas un rôle technique.
+    role: { type: String, default: '', trim: true },
+    email: { type: String, default: '', trim: true, lowercase: true },
+    phone: { type: String, default: '', trim: true },
+    // URL absolue résolue à la publication, comme le logo.
+    photoUrl: { type: String, default: null },
+    active: { type: Boolean, default: true },
+    // Mêmes références que l’entreprise : un membre peut porter son propre
+    // canal de contact (ligne directe, profil, agenda).
+    references: { type: [referenceSchema], default: [] },
+    order: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
 /** Domaines — le domaine principal sert de base aux domaines des projets. */
 const domainsSchema = new mongoose.Schema(
   {
@@ -155,6 +191,8 @@ const companySchema = new mongoose.Schema(
     // devient l'autorité : ces deux blocs n'existaient que localement.
     signer: { type: signerSchema, default: null },
     references: { type: [referenceSchema], default: [] },
+    // L’équipe visible par les clients — publiée avec le reste de l’identité.
+    team: { type: [teamMemberSchema], default: [] },
 
     // TEST ou PROD : une entreprise de recette et une entreprise de
     // production ne doivent jamais être confondues, même si elles portent le

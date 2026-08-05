@@ -20,6 +20,7 @@ import {
   listVersions,
   publishConfiguration,
   restoreVersion,
+  saveCompany,
   updateCompany,
 } from '../services/company/company.service.js';
 import {
@@ -69,13 +70,29 @@ export async function current(_req, res) {
   });
 }
 
+/**
+ * CRÉER — et diffuser aussitôt.
+ *
+ * Une entreprise créée mais non publiée n’existe pour aucun projet : elle
+ * n’était visible que dans le Panel, avec un bandeau expliquant qu’il fallait
+ * encore faire un second geste. Créer, c’est déclarer qui l’on est ; il n’y a
+ * rien à retenir avant de le dire.
+ */
 export async function create(req, res) {
-  return created(res, describeCompany(await createCompany(req.body ?? {}, actorOf(req))));
+  const company = await createCompany(req.body ?? {}, actorOf(req));
+  return created(res, await saveCompany(company.companyId, {}, actorOf(req)));
 }
 
+/**
+ * ENREGISTRER — c’est-à-dire DIFFUSER.
+ *
+ * Il n’y a plus de brouillon : ce que l’écran montre est ce que les projets
+ * appliquent. La version est figée à chaque enregistrement, avec son diff ;
+ * aucune justification n’est demandée.
+ */
 export async function update(req, res) {
   const company = await targetCompany(req);
-  return ok(res, describeCompany(await updateCompany(company.companyId, req.body ?? {}, actorOf(req))));
+  return ok(res, await saveCompany(company.companyId, req.body ?? {}, actorOf(req)));
 }
 
 /* -------------------------------------------------------------------------- */
