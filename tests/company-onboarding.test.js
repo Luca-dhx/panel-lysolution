@@ -18,7 +18,7 @@ setTestEnv();
 await startMemoryMongo();
 await connectTestDatabase();
 
-const { createCompany, getActiveCompany, updateCompany } = await import(
+const { createCompany, getActiveCompany, updateCompany, publishConfiguration } = await import(
   '../backend/src/services/company/company.service.js'
 );
 const PanelCompany = (await import('../backend/src/models/PanelCompany.model.js')).default;
@@ -37,43 +37,58 @@ section('1. Première création — le nom suffit');
 
   check('l’entreprise est créée', Boolean(company?.companyId));
   check('…avec un identifiant interne généré', typeof company.companyId === 'string' && company.companyId.length > 30);
-  check('…et un slug dérivé du nom', company.slug === 'l-y-solution');
   check('le mode vient du Panel, pas de l’utilisateur', company.environment === config.env);
   check('…et rien n’est publié à la naissance', company.publishedVersion === null);
 }
 
-section('1 bis. Le slug se dérive proprement, quel que soit le nom');
+section('1 bis. L’identifiant technique est OPAQUE — aucun lien avec le nom');
 {
-  const cas = [
-    ['Éditions Café & Co', 'editions-cafe-co'],
-    ['   Espaces   Multiples   ', 'espaces-multiples'],
-    ['---Tirets---', 'tirets'],
-    ['ACCENTS ÀÉÎÕÜ', 'accents-aeiou'],
-  ];
-  for (const [nom, attendu] of cas) {
-    await nettoyer();
-    const c = await createCompany({ identity: { name: nom } });
-    check(`« ${nom.trim()} » → ${attendu}`, c.slug === attendu);
-  }
-
-  // Un nom qui ne donne aucune lettre ne doit pas produire un slug vide.
+  // Le nom est une donnée métier : il se corrige, il change au rebranding.
+  // L'identifiant voyage jusqu'aux projets et doit rester stable à vie.
   await nettoyer();
-  const symboles = await createCompany({ identity: { name: '###' } });
-  check('un nom sans lettre reste utilisable', symboles.slug === 'entreprise');
-}
+  const c = await createCompany({ identity: { name: 'L.Y Solution' } });
 
-section('1 ter. Deux entreprises homonymes ne se marchent pas dessus');
-{
+  check('le slug ne contient RIEN du nom',
+    !/ly|solution|l-y/i.test(c.slug));
+  check('…il est opaque et de longueur fixe', /^c[0-9a-f]{20}$/.test(c.slug));
+
+  // Deux entreprises du même nom obtiennent deux identifiants sans rapport.
   await nettoyer();
   const a = await createCompany({ identity: { name: 'Studio' } });
-  // La phase n'autorise qu'une entreprise ACTIVE : la seconde est désactivée,
-  // ce qui suffit à éprouver l'unicité du slug.
   const b = await createCompany({ identity: { name: 'Studio' }, active: false });
-  check('le premier prend le nom', a.slug === 'studio');
-  check('…le second est suffixé', b.slug === 'studio-2');
-  check('…et les identifiants internes diffèrent', a.companyId !== b.companyId);
+  check('deux homonymes → deux identifiants distincts', a.slug !== b.slug);
+  check('…et aucun n’est suffixé à partir du nom',
+    !/studio/i.test(a.slug) && !/studio/i.test(b.slug));
+  check('…les identifiants internes diffèrent aussi', a.companyId !== b.companyId);
+
+  // Deux créations successives ne tirent jamais le même identifiant.
+  await nettoyer();
+  const tirages = new Set();
+  for (let i = 0; i < 5; i += 1) {
+    await nettoyer();
+    tirages.add((await createCompany({ identity: { name: 'Même nom' } })).slug);
+  }
+  check('cinq créations, cinq identifiants différents', tirages.size === 5);
 }
 
+section('1 ter. Renommer l’entreprise ne touche JAMAIS l’identifiant');
+{
+  await nettoyer();
+  const cree = await createCompany({ identity: { name: 'Ancien nom' } });
+  const slugOrigine = cree.slug;
+
+  await updateCompany(cree.companyId, { identity: { name: 'Nom entièrement différent' } });
+  const apres = await getActiveCompany();
+  check('le nom a changé', apres.identity.name === 'Nom entièrement différent');
+  check('…l’identifiant technique, non', apres.slug === slugOrigine);
+  check('…ni l’identifiant interne', apres.companyId === cree.companyId);
+
+  // Même une charge utile qui prétend le modifier est sans effet.
+  await updateCompany(cree.companyId, { slug: 'force-a-la-main', environment: 'PROD' });
+  const force = await getActiveCompany();
+  check('un slug imposé par le client est ignoré', force.slug === slugOrigine);
+  check('…et le mode aussi', force.environment === config.env);
+}
 /* ────────────────────────────────────────────────────────────────────────── */
 section('2. Le mode n’est JAMAIS pris du client');
 {
@@ -86,11 +101,12 @@ section('2. Le mode n’est JAMAIS pris du client');
   });
   check('l’environnement demandé est ignoré', c.environment === config.env);
 
-  // Idem pour le slug : s'il est fourni, il est accepté (compatibilité), mais
-  // plus rien dans l'interface ne le propose.
+  // Le slug fourni par un client n'est plus qu'une valeur parmi d'autres :
+  // il reste accepté à la CRÉATION (compatibilité d'appel), mais l'interface
+  // ne le propose plus et aucune modification ne peut le changer ensuite.
   await nettoyer();
   const impose = await createCompany({ identity: { name: 'Essai' }, slug: 'choisi-a-la-main' });
-  check('un slug explicite reste honoré (compatibilité)', impose.slug === 'choisi-a-la-main');
+  check('un slug explicite reste honoré à la création', impose.slug === 'choisi-a-la-main');
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -163,5 +179,62 @@ section('5. Aucun autre écran ne dépend du mode ni d’une sélection d’entr
   check('le bandeau de brouillon non publié subsiste', /hasUnpublishedChanges/.test(page));
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('6. F5 avant publication — le brouillon est retrouvé, pas recréé');
+{
+  await nettoyer();
+
+  // 1. Aucune entreprise : l'écran proposerait l'état vide.
+  check('au départ, aucune entreprise', (await getActiveCompany()) === null);
+
+  // 2. Création depuis le formulaire, puis premier enregistrement.
+  const cree = await createCompany({
+    identity: { name: 'Entreprise en cours', tagline: 'Brouillon' },
+    domains: { websiteUrl: 'https://brouillon.test' },
+  });
+  await updateCompany(cree.companyId, {
+    contacts: { email: 'contact@brouillon.test' },
+    signer: { firstName: 'Jean', lastName: 'Dupont', jobTitle: 'Gérant', email: 'jean@brouillon.test' },
+  });
+
+  check('le brouillon existe', (await getActiveCompany())?.companyId === cree.companyId);
+  check('…et n’est pas publié', (await getActiveCompany()).publishedVersion === null);
+
+  // 3. F5 : le navigateur repart de zéro et redemande l’état au serveur.
+  //    C’est exactement ce que fait la page au montage.
+  const apresRechargement = await getActiveCompany();
+
+  check('l’entreprise est RETROUVÉE', Boolean(apresRechargement));
+  check('…avec le même identifiant interne', apresRechargement.companyId === cree.companyId);
+  check('…et le même identifiant technique', apresRechargement.slug === cree.slug);
+  check('le brouillon est restauré — identité', apresRechargement.identity.name === 'Entreprise en cours');
+  check('…signature', apresRechargement.identity.tagline === 'Brouillon');
+  check('…site', apresRechargement.domains.websiteUrl === 'https://brouillon.test');
+  check('…contact', apresRechargement.contacts.email === 'contact@brouillon.test');
+  check('…signataire', apresRechargement.signer?.email === 'jean@brouillon.test');
+
+  // 4. Aucun doublon : une seule entreprise, une seule active.
+  check('aucune deuxième entreprise', (await PanelCompany.countDocuments({})) === 1);
+  check('…et une seule active', (await PanelCompany.countDocuments({ active: true })) === 1);
+
+  // Le serveur refuse d’en créer une seconde tant que celle-ci est active :
+  // même un double clic ou un client resté sur l’ancien écran ne peut pas
+  // fabriquer un doublon.
+  let refus = null;
+  try { await createCompany({ identity: { name: 'Doublon' } }); }
+  catch (err) { refus = err; }
+  check('une seconde création est refusée', refus !== null);
+  check('…avec un code explicite', refus?.code === 'PANEL_COMPANY_ALREADY_ACTIVE');
+  check('…et rien n’a été créé', (await PanelCompany.countDocuments({})) === 1);
+
+  // 5. La publication fonctionne ensuite normalement.
+  const publiee = await publishConfiguration(cree.companyId, { reason: 'Première mise en service' });
+  check('la publication aboutit', Boolean(publiee));
+  const finale = await getActiveCompany();
+  check('…en version 1', finale.publishedVersion === 1);
+  check('…sans changer l’identifiant', finale.slug === cree.slug && finale.companyId === cree.companyId);
+  check('…et le contenu du brouillon est celui publié',
+    finale.identity.name === 'Entreprise en cours');
+}
 await stopMemoryMongo();
 finish();

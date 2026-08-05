@@ -30,6 +30,7 @@ import { listProjects } from '../registry/projectRegistry.service.js';
 import { emitChange } from '../sync/syncCore.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { validateCompanyInput } from './company.validation.js';
+import { resolvePublicMediaUrl } from '../upload/upload.service.js';
 
 /** Type d'entité de synchronisation portant l'entreprise. */
 const COMPANY_ENTITY = 'DEV_COMPANY';
@@ -75,30 +76,30 @@ export function listCompanies() {
 
 /** Crée l'entreprise. Elle naît NON publiée : saisir n'est pas diffuser. */
 /**
- * L'IDENTIFIANT INTERNE — dérivé du nom, jamais demandé.
+ * L'IDENTIFIANT INTERNE — OPAQUE, et totalement indépendant du nom.
  *
- * Il voyage jusqu'aux projets et doit rester stable et unique, mais rien
- * n'oblige un utilisateur à l'inventer : c'est une contrainte de machine, pas
- * une décision d'entreprise. On le dérive du nom, et on le rend unique en
- * suffixant si besoin.
+ * ── POURQUOI IL N'EST PAS DÉRIVÉ DU NOM ─────────────────────────────────────
+ * Le nom est une donnée MÉTIER : il se corrige, il change au rebranding, il
+ * porte des accents et des homonymies. L'identifiant est une donnée TECHNIQUE :
+ * il voyage jusqu'aux projets et doit rester stable à vie. Les lier revenait à
+ * faire dépendre une clé d'une information faite pour bouger — et à laisser
+ * deviner, depuis l'identifiant, un nom que l'entreprise a peut-être changé.
+ *
+ * Il est donc tiré au hasard, jamais reconstruit, jamais modifiable, et jamais
+ * affiché. Une collision reste théoriquement possible : on la traite plutôt
+ * que de la supposer impossible.
  */
-async function derivedSlug(nom) {
-  const base = String(nom ?? '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')   // accents
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50) || 'entreprise';
+async function opaqueSlug() {
+  // 20 caractères base36 tirés d'un UUID : assez court pour un identifiant,
+  // assez large pour ne jamais avoir à y penser.
+  const tirage = () => randomUUID().replace(/-/g, '').slice(0, 20);
 
-  let candidat = base;
-  // Boucle bornée : au-delà, c'est un symptôme, pas un cas d'usage.
-  for (let n = 2; n <= 50; n += 1) {
+  for (let essai = 0; essai < 5; essai += 1) {
+    const candidat = `c${tirage()}`;
     if (!(await PanelCompany.exists({ slug: candidat }))) return candidat;
-    candidat = `${base}-${n}`.slice(0, 60);
   }
   throw ApiError.conflict('PANEL_COMPANY_SLUG_EXHAUSTED',
-    'Identifiant introuvable : trop d’entreprises portent déjà ce nom.');
+    'Identifiant interne introuvable après plusieurs tirages : anomalie à signaler.');
 }
 
 export async function createCompany(input, actor = {}) {
@@ -114,7 +115,7 @@ export async function createCompany(input, actor = {}) {
    */
   const demande = { ...(input ?? {}) };
   demande.environment = config.env;
-  if (!demande.slug) demande.slug = await derivedSlug(demande.identity?.name);
+  if (!demande.slug) demande.slug = await opaqueSlug();
 
   const validation = validateCompanyInput(demande, { creating: true });
   if (!validation.valid) {
@@ -162,17 +163,23 @@ export async function updateCompany(companyId, patch, actor = {}) {
   const current = await getCompanyOrThrow(companyId);
   const merged = mergeDeep(stripMeta(current), patch);
 
+  /**
+   * L'IDENTIFIANT NE BOUGE PAS — quoi qu'on envoie.
+   *
+   * Il voyage jusqu'aux projets, qui s'y réfèrent : le changer reviendrait à
+   * remplacer l'entreprise par une autre à leurs yeux. Renommer l'entreprise
+   * n'y touche donc pas, et une charge utile qui prétendrait le modifier est
+   * ignorée en silence plutôt que refusée — ce n'est pas une erreur de
+   * l'utilisateur, c'est un champ qu'il n'a jamais eu à connaître.
+   */
+  merged.slug = current.slug;
+  merged.environment = current.environment;
+
   const validation = validateCompanyInput(merged, { creating: false });
   if (!validation.valid) {
     throw ApiError.badRequest('PANEL_COMPANY_INVALID',
       `Modification refusée parce que ${validation.errors.length} champ(s) sont invalides : ${validation.errors.join(' ')}`,
       { errors: validation.errors });
-  }
-
-  if (validation.value.slug !== current.slug
-    && await PanelCompany.exists({ slug: validation.value.slug, companyId: { $ne: companyId } })) {
-    throw ApiError.conflict('PANEL_COMPANY_SLUG_TAKEN',
-      `Modification refusée parce que l’identifiant « ${validation.value.slug} » est déjà utilisé.`);
   }
 
   await PanelCompany.updateOne(
