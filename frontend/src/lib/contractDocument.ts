@@ -49,10 +49,36 @@ export type DocumentPresentationState =
 
 export type BadgeTone = 'ok' | 'warn' | 'neutral';
 
+/**
+ * DISPONIBILITÉ — « Disponible » ou « Non disponible », et rien d'autre.
+ *
+ * Le document contractuel est IMPORTÉ dans le projet, pas fabriqué par lui :
+ * « Généré » / « Non généré » décrivait une production qui n'a jamais eu lieu
+ * et laissait croire à une étape de fabrication en attente. Ce qui compte pour
+ * qui lit la fiche, c'est de savoir s'il peut obtenir le fichier.
+ */
+export type DocumentAvailability = 'AVAILABLE' | 'UNAVAILABLE';
+
+/** État de signature — indépendant de la disponibilité du fichier. */
+export type DocumentSignature = 'NOT_REQUIRED' | 'PENDING' | 'SIGNED';
+
 export interface ContractDocumentPresentation {
   state: DocumentPresentationState;
   /** Libellé court de l'état documentaire — la pastille. */
   title: string;
+  /** Le fichier est-il obtenable ? Axe DOCUMENTAIRE, sans la connexion. */
+  availability: DocumentAvailability;
+  availabilityLabel: string;
+  /**
+   * Où en est la signature — `null` quand il n'y a pas de document, ou quand
+   * la projection est trop ancienne pour le dire.
+   */
+  signature: DocumentSignature | null;
+  signatureLabel: string | null;
+  /** Nom du fichier publié par le projet, s'il en porte un. */
+  filename: string | null;
+  /** Nombre de pages, si le projet le connaît. */
+  pages: number | null;
   /** Phrase affichée sous la fiche. Vide quand il n'y a rien à ajouter. */
   message: string;
   badgeTone: BadgeTone;
@@ -84,6 +110,31 @@ export interface DocumentPresentationInput {
  *
  * Ce qu'on ne fait JAMAIS : conclure d'un axe sur un autre.
  */
+/** Le fichier est-il réellement obtenable, d'après ce que le projet publie ? */
+function estDisponible(doc: BusinessDocument | null): boolean {
+  if (!doc || doc.status === 'NONE' || doc.status === 'UNAVAILABLE') return false;
+  return doc.downloadAvailable === true;
+}
+
+/**
+ * Où en est la signature — lu sur le document, JAMAIS sur le contrat.
+ *
+ * Un contrat en cours d'activation peut porter un document déjà signé, et un
+ * contrat actif un document qui n'exigeait aucune signature.
+ */
+function signatureDe(doc: BusinessDocument | null): DocumentSignature | null {
+  if (!doc || doc.status === 'NONE') return null;
+  if (doc.signatureRequired === false || doc.signatureStatus === 'NOT_REQUIRED') return 'NOT_REQUIRED';
+  if (doc.status === 'SIGNED') return 'SIGNED';
+  return 'PENDING';
+}
+
+const SIGNATURE_LABEL: Record<DocumentSignature, string> = {
+  NOT_REQUIRED: 'Signature non requise',
+  PENDING: 'En attente de signature',
+  SIGNED: 'Signé',
+};
+
 export function getContractDocumentPresentation(
   { document, freshness, paired }: DocumentPresentationInput,
 ): ContractDocumentPresentation {
@@ -101,12 +152,29 @@ export function getContractDocumentPresentation(
   const monde = freshness.isEnvironmentMismatch || freshness.isGenerationMismatch;
   const actionsPossibles = connecte && !monde;
 
+  // Les faits documentaires, calculés UNE fois : ils ne dépendent ni du réseau,
+  // ni de la fraîcheur, ni du contrat. Ils accompagnent chaque réponse.
+  const signature = signatureDe(doc);
+  const disponible = estDisponible(doc);
+  const disponibleOuReference = Boolean(doc) && statut !== 'NONE';
+  const faits = {
+    availability: (disponible ? 'AVAILABLE' : 'UNAVAILABLE') as DocumentAvailability,
+    availabilityLabel: disponible ? 'Disponible' : 'Non disponible',
+    signature,
+    signatureLabel: signature ? SIGNATURE_LABEL[signature] : null,
+    // Un document absent n'a ni nom ni pages : les exposer ferait croire
+    // qu'un fichier attend quelque part.
+    filename: disponibleOuReference ? doc?.filename ?? null : null,
+    pages: disponibleOuReference && doc?.pages && doc.pages > 0 ? doc.pages : null,
+  };
+
   // Aucun document : rien d'autre à dire, quel que soit l'état du réseau.
   // C'est un fait publié par le projet, pas une conséquence de la connexion.
   if (statut === 'NONE' || !doc) {
     return {
+      ...faits,
       state: 'NONE',
-      title: 'Non généré',
+      title: 'Non disponible',
       message: 'Le projet n’a publié aucun document contractuel.',
       badgeTone: 'neutral',
       showDownload: false,
@@ -119,8 +187,9 @@ export function getContractDocumentPresentation(
   // Données d'un autre monde : on ne présente plus que de l'histoire.
   if (monde) {
     return {
+      ...faits,
       state: 'LAST_KNOWN_PREVIOUS_GENERATION',
-      title: `Dernier état connu : ${etiquette(doc)}`,
+      title: `Dernier état connu : ${faits.availabilityLabel}`,
       message: freshness.isEnvironmentMismatch
         ? 'Données de l’environnement précédent : le projet en déclare un autre aujourd’hui.'
         : 'Données de la génération précédente : le projet a été redéployé ou réappairé depuis.',
@@ -137,8 +206,9 @@ export function getContractDocumentPresentation(
   // il est daté. C'est le SEUL cas où l'on parle de projet injoignable.
   if (!connecte) {
     return {
+      ...faits,
       state: 'LAST_KNOWN_OFFLINE',
-      title: `Dernier état connu : ${etiquette(doc)}`,
+      title: `Dernier état connu : ${faits.availabilityLabel}`,
       message: paired
         ? 'Le projet est momentanément injoignable : le document sera de nouveau téléchargeable dès son retour.'
         : 'Le projet n’est pas relié : le document n’est pas accessible depuis le Panel.',
@@ -158,8 +228,9 @@ export function getContractDocumentPresentation(
   // document manquant : c'est un fichier manquant, et il faut le dire ainsi.
   if (statut === 'UNAVAILABLE') {
     return {
+      ...faits,
       state: 'FILE_MISSING',
-      title: 'Fichier indisponible',
+      title: 'Non disponible',
       /*
         On ne dit pas « le document SIGNÉ » : quand le fichier manque, le
         projet publie `UNAVAILABLE` sans préciser quelle variante était
@@ -177,10 +248,11 @@ export function getContractDocumentPresentation(
 
   if (doc.downloadAvailable) {
     return {
+      ...faits,
       state: 'DOWNLOADABLE',
-      title: etiquette(doc),
+      title: 'Disponible',
       message: '',
-      badgeTone: statut === 'SIGNED' || doc.signatureRequired === false ? 'ok' : 'warn',
+      badgeTone: 'ok',
       showDownload: true,
       downloadDisabledReason: null,
       showRemoteActions: true,
@@ -199,8 +271,9 @@ export function getContractDocumentPresentation(
   */
   if (statut === 'PENDING_SIGNATURE' && doc.signatureRequired !== false) {
     return {
+      ...faits,
       state: 'PENDING_SIGNATURE',
-      title: 'En attente de signature',
+      title: 'Non disponible',
       message: 'Le document est en cours de signature : il sera téléchargeable une fois la procédure terminée.',
       badgeTone: 'warn',
       showDownload: false,
@@ -211,8 +284,9 @@ export function getContractDocumentPresentation(
   }
 
   return {
+    ...faits,
     state: 'NOT_YET_AVAILABLE',
-    title: etiquette(doc),
+    title: 'Non disponible',
     message: 'Le document contractuel n’est pas encore disponible au téléchargement.',
     badgeTone: 'warn',
     showDownload: false,
@@ -220,24 +294,6 @@ export function getContractDocumentPresentation(
     showRemoteActions: true,
     isHistorical: false,
   };
-}
-
-/**
- * L'état documentaire en français, sans jargon de signature électronique.
- *
- * Il décrit le DOCUMENT et rien d'autre : ni le réseau, ni l'avancement du
- * contrat. Un contrat en cours d'activation peut porter un document signé.
- */
-export function etiquette(doc: BusinessDocument): string {
-  if (doc.status === 'SIGNED') return 'Signé';
-  if (doc.status === 'UNAVAILABLE') return 'Fichier indisponible';
-  // Le projet dit lui-même si son parcours exige une signature. Sans cette
-  // information, un contrat volontairement dépourvu de procédure s'affichait
-  // « Généré, non signé » : une phrase qui fait chercher une signature absente.
-  if (doc.signatureRequired === false) return 'Signature non requise';
-  if (doc.status === 'PENDING_SIGNATURE') return 'En attente de signature';
-  if (doc.status === 'NONE') return 'Non généré';
-  return 'Généré, non signé';
 }
 
 export default getContractDocumentPresentation;

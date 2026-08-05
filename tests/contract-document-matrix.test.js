@@ -73,7 +73,10 @@ section('CAS 1 — projet ONLINE + document téléchargeable');
   check('le bouton est proposé', p.showDownload === true);
   check('aucun empêchement à expliquer', p.downloadDisabledReason === null);
   check('aucun message parasite', p.message === '');
-  check('l’état documentaire est celui du document', p.title === 'Signé');
+  check('la pastille dit la DISPONIBILITÉ', p.title === 'Disponible' && p.availabilityLabel === 'Disponible');
+  check('…et la signature est une étiquette SÉPARÉE', p.signatureLabel === 'Signé');
+  check('le nom du fichier est publié', p.filename === 'contrat.pdf');
+  check('…et son nombre de pages', p.pages === 4);
   check('les actions distantes restent possibles', p.showRemoteActions === true);
   check('ce n’est pas de l’histoire', p.isHistorical === false);
 }
@@ -82,7 +85,10 @@ section('CAS 2 — projet ONLINE + aucun document');
 {
   const p = presenter({ document: document({ status: 'NONE', available: false, downloadAvailable: false }) });
   check('état = aucun document', p.state === 'NONE');
-  check('libellé « Non généré »', p.title === 'Non généré');
+  check('libellé « Non disponible »', p.title === 'Non disponible');
+  check('…et AUCUNE mention de génération', !/généré/i.test(texte(p)));
+  check('aucune étiquette de signature sans document', p.signatureLabel === null);
+  check('ni nom de fichier, ni pages', p.filename === null && p.pages === null);
   check('aucun bouton', p.showDownload === false);
   check('AUCUNE phrase de rupture de connexion', !/rompu|injoignable|retour du site/.test(texte(p)));
   check('…et rien qui prétende que le document existe', !/le document existe/.test(texte(p)));
@@ -115,7 +121,8 @@ section('CAS 4 — projet ONLINE + fichier absent (LE CAS OBSERVÉ)');
     document: document({ status: 'UNAVAILABLE', available: true, downloadAvailable: false }),
   });
   check('état = fichier manquant', p.state === 'FILE_MISSING');
-  check('libellé sans ambiguïté', p.title === 'Fichier indisponible');
+  check('libellé « Non disponible »', p.title === 'Non disponible');
+  check('…et la disponibilité le dit aussi', p.availability === 'UNAVAILABLE');
   check('le message parle du FICHIER, pas du lien',
     p.message === 'Le document contractuel est référencé, mais le fichier est actuellement indisponible sur le projet.');
   check('aucun bouton', p.showDownload === false);
@@ -185,21 +192,23 @@ section('CAS 7 — l’état du CONTRAT n’écrase jamais l’état du DOCUMENT
   // Activation en cours + frais dus + document signé : les deux coexistent.
   const activation = presenter({ contract: { status: 'ACTIVATION_IN_PROGRESS' } });
   check('activation en cours + document signé → téléchargeable', activation.showDownload === true);
-  check('…et le document reste « Signé »', activation.title === 'Signé');
+  check('…et la signature du document reste « Signé »', activation.signatureLabel === 'Signé');
+  check('…sans que le contrat n’altère la disponibilité', activation.availabilityLabel === 'Disponible');
 
   // Activation en cours + aucun document : pas de contradiction non plus.
   const sansDoc = presenter({
     contract: { status: 'ACTIVATION_IN_PROGRESS' },
     document: document({ status: 'NONE', available: false, downloadAvailable: false }),
   });
-  check('activation en cours + aucun document → « Non généré »', sansDoc.title === 'Non généré');
+  check('activation en cours + aucun document → « Non disponible »', sansDoc.title === 'Non disponible');
   check('…sans phrase de connexion', !/rompu|injoignable/.test(texte(sansDoc)));
 }
 
 section('CAS 8 — signature non requise');
 {
   const p = presenter({ document: document({ status: 'GENERATED', signatureRequired: false, signatureStatus: 'NOT_REQUIRED' }) });
-  check('libellé « Signature non requise »', p.title === 'Signature non requise');
+  check('étiquette « Signature non requise »', p.signatureLabel === 'Signature non requise');
+  check('…et la disponibilité reste un axe à part', p.title === 'Disponible');
   check('téléchargeable', p.showDownload === true);
   check('ton positif', p.badgeTone === 'ok');
   check('JAMAIS « en attente de signature »', !/attente de signature/.test(texte(p)));
@@ -209,7 +218,7 @@ section('CAS 9 — contrat terminé + document historique');
 {
   const p = presenter({ contract: { status: 'ENDED' } });
   check('le document reste téléchargeable', p.showDownload === true);
-  check('…et n’est pas requalifié par la fin du contrat', p.title === 'Signé');
+  check('…et n’est pas requalifié par la fin du contrat', p.availabilityLabel === 'Disponible');
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -269,7 +278,12 @@ section('GARDE — aucune contradiction possible, sur AUCUNE combinaison');
                   if (!signature && /attente de signature/.test(t)) {
                     contradictions.push(`[signature non requise mais attente annoncée] ${cas} → ${t}`);
                   }
-                  // 4. Bouton proposé UNIQUEMENT si tout concorde.
+                  // 4. « Généré » n'existe plus pour le document : il est importé.
+                  //    (« génération » du projet est un autre mot, et légitime.)
+                  if (/génér[ée]/i.test(t)) {
+                    contradictions.push(`[vocabulaire de génération] ${cas} → ${t}`);
+                  }
+                  // 4 bis. Bouton proposé UNIQUEMENT si tout concorde.
                   const devraitTelecharger = vivant && !envKo && !genKo
                     && statut !== 'NONE' && statut !== 'UNAVAILABLE' && telechargeable;
                   if (p.showDownload !== devraitTelecharger) {
@@ -321,6 +335,49 @@ section('LA CAPTURE — la réponse API exacte qui a produit l’écran fautif')
     p.message === 'Le document contractuel est référencé, mais le fichier est actuellement indisponible sur le projet.');
   check('aucun bouton de téléchargement', p.showDownload === false);
   check('les actions contractuelles restent offertes', p.showRemoteActions === true);
+}
+
+/* -------------------------------------------------------------------------- */
+section('LE BLOC VISUEL — un fichier, pas une ligne de tableau');
+{
+  const fs2 = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const carte = await fs2.readFile(path.join(racine, 'frontend/src/components/ContractCard.tsx'), 'utf8');
+  const css = await fs2.readFile(path.join(racine, 'frontend/src/components.css'), 'utf8');
+  const presentation = await fs2.readFile(path.join(racine, 'frontend/src/lib/contractDocument.ts'), 'utf8');
+
+  check('le document a son propre composant', /function DocumentFile\(/.test(carte));
+  check('…avec une grande icône de fichier', /doc-file-icon[\s\S]{0,400}<svg/.test(carte));
+  check('…le format PDF est affiché', /doc-file-ext">PDF</.test(carte));
+  check('…le nom du fichier',
+    /doc-file-name[\s\S]{0,200}\{filename \|\| 'Document contractuel'\}/.test(carte));
+  check('…le nombre de pages, au pluriel correct',
+    /\${pages} page\${pages > 1 \? 's' : ''}/.test(carte));
+  check('la disponibilité et la signature sont DEUX étiquettes',
+    /badge badge-ok' : 'badge badge-muted'[\s\S]{0,300}\{signatureLabel\}/.test(carte));
+  check('le bouton vit DANS la fiche', /doc-file-action/.test(carte));
+  check('…et n’apparaît que si le fichier est servable',
+    /presentation\.showDownload \? \(/.test(carte));
+
+  // Le document est IMPORTÉ dans le projet, jamais fabriqué par lui. On lit le
+  // code RENDU : les commentaires citent l'ancien vocabulaire, c'est leur rôle.
+  const sansCommentaires = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+    .replace(/^\s*\*.*$/gm, '');
+  check('le vocabulaire « généré » a disparu du bloc document',
+    !/généré/i.test(sansCommentaires(presentation))
+    && !/généré/i.test(sansCommentaires(carte)));
+
+  check('la fiche a son style', css.includes('.doc-file {'));
+  check('…responsive : le bouton passe pleine largeur sur mobile',
+    /@media \(max-width: 560px\)[\s\S]{0,300}\.doc-file-action \{[\s\S]{0,80}width: 100%/.test(css));
+  check('…un nom long ne pousse pas le bouton hors de la carte',
+    /\.doc-file-body \{[\s\S]{0,200}min-width: 0/.test(css));
+  check('…la cible tactile respecte 44px',
+    /\.doc-file-action \{[\s\S]{0,200}min-height: 44px/.test(css));
 }
 
 console.log(`\n${pass} réussis, ${fail} échoués`);

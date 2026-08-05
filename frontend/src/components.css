@@ -342,6 +342,108 @@ a:focus-visible {
   animation: timeline-open var(--p-motion) var(--p-ease);
 }
 
+/* ---------- Document contractuel : une fiche de fichier ---------- */
+/*
+   Le document était une ligne de liste avec une pastille qui mélangeait sa
+   disponibilité et sa signature. C'est un OBJET : il a un nom, un format, un
+   nombre de pages, et deux états indépendants. La fiche le montre comme tel.
+*/
+.doc-file {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--p-space-3);
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+  background: var(--p-background);
+  transition: border-color var(--p-motion-fast) var(--p-ease);
+}
+
+.doc-file:hover {
+  border-color: var(--p-border-strong);
+}
+
+.doc-file-icon {
+  position: relative;
+  flex-shrink: 0;
+  width: 44px;
+  height: 56px;
+  color: var(--p-text-muted);
+}
+
+.doc-file-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* L'extension se lit SUR la feuille : le format saute aux yeux. */
+.doc-file-ext {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border-radius: var(--p-radius-sm);
+  /* Pastille douce : elle suit le thème, aucune couleur en dur. */
+  background: var(--p-danger-soft);
+  color: var(--p-danger);
+}
+
+.doc-file-body {
+  flex: 1;
+  min-width: 0; /* sans quoi un nom long pousse le bouton hors de la carte */
+  display: grid;
+  gap: 2px;
+}
+
+.doc-file-name {
+  margin: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-file-meta {
+  margin: 0;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+}
+
+.doc-file-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-1);
+  margin-top: var(--p-space-1);
+}
+
+.doc-file-note {
+  margin: var(--p-space-1) 0 0;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+}
+
+.doc-file-action {
+  flex-shrink: 0;
+  align-self: center;
+  min-height: 44px; /* cible tactile */
+}
+
+/* Mobile : le fichier passe en colonne, le bouton prend toute la largeur. */
+@media (max-width: 560px) {
+  .doc-file {
+    flex-wrap: wrap;
+  }
+
+  .doc-file-action {
+    width: 100%;
+    align-self: stretch;
+  }
+}
+
 /* ---------- Bandeau de fraîcheur ---------- */
 /* Il précède TOUTE donnée métier : ce qui suit est-il encore vrai ? Une
    pastille grise perdue au milieu des autres ne suffisait pas à le dire. */

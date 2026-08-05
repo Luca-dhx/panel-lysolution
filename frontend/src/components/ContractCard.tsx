@@ -23,6 +23,7 @@ import {
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 import { getContractDocumentPresentation } from '@/lib/contractDocument';
+import type { ContractDocumentPresentation } from '@/lib/contractDocument';
 import type {
   BusinessContract, ContractOperation, PreviousContract, PublicProject,
 } from '@/types';
@@ -50,6 +51,75 @@ function raisonActionsIndisponibles(
     return 'Les données affichées viennent d’une génération précédente du projet : les actions contractuelles sont suspendues.';
   }
   return 'Projet injoignable : les actions contractuelles sont indisponibles pour l’instant.';
+}
+
+/**
+ * LE DOCUMENT CONTRACTUEL, présenté comme ce qu'il est : un fichier.
+ *
+ * Il était réduit à une ligne de la liste de définitions, avec une pastille qui
+ * mélangeait sa disponibilité et l'état de sa signature. Ce sont deux choses
+ * distinctes : un document peut être disponible sans signature requise, ou
+ * signé mais introuvable sur le stockage. Chacune a donc sa place.
+ *
+ * Le vocabulaire change aussi : le document est IMPORTÉ dans le projet, jamais
+ * fabriqué par lui. « Généré » / « Non généré » décrivait une production
+ * imaginaire et faisait attendre une étape qui n'existe pas.
+ */
+function DocumentFile({
+  presentation,
+  signedAt,
+  enCours,
+  onDownload,
+}: {
+  presentation: ContractDocumentPresentation;
+  signedAt: string | null;
+  enCours: boolean;
+  onDownload: () => void;
+}) {
+  const { availability, availabilityLabel, signatureLabel, filename, pages } = presentation;
+  return (
+    <section className="doc-file" aria-label="Document contractuel">
+      <div className="doc-file-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" strokeLinejoin="round" />
+          <path d="M14 2v5h5" strokeLinejoin="round" />
+        </svg>
+        <span className="doc-file-ext">PDF</span>
+      </div>
+
+      <div className="doc-file-body">
+        <p className="doc-file-name" title={filename ?? undefined}>
+          {filename || 'Document contractuel'}
+        </p>
+        <p className="doc-file-meta">
+          PDF
+          {pages ? ` · ${pages} page${pages > 1 ? 's' : ''}` : ''}
+          {signedAt ? ` · signé le ${formatDateTime(signedAt)}` : ''}
+        </p>
+        <div className="doc-file-tags">
+          <span className={availability === 'AVAILABLE' ? 'badge badge-ok' : 'badge badge-muted'}>
+            {availabilityLabel}
+          </span>
+          {/* La signature est un AUTRE axe : elle a sa propre étiquette. */}
+          {signatureLabel ? <span className="badge badge-neutral">{signatureLabel}</span> : null}
+        </div>
+        {presentation.message ? <p className="doc-file-note">{presentation.message}</p> : null}
+      </div>
+
+      {/* Aucun faux bouton : il n'apparaît que si le fichier est réellement
+          servable — projet relié, qui répond, données du bon monde. */}
+      {presentation.showDownload ? (
+        <button
+          type="button"
+          className="btn btn-secondary btn-small doc-file-action"
+          disabled={enCours}
+          onClick={onDownload}
+        >
+          {enCours ? 'Récupération…' : 'Télécharger'}
+        </button>
+      ) : null}
+    </section>
+  );
 }
 
 export function ContractCard({
@@ -211,28 +281,14 @@ export function ContractCard({
         {formatAmount(contract.pricing.launchFee) ? (
           <div><dt>Frais de mise en service</dt><dd>{formatAmount(contract.pricing.launchFee)}</dd></div>
         ) : null}
-        <div>
-          <dt>Document contractuel</dt>
-          <dd>
-            <span className={toneBadgeClass(doc0.badgeTone)}>{doc0.title}</span>
-            {doc?.available && doc.signedAt ? ` · signé le ${formatDateTime(doc.signedAt)}` : ''}
-            {doc?.pages ? ` · ${doc.pages} pages` : ''}
-          </dd>
-        </div>
       </dl>
 
-      {doc0.showDownload ? (
-        <button
-          type="button"
-          className="btn btn-secondary btn-small"
-          disabled={telechargement}
-          onClick={() => void telecharger()}
-        >
-          {telechargement ? 'Récupération…' : 'Télécharger le contrat'}
-        </button>
-      ) : doc0.message ? (
-        <p className="muted">{doc0.message}</p>
-      ) : null}
+      <DocumentFile
+        presentation={doc0}
+        signedAt={doc?.signedAt ?? null}
+        enCours={telechargement}
+        onDownload={() => void telecharger()}
+      />
 
       {message ? <div className="alert alert-success">{message}</div> : null}
       {erreur ? <div className="alert alert-error">{erreur}</div> : null}
@@ -448,23 +504,16 @@ function ContractHistory({
                     {formatAmount(c.pricing?.launchFee) ? (
                       <div><dt>Mise en service</dt><dd>{formatAmount(c.pricing.launchFee)}</dd></div>
                     ) : null}
-                    {doc?.signedAt ? (
-                      <div><dt>Signé le</dt><dd>{formatDateTime(doc.signedAt)}</dd></div>
-                    ) : null}
+
                   </dl>
 
-                  {docEtat.showDownload ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-small"
-                      disabled={telechargement}
-                      onClick={() => void telecharger(doc?.filename ?? 'contrat.pdf')}
-                    >
-                      {telechargement ? 'Téléchargement…' : 'Télécharger le contrat'}
-                    </button>
-                  ) : docEtat.message ? (
-                    <p className="muted">{docEtat.message}</p>
-                  ) : null}
+                  {/* Même fiche de fichier que pour le contrat courant. */}
+                  <DocumentFile
+                    presentation={docEtat}
+                    signedAt={doc?.signedAt ?? null}
+                    enCours={telechargement}
+                    onDownload={() => void telecharger(doc?.filename ?? 'contrat.pdf')}
+                  />
                 </div>
               ) : null}
             </li>

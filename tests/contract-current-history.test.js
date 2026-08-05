@@ -195,17 +195,22 @@ section('5. L’écran ne mélange plus les deux');
   check('…avec référence, état, dates et montant en ligne compacte',
     /contract-history-ref/.test(carte) && /contract-history-line/.test(carte));
   check('…et le détail complet à l’ouverture',
-    /Terminé le/.test(carte) && /Signé le/.test(carte) && /Motif/.test(carte));
+    /Terminé le/.test(carte) && /Motif/.test(carte));
+  // « Signé le » a quitté la liste : il vit désormais dans la fiche de fichier,
+  // avec le nom, le format et le nombre de pages.
+  check('…la date de signature accompagne le FICHIER',
+    /signé le \$\{formatDateTime\(signedAt\)\}/.test(carte));
   // La décision ne vit plus dans le JSX : elle vient du calcul central, qui
   // sépare le document, la connexion et la fraîcheur. Cf.
   // `contract-document-matrix.test.js`, qui l'éprouve à l'exécution.
   check('le téléchargement d’un contrat passé reste possible',
-    /docEtat\.showDownload[\s\S]{0,400}Télécharger le contrat/.test(carte));
+    /<DocumentFile[\s\S]{0,300}presentation=\{docEtat\}/.test(carte)
+    && /presentation\.showDownload \? \([\s\S]{0,300}Télécharger/.test(carte));
   check('…mais seulement si le projet peut le servir',
     /const docEtat = getContractDocumentPresentation\(\{[\s\S]{0,220}freshness: fraicheur,[\s\S]{0,120}paired: project\.pairing\.status === 'PAIRED'/
       .test(carte.slice(carte.indexOf('function ContractHistory'))));
   check('…sinon on affiche la raison RÉELLE, pas un message figé',
-    /docEtat\.message \? \(\s*<p className="muted">\{docEtat\.message\}<\/p>/.test(carte)
+    /presentation\.message \? <p className="doc-file-note">\{presentation\.message\}<\/p>/.test(carte)
     && !carte.includes('Document momentanément indisponible.'));
 
   check('la liste des projets n’affiche plus l’état d’un contrat terminé',

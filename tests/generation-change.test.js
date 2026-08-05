@@ -341,7 +341,8 @@ section('9. Les écrans obéissent à cette règle, et à elle seule');
     /!doc0\.showRemoteActions \? \(/.test(contrat)
     && /raisonActionsIndisponibles\(fraicheur, project\)/.test(contrat));
   check('…et le téléchargement en dépend',
-    /\{doc0\.showDownload \? \(/.test(contrat)
+    /<DocumentFile[\s\S]{0,200}presentation=\{doc0\}/.test(contrat)
+    && /presentation\.showDownload \? \(/.test(contrat)
     && /freshness: fraicheur,/.test(contrat));
 }
 
