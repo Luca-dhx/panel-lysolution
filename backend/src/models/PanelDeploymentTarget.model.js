@@ -47,6 +47,34 @@ const targetSchema = new mongoose.Schema(
     // URL COMPLÈTE — la seule saisie de domaine. Tout le reste en découle.
     url: { type: String, required: true, trim: true },
 
+    /**
+     * QUEL PROJET vit ici — déclaré, jamais deviné.
+     *
+     * Deux destinations partagent une identité UNIQUEMENT si un opérateur
+     * l'a dit. Ni la base, ni le domaine, ni le serveur ne créent cette
+     * parenté : deux projets distincts peuvent partager les trois.
+     *
+     * C'est ce lien, et lui seul, qui autorise une migration de médias.
+     */
+    projectIdentityId: { type: String, default: null, index: true },
+
+    /**
+     * Cycle de vie de la DESTINATION, distinct de l'état du dernier
+     * déploiement. `EMPTY` : les fichiers ont été retirés du serveur, la
+     * fiche subsiste.
+     */
+    lifecycleStatus: {
+      type: String,
+      enum: ['ACTIVE', 'DEPROVISIONING', 'EMPTY', 'DEPROVISION_FAILED'],
+      default: 'ACTIVE',
+    },
+    // Dernier run réellement validé : ce qui fait d'un emplacement une source sûre.
+    lastHealthyDeploymentRunId: { type: String, default: null },
+    // Emplacement courant sur le serveur, tel que déployé.
+    currentSiteRoot: { type: String, default: null },
+    // Destination que celle-ci remplace, quand elle a été créée comme suite.
+    previousTargetId: { type: String, default: null },
+
     // Déductions de `parseTargetUrl`, recalculées à chaque enregistrement.
     // Stockées pour être filtrables et affichables sans relancer le moteur.
     host: { type: String, required: true, lowercase: true, unique: true },
