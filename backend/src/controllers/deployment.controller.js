@@ -315,11 +315,20 @@ export async function releases(req, res) {
 export async function self(_req, res) {
   const { resolveBackendUrl } = await import('../services/network/networkConfig.service.js');
   const profile = await import('../deployment-engine/config/project.profile.js');
-  const backend = await resolveBackendUrl();
+  const { resolvePairingEndpoints, resolveFrontendUrl } = await import('../services/network/networkConfig.service.js');
+  const [backend, frontend, pairing] = await Promise.all([
+    resolveBackendUrl(),
+    resolveFrontendUrl(),
+    resolvePairingEndpoints(),
+  ]);
   return ok(res, {
     environment: config.env,
     publicUrl: backend.url,
     publicUrlSource: backend.source,
+    // Topologie DÉRIVÉE du frontend : aucune de ces adresses n'est configurée.
+    frontendUrl: frontend.url,
+    backendUrl: backend.url,
+    pairing,
     projectSlug: profile.PROJECT_SLUG,
     projectId: profile.PROJECT_ID,
     apps: profile.APPS.map((a) => ({ id: a.id, dir: a.dir, role: a.role, nginxRole: a.nginxRole })),

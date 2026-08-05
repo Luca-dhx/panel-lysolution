@@ -72,7 +72,11 @@ export function buildPlan(deployConfig, { releaseId }) {
       description: 'Obtenir ou renouveler le certificat Let’s Encrypt',
       commands: [
         `mkdir -p /var/www/certbot`,
-        `certbot certonly --webroot -w /var/www/certbot -d ${host} --agree-tos --non-interactive --keep-until-expiring`,
+        // UN CERTIFICAT PAR HÔTE, jamais de wildcard TLS : celui-ci ne
+        // couvrirait qu'un seul niveau et ne pourrait pas servir
+        // `api.panel.…`. HTTP-01 sur webroot, exactement comme SB Auto.
+        ...urls.hosts.map((h) =>
+          `certbot certonly --webroot -w /var/www/certbot -d ${h} --agree-tos --non-interactive --keep-until-expiring`),
       ],
     },
     {

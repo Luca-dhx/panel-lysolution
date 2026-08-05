@@ -103,8 +103,11 @@ section('4. Les références sont éditables — le bloc était absent');
   check('…qui renumérote l’ordre', /\.map\(\(r, idx\) => \(\{ \.\.\.r, order: idx \}\)\)/.test(blocs));
   check('bascule texte / lien', /type: r\.type === 'TEXT' \? 'LINK' : 'TEXT'/.test(blocs));
   check('icône Bootstrap', /placeholder="Icône \(bi-star\)"/.test(blocs));
+  // Le libellé ne contient plus d'URL littérale : la garde d'architecture
+  // interdit toute adresse absolue dans le frontend, et une simple aide de
+  // saisie ne justifie pas de l'affaiblir.
   check('valeur contextuelle selon le type',
-    /r\.type === 'LINK' \? 'https:\/\/…' : 'Valeur'/.test(blocs));
+    /r\.type === 'LINK' \? 'Adresse du lien' : 'Valeur'/.test(blocs));
   check('état vide explicite', /Aucune référence\. Ajoutez des liens/.test(blocs));
   check('une adresse invalide est signalée pendant la saisie',
     /!\/\^https\?:\\\/\\\/\/i\.test\(r\.value \|\| ''\)/.test(blocs));

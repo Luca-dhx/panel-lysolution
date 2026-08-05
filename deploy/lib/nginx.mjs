@@ -13,12 +13,20 @@ export function certPaths(host) {
   };
 }
 
-export function renderNginxHttpOnly({ host, paths }) {
+/**
+ * PHASE 1 — HTTP seul, le temps du challenge ACME.
+ *
+ * Les DEUX hôtes doivent y répondre : certbot valide `panel.…` et
+ * `api.panel.…` séparément, chacun par un challenge servi sur son propre nom.
+ * N'en déclarer qu'un ferait échouer l'émission du second certificat.
+ */
+export function renderNginxHttpOnly({ host, backendHost, paths }) {
+  const hosts = backendHost && backendHost !== host ? `${host} ${backendHost}` : host;
   return `${BANNER}
 server {
     listen 80;
     listen [::]:80;
-    server_name ${host};
+    server_name ${hosts};
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -32,13 +40,57 @@ server {
 `;
 }
 
-export function renderNginxConfig({ host, backendPort, paths }) {
+/** Proxy vers le backend interne — identique quel que soit l'hôte qui l'appelle. */
+function backendProxy(backendPort) {
+  return `        proxy_pass http://127.0.0.1:${backendPort};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;`;
+}
+
+/**
+ * PHASE 2 — HTTPS complet.
+ *
+ * Deux blocs, deux certificats :
+ *   · `panel.…`     sert le frontend, ET conserve ses proxys `/api`,
+ *     `/bridge`, `/health`. Le frontend continue donc d'appeler des chemins
+ *     relatifs, sans une ligne de React à changer et sans CORS ;
+ *   · `api.panel.…` sert le backend sur toute sa surface. C'est l'origine
+ *     canonique, celle que reçoivent les projets, les webhooks et les médias.
+ *
+ * Les deux chemins fonctionnent — c'est ce qui rend la bascule sans rupture
+ * pour un Panel déjà déployé.
+ */
+export function renderNginxConfig({ host, backendHost, backendPort, paths }) {
   const cert = certPaths(host);
+  const apiHost = backendHost && backendHost !== host ? backendHost : null;
+  const certApi = apiHost ? certPaths(apiHost) : null;
+  const hosts = apiHost ? `${host} ${apiHost}` : host;
+
+  const blocApi = apiHost ? `
+
+# --- Origine CANONIQUE du backend : ${apiHost} ---
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${apiHost};
+
+    ssl_certificate     ${certApi.fullchain};
+    ssl_certificate_key ${certApi.privkey};
+
+    # Toute la surface part au backend : aucune ressource statique ici.
+    location / {
+${backendProxy(backendPort)}
+    }
+}` : '';
+
   return `${BANNER}
 server {
     listen 80;
     listen [::]:80;
-    server_name ${host};
+    server_name ${hosts};
 
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
@@ -98,10 +150,8 @@ server {
     }
 
     location = /health {
-        proxy_pass http://127.0.0.1:${backendPort};
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+${backendProxy(backendPort)}
     }
-}
+}${blocApi}
 `;
 }

@@ -53,13 +53,20 @@ section('Le domaine choisi alimente TOUT — aucune valeur figée');
 {
   const config = loadDeployConfig(null, { ...BASE, host: 'admin.autre-client.fr' });
   const urls = deriveUrls('admin.autre-client.fr');
-  check('URLs dérivées du domaine', urls.backendUrl === 'https://admin.autre-client.fr');
+  // Le backend est TOUJOURS `api.<frontend>` — c'est la règle unifiée avec
+  // SB Auto : un seul domaine saisi, un sous-domaine API dérivé.
+  check('URLs dérivées du domaine',
+    urls.frontendUrl === 'https://admin.autre-client.fr'
+    && urls.backendUrl === 'https://api.admin.autre-client.fr');
 
   const remote = buildRemoteEnv({ ENV: 'TEST', PORT: '9999', MONGODB_URI: 'mongodb://x' }, config);
   check('ENV imposé par le déploiement', remote.ENV === 'PROD');
   check('PORT imposé par le déploiement', remote.PORT === '4100');
-  check('PUBLIC_URL dérivée du domaine', remote.PUBLIC_URL === 'https://admin.autre-client.fr');
-  check('CORS_ORIGINS dérivées du domaine', remote.CORS_ORIGINS === 'https://admin.autre-client.fr');
+  check('PUBLIC_URL dérivée du domaine', remote.PUBLIC_URL === 'https://api.admin.autre-client.fr');
+  // Les DEUX origines sont autorisées : le frontend appelle encore ses chemins
+  // relatifs, et le backend canonique répond aussi directement.
+  check('CORS_ORIGINS couvrent les deux origines',
+    remote.CORS_ORIGINS === 'https://admin.autre-client.fr,https://api.admin.autre-client.fr');
 
   const nginx = renderNginxConfig(config);
   check('Nginx : server_name = domaine choisi', nginx.includes('server_name admin.autre-client.fr;'));
@@ -70,7 +77,8 @@ section('Le domaine choisi alimente TOUT — aucune valeur figée');
   const plan = buildPlan(config, { releaseId: 'r1' });
   const runtime = plan.find((p) => p.step === 'runtime.network');
   check('la configuration système reçoit le domaine',
-    runtime.commands[0].includes('--backend-url https://admin.autre-client.fr'));
+    runtime.commands[0].includes('--backend-url https://api.admin.autre-client.fr')
+    && runtime.commands[0].includes('--frontend-url https://admin.autre-client.fr'));
 
   const everything = JSON.stringify({ plan, nginx, remote });
   check('aucun domaine du projet modèle ne subsiste',

@@ -1,3 +1,4 @@
+import { deriveDeploymentTopology } from '../../backend/src/config/deploymentTopology.js';
 // Configuration d'un déploiement du Panel — validée avant toute action.
 // Le domaine n'est JAMAIS codé en dur : il vient d'ici (fichier ou options
 // de ligne de commande), et c'est lui qui alimente ensuite Nginx, le .env
@@ -31,12 +32,18 @@ export function assertValidHost(host, label = 'domaine') {
   return host;
 }
 
-// Un seul domaine saisi suffit : les URLs publiques en découlent.
+/**
+ * Un seul domaine saisi suffit : TOUT en découle.
+ *
+ * Cette fonction rendait la même adresse pour le frontend et le backend, alors
+ * que SB Auto dérive depuis toujours un sous-domaine `api.` dédié. Deux
+ * philosophies pour un même écosystème. Elle délègue désormais à la topologie
+ * canonique — un seul endroit calcule un domaine, et c'est celui-là.
+ */
 export function deriveUrls(host) {
-  return {
-    frontendUrl: `https://${host}`,
-    backendUrl: `https://${host}`,
-  };
+  const topo = deriveDeploymentTopology(host);
+  if (!topo) throw new Error('deriveUrls : hôte manquant.');
+  return topo;
 }
 
 /**
@@ -108,6 +115,9 @@ export function loadDeployConfig(configPath, overrides = {}, required = false) {
        */
       sharedUploads: `${siteRoot}/shared/uploads`,
     },
+    // Dérivé du frontend, jamais configuré : c'est l'origine canonique du
+    // backend, celle que servent Nginx, certbot et la configuration réseau.
+    backendHost: deriveUrls(merged.host).backendHost,
     urls: deriveUrls(merged.host),
   };
 }

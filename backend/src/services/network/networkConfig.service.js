@@ -13,6 +13,7 @@
 // le Panel préfère annoncer « URL indisponible » plutôt que diffuser une
 // adresse locale à un projet distant.
 import config from '../../config/env.js';
+import { derivePairingEndpoints } from '../../config/deploymentTopology.js';
 import SystemConfiguration from '../../models/SystemConfiguration.model.js';
 import {
   isPubliclyReachableUrl,
@@ -72,6 +73,22 @@ export async function resolveUrl(field) {
 
 export async function resolveBackendUrl() {
   return resolveUrl('backendUrl');
+}
+
+/**
+ * LES ADRESSES DU PONT — celles qu'un projet appelle.
+ *
+ * Un projet qui les construit à la main fige le domaine du Panel dans sa
+ * configuration : le jour d'une migration, il continue d'appeler l'ancienne
+ * adresse et l'appairage se rompt sans qu'aucun code n'ait changé. Elles
+ * dérivent donc toutes de `backendUrl`, qui dérive lui-même du frontend.
+ *
+ * `null` quand aucune adresse publique n'est résolue : mieux vaut ne rien
+ * annoncer qu'une adresse locale envoyée à un projet distant.
+ */
+export async function resolvePairingEndpoints() {
+  const { url } = await resolveBackendUrl();
+  return derivePairingEndpoints(url);
 }
 
 export async function resolveFrontendUrl() {

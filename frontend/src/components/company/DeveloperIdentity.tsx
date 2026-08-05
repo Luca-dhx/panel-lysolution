@@ -205,14 +205,14 @@ export function ReferencesEditor({
               </div>
               <input
                 type="text"
-                placeholder={r.type === 'LINK' ? 'https://…' : 'Valeur'}
+                placeholder={r.type === 'LINK' ? 'Adresse du lien' : 'Valeur'}
                 value={r.value ?? ''}
                 onChange={(e) => set(i, { value: e.target.value })}
               />
               {/* Un lien qui n'en est pas un ne sera pas cliquable côté projet :
                   autant le dire pendant la saisie. */}
               {r.type === 'LINK' && (r.value || '').trim() && !/^https?:\/\//i.test(r.value || '') ? (
-                <p className="field-error">Adresse attendue en http:// ou https:// — sinon le lien ne sera pas affiché.</p>
+                <p className="field-error">Adresse absolue attendue (http ou https) — sinon le lien ne sera pas affiché.</p>
               ) : null}
             </li>
           ))}
