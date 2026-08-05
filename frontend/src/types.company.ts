@@ -59,11 +59,30 @@ export interface CompanySettings {
   currency: string;
 }
 
+export interface CompanySigner {
+  firstName: string | null;
+  lastName: string | null;
+  jobTitle: string | null;
+  email: string | null;
+}
+
+export interface CompanyReference {
+  type: 'TEXT' | 'LINK';
+  icon: string | null;
+  name: string | null;
+  value: string | null;
+  order: number;
+}
+
 export interface Company {
   companyId: string;
   slug: string;
   environment: 'TEST' | 'PROD';
   identity: CompanyIdentity;
+  /** Personne physique qui engage l'entreprise. `null` tant qu'elle n'est pas renseignée. */
+  signer: CompanySigner | null;
+  /** Liens et informations affichés par les projets. */
+  references: CompanyReference[];
   branding: CompanyBranding;
   domains: CompanyDomains;
   contacts: CompanyContacts;

@@ -48,6 +48,41 @@ const brandingSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/**
+ * SIGNATAIRE CONTRACTUEL — la personne physique qui engage l'entreprise.
+ *
+ * Jamais déduit d'un compte utilisateur : un compte sert à se connecter, pas à
+ * signer. Reste vide tant qu'il n'est pas renseigné — un projet refusera alors
+ * explicitement de valider un contrat, ce qui vaut mieux qu'un signataire
+ * deviné.
+ */
+const signerSchema = new mongoose.Schema(
+  {
+    firstName: { type: String, default: '', trim: true },
+    lastName: { type: String, default: '', trim: true },
+    jobTitle: { type: String, default: '', trim: true },
+    email: { type: String, default: '', trim: true, lowercase: true },
+  },
+  { _id: false },
+);
+
+/**
+ * RÉFÉRENCES — liens et informations affichés par les projets.
+ *
+ * `type` distingue une valeur cliquable d'un simple texte ; `icon` reprend la
+ * nomenclature Bootstrap Icons déjà utilisée par les projets.
+ */
+const referenceSchema = new mongoose.Schema(
+  {
+    type: { type: String, enum: ['TEXT', 'LINK'], default: 'TEXT' },
+    icon: { type: String, default: 'bi-star' },
+    name: { type: String, default: '' },
+    value: { type: String, default: '' },
+    order: { type: Number, default: 0 },
+  },
+  { _id: false },
+);
+
 /** Domaines — le domaine principal sert de base aux domaines des projets. */
 const domainsSchema = new mongoose.Schema(
   {
@@ -116,6 +151,10 @@ const companySchema = new mongoose.Schema(
     contacts: { type: contactsSchema, default: () => ({}) },
     legal: { type: legalSchema, default: () => ({}) },
     settings: { type: settingsSchema, default: () => ({}) },
+    // Repris de la page « Entreprise développeur » des projets, dont le Panel
+    // devient l'autorité : ces deux blocs n'existaient que localement.
+    signer: { type: signerSchema, default: null },
+    references: { type: [referenceSchema], default: [] },
 
     // TEST ou PROD : une entreprise de recette et une entreprise de
     // production ne doivent jamais être confondues, même si elles portent le

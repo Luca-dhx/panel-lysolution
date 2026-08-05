@@ -182,6 +182,38 @@ export function CompanyPage() {
         </div>
       </Disclosure>
 
+      {/*
+        SIGNATAIRE — repris de la page « Entreprise développeur » des projets,
+        dont le Panel devient l'autorité. C'est la personne physique qui engage
+        l'entreprise : jamais un compte utilisateur, qui sert à se connecter et
+        non à signer. Tant qu'il n'est pas renseigné, un projet refuse
+        explicitement de valider un contrat — ce qui vaut mieux qu'un
+        signataire deviné.
+      */}
+      <Disclosure title="Signataire des contrats">
+        <div className="parameter-form">
+          <label className="field">
+            <span className="field-label">Prénom</span>
+            {field('signer.firstName', c.signer?.firstName ?? null)}
+          </label>
+          <label className="field">
+            <span className="field-label">Nom</span>
+            {field('signer.lastName', c.signer?.lastName ?? null)}
+          </label>
+          <label className="field">
+            <span className="field-label">Fonction</span>
+            {field('signer.jobTitle', c.signer?.jobTitle ?? null)}
+          </label>
+          <label className="field">
+            <span className="field-label">E-mail</span>
+            {field('signer.email', c.signer?.email ?? null)}
+          </label>
+        </div>
+        <p className="field-hint">
+          Publié aux projets. Sans signataire complet, un projet refusera de valider un contrat.
+        </p>
+      </Disclosure>
+
       <Disclosure title="Domaines et paramètres">
         <div className="parameter-form">
           {/*

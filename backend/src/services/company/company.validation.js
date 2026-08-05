@@ -72,6 +72,26 @@ const brandingSchema = z.object({
   fontFamily: nullableString(120),
 }).partial().default({});
 
+/**
+ * SIGNATAIRE — tout est facultatif, mais un e-mail renseigné doit être un
+ * e-mail. Un signataire à moitié rempli est refusé par le projet au moment de
+ * valider un contrat : c'est là que la règle a du sens, pas ici.
+ */
+const signerSchema = z.object({
+  firstName: nullableString(120),
+  lastName: nullableString(120),
+  jobTitle: nullableString(120),
+  email: email('signer.email'),
+}).partial().nullable().default(null);
+
+const referencesSchema = z.array(z.object({
+  type: z.enum(['TEXT', 'LINK']).default('TEXT'),
+  icon: nullableString(60),
+  name: nullableString(120),
+  value: nullableString(500),
+  order: z.number().int().min(0).default(0),
+})).default([]);
+
 const domainsSchema = z.object({
   primaryDomain: domain('domains.primaryDomain'),
   websiteUrl: url('domains.websiteUrl'),
@@ -126,6 +146,8 @@ const companySchema = z.object({
   contacts: contactsSchema,
   legal: legalSchema,
   settings: settingsSchema,
+  signer: signerSchema,
+  references: referencesSchema,
   environment: z.enum(['TEST', 'PROD'], {
     errorMap: () => ({ message: 'environment : TEST ou PROD attendu.' }),
   }),

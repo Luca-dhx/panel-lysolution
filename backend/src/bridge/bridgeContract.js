@@ -528,6 +528,10 @@ export const companyProfileSchema = z
     contacts: z.record(z.string(), z.any()).optional(),
     legal: z.record(z.string(), z.any()).optional(),
     settings: z.record(z.string(), z.any()).optional(),
+    // ADDITIF : un projet antérieur les ignore sans rien casser. Le Panel est
+    // désormais l'autorité de l'identité développeur — signataire compris.
+    signer: z.record(z.string(), z.any()).nullable().optional(),
+    references: z.array(z.record(z.string(), z.any())).optional(),
   })
   .passthrough();
 
