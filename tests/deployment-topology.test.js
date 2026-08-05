@@ -313,4 +313,147 @@ section('9. Compatibilité — un Panel déjà déployé continue de fonctionner
   check('…sans base d’URL absolue', !/https:\/\/api\./.test(api));
 }
 
+/* -------------------------------------------------------------------------- */
+section('10. MOTEUR — un certificat par hôte, aucun prérequis wildcard');
+{
+  const { certPaths, dedicatedCertPaths, renderNginxConfig: renderEngineNginx } = await import(
+    '../backend/src/deployment-engine/nginx.js');
+  const { parseTargetUrl } = await import('../backend/src/deployment-engine/url.js');
+  const { runPreflight } = await import('../backend/src/deployment-engine/preflight.js');
+
+  const OFFICIAL = ['ly-solution.com'];
+
+  // Le cas qui échouait : un sous-domaine d’une base gérée.
+  const cible = parseTargetUrl('https://panel.ly-solution.com', { wildcardBases: OFFICIAL });
+  check('la cible reste reconnue comme sous-domaine', cible.type === 'subdomain');
+  check('…mais son certificat est celui de l’HÔTE',
+    certPaths(cible).fullchain === '/etc/letsencrypt/live/panel.ly-solution.com/fullchain.pem');
+  check('…jamais celui de la base',
+    !certPaths(cible).fullchain.includes('/live/ly-solution.com/'));
+  check('…et il n’est plus déclaré partagé', certPaths(cible).shared === false);
+  check('le nom du certificat est l’hôte', certPaths(cible).certName === 'panel.ly-solution.com');
+
+  // Un domaine client garde exactement le même régime : plus qu’une règle.
+  const client = parseTargetUrl('https://sbauto06.fr', { wildcardBases: OFFICIAL });
+  check('domaine client : même règle',
+    certPaths(client).fullchain === '/etc/letsencrypt/live/sbauto06.fr/fullchain.pem'
+    && certPaths(client).shared === false);
+  check('un hôte dérivé aussi',
+    dedicatedCertPaths('api.panel.ly-solution.com').fullchain
+      === '/etc/letsencrypt/live/api.panel.ly-solution.com/fullchain.pem');
+
+  // Nginx ne référence plus jamais le certificat de la base.
+  const conf = renderEngineNginx(cible, { webRoot: '/w', backendPort: 5005 });
+  check('nginx : aucun certificat de base', !conf.includes('/live/ly-solution.com/'));
+  check('nginx : le certificat de l’hôte', conf.includes('/live/panel.ly-solution.com/fullchain.pem'));
+  check('nginx : AUCUN wildcard TLS', !/ssl_certificate[^;]*\*/.test(conf));
+}
+
+/* -------------------------------------------------------------------------- */
+section('11. PRÉFLIGHT — un domaine vierge est déployable');
+{
+  const { runPreflight } = await import('../backend/src/deployment-engine/preflight.js');
+  const { parseTargetUrl } = await import('../backend/src/deployment-engine/url.js');
+
+  /** VPS sain ; `cert` décide si un certificat existe déjà. */
+  const vps = ({ cert }) => ({
+    kind: 'ssh',
+    async exec(cmd) {
+      if (cmd.includes('id -un')) return { code: 0, stdout: 'root\n', stderr: '' };
+      if (cmd.includes('command -v')) return { code: 0, stdout: 'OK\n', stderr: '' };
+      if (cmd.includes('fullchain.pem')) return { code: 0, stdout: cert ? 'OK\n' : 'NO\n', stderr: '' };
+      // Un VPS sain : racine inscriptible, 10 Go libres (en Ko, comme `df -Pk`).
+      if (cmd.includes('echo WRITABLE')) return { code: 0, stdout: 'WRITABLE\n', stderr: '' };
+      if (cmd.includes('df -Pk')) return { code: 0, stdout: `${10 * 1024 * 1024}\n`, stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    },
+    writeFile: async () => {}, readFile: async () => '',
+    uploadDir: async () => ({ files: 0, bytes: 0 }), close: async () => {},
+  });
+
+  // DOMAINE VIERGE — aucun certificat sur le VPS.
+  const vierge = await runPreflight({
+    transport: vps({ cert: false }),
+    url: 'https://panel.ly-solution.com',
+    wildcardBases: ['ly-solution.com'],
+    skipDnsCheck: true,
+  });
+  const certCheck = vierge.checks.find((c) => c.id === 'host-cert');
+
+  check('le contrôle de certificat existe toujours', Boolean(certCheck));
+  check('…mais n’est PLUS bloquant', certCheck.required === false);
+  check('…et dit ce qui va se passer', /émis par HTTP-01/.test(certCheck.detail || ''));
+  check('le préflight PASSE sur un domaine vierge', vierge.ok === true);
+  check('…aucun contrôle bloquant en échec',
+    vierge.failedChecks.length === 0);
+  check('l’ancien contrôle a disparu',
+    !vierge.checks.some((c) => c.id === 'wildcard-cert'));
+
+  // DOMAINE DÉJÀ CERTIFIÉ — redéploiement.
+  const certifie = await runPreflight({
+    transport: vps({ cert: true }),
+    url: 'https://panel.ly-solution.com',
+    wildcardBases: ['ly-solution.com'],
+    skipDnsCheck: true,
+  });
+  const dejaLa = certifie.checks.find((c) => c.id === 'host-cert');
+  check('redéploiement : le certificat est constaté', dejaLa.ok === true);
+  check('…et signalé comme présent', /présent/.test(dejaLa.detail || ''));
+  check('…le préflight passe aussi', certifie.ok === true);
+
+  // La présence du certificat ne change JAMAIS le verdict.
+  check('vierge et certifié aboutissent au même verdict', vierge.ok === certifie.ok);
+}
+
+/* -------------------------------------------------------------------------- */
+section('12. CERTBOT — émission sans prérequis, réutilisation si présent');
+{
+  const { ensureCertificate } = await import('../backend/src/deployment-engine/certbot.js');
+  const { parseTargetUrl } = await import('../backend/src/deployment-engine/url.js');
+  const cible = parseTargetUrl('https://panel.ly-solution.com', { wildcardBases: ['ly-solution.com'] });
+
+  /** Transport qui journalise, et dit si un certificat existe. */
+  const tx = ({ cert }) => {
+    const cmds = [];
+    return {
+      cmds,
+      async exec(cmd) {
+        cmds.push(cmd);
+        if (cmd.includes('fullchain.pem')) return { code: 0, stdout: cert ? 'OK\n' : 'NO\n', stderr: '' };
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+  };
+
+  // Domaine vierge : le certificat est ÉMIS, rien n’est exigé.
+  const neuf = tx({ cert: false });
+  const res = await ensureCertificate(neuf, cible, {
+    email: 'ops@exemple.fr', webroot: '/var/www/certbot',
+    dedicatedHosts: ['api.panel.ly-solution.com'],
+  });
+  const emissions = neuf.cmds.filter((c) => c.includes('certonly'));
+
+  check('aucune erreur sur un domaine vierge', Boolean(res.primary));
+  check('l’hôte principal est émis', res.primary.obtained === true);
+  check('…et n’est plus marqué « wildcard »', res.primary.wildcard === undefined);
+  check('l’hôte API est émis aussi', res.dedicated['api.panel.ly-solution.com'].obtained === true);
+  check('deux émissions HTTP-01', emissions.length === 2);
+  check('…sur le webroot', emissions.every((c) => c.includes('--webroot -w /var/www/certbot')));
+  check('…et AUCUN wildcard demandé', emissions.every((c) => !c.includes('-d *')));
+  check('le certificat porte le nom de l’hôte', res.primary.certName === 'panel.ly-solution.com');
+
+  // Redéploiement : rien n’est réémis.
+  const deja = tx({ cert: true });
+  const res2 = await ensureCertificate(deja, cible, {
+    email: 'ops@exemple.fr', webroot: '/var/www/certbot',
+    dedicatedHosts: ['api.panel.ly-solution.com'],
+  });
+  check('redéploiement : le certificat est réutilisé', res2.primary.reused === true);
+  check('…sans nouvelle émission', deja.cmds.filter((c) => c.includes('certonly')).length === 0);
+
+  // Migration : un parc déployé sous l'ancien régime pointait vers le
+  // certificat de la base. Au redéploiement, il obtient le sien sans que rien
+  // ne soit à faire à la main.
+  check('migration ancien → nouveau : émission automatique', res.primary.obtained === true);
+}
 finish();

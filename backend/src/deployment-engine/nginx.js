@@ -39,14 +39,23 @@ export function nginxEnabledPath(host) {
  * - domain (client)      : certificat dédié Let's Encrypt au nom de l'hôte.
  */
 export function certPaths(target) {
-  if (target.type === 'subdomain') {
-    return {
-      fullchain: `/etc/letsencrypt/live/${target.wildcardBase}/fullchain.pem`,
-      privkey: `/etc/letsencrypt/live/${target.wildcardBase}/privkey.pem`,
-      certName: target.wildcardBase,
-      shared: true,
-    };
-  }
+  /**
+   * UN CERTIFICAT PAR HÔTE — sans exception, y compris l'hôte principal.
+   *
+   * ── L'HYPOTHÈSE SUPPRIMÉE ─────────────────────────────────────────────────
+   * Un hôte reconnu comme sous-domaine d'une base gérée pointait ici vers le
+   * certificat `*.base`, supposé déjà émis. Cette hypothèse rendait un domaine
+   * VIERGE indéployable : le préflight exigeait un fichier que seul un
+   * déploiement antérieur aurait pu créer, et certbot refusait de l'émettre.
+   *
+   * Elle était de toute façon fausse pour la moitié des hôtes : un wildcard ne
+   * couvrant qu'un seul niveau, `manager.demo.base` et `api.demo.base`
+   * recevaient déjà un certificat dédié. Deux régimes coexistaient donc pour
+   * une même destination.
+   *
+   * Désormais : un certificat par hôte, émis par HTTP-01, sans prérequis. Le
+   * wildcard DNS suffit à résoudre tous les niveaux ; TLS n'en dépend plus.
+   */
   return {
     fullchain: `/etc/letsencrypt/live/${target.host}/fullchain.pem`,
     privkey: `/etc/letsencrypt/live/${target.host}/privkey.pem`,

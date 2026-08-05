@@ -1,15 +1,13 @@
 /**
  * Gestion des certificats TLS (Let's Encrypt via certbot).
  *
- * Hôte principal :
- *   - sous-domaine wildcard : le certificat *.base existe déjà, on le réutilise
- *     (aucune émission, le moteur ne touche jamais le DNS) ;
- *   - domaine client : certificat dédié via challenge HTTP-01 (webroot).
+ * UN CERTIFICAT PAR HÔTE, sans exception — principal comme dérivés.
  *
- * Hôtes DÉRIVÉS (`<sous-domaine>.<host>`, quel que soit le rôle qui les
- * déclare) : TOUJOURS un certificat DÉDIÉ — un wildcard *.base à un seul niveau
- * ne couvre pas deux niveaux. Émis/réutilisé via HTTP-01 (le DNS wildcard, lui,
- * résout bien plusieurs niveaux).
+ * Tous sont émis ou réutilisés via le challenge HTTP-01 (webroot). Le moteur ne
+ * dépend d'aucun certificat wildcard : celui-ci ne couvrirait qu'un seul niveau
+ * et ne pourrait de toute façon pas servir `manager.demo.base` ni
+ * `api.demo.base`. Le DNS wildcard, lui, résout bien tous les niveaux — c'est
+ * lui, et lui seul, qui rend un nouveau domaine déployable sans configuration.
  */
 import { certPaths, legacyDedicatedCertPaths } from './nginx.js';
 
@@ -50,21 +48,19 @@ export async function ensureCertificate(transport, target, { email, webroot = '/
   const paths = certPaths(target);
   let primary;
 
-  // Hôte principal : wildcard réutilisé (sous-domaine) ou cert dédié (domaine client).
-  if (target.type === 'subdomain') {
-    const check = await transport.exec(`test -f ${paths.fullchain} && echo OK || echo NO`);
-    if (!check.stdout.trim().endsWith('OK')) {
-      const { DeploymentError } = await import('./errors.js');
-      throw new DeploymentError(
-        'WILDCARD_CERT_MISSING',
-        `Le certificat wildcard *.${target.wildcardBase} est introuvable sur le VPS.`,
-        { step: 'certbot', details: { expected: paths.fullchain } }
-      );
-    }
-    primary = { host: target.host, obtained: false, reused: true, wildcard: true, certName: paths.certName };
-  } else {
-    primary = { ...(await ensureHostCert(transport, target.host, { email, webroot })), certName: paths.certName };
-  }
+  /**
+   * HÔTE PRINCIPAL — émis comme les autres, sans prérequis.
+   *
+   * Un hôte reconnu comme sous-domaine d'une base gérée exigeait ici un
+   * certificat `*.base` DÉJÀ présent sur le VPS, faute de quoi le déploiement
+   * s'arrêtait. Un domaine vierge était donc indéployable : le seul moyen
+   * d'obtenir ce fichier aurait été un déploiement antérieur.
+   *
+   * `ensureHostCert` réutilise un certificat existant et n'émet que s'il
+   * manque : un parc déjà déployé ne repasse pas par Let's Encrypt, et un
+   * domaine neuf s'installe seul.
+   */
+  primary = { ...(await ensureHostCert(transport, target.host, { email, webroot })), certName: paths.certName };
 
   // Chaque hôte dérivé (front sur sous-domaine, domaine API…) : certificat
   // DÉDIÉ, jamais couvert par un wildcard à un seul niveau.

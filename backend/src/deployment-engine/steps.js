@@ -49,7 +49,7 @@ export const RAW_TO_CANONICAL = {
   preflight: 'server.preflight',
   occupied: 'remote.safety',
   dns: 'dns.verify',
-  'wildcard-cert': 'https.configure',
+  'host-cert': 'https.configure',
   // Build local.
   build: 'artifact.build',
   // Pipeline distant.

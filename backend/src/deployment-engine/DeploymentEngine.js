@@ -38,7 +38,7 @@ import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity
  */
 const PREFLIGHT_CANONICAL = {
   'ssh.connect': ['ssh'],
-  'server.preflight': ['nginx', 'node', 'pm2', 'nginx-config', 'permissions', 'disk', 'mongo', 'certbot', 'wildcard-cert'],
+  'server.preflight': ['nginx', 'node', 'pm2', 'nginx-config', 'permissions', 'disk', 'mongo', 'certbot', 'host-cert'],
   'remote.safety': ['occupied'],
 };
 

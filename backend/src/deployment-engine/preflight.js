@@ -168,18 +168,33 @@ export async function runPreflight({
     })
   );
 
-  // 7. Certificat wildcard (sous-domaine géré) — indépendant du contrôle DNS.
-  if (target.type === 'subdomain') {
-    const wc = certPaths(target).fullchain;
-    const wcRes = await transport.exec(`test -f ${wc} && echo OK || echo NO`);
-    const wcPresent = wcRes.stdout.trim().endsWith('OK');
-    checks.push(
-      check('wildcard-cert', `Certificat wildcard *.${target.wildcardBase} présent`, wcPresent, {
-        required: true,
-        detail: wcPresent ? null : `attendu : ${wc}`,
-      })
-    );
-  }
+  /**
+   * 7. Certificat de l'hôte — INFORMATIF, jamais bloquant.
+   *
+   * ── LE DÉFAUT SUPPRIMÉ ────────────────────────────────────────────────────
+   * Ce contrôle exigeait (`required: true`) qu'un certificat `*.base` existe
+   * DÉJÀ sur le VPS. Un domaine vierge était donc impossible à déployer : le
+   * seul moyen d'obtenir ce fichier aurait été un déploiement antérieur, que
+   * ce même contrôle refusait. Un préflight ne doit pas exiger le résultat de
+   * l'étape qu'il précède.
+   *
+   * Ce qui compte AVANT d'émettre, c'est que l'émission soit possible : le
+   * nom résout (contrôle DNS), et le port 80 sert le challenge ACME
+   * (`/var/www/certbot`, vérifié ci-dessus par la configuration Nginx). La
+   * présence du certificat n'est plus qu'une information : elle dit si ce
+   * déploiement émettra ou réutilisera.
+   */
+  const certFile = certPaths(target).fullchain;
+  const certRes = await transport.exec(`test -f ${certFile} && echo OK || echo NO`);
+  const certPresent = certRes.stdout.trim().endsWith('OK');
+  checks.push(
+    check('host-cert', `Certificat de ${target.host}`, certPresent, {
+      required: false,
+      detail: certPresent
+        ? `présent : ${certFile}`
+        : `absent — il sera émis par HTTP-01 pendant ce déploiement (${certFile})`,
+    })
+  );
 
   // 8. Analyse DNS — SAUTÉE si une phase DNS dédiée s'en charge (fournisseur
   // Hostinger : le DNS est vérifié/créé par le moteur, pas ici).
