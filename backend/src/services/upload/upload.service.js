@@ -50,6 +50,54 @@ export async function processImage(buffer, { maxWidth = 1920, prefix = 'img' } =
 }
 
 /**
+ * RETIRE un média — sur l'autorité, et nulle part ailleurs.
+ *
+ * ── LE NOM EST VALIDÉ, PAS NETTOYÉ ──────────────────────────────────────────
+ * Le nom arrive d'une requête. Le « nettoyer » masquerait une tentative ; on
+ * exige donc exactement la forme que `processImage` produit — préfixe,
+ * horodatage, aléa, extension `.webp` — et rien d'autre. Aucun séparateur, aucun
+ * point isolé, aucune remontée possible.
+ *
+ * ── SUPPRIMER DEUX FOIS N’EST PAS UNE ERREUR ────────────────────────────────
+ * Un double clic, deux onglets, une reprise après coupure : le média peut
+ * avoir déjà disparu. On le dit (`alreadyGone`) plutôt que de lever — le
+ * résultat voulu est atteint dans les deux cas.
+ */
+const NOM_MEDIA = /^[a-z0-9_-]{1,32}-\d{10,}-\d{1,12}\.webp$/i;
+
+export async function deleteImage(filename) {
+  const nom = String(filename ||'').trim();
+  if (!NOM_MEDIA.test(nom)) {
+    const err = new Error("Nom de média invalide.");
+    err.status = 400;
+    err.code = "PANEL_MEDIA_INVALID_NAME";
+    throw err;
+  }
+
+  const dossier = uploadsDir();
+  const cible = path.join(dossier, nom);
+
+  // Ceinture et bretelles : après résolution, le chemin doit toujours être
+  // DANS le dossier des médias. Une regex peut être contournée un jour ; la
+  // comparaison de chemins résolus, non.
+  const racine = path.resolve(dossier);
+  if (path.dirname(path.resolve(cible)) !== racine) {
+    const err = new Error("Chemin de média hors du dossier autorisé.");
+    err.status = 400;
+    err.code = "PANEL_MEDIA_PATH_ESCAPE";
+    throw err;
+  }
+
+  try {
+    await fs.unlink(cible);
+    return { deleted: true, filename: nom, alreadyGone: false };
+  } catch (err) {
+    if (err?.code === "ENOENT") return { deleted: true, filename: nom, alreadyGone: true };
+    throw err;
+  }
+}
+
+/**
  * Rend une adresse publiable par les projets.
  *
  * ── L'ADRESSE VIENT DE LA CONFIGURATION EXISTANTE ─────────────────────────
@@ -75,4 +123,4 @@ export async function resolvePublicMediaUrl(valeur) {
   return `${base}${brut}`;
 }
 
-export default { processImage, resolvePublicMediaUrl, UPLOADS_PUBLIC_PREFIX, uploadsDir };
+export default { processImage, deleteImage, resolvePublicMediaUrl, UPLOADS_PUBLIC_PREFIX, uploadsDir };

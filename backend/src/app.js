@@ -4,6 +4,7 @@
 //   /health     vivacité publique
 import express from 'express';
 import { uploadsDir } from './services/upload/upload.service.js';
+import { resolveMediaAuthority, relayToAuthority } from './services/upload/mediaAuthority.js';
 import corsMiddleware from './middlewares/cors.middleware.js';
 import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -47,6 +48,39 @@ export function createApp() {
    * exiger un jeton le rendrait invisible aux visiteurs. Le dossier ne contient
    * que des images réécrites par sharp — jamais un fichier déposé tel quel.
    */
+  /**
+   * LECTURE D'UN MÉDIA — depuis l'autorité, jamais depuis un disque local.
+   *
+   * Une instance CLIENTE n'a pas les fichiers : les servir depuis son propre
+   * dossier renverrait un 404 pour un média qui existe pourtant. Elle relaie
+   * donc la lecture, et le navigateur ne s'adresse qu'à son propre backend —
+   * ni adresse d'autorité, ni jeton ne transitent par lui.
+   *
+   * L'autorité, elle, passe directement au service statique ci-dessous.
+   */
+  app.use('/uploads', async (req, res, next) => {
+    try {
+      const { authority, isAuthority } = await resolveMediaAuthority();
+      if (isAuthority || !authority) return next();
+
+      const amont = await relayToAuthority(authority, `/uploads${req.path}`, { method: 'GET' });
+      if (!amont.ok) return next();
+
+      const type = amont.headers.get('content-type');
+      if (type) res.type(type);
+      // Le cache suit celui de l’autorité : deux durées différentes feraient
+      // réapparaître une image remplacée sur une seule des deux surfaces.
+      const cache = amont.headers.get('cache-control');
+      if (cache) res.set('cache-control', cache);
+
+      return res.status(amont.status).send(Buffer.from(await amont.arrayBuffer()));
+    } catch {
+      // L'autorité injoignable ne doit pas casser la requête : on laisse le
+      // service statique répondre, puis le 404 canonique.
+      return next();
+    }
+  });
+
   app.use('/uploads', express.static(uploadsDir(), {
     maxAge: '7d',
     fallthrough: true,
