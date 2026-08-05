@@ -334,10 +334,15 @@ section('9. Les écrans obéissent à cette règle, et à elle seule');
     contrat.includes('Statut actuel : en attente de synchronisation'));
   check('l’équipe aussi', fiche.includes('Équipe actuelle : en attente de synchronisation'));
 
+  // Génération/environnement divergents : ni téléchargement, ni action
+  // distante. La règle est portée par la présentation centrale, et non plus
+  // recopiée dans chaque bloc JSX.
   check('les actions contractuelles suivent la même règle',
-    /actionsDistantesPossibles\(fraicheur\)/.test(contrat));
+    /!doc0\.showRemoteActions \? \(/.test(contrat)
+    && /raisonActionsIndisponibles\(fraicheur, project\)/.test(contrat));
   check('…et le téléchargement en dépend',
-    /doc\?\.downloadAvailable && joignable/.test(contrat));
+    /\{doc0\.showDownload \? \(/.test(contrat)
+    && /freshness: fraicheur,/.test(contrat));
 }
 
 await stopMemoryMongo();

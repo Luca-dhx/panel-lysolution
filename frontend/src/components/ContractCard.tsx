@@ -15,13 +15,14 @@ import { Card } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { DernierEtatConnu } from '@/components/FreshnessBanner';
-import { actionsDistantesPossibles, getProjectDataFreshness } from '@/lib/projectFreshness';
+import { getProjectDataFreshness } from '@/lib/projectFreshness';
 import {
   contractState,
   formatAmount,
   formatInterval,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
+import { getContractDocumentPresentation } from '@/lib/contractDocument';
 import type {
   BusinessContract, ContractOperation, PreviousContract, PublicProject,
 } from '@/types';
@@ -29,34 +30,26 @@ import type {
 const CANCEL_NOW = 'contract.cancel_now';
 
 /**
- * État du document, en français, sans jargon de signature électronique.
+ * POURQUOI les actions contractuelles sont indisponibles — la vraie raison.
  *
- * « Momentanément indisponible » n'est pas « non généré » : le document
- * existe, c'est le lien avec le projet qui est rompu. Confondre les deux ferait
- * croire qu'un contrat n'a jamais été produit alors qu'il attend simplement
- * que le site revienne.
+ * Un bouton grisé sans explication laisse chercher. Et « projet injoignable »
+ * sur un projet connecté dont la projection vient d'un autre environnement
+ * serait faux : la cause est la donnée, pas le réseau.
  */
-function documentState(
-  contract: BusinessContract,
-  joignable: boolean,
-): { label: string; tone: 'ok' | 'warn' | 'neutral' } {
-  const doc = contract.document;
-  // C'est le PROJET qui constate l'état, en croisant sa base et son stockage.
-  // Le Panel ne le déduit plus : il l'affiche.
-  if (!doc || doc.status === 'NONE') return { label: 'Non généré', tone: 'neutral' };
-  if (doc.status === 'UNAVAILABLE') return { label: 'Momentanément indisponible', tone: 'warn' };
-  if (!joignable) return { label: 'Momentanément indisponible', tone: 'warn' };
-  if (doc.status === 'SIGNED') return { label: 'Signé', tone: 'ok' };
-  /**
-   * SIGNATURE NON REQUISE — ce n'est pas une signature qui manque.
-   *
-   * Le projet dit lui-même si son parcours exige une signature. Sans cette
-   * information, un contrat volontairement dépourvu de procédure s'affichait
-   * « Généré, non signé » : une phrase qui fait chercher une signature absente.
-   */
-  if (doc.signatureRequired === false) return { label: 'Signature non requise', tone: 'ok' };
-  if (doc.status === 'PENDING_SIGNATURE') return { label: 'En attente de signature', tone: 'warn' };
-  return { label: 'Généré, non signé', tone: 'warn' };
+function raisonActionsIndisponibles(
+  fraicheur: ReturnType<typeof getProjectDataFreshness>,
+  project: PublicProject,
+): string {
+  if (project.pairing.status !== 'PAIRED') {
+    return 'Ce projet n’est pas relié : aucune action contractuelle n’est possible.';
+  }
+  if (fraicheur.isEnvironmentMismatch) {
+    return 'Les données affichées viennent de l’environnement précédent : les actions contractuelles sont suspendues tant que la synchronisation n’a pas rattrapé le nouvel environnement.';
+  }
+  if (fraicheur.isGenerationMismatch) {
+    return 'Les données affichées viennent d’une génération précédente du projet : les actions contractuelles sont suspendues.';
+  }
+  return 'Projet injoignable : les actions contractuelles sont indisponibles pour l’instant.';
 }
 
 export function ContractCard({
@@ -138,8 +131,21 @@ export function ContractCard({
    * alors que ce qu'on affiche décrit encore PROD : proposer un
    * téléchargement ou une résiliation sur cette base agirait à l'aveugle.
    */
-  const joignable = project.pairing.status === 'PAIRED' && actionsDistantesPossibles(fraicheur);
-  const etatDoc = documentState(contract, joignable);
+  /**
+   * L'ÉTAT DU DOCUMENT est calculé À PART, et il ne parle que du document.
+   *
+   * Cette carte concluait auparavant d'un axe sur l'autre : téléchargement
+   * impossible ⇒ « le lien avec le projet est rompu ». Sur un projet en ligne
+   * dont le fichier manque, l'écran affirmait donc « connecté » et « lien
+   * rompu » en même temps. La connexion, la fraîcheur, le contrat et le
+   * document sont désormais quatre axes lus séparément.
+   */
+  const doc0 = getContractDocumentPresentation({
+    document: contract.document,
+    contract,
+    freshness: fraicheur,
+    paired: project.pairing.status === 'PAIRED',
+  });
   const statut = contractState(contract.status);
 
   const telecharger = async () => {
@@ -208,14 +214,14 @@ export function ContractCard({
         <div>
           <dt>Document contractuel</dt>
           <dd>
-            <span className={toneBadgeClass(etatDoc.tone)}>{etatDoc.label}</span>
+            <span className={toneBadgeClass(doc0.badgeTone)}>{doc0.title}</span>
             {doc?.available && doc.signedAt ? ` · signé le ${formatDateTime(doc.signedAt)}` : ''}
             {doc?.pages ? ` · ${doc.pages} pages` : ''}
           </dd>
         </div>
       </dl>
 
-      {doc?.downloadAvailable && joignable ? (
+      {doc0.showDownload ? (
         <button
           type="button"
           className="btn btn-secondary btn-small"
@@ -224,22 +230,24 @@ export function ContractCard({
         >
           {telechargement ? 'Récupération…' : 'Télécharger le contrat'}
         </button>
-      ) : doc?.available ? (
-        <p className="muted">
-          Le document existe, mais le lien avec le projet est rompu : il sera de nouveau
-          téléchargeable dès le retour du site.
-        </p>
-      ) : (
-        <p className="muted">
-          Le projet n’a publié aucun document. Il reste consultable dans son Manager.
-        </p>
-      )}
+      ) : doc0.message ? (
+        <p className="muted">{doc0.message}</p>
+      ) : null}
 
       {message ? <div className="alert alert-success">{message}</div> : null}
       {erreur ? <div className="alert alert-error">{erreur}</div> : null}
 
       {/* ── RÉSILIATION ─────────────────────────────────────────────────── */}
-      {!reachable ? (
+      {/*
+        Deux conditions, et elles ne se remplacent pas : le projet doit répondre
+        (`reachable`, constaté à l'appel), ET ce qu'on affiche doit décrire ce
+        projet-ci maintenant (`showRemoteActions` : bon environnement, bonne
+        génération, connexion vivante). Agir sur la foi d'une projection d'un
+        autre monde reviendrait à résilier à l'aveugle.
+      */}
+      {!doc0.showRemoteActions ? (
+        <p className="muted">{raisonActionsIndisponibles(fraicheur, project)}</p>
+      ) : !reachable ? (
         <p className="muted">
           Projet injoignable : les actions contractuelles sont indisponibles pour l’instant.
         </p>
@@ -363,10 +371,6 @@ function ContractHistory({
   const [erreur, setErreur] = useState<string | null>(null);
   if (contracts.length === 0) return null;
 
-  // Le document d'un contrat passé se récupère CHEZ LE PROJET : sans lien
-  // vivant, le bouton mentirait.
-  const joignable = project.pairing.status === 'PAIRED' && actionsDistantesPossibles(fraicheur);
-
   const telecharger = async (nom: string) => {
     setErreur(null);
     setTelechargement(true);
@@ -387,6 +391,14 @@ function ContractHistory({
           const etat = contractState(c.status);
           const deplie = ouvert === c.sourceContractId;
           const doc = c.document;
+          // Même calcul que la carte du contrat courant : un contrat historique
+          // n'autorise pas plus l'écran à confondre document et connexion.
+          const docEtat = getContractDocumentPresentation({
+            document: doc,
+            contract: c,
+            freshness: fraicheur,
+            paired: project.pairing.status === 'PAIRED',
+          });
           return (
             <li key={c.sourceContractId} className="contract-history-item">
               <div className="contract-history-line">
@@ -441,20 +453,18 @@ function ContractHistory({
                     ) : null}
                   </dl>
 
-                  {doc?.downloadAvailable && joignable ? (
+                  {docEtat.showDownload ? (
                     <button
                       type="button"
                       className="btn btn-secondary btn-small"
                       disabled={telechargement}
-                      onClick={() => void telecharger(doc.filename ?? 'contrat.pdf')}
+                      onClick={() => void telecharger(doc?.filename ?? 'contrat.pdf')}
                     >
                       {telechargement ? 'Téléchargement…' : 'Télécharger le contrat'}
                     </button>
-                  ) : doc?.available ? (
-                    <p className="muted">Document momentanément indisponible.</p>
-                  ) : (
-                    <p className="muted">Aucun document n’a été publié pour ce contrat.</p>
-                  )}
+                  ) : docEtat.message ? (
+                    <p className="muted">{docEtat.message}</p>
+                  ) : null}
                 </div>
               ) : null}
             </li>
