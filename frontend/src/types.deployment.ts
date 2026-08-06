@@ -227,10 +227,38 @@ export interface DeploymentOverview {
   recentRuns: RunRow[];
 }
 
+/**
+ * RÉSERVATION D'UN PORT — le port n'est plus un entier sur la fiche, c'est une
+ * ressource du SERVEUR avec un propriétaire, un état et une vérification.
+ *
+ * « Réservé, jamais vérifié » n'est pas « actif, PID connu, socket contrôlée » :
+ * confondre les deux est exactement ce qui a permis d'attribuer un port qu'un
+ * ancien service détenait encore.
+ */
+export interface PortReservation {
+  port: number;
+  serverKey: string;
+  host: string | null;
+  deploymentTargetId: string | null;
+  projectIdentityId: string | null;
+  environment: 'TEST' | 'PROD';
+  serviceType: string;
+  status: 'RESERVED' | 'ACTIVE' | 'RELEASING' | 'RELEASED';
+  reservedAt: string;
+  activatedAt: string | null;
+  releasedAt: string | null;
+  processName: string | null;
+  pid: number | null;
+  lastVerifiedAt: string | null;
+  lastConflict: Record<string, unknown> | null;
+}
+
 export interface TargetDetail {
   target: DeploymentTarget;
   runs: RunRow[];
   activeRun: DeploymentRun | null;
+  /** Ce que le registre des ports dit de cette destination. */
+  portReservation: PortReservation | null;
 }
 
 /** Ce que le Panel sait de lui-même — affiché avant de configurer. */

@@ -6,6 +6,7 @@
  * dédié. On (re)démarre l'app, on persiste la liste PM2 (survie au reboot).
  */
 import { serviceName } from './config/project.profile.js';
+import { assertPortAvailableFor, readPm2Processes, verifyServiceHealth } from './ports.js';
 
 /** Nom PM2 déterministe d'une cible. */
 export function pm2AppName(host) {
@@ -62,12 +63,32 @@ export function readPm2Location(jlistStdout, name) {
  * @param {'PROD'|'TEST'} args.env  ENV applicatif (PROD par défaut en déploiement).
  * @returns {Promise<{name:string, action:'start'|'reload'|'recreate', previousPath:string|null}>}
  */
-export async function restartBackend(transport, { host, backendDir, port, env = 'PROD' }) {
+export async function restartBackend(transport, { host, backendDir, port, env = 'PROD', health = {} }) {
   const name = pm2AppName(host);
   const attendu = `${backendDir}/src/server.js`;
 
+  /**
+   * COLLISION DÉTECTÉE AVANT `pm2 start`, jamais après.
+   *
+   * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────────
+   * Rien ne vérifiait, avant de démarrer, que le port était disponible. Quand
+   * un ancien service oublié le détenait encore — une fiche supprimée sans
+   * retrait —, le nouveau process bouclait sur EADDRINUSE plus de 7 000 fois
+   * pendant que Nginx envoyait le trafic à l'ancien code. Personne n'était
+   * prévenu : `pm2 start` rendait 0.
+   *
+   * On regarde donc AVANT, et on s'arrête sur un port qui n'est pas à nous —
+   * sans jamais tuer son détenteur : un programme inconnu sur la plage
+   * applicative peut être un service légitime.
+   */
+  await assertPortAvailableFor(transport, { port, host, expectedPm2Name: name });
+
   const list = await transport.exec(`pm2 jlist 2>/dev/null || echo '[]'`);
   const emplacement = readPm2Location(list.stdout, name);
+  // Compteur de redémarrages AVANT l'opération : seuls ceux survenus DEPUIS
+  // prouvent une boucle. Un compteur élevé peut n'être qu'un historique.
+  const avant = (await readPm2Processes(transport)).processes.find((p) => p.name === name);
+  const baselineRestarts = avant?.restarts ?? null;
 
   // Le chemin mémorisé est-il bien celui où l'on vient d'écrire ? Les deux
   // formes sont acceptées : PM2 normalise différemment selon les versions.
@@ -108,6 +129,13 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
    * C'est précisément la vérification qui manquait : le rechargement rendait 0
    * en relançant un autre fichier. Un déploiement ne peut pas se déclarer
    * réussi sans avoir constaté QUEL fichier tourne.
+   *
+   * ── CE QUI NE SUFFISAIT PAS ───────────────────────────────────────────────
+   * Constater le chemin ne suffit pas. Un process qui boucle sur EADDRINUSE
+   * présente le BON chemin : la garde passait, le déploiement se déclarait
+   * vert, et le service n'a jamais servi une requête. On prouve donc aussi
+   * qu'il est en ligne, stable, qu'il a un PID, qu'il écoute son port — et que
+   * la socket appartient bien à CE PID.
    */
   const apres = await transport.exec(`pm2 jlist 2>/dev/null || echo '[]'`);
   const final = readPm2Location(apres.stdout, name);
@@ -125,8 +153,27 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
     });
   }
 
+  const sante = await verifyServiceHealth(transport, {
+    name,
+    port,
+    expectedExecPath: attendu,
+    expectedCwd: backendDir,
+    baselineRestarts: action === 'reload' ? baselineRestarts : null,
+    settleMs: health.settleMs,
+  });
+
   await transport.exec('pm2 save');
-  return { name, action, previousPath: emplacement?.execPath ?? null };
+  return {
+    name,
+    action,
+    previousPath: emplacement?.execPath ?? null,
+    port,
+    pid: sante.pid,
+    status: sante.status,
+    restarts: sante.restarts,
+    portListened: sante.portListened,
+    portOwnedByService: sante.portOwnedByService,
+  };
 }
 
 export default { restartBackend, pm2AppName, readPm2Location };

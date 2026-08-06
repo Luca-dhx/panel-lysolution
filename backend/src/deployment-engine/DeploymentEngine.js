@@ -31,6 +31,7 @@ import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { runLocalPreflight } from './localPreflight.js';
 import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
 import { inspectDestination, removeQuarantine, runDeprovision } from './deprovision.js';
+import { probePort, readPortLandscape } from './ports.js';
 
 /**
  * Regroupement des contrôles préflight en étapes canoniques. La vérification DNS
@@ -114,6 +115,32 @@ export class DeploymentEngine {
         env: options.env || 'PROD',
         onStep,
       });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * PAYSAGE DES PORTS d'un serveur — lecture seule, sur les trois sources.
+   *
+   * Ce que le SERVEUR dit : sockets réellement en écoute et process PM2
+   * déclarés, avec le port de chacun. Le registre de l'application y ajoute
+   * ses réservations — le moteur, lui, n'a pas de base et ne les connaît pas.
+   */
+  async readPorts({ sessionId, transport } = {}) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      return await readPortLandscape(tx);
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /** QUI détient un port précis, d'après le serveur. */
+  async probePort({ sessionId, port, transport } = {}) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      return await probePort(tx, port);
     } finally {
       if (ephemeral) await tx.close?.();
     }

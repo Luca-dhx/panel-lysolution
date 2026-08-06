@@ -61,18 +61,35 @@ export class FakeTransport extends Transport {
    * exactement le défaut observé en production, où deux déploiements verts
    * ont laissé tourner un backend vieux de plusieurs commits.
    *
-   * Ce double modélise donc le strict nécessaire : `start` enregistre un
-   * chemin, `delete` l'oublie, `reload` ne change RIEN, `jlist` le rend.
-   * Une règle explicite passée par `.on()` reste prioritaire.
+   * ── CE QU'IL MODÉLISE EN PLUS DEPUIS LE REGISTRE DES PORTS ────────────────
+   * Un double qui ne rendait qu'un chemin ne pouvait pas non plus révéler
+   * qu'un service « démarré » boucle sur EADDRINUSE : il n'avait ni statut,
+   * ni PID, ni compteur de redémarrages, ni port. Or c'est exactement ce que
+   * le moteur doit désormais PROUVER avant de déclarer un service démarré.
+   *
+   * Il modélise donc : `start` enregistre chemin, port, PID et statut ;
+   * `delete` oublie tout ; `reload` ne change RIEN au chemin ; `jlist` rend
+   * l'ensemble. Une règle explicite passée par `.on()` reste prioritaire.
    */
   _pm2(command) {
     if (!command.includes('pm2')) return null;
 
     if (command.includes('pm2 jlist')) {
-      const liste = [...this.pm2.entries()].map(([name, execPath]) => ({
-        name,
-        pm2_env: { pm_exec_path: execPath, pm_cwd: execPath.replace(/\/src\/server\.js$/, '') },
-      }));
+      const liste = [...this.pm2.entries()].map(([name, etat]) => {
+        const p = typeof etat === 'string' ? { execPath: etat } : etat;
+        return {
+          name,
+          pid: p.pid ?? 1000 + name.length,
+          pm2_env: {
+            pm_exec_path: p.execPath,
+            pm_cwd: p.cwd ?? String(p.execPath).replace(/\/src\/server\.js$/, ''),
+            status: p.status ?? 'online',
+            restart_time: p.restarts ?? 0,
+            unstable_restarts: p.unstableRestarts ?? 0,
+            env: p.port ? { PORT: String(p.port) } : {},
+          },
+        };
+      });
       return { code: 0, stdout: JSON.stringify(liste), stderr: '' };
     }
 
@@ -80,7 +97,17 @@ export class FakeTransport extends Transport {
     if (suppression) this.pm2.delete(suppression[1]);
 
     const demarrage = command.match(/cd (\S+) &&[\s\S]*pm2 start (\S+) --name (\S+)/);
-    if (demarrage) this.pm2.set(demarrage[3], `${demarrage[1]}/${demarrage[2]}`);
+    if (demarrage) {
+      const port = command.match(/PORT=(\d+)/);
+      this.pm2.set(demarrage[3], {
+        execPath: `${demarrage[1]}/${demarrage[2]}`,
+        cwd: demarrage[1],
+        status: 'online',
+        restarts: 0,
+        pid: 1000 + demarrage[3].length,
+        port: port ? Number(port[1]) : null,
+      });
+    }
 
     // `reload` : volontairement SANS effet sur le chemin mémorisé.
     return { code: 0, stdout: '', stderr: '' };

@@ -200,9 +200,18 @@ targetSchema.index({ environment: 1 });
  * cela ; un index unique classique disait autre chose et interdisait de
  * redéployer un domaine qu'on venait de libérer.
  */
+// Le filtre s'énonce en `$in` et non en `$ne` : MongoDB refuse une négation
+// dans un index partiel — un `$ne` fait échouer la construction en silence, et
+// l'index n'existe alors tout simplement pas. Énumérer les états VIVANTS dit
+// d'ailleurs mieux la règle qu'une exclusion.
 targetSchema.index(
   { host: 1 },
-  { unique: true, partialFilterExpression: { lifecycleStatus: { $ne: 'DELETED' } } },
+  {
+    unique: true,
+    partialFilterExpression: {
+      lifecycleStatus: { $in: ['ACTIVE', 'DEPROVISIONING', 'EMPTY', 'DEPROVISION_FAILED'] },
+    },
+  },
 );
 
 /** Historique borné — il ne doit pas croître sans fin. */

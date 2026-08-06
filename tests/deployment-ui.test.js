@@ -96,13 +96,26 @@ section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite'
   check('le port SSH est la convention standard', created.sshPort === 22);
   check('l’utilisateur du serveur est pré-rempli', created.sshUser === 'root');
 
-  // Deuxième destination : le port suivant, jamais le même.
+  // ── LA PORTÉE D'UN PORT EST LE SERVEUR (LOT 9) ────────────────────────
+  // Deux destinations sur le MÊME serveur ne partagent jamais un port. Sur
+  // deux serveurs différents, en revanche, le même numéro est parfaitement
+  // sain : un port est une ressource de la machine, pas du Panel. L'ancienne
+  // règle « le plus haut attribué + 1 », globale, interdisait des
+  // configurations correctes tout en ne protégeant de rien — elle ne
+  // regardait ni PM2 ni les sockets réelles.
+  const memeServeur = await targets.createTarget({
+    name: 'Voisine', url: 'https://voisine.exemple.com', environment: 'TEST',
+    sshHost: '203.0.113.10',
+  });
+  check('deux destinations d’un MÊME serveur n’ont jamais le même port',
+    memeServeur.backendPort !== created.backendPort);
+
   const second = await targets.createTarget({
     name: 'Production', url: 'https://panel.exemple.com', environment: 'PROD',
     sshHost: '203.0.113.11',
   });
-  check('deux destinations n’ont JAMAIS le même port',
-    second.backendPort === created.backendPort + 1);
+  check('…et un autre serveur peut réutiliser le même numéro sans conflit',
+    second.backendPort === created.backendPort);
 
   // L'origine de chaque valeur est affichable : la déduction n'est pas magique.
   const labels = created.derived.map((d) => d.label);
@@ -139,7 +152,7 @@ section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite'
   // Nettoyage du jeu d'essai : on passe par le modèle, pas par le service —
   // c'est un ménage de test, pas une opération du Panel.
   await PanelDeploymentTarget.deleteMany({
-    targetId: { $in: [second.targetId, forced.targetId] },
+    targetId: { $in: [second.targetId, forced.targetId, memeServeur.targetId] },
   });
 }
 

@@ -24,6 +24,7 @@ import {
 import {
   LIFECYCLE, assertDeletable, assertDeployable, assertDeprovisionable, beginDeprovision,
 } from '../services/deployment/destinationLifecycle.service.js';
+import { describeReservation, reservationFor } from '../services/deployment/portRegistry.service.js';
 import PanelDeploymentTarget from '../models/PanelDeploymentTarget.model.js';
 import {
   activeRunFor, createRun, getRunOrThrow, listRuns, readEventsSince,
@@ -50,11 +51,18 @@ export async function overview(_req, res) {
 
 export async function detail(req, res) {
   const target = await getTargetOrThrow(req.params.targetId);
-  const [runs, active] = await Promise.all([
+  const [runs, active, reservation] = await Promise.all([
     listRuns({ targetId: target.targetId, limit: 30 }),
     activeRunFor(target.targetId),
+    // Le port n'est plus un simple entier sur la fiche : c'est une RESSOURCE
+    // du serveur, avec un propriétaire, un état et une date de vérification.
+    // L'écran doit pouvoir le dire — « réservé mais jamais vérifié » n'est pas
+    // la même chose qu'« actif, PID connu, socket vérifiée ».
+    reservationFor(target.targetId).then(describeReservation),
   ]);
-  return ok(res, { target: describeTarget(target), runs, activeRun: active });
+  return ok(res, {
+    target: describeTarget(target), runs, activeRun: active, portReservation: reservation,
+  });
 }
 
 export async function create(req, res) {

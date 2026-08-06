@@ -189,6 +189,28 @@ export function DeploymentTargetPage() {
             </li>
           ))}
         </ul>
+        {/* — LE PORT, TEL QUE LE REGISTRE LE CONNAÎT ———————————
+            Le port n'est plus un entier sur la fiche : c'est une ressource du
+            serveur, avec un propriétaire, un état et une date de vérification.
+            « Réservé, jamais vérifié » n'est pas « actif, PID connu, socket
+            contrôlée » — et c'est exactement cette confusion qui a permis
+            d'attribuer un port qu'un ancien service détenait encore. */}
+        {data.portReservation ? (
+          <DetailList
+            items={[
+              ['Port réservé', <code key="p">{data.portReservation.port}</code>],
+              ['Serveur propriétaire', <code key="s">{data.portReservation.serverKey}</code>],
+              ['État de la réservation', portStatusLabel(data.portReservation.status)],
+              ['Process détenteur', data.portReservation.processName
+                ? <code key="pn">{data.portReservation.processName}{data.portReservation.pid ? ` (pid ${data.portReservation.pid})` : ''}</code>
+                : <span className="muted">aucun — rien ne tourne encore</span>],
+              ['Dernière vérification sur le serveur', data.portReservation.lastVerifiedAt
+                ? data.portReservation.lastVerifiedAt.slice(0, 16).replace('T', ' ')
+                : <span className="muted">jamais — sera vérifié avant le prochain démarrage</span>],
+            ]}
+          />
+        ) : null}
+
         <p className="muted read-only-note">
           Ces valeurs viennent du profil de déploiement du Panel et des
           conventions du moteur — le même moteur que celui des projets
@@ -436,6 +458,23 @@ export function DeploymentTargetPage() {
       </Disclosure>
     </div>
   );
+}
+
+/**
+ * État d'une réservation de port, dit en clair.
+ *
+ * Les quatre états ne se valent pas : « en cours de libération » signifie que
+ * le port reste RETENU tant que sa liberté n'a pas été constatée sur le
+ * serveur. C'est cette nuance, absente d'un simple entier, qui empêche de
+ * réattribuer un port qu'un ancien service détient encore.
+ */
+function portStatusLabel(status: string): string {
+  return {
+    RESERVED: 'réservé — aucun service ne le détient encore',
+    ACTIVE: 'actif — un process connu le détient, vérifié',
+    RELEASING: 'en cours de libération — toujours retenu, faute de preuve',
+    RELEASED: 'rendu à la plage libre',
+  }[status] ?? status;
 }
 
 /* -------------------------------------------------------------------------- */

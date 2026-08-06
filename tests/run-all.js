@@ -1,4 +1,4 @@
-// Enchaîne toute la suite (équivalent du `npm test` chaîné du projet modèle).
+﻿// Enchaîne toute la suite (équivalent du `npm test` chaîné du projet modèle).
 // Chaque test est un processus séparé : isolation totale des stores en RAM.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
@@ -44,6 +44,7 @@ const TESTS = [
   'spec-drift.check.mjs',
   'deployment-rollback.test.js',
   'deployment-deprovision.test.js',
+  'deployment-ports.test.js',
   'deployment-ui.test.js',
   'engine-governance.test.js',
   'duplication-e2e.test.js',

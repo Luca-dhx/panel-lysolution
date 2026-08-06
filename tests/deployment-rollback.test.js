@@ -68,12 +68,20 @@ function makeTransport({ releases = {}, current = null, healthyReleases = null, 
        * ensuite cette liste pour PROUVER qu'il exécute bien le fichier
        * déployé. Un double qui n'enregistre rien simule un PM2 impossible.
        */
+      // Le double déclare aussi STATUT, PID, redémarrages et port : le moteur
+      // ne se contente plus du chemin exécuté pour dire qu'un service est
+      // démarré. Un process qui boucle sur EADDRINUSE présentait le BON
+      // chemin — c'est précisément ce que le contrôle doit attraper.
       if (/pm2 jlist/.test(cmd)) {
         const liste = state.pm2Path === null ? [] : [{
           name: pm2AppName('site.exemple.com'),
+          pid: 4242,
           pm2_env: {
             pm_exec_path: state.pm2Path,
             pm_cwd: state.pm2Path.replace(/\/src\/server\.js$/, ''),
+            status: 'online',
+            restart_time: 0,
+            env: { PORT: '4100' },
           },
         }];
         return { code: 0, stdout: JSON.stringify(liste), stderr: '' };

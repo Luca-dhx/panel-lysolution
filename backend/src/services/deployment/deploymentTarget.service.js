@@ -21,6 +21,9 @@ import { resolveBackendUrl } from '../network/networkConfig.service.js';
 import {
   LIFECYCLE, assertDeletable, lifecycleLabel, softDelete, statusOf,
 } from './destinationLifecycle.service.js';
+import {
+  moveReservationToServer, reservePort, rollbackReservation,
+} from './portRegistry.service.js';
 
 /* -------------------------------------------------------------------------- */
 /*  LECTURE                                                                   */
@@ -145,7 +148,7 @@ export function describeDerivation(target) {
     {
       label: 'Port local du backend',
       value: String(target.backendPort),
-      from: 'attribué automatiquement (plus haut port utilisé + 1)',
+      from: 'réservé par le registre des ports (base + PM2 + sockets réelles du serveur)',
     },
     {
       label: 'Service PM2',
@@ -204,28 +207,21 @@ const SSH_PORT = 22;
 const DEFAULT_SSH_USER = 'root';
 
 /**
- * Premier port applicatif attribué. Au-dessus des ports réservés, et
- * au-dessus du 4100 utilisé en développement local — pour qu'une destination
- * ne réserve jamais le port du Panel de l'opérateur.
- */
-const BASE_BACKEND_PORT = 5100;
-
-/**
- * ALLOCATION DU PORT — même convention que SB Auto 06 : le plus haut déjà
- * attribué, plus un.
+ * ── L'ALLOCATION N'EST PLUS ICI (LOT 9) ────────────────────────────────────
  *
- * C'est volontairement simple et monotone : deux destinations n'ont jamais
- * le même port, et un port libéré n'est pas réattribué. Réutiliser un port
- * libéré ferait qu'un ancien service PM2 oublié capterait le trafic d'une
- * nouvelle destination.
+ * Ce fichier attribuait le port : « le plus haut déjà attribué en base, plus
+ * un ». Cette règle ne consultait qu'une source — les fiches du Panel — et
+ * ignorait donc les process encore en ligne dont la fiche avait disparu, les
+ * sockets réellement ouvertes, et les services système.
+ *
+ * C'est ainsi que le port 5100, toujours détenu par l'ancien backend de
+ * `panel.lycarz.com`, a été réattribué : le nouveau service a bouclé sur
+ * EADDRINUSE plus de 7 000 fois.
+ *
+ * L'autorité appartient désormais à `portRegistry.service.js`, qui croise la
+ * base, PM2 et les sockets réelles, réserve transactionnellement, vérifie de
+ * nouveau avant démarrage et n'active qu'après preuve.
  */
-async function allocateBackendPort() {
-  const highest = await PanelDeploymentTarget.findOne()
-    .sort({ backendPort: -1 })
-    .select('backendPort')
-    .lean();
-  return highest ? highest.backendPort + 1 : BASE_BACKEND_PORT;
-}
 
 /**
  * Contact Let's Encrypt — pris sur l'ENTREPRISE, jamais demandé.
@@ -305,9 +301,10 @@ async function normalize(input, { existing = null } = {}) {
     // ── CONVENTIONS ─────────────────────────────────────────────────────
     sshPort: SSH_PORT,
     remoteRoot: existing?.remoteRoot ?? DEFAULT_REMOTE_ROOT,
-    // Le port n'est alloué qu'à la création : le modifier casserait le
-    // service PM2 et la configuration nginx déjà en place.
-    backendPort: existing?.backendPort ?? await allocateBackendPort(),
+    // Le port n'est attribué qu'à la CRÉATION, par le registre — et il ne
+    // change jamais ensuite : le modifier casserait le service PM2 et la
+    // configuration nginx déjà en place, qui le référencent tous les deux.
+    backendPort: existing?.backendPort ?? null,
     certbotEmail: existing?.certbotEmail ?? await resolveCertbotEmail(),
     // Aucune variable technique ne vient du frontend : le profil déclare ce
     // qui est obligatoire, et le moteur construit le .env distant.
@@ -345,16 +342,46 @@ export async function createTarget(input, actor = {}) {
       `Destination refusée parce que l’hôte « ${value.host} » est déjà déclaré.`);
   }
   const at = nowIso();
-  const doc = await PanelDeploymentTarget.create({
-    ...value,
-    targetId: randomUUID(),
-    state: 'NEW',
-    lifecycleStatus: LIFECYCLE.ACTIVE,
-    createdAt: at,
-    updatedAt: at,
-    createdBy: actor.userId ?? null,
+  const targetId = randomUUID();
+
+  /**
+   * LE PORT VIENT DU REGISTRE, et il est réservé AVANT que la fiche existe.
+   *
+   * L'ordre compte : réserver après création laisserait exister, l'espace
+   * d'une erreur, une destination sans port — donc indéployable et muette sur
+   * la raison. Réserver avant, et annuler la réservation si la création
+   * échoue, garantit qu'une fiche a toujours un port et qu'aucun port n'est
+   * retenu par une fiche inexistante.
+   */
+  const reservation = await reservePort({
+    target: {
+      targetId,
+      sshHost: value.sshHost,
+      environment: value.environment,
+      host: value.host,
+      projectIdentityId: null,
+    },
   });
-  return describeTarget(doc.toObject());
+
+  try {
+    const doc = await PanelDeploymentTarget.create({
+      ...value,
+      backendPort: reservation.port,
+      targetId,
+      state: 'NEW',
+      lifecycleStatus: LIFECYCLE.ACTIVE,
+      createdAt: at,
+      updatedAt: at,
+      createdBy: actor.userId ?? null,
+    });
+    return describeTarget(doc.toObject());
+  } catch (err) {
+    // ROLLBACK : sans lui, chaque tentative ratée retiendrait un port de plus,
+    // et la plage applicative se viderait sans que personne ne comprenne.
+    await rollbackReservation(targetId, { reason: `création refusée : ${err.message}` })
+      .catch(() => {});
+    throw err;
+  }
 }
 
 export async function updateTarget(targetId, input, actor = {}) {
@@ -375,6 +402,15 @@ export async function updateTarget(targetId, input, actor = {}) {
     { targetId },
     { $set: { ...value, updatedAt: nowIso(), createdBy: existing.createdBy ?? actor.userId ?? null } },
   );
+
+  // CHANGEMENT DE SERVEUR : le port suit la destination — le changer casserait
+  // Nginx et PM2 s'ils sont déjà posés. Mais la réservation cesse d'être
+  // vérifiée : le nouveau serveur n'a jamais été consulté, et c'est le
+  // contrôle d'avant démarrage qui tranchera.
+  if (value.sshHost && value.sshHost !== existing.sshHost) {
+    await moveReservationToServer(targetId, value.sshHost);
+  }
+
   return describeTarget(await getTargetOrThrow(targetId));
 }
 

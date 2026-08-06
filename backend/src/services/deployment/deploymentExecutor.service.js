@@ -237,16 +237,34 @@ async function simulation({ engine, target, sessionId, step, log }) {
  */
 async function deployWithFullReport({ engine, target, sessionId, step, log, user, runId = null }) {
   const parsedTarget = engine.parseUrl(target.url);
+  const ports = await import('./portRegistry.service.js');
+
+  /**
+   * LE PORT VIENT DU REGISTRE, pas de la fiche.
+   *
+   * La fiche porte une valeur historique ; le registre porte la RÉSERVATION.
+   * Les deux coïncident presque toujours — mais « presque » est exactement ce
+   * qui a permis à deux destinations de viser le même port. Une destination
+   * déjà réservée retrouve le sien (redéploiement = même port) ; une
+   * destination vidée dont le port a été rendu en obtient un vérifié.
+   */
+  const reservation = await ports.reservePort({ target });
+  const backendPort = reservation.port;
+  if (backendPort !== target.backendPort) {
+    log(`Port réattribué par le registre : ${target.backendPort} → ${backendPort}.`, 'WARNING');
+    const PanelDeploymentTarget = (await import('../../models/PanelDeploymentTarget.model.js')).default;
+    await PanelDeploymentTarget.updateOne({ targetId: target.targetId }, { $set: { backendPort } });
+  }
   // `buildRemoteEnv` retourne une ENVELOPPE { remoteEnv, dbName, env, sourcePath } :
   // seul `.remoteEnv` porte les variables. Étaler l'enveloppe n'envoyait aucune
   // variable sur le VPS — uniquement `remoteEnv=[object Object]`.
   const remoteEnv = {
     ...buildRemoteEnv(parsedTarget, { env: target.environment }).remoteEnv,
-    PORT: String(target.backendPort),
+    PORT: String(backendPort),
     ...(target.extraEnv ?? {}),
   };
 
-  log(`Déploiement de ${target.url} en ${target.environment} (port ${target.backendPort}).`);
+  log(`Déploiement de ${target.url} en ${target.environment} (port ${backendPort}).`);
 
   /**
    * IDENTITÉ DU PROJET DÉPLOYÉ — et, par elle, le droit de récupérer les
@@ -300,7 +318,7 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
     user,
     options: {
       remoteRoot: target.remoteRoot,
-      backendPort: target.backendPort,
+      backendPort,
       env: target.environment,
       email: target.certbotEmail ?? undefined,
       remoteEnv,
@@ -309,6 +327,30 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
       sshHost: target.sshHost,
       sshUser: target.sshUser,
       operationType: 'DEPLOYMENT',
+
+      /**
+       * REGISTRE DES PORTS — opposé juste AVANT le démarrage du service.
+       *
+       * Le moteur sait ce que le serveur dit ; il ignore quelle autre
+       * destination du Panel a réservé ce port. C'est cette information qui
+       * manquait le jour où 5100 a été réattribué alors qu'un ancien backend
+       * le détenait encore.
+       */
+      beforeServiceStart: async ({ transport, pm2Name }) => {
+        const verdict = await ports.verifyBeforeStart({ target, transport, expectedPm2Name: pm2Name });
+        log(`Port ${verdict.port} vérifié juste avant démarrage : `
+          + `${verdict.free ? 'libre' : 'détenu par notre propre service'}.`);
+      },
+
+      /**
+       * ACTIVATION — après la preuve rendue par le moteur : process en ligne,
+       * stable, PID connu, port écouté par CE pid. Un port n'est déclaré
+       * « actif » qu'à ce moment, jamais sur un `pm2 start` qui rend 0.
+       */
+      afterServiceStarted: async (info) => {
+        await ports.activateReservation(target.targetId, { pid: info.pid ?? null, processName: info.name ?? null });
+        log(`Service « ${info.name} » actif (pid ${info.pid ?? '?'}) sur le port ${info.port}.`);
+      },
       // Écrit les URLs publiques dans le SystemConfiguration de la DESTINATION
       // (comme SB Auto). Sans cette capacité, l'étape `runtime.sync` se déclarait
       // réussie sans rien faire — une étape verte sans action.
@@ -525,6 +567,13 @@ async function rollback({ engine, target, sessionId, releaseId, step, log }) {
  */
 async function deprovision({ engine, target, sessionId, step, log, runId, options = {} }) {
   const lifecycle = await import('./destinationLifecycle.service.js');
+  const ports = await import('./portRegistry.service.js');
+
+  // Le port entre en LIBÉRATION dès le début du retrait — il reste RETENU.
+  // Entre l'arrêt du service et la preuve que le port est libre, le déclarer
+  // disponible serait un mensonge, et l'attribuer à une autre destination
+  // reproduirait exactement l'incident d'origine.
+  await ports.beginRelease(target.targetId);
 
   log(`Retrait de ${target.url} (port ${target.backendPort}, serveur ${target.sshHost}).`);
   if (options.removePersistentData === true) {
@@ -565,6 +614,12 @@ async function deprovision({ engine, target, sessionId, step, log, runId, option
       runId,
       error: { code: result.error?.code, message: result.error?.message, step: result.failedStep },
     });
+    // Le port N'EST PAS rendu : le retrait n'a pas prouvé qu'il était libre.
+    // Il reste `RELEASING`, donc indisponible pour toute autre destination.
+    await ports.releasePort(target.targetId, {
+      verifiedFree: false,
+      reason: `retrait interrompu à l’étape ${result.failedStep ?? 'inconnue'}`,
+    });
     return {
       status: 'error',
       summary: `Retrait interrompu à l’étape « ${result.failedStep ?? 'inconnue'} » : ${result.error?.message ?? 'échec.'} `
@@ -579,6 +634,17 @@ async function deprovision({ engine, target, sessionId, step, log, runId, option
   }
 
   await lifecycle.markEmpty(target.targetId, { runId, quarantine: true });
+
+  /**
+   * LE PORT EST RENDU — parce qu'il a été CONSTATÉ libre.
+   *
+   * L'étape `deprovision.port.release` du moteur interroge les sockets réelles
+   * du serveur et échoue si le port est encore détenu ; un retrait réussi vaut
+   * donc preuve. C'est la seule voie vers `RELEASED` : un port qu'on n'a pas
+   * vu libre reste retenu, et ne peut pas être réattribué.
+   */
+  const rendu = await ports.releasePort(target.targetId, { verifiedFree: true });
+  if (rendu.released) log(`Port ${target.backendPort} rendu à la plage libre (constaté libre sur le serveur).`);
 
   const inv = result.inventory ?? {};
   return {

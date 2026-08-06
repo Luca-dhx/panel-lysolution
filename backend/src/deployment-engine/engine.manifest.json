@@ -1,8 +1,8 @@
 {
   "engine": "deployment-engine",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "engineApiVersion": "1",
-  "contractVersion": "1.2.0",
+  "contractVersion": "1.3.0",
   "minimumCompatibleVersion": "1.0.0",
   "layoutVersion": "2",
   "releaseDate": "2026-08-06",
@@ -14,7 +14,7 @@
   "compatibleProjects": [
     "panel"
   ],
-  "description": "Moteur de déploiement standard de l'écosystème L.Y Solution, embarqué dans le Panel. Cœur générique IDENTIQUE à celui des projets vitrines : préflight, build d'artefact, releases, Nginx, HTTPS, PM2, health checks, rollback, sauvegardes, rapports. La topologie du Panel (frontend + backend, sans sous-domaine Manager) est décrite dans config/project.profile.js — le cœur n'est jamais forké.",
+  "description": "Moteur de déploiement standard de l'écosystème L.Y Solution, embarqué dans le Panel. Cœur générique IDENTIQUE à celui des projets vitrines : préflight, build d'artefact, releases, Nginx, HTTPS, PM2, health checks, rollback, sauvegardes, rapports, retrait d'une destination, registre des ports. La topologie du Panel (frontend + backend, sans sous-domaine Manager) est décrite dans config/project.profile.js — le cœur n'est jamais forké.",
   "layout": {
     "core": "fichiers à la racine du moteur + dns/ + report/ — identiques dans tous les projets",
     "config": "config/project.profile.js — le seul fichier spécifique au projet",
@@ -38,10 +38,19 @@
     "engine-introspection",
     "engine-migrations",
     "deprovision",
-    "quarantine-410"
+    "quarantine-410",
+    "port-registry",
+    "service-health-proof"
   ],
   "breakingChanges": [],
   "history": [
+    {
+      "version": "1.3.0",
+      "date": "2026-08-06",
+      "type": "MINOR",
+      "summary": "Ports applicatifs : lecture des sockets réelles et des process PM2, choix d'un port par exclusion des trois sources, refus AVANT démarrage sur collision ou détenteur inconnu, et preuve de santé du service (en ligne, stable, PID connu, port écouté par ce PID). Un « pm2 start » qui rend 0 ne vaut plus preuve.",
+      "breaking": false
+    },
     {
       "version": "1.2.0",
       "date": "2026-08-06",

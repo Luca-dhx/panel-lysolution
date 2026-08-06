@@ -8,6 +8,7 @@ import logger from './utils/logger.js';
 import { seedFromEnv } from './services/auth/panelUsers.service.js';
 import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
 import { migrateDeploymentTargets } from './services/deployment/destinationLifecycle.service.js';
+import { migratePortRegistry } from './services/deployment/portRegistry.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -36,6 +37,21 @@ async function start() {
   });
   if (lifecycle?.lifecycleBackfilled) {
     logger.info(`${lifecycle.lifecycleBackfilled} destination(s) reprise(s) en état ACTIVE.`);
+  }
+
+  // REGISTRE DES PORTS : chaque destination vivante reçoit la réservation de
+  // son port actuel. On ne réattribue RIEN — un service tourne peut-être
+  // derrière. Deux destinations partageant un port sont signalées, pas
+  // arbitrées : c'est l'incident lui-même, et le déploiement le refusera.
+  const registre = await migratePortRegistry().catch((err) => {
+    logger.warn(`Reprise du registre des ports impossible : ${err.message}`);
+    return null;
+  });
+  if (registre?.reservationsCreated) {
+    logger.info(`${registre.reservationsCreated} port(s) enregistré(s) au registre.`);
+  }
+  if (registre?.conflicts) {
+    logger.warn(`${registre.conflicts} conflit(s) de port détecté(s) : deux destinations visent le même port sur un même serveur.`);
   }
 
   const backend = await resolveBackendUrl();

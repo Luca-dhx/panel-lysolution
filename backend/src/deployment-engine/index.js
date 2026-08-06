@@ -19,6 +19,18 @@ export { createBackup, restoreBackup, listBackups } from './backup.js';
 export { renderNginxConfig, applyNginxConfig } from './nginx.js';
 export { ensureCertificate } from './certbot.js';
 export { restartBackend, pm2AppName } from './pm2.js';
+export {
+  PORT_ERRORS,
+  PORT_RANGE,
+  NEVER_ALLOCATE,
+  readListeningSockets,
+  readPm2Processes,
+  readPortLandscape,
+  probePort,
+  findFreePort,
+  assertPortAvailableFor,
+  verifyServiceHealth,
+} from './ports.js';
 export { checkLocalHealth, checkPublicHealth } from './health.js';
 export { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
 export {

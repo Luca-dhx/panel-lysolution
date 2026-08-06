@@ -14,7 +14,7 @@
  */
 import { applyNginxConfig, applyNginxHttpOnly, deriveApiHost } from './nginx.js';
 import { ensureCertificate } from './certbot.js';
-import { restartBackend } from './pm2.js';
+import { pm2AppName, restartBackend } from './pm2.js';
 import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact } from './health.js';
 import { deriveNetworkUrls, describeRuntimeConfig } from './runtimeConfig.js';
 import { migrateUploads } from './uploads.js';
@@ -287,10 +287,35 @@ export async function runPipeline({ transport, target, artifact, options, versio
     //    désormais : `nginx -t` passe, on bascule le site en HTTPS puis on recharge.
     await step('reload', 'Activation HTTPS', async () => applyNginxConfig(transport, target, nginxOpts));
 
-    // 7. (Re)démarrage backend via PM2.
+    /**
+     * 7. (Re)démarrage backend via PM2.
+     *
+     * ── DEUX CAPACITÉS INJECTÉES, ET POURQUOI ─────────────────────────────
+     * Le moteur sait ce que le SERVEUR dit d'un port (sockets, process PM2).
+     * Il ne sait rien du REGISTRE de l'application qui l'embarque : quelle
+     * autre destination a réservé ce port, depuis quand, pour quel projet.
+     * Or c'est cette information-là qui manquait le jour où un port a été
+     * réattribué alors qu'un ancien service le détenait encore.
+     *
+     * `beforeServiceStart` laisse donc l'appelant opposer son registre juste
+     * avant le démarrage — le seul moment où la question a un sens, puisque
+     * le serveur a pu changer depuis la réservation. `afterServiceStarted`
+     * lui rend la preuve (PID, statut, propriété de la socket) pour qu'il
+     * n'inscrive « actif » qu'après constat.
+     *
+     * En l'absence de ces capacités (façade, test, projet qui n'a pas de
+     * registre), l'étape est strictement celle d'avant.
+     */
     let pm2Info;
     await step('pm2', 'Redémarrage du backend (PM2)', async () => {
-      pm2Info = await restartBackend(transport, { host, backendDir, port: backendPort, env });
+      const pm2Name = pm2AppName(host);
+      if (typeof options.beforeServiceStart === 'function') {
+        await options.beforeServiceStart({ transport, host, port: backendPort, pm2Name });
+      }
+      pm2Info = await restartBackend(transport, { host, backendDir, port: backendPort, env, health: options.health });
+      if (typeof options.afterServiceStarted === 'function') {
+        await options.afterServiceStarted({ ...pm2Info, host, port: backendPort });
+      }
       return pm2Info;
     });
 

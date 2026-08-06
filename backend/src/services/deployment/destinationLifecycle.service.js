@@ -364,6 +364,11 @@ export async function releaseDeploymentLock(targetId, { ok = false, runId = null
  * AUCUNE fiche n'est supprimée, ni vidée, ni modifiée autrement.
  */
 export async function migrateDeploymentTargets() {
+  // L'index unique partiel doit EXISTER avant la première création : c'est lui
+  // qui empêche deux fiches vivantes de revendiquer le même hôte. Mongoose le
+  // construit en tâche de fond ; attendre est un préalable, pas un confort.
+  await PanelDeploymentTarget.init().catch(() => {});
+
   const result = await PanelDeploymentTarget.updateMany(
     { $or: [{ lifecycleStatus: { $exists: false } }, { lifecycleStatus: null }] },
     { $set: { lifecycleStatus: LIFECYCLE.ACTIVE } },
