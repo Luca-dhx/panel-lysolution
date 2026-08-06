@@ -86,7 +86,18 @@ export async function uploadImage(
    * rôle, et c'est lui qu'ils lisent pour savoir quoi afficher où.
    */
   role?: string,
-): Promise<{ url: string; filename: string; media?: MediaDescriptor }> {
+): Promise<{
+  /** Chemin RELATIF — clé de stockage, servie par le service statique. */
+  url: string;
+  /**
+   * Adresse ABSOLUE de l'autorité média : c'est CELLE-CI qui entre dans une
+   * fiche. La même quel que soit le Panel qui a servi l'import, puisque
+   * l'autorité est unique. `null` si aucune adresse publique n'est résolue.
+   */
+  canonicalUrl: string | null;
+  filename: string;
+  media?: MediaDescriptor;
+}> {
   const form = new FormData();
   form.append('file', file);
 
@@ -115,7 +126,13 @@ export async function uploadImage(
       payload?.error?.message || payload?.message || "L'image n'a pas pu être importée.",
     );
   }
-  return payload as { url: string; filename: string };
+  // `canonicalUrl` peut manquer si l'autorité média répond depuis une version
+  // antérieure : on le ramène explicitement à `null` plutôt que de laisser un
+  // `undefined` traverser l'écran, où il se confondrait avec « pas encore lu ».
+  return {
+    ...(payload as { url: string; filename: string; media?: MediaDescriptor }),
+    canonicalUrl: (payload as { canonicalUrl?: string | null })?.canonicalUrl ?? null,
+  };
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {

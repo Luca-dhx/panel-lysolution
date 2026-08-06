@@ -335,12 +335,38 @@ export function ImageField({
       // Le RÔLE métier accompagne le fichier : c'est lui que le descripteur
       // publié porte, et que les projets lisent pour savoir quoi afficher où.
       // Le préfixe, lui, ne fait que nommer le fichier.
-      const { url: chemin } = await uploadImage(
+      const importe = await uploadImage(
         file,
         kind === 'avatar' ? 'avatar' : 'logo',
         kind === 'avatar' ? 'team-photo' : 'logo',
       );
-      onChange(chemin);
+
+      /**
+       * ── CE QUI ENTRE DANS LA FICHE EST L'ADRESSE CANONIQUE ──────────────
+       *
+       * On y écrivait le chemin RELATIF rendu par l'import. L'enregistrement
+       * échouait ensuite : la fiche d'entreprise exige une URL absolue en
+       * https, et `/uploads/…` ne s'analyse pas comme une URL. L'import
+       * réussissait, l'enregistrement non — et le refus parlait d'un champ que
+       * l'utilisateur n'avait jamais saisi, donc de rien qu'il puisse corriger.
+       *
+       * L'adresse canonique est celle de l'AUTORITÉ média, identique que
+       * l'import ait été servi par le Panel local ou par le déployé : la fiche
+       * porte donc la même valeur dans les deux cas.
+       *
+       * Sans adresse canonique, on REFUSE plutôt que de retomber sur le chemin
+       * relatif : l'enregistrement échouerait de toute façon, et il vaut mieux
+       * le dire ici, où l'on sait pourquoi.
+       */
+      if (!importe.canonicalUrl) {
+        setErreur(
+          'L’image a bien été importée, mais le Panel ne connaît pas encore son '
+          + 'adresse publique : impossible de l’enregistrer dans la fiche. '
+          + 'Renseignez l’adresse publique du Panel dans la configuration réseau, puis réessayez.',
+        );
+        return;
+      }
+      onChange(importe.canonicalUrl);
     } catch (err) {
       setErreur(errorMessage(err, "L'image n'a pas pu être importée."));
     } finally {

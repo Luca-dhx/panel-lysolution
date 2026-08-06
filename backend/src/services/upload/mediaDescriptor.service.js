@@ -168,13 +168,41 @@ export async function markMediaDeleted(objectKey) {
   return doc ? doc.toObject() : null;
 }
 
-/** Le descripteur stocké d'un chemin ou d'un nom de fichier. */
-export async function findMedia(valeur) {
+/**
+ * LA CLÉ D'OBJET contenue dans une valeur — nom nu, chemin relatif ou URL
+ * ABSOLUE de l'autorité.
+ *
+ * ── POURQUOI L'ABSOLU DOIT ÊTRE RECONNU ─────────────────────────────────────
+ * Les fiches conservent désormais l'adresse canonique complète (la validation
+ * de l'entreprise exige une URL absolue). Ne reconnaître que le chemin relatif
+ * ferait traiter nos PROPRES médias comme des URL externes : ils seraient
+ * publiés sans empreinte, sans type et sans dimensions, alors que le Panel les
+ * connaît parfaitement.
+ */
+export function objectKeyOf(valeur) {
   const brut = String(valeur ?? '').trim();
   if (!brut) return null;
-  const objectKey = brut.startsWith(`${UPLOADS_PUBLIC_PREFIX}/`)
-    ? brut.slice(UPLOADS_PUBLIC_PREFIX.length + 1)
-    : brut;
+
+  let chemin = brut;
+  if (/^https?:\/\//i.test(brut)) {
+    try {
+      chemin = new URL(brut).pathname;
+    } catch {
+      return null;
+    }
+  }
+  if (chemin.startsWith(`${UPLOADS_PUBLIC_PREFIX}/`)) {
+    return chemin.slice(UPLOADS_PUBLIC_PREFIX.length + 1) || null;
+  }
+  // Un nom nu ne doit contenir aucun séparateur : sinon ce n'est pas une clé
+  // d'objet, c'est un chemin qu'on n'a pas su lire.
+  return chemin.includes('/') ? null : chemin;
+}
+
+/** Le descripteur stocké d'un chemin, d'un nom de fichier ou d'une URL absolue. */
+export async function findMedia(valeur) {
+  const objectKey = objectKeyOf(valeur);
+  if (!objectKey) return null;
   return PanelMedia.findOne({ objectKey }).lean();
 }
 
@@ -195,6 +223,20 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
   const brut = String(valeur ?? '').trim();
   if (!brut) return null;
 
+  /**
+   * NOS PROPRES MÉDIAS D'ABORD, même donnés en absolu.
+   *
+   * Les fiches conservent l'adresse canonique complète. Si l'on testait
+   * « absolu ⇒ externe », on publierait nos propres images sans empreinte, ni
+   * type, ni dimensions — en se privant de tout ce que le descripteur apporte,
+   * alors que le Panel les a mesurées à l'import.
+   */
+  const connu = await findMedia(brut);
+  if (connu) {
+    if (connu.deletedAt) return null;
+    return descriptorOfKnownMedia(connu, role);
+  }
+
   // Une URL EXTERNE déjà absolue reste acceptée : le champ l'autorise encore,
   // et le Panel n'a aucune métadonnée à son sujet. On publie ce qu'on sait —
   // l'adresse — et rien de plus, plutôt que d'inventer une empreinte.
@@ -211,9 +253,19 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
     };
   }
 
-  const media = await findMedia(brut);
-  if (!media || media.deletedAt) return null;
+  return null;
+}
 
+/**
+ * Le descripteur d'un média que le Panel CONNAÎT, résolu contre l'adresse
+ * canonique courante.
+ *
+ * L'adresse est toujours recomposée depuis `media.path` et l'autorité du
+ * moment — jamais reprise telle quelle de la fiche. C'est ce qui fait qu'un
+ * changement d'adresse du Panel se répercute partout à la publication
+ * suivante, sans qu'aucune fiche n'ait à être réécrite.
+ */
+async function descriptorOfKnownMedia(media, role) {
   const { url: base } = await resolveBackendUrl();
   const racine = String(base ?? '').trim().replace(/\/+$/, '');
   const absolue = `${racine}${media.path}`;
@@ -244,6 +296,7 @@ export default {
   sha256Of,
   SHORT_HASH_LENGTH,
   objectKeyFor,
+  objectKeyOf,
   shortHashOf,
   findMediaByContent,
   isCanonicalMediaUrl,

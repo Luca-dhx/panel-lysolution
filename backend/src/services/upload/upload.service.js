@@ -77,7 +77,13 @@ export async function processImage(buffer, {
     const surDisque = path.join(dossier, deja.objectKey);
     const present = await fs.access(surDisque).then(() => true).catch(() => false);
     if (present) {
-      return { url: deja.path, filename: deja.objectKey, media: deja, deduplicated: true };
+      return {
+        url: deja.path,
+        canonicalUrl: await resolvePublicMediaUrl(deja.path),
+        filename: deja.objectKey,
+        media: deja,
+        deduplicated: true,
+      };
     }
   }
 
@@ -131,6 +137,27 @@ export async function processImage(buffer, {
 
   return {
     url: chemin,
+    /**
+     * L'ADRESSE QUE L'ÉCRAN DOIT CONSERVER — absolue, celle de l'autorité.
+     *
+     * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────
+     * L'import ne rendait qu'un chemin RELATIF. L'écran le recopiait tel quel
+     * dans la fiche, puis l'enregistrement échouait : la validation de
+     * l'entreprise exige une URL absolue en https, et `new URL('/uploads/x')`
+     * ne s'analyse pas. L'import réussissait, l'enregistrement non — et rien
+     * ne reliait les deux, puisque le refus parlait d'un champ que
+     * l'utilisateur n'avait jamais saisi.
+     *
+     * Le chemin relatif reste rendu : c'est la clé de stockage, et le service
+     * statique la sert. Mais ce qui entre dans une FICHE est l'adresse
+     * canonique — la même quel que soit le Panel qui a servi l'import, puisque
+     * l'autorité média est unique.
+     *
+     * `null` si aucune adresse publique n'est résolue : l'appelant refuse
+     * alors l'import plutôt que d'enregistrer une adresse qui ne marcherait
+     * que sur sa propre machine.
+     */
+    canonicalUrl: await resolvePublicMediaUrl(chemin),
     filename: unique,
     // Le descripteur complet, disponible dès l'import : l'écran peut afficher
     // le poids et les dimensions sans relire le disque.

@@ -48,6 +48,7 @@ const TESTS = [
   'deployment-ports.test.js',
   'media-descriptor.test.js',
   'media-cache-versioning.test.js',
+  'media-canonical-save.test.js',
   'deployment-ui.test.js',
   'engine-governance.test.js',
   'duplication-e2e.test.js',
