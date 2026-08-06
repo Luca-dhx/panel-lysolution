@@ -45,7 +45,9 @@ section('1. Tous les champs de la page Manager existent dans le Panel');
   // signataire. Rien d'autre n'y figurait — et rien d'autre n'a été inventé.
   check('nom', /field\('identity\.name'/.test(page));
   check('slogan (« signature »)', /field\('identity\.tagline'/.test(page));
-  check('logo', /<LogoField value=\{logo\}/.test(page));
+  // Le logo se passe en trois morceaux : le chemin de stockage, le
+  // DESCRIPTEUR (la source de vérité) et l'aperçu résolu — jamais réenregistré.
+  check('logo', /<LogoField[\s\S]{0,80}value=\{logo\}[\s\S]{0,120}descriptor=\{logoDescripteur\}/.test(page));
   check('références', /<ReferencesEditor/.test(page));
   check('signataire', /<SignerSection/.test(page));
   check('site internet', /field\('domains\.websiteUrl'/.test(page));
@@ -169,8 +171,18 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
   check('publication absolue', /export async function resolvePublicMediaUrl/.test(service));
   check('…sans adresse résolue, on ne publie RIEN plutôt qu’un lien brisé',
     /return null;/.test(service) && /await resolveBackendUrl\(\)/.test(service));
+  /**
+   * LA RÉSOLUTION A LIEU À LA PUBLICATION — et l'adresse vient du DESCRIPTEUR
+   * publiable, plus jamais du champ stocké.
+   *
+   * Le champ `branding.logoUrl` porte désormais un chemin de stockage : le
+   * republier tel quel enverrait `/uploads/…` à des projets servis depuis
+   * d'autres origines. C'est le descripteur, résolu contre la destination
+   * active, qui donne l'adresse — ou `null` s'il n'y en a pas encore.
+   */
   check('la résolution a lieu à la publication',
-    /logoUrl: await resolvePublicMediaUrl\(branding\.logoUrl\)/.test(companyService));
+    /logoUrl: logo\?\.url \?\? null/.test(companyService)
+    && /publishableDescriptor\(branding\.logo\?\.objectKey \?\? branding\.logoUrl/.test(companyService));
 
   check('le client n’impose pas le Content-Type du multipart',
     /body: form,/.test(client) && !/'Content-Type': 'multipart/.test(client));
@@ -222,7 +234,9 @@ section('8. Présentation — cartes, grille, responsive');
   check('…avec prénom et nom SÉPARÉS',
     /field-label">Prénom</.test(blocs) && /field-label">Nom</.test(blocs));
   check('…une photo importée, pas une URL collée',
-    /<ImageField[\s\S]{0,220}kind="avatar"/.test(blocs));
+    /<ImageField[\s\S]{0,700}kind="avatar"/.test(blocs)
+    // …et ce qu'elle enregistre est le DESCRIPTEUR, pas une adresse.
+    && /photo: photo \?\? null/.test(blocs));
   check('…des références propres à la personne',
     /<ReferenceRows[\s\S]{0,120}m\.references/.test(blocs));
   check('…un retrait qui n’efface pas',

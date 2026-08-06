@@ -77,9 +77,11 @@ export async function processImage(buffer, {
     const surDisque = path.join(dossier, deja.objectKey);
     const present = await fs.access(surDisque).then(() => true).catch(() => false);
     if (present) {
+      const { resolveMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
       return {
         url: deja.path,
-        canonicalUrl: await resolvePublicMediaUrl(deja.path),
+        publicUrl: (await resolveMediaUrl(deja, deja.environment)).url,
+        descriptor: stableDescriptorOf(deja),
         filename: deja.objectKey,
         media: deja,
         deduplicated: true,
@@ -135,29 +137,32 @@ export async function processImage(buffer, {
   // les appelants existants, et volontairement sans effet sur l'adresse.
   void prefix;
 
+  const { resolveMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
+
   return {
+    /**
+     * LE CHEMIN DE STOCKAGE — relatif, et c'est lui que la fiche conserve à
+     * côté du descripteur.
+     *
+     * ── POURQUOI PAS L'ADRESSE ABSOLUE ────────────────────────────────────
+     * Une correction précédente enregistrait l'URL absolue dans la fiche et
+     * refusait l'import quand aucune n'était résolue. Conséquence : un Panel
+     * de RECETTE non encore déployé ne pouvait plus être configuré du tout —
+     * on ne pouvait pas y enregistrer un logo avant sa première mise en ligne.
+     *
+     * L'identité d'un média est son DESCRIPTEUR ; l'adresse en est dérivée, à
+     * la lecture, contre la destination active du moment. Une fiche n'a donc
+     * jamais à être réécrite quand le Panel change de domaine.
+     */
     url: chemin,
     /**
-     * L'ADRESSE QUE L'ÉCRAN DOIT CONSERVER — absolue, celle de l'autorité.
-     *
-     * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────
-     * L'import ne rendait qu'un chemin RELATIF. L'écran le recopiait tel quel
-     * dans la fiche, puis l'enregistrement échouait : la validation de
-     * l'entreprise exige une URL absolue en https, et `new URL('/uploads/x')`
-     * ne s'analyse pas. L'import réussissait, l'enregistrement non — et rien
-     * ne reliait les deux, puisque le refus parlait d'un champ que
-     * l'utilisateur n'avait jamais saisi.
-     *
-     * Le chemin relatif reste rendu : c'est la clé de stockage, et le service
-     * statique la sert. Mais ce qui entre dans une FICHE est l'adresse
-     * canonique — la même quel que soit le Panel qui a servi l'import, puisque
-     * l'autorité média est unique.
-     *
-     * `null` si aucune adresse publique n'est résolue : l'appelant refuse
-     * alors l'import plutôt que d'enregistrer une adresse qui ne marcherait
-     * que sur sa propre machine.
+     * L'ADRESSE UTILISABLE MAINTENANT — absolue si une destination sert déjà
+     * ce média, sinon locale. Elle sert l'APERÇU, pas l'identité, et n'est
+     * jamais enregistrée telle quelle.
      */
-    canonicalUrl: await resolvePublicMediaUrl(chemin),
+    publicUrl: (await resolveMediaUrl(descripteur, descripteur.environment)).url,
+    /** Le descripteur STABLE, celui que la fiche conserve. */
+    descriptor: stableDescriptorOf(descripteur),
     filename: unique,
     // Le descripteur complet, disponible dès l'import : l'écran peut afficher
     // le poids et les dimensions sans relire le disque.

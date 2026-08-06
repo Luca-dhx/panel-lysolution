@@ -45,6 +45,69 @@ const url = (label) =>
     z.null(),
   ]).optional().transform((v) => (v === undefined || v === '' ? null : v));
 
+/**
+ * ADRESSE D'UN MÉDIA DU PANEL — absolue OU chemin de stockage.
+ *
+ * ── CE QUI EST ASSOUPLI, ET CE QUI NE L'EST PAS ─────────────────────────────
+ * La règle de sécurité sur une URL ABSOLUE ne bouge pas : https exigé hors
+ * boucle locale. Ce qui change, c'est qu'un CHEMIN DE STOCKAGE
+ * (`/uploads/<clé>`) est désormais accepté.
+ *
+ * Il le faut : un Panel de recette non encore déployé n'a aucune adresse
+ * publique, et exiger l'absolu revenait à interdire de le configurer avant sa
+ * première mise en ligne. Le chemin relatif n'est pas une URL publique — c'est
+ * une référence interne, résolue à la lecture contre la destination active.
+ *
+ * Rien d'autre n'est toléré : ni chemin arbitraire, ni remontée de répertoire.
+ */
+const mediaRef = (label) =>
+  z.union([
+    z.string().trim().refine((value) => {
+      if (value === '') return true;
+      // Référence interne au stockage du Panel : une clé d'objet, et rien d'autre.
+      if (value.startsWith('/uploads/')) {
+        const cle = value.slice('/uploads/'.length);
+        return cle.length > 0 && !cle.includes('/') && !cle.includes('..');
+      }
+      let parsed;
+      try {
+        parsed = new URL(value);
+      } catch {
+        return false;
+      }
+      if (parsed.protocol === 'https:') return true;
+      return parsed.protocol === 'http:' && /^(localhost|127\.0\.0\.1)$/.test(parsed.hostname);
+    }, `${label} : chemin de média (/uploads/…) ou URL absolue en https attendu.`),
+    z.null(),
+  ]).optional().transform((v) => (v === undefined || v === '' ? null : v));
+
+/**
+ * DESCRIPTEUR DE MÉDIA — la source de vérité d'une image.
+ *
+ * `passthrough` : le descripteur peut gagner des champs (rôle, état de
+ * publication) sans qu'une fiche déjà enregistrée devienne invalide. Ce qui
+ * est vérifié, c'est ce dont la résolution d'adresse a besoin — une clé
+ * d'objet exploitable et un environnement cohérent.
+ */
+const mediaDescriptor = (label) =>
+  z.union([
+    z.object({
+      mediaId: z.string().nullable().optional(),
+      objectKey: z.string().trim().min(1).refine(
+        (v) => !v.includes('/') && !v.includes('..'),
+        `${label}.objectKey : clé d’objet attendue, sans séparateur.`,
+      ),
+      environment: z.enum(['TEST', 'PROD']).nullable().optional(),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/i, `${label}.sha256 : empreinte SHA-256 attendue.`).nullable().optional(),
+      mime: z.string().nullable().optional(),
+      size: z.number().int().nonnegative().nullable().optional(),
+      width: z.number().int().positive().nullable().optional(),
+      height: z.number().int().positive().nullable().optional(),
+      version: z.number().int().positive().nullable().optional(),
+    }).passthrough(),
+    z.null(),
+  ]).optional().transform((v) => (v === undefined ? null : v));
+
 const domain = (label) =>
   z.union([z.string().trim().toLowerCase().regex(DOMAIN_RE, `${label} : nom de domaine attendu (ex. exemple.fr).`), z.null()])
     .optional()
@@ -63,9 +126,11 @@ const identitySchema = z.object({
 });
 
 const brandingSchema = z.object({
-  logoUrl: url('branding.logoUrl'),
-  logoDarkUrl: url('branding.logoDarkUrl'),
-  faviconUrl: url('branding.faviconUrl'),
+  logoUrl: mediaRef('branding.logoUrl'),
+  logoDarkUrl: mediaRef('branding.logoDarkUrl'),
+  faviconUrl: mediaRef('branding.faviconUrl'),
+  logo: mediaDescriptor('branding.logo'),
+  favicon: mediaDescriptor('branding.favicon'),
   primaryColor: color('branding.primaryColor'),
   secondaryColor: color('branding.secondaryColor'),
   accentColor: color('branding.accentColor'),
@@ -106,13 +171,14 @@ const teamSchema = z.array(z.object({
   role: nullableString(120),
   email: email('team.email'),
   phone: nullableString(40),
-  photoUrl: url('team.photoUrl'),
+  photoUrl: mediaRef('team.photoUrl'),
+  photo: mediaDescriptor('team.photo'),
   active: z.boolean().default(true),
   references: referencesSchema,
   order: z.number().int().min(0).default(0),
 }).partial({
   // `active` et `order` gardent leur défaut ; les autres peuvent manquer.
-  firstName: true, lastName: true, role: true, email: true, phone: true, photoUrl: true,
+  firstName: true, lastName: true, role: true, email: true, phone: true, photoUrl: true, photo: true,
 })).default([]);
 
 const domainsSchema = z.object({

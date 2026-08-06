@@ -35,11 +35,57 @@ const identitySchema = new mongoose.Schema(
  * injecte dans sa feuille de style ne doit pas hériter d'une chaîne
  * arbitraire venue du Panel.
  */
+/**
+ * DESCRIPTEUR STABLE D'UN MÉDIA — ce qu'une fiche conserve d'une image.
+ *
+ * ══ POURQUOI PAS UNE URL ════════════════════════════════════════════════════
+ *
+ * Une URL absolue dépend du domaine courant. L'y stocker avait deux effets, et
+ * les deux se sont produits :
+ *
+ *   · un Panel de RECETTE non encore déployé n'a aucune adresse publique : on
+ *     ne pouvait donc plus y enregistrer de logo avant sa première mise en
+ *     ligne — c'est-à-dire plus le configurer du tout ;
+ *   · le jour d'un changement de domaine, toutes les fiches pointaient encore
+ *     sur l'ancien.
+ *
+ * L'identité d'un média est sa CLÉ D'OBJET et son empreinte. L'adresse en est
+ * dérivée à la lecture, contre la destination active du moment.
+ *
+ * Tous ces champs sont IMMUABLES pour une clé donnée — le nom porte
+ * l'empreinte du contenu — ce qui rend leur recopie ici sans dérive possible.
+ */
+const mediaDescriptorSchema = new mongoose.Schema(
+  {
+    mediaId: { type: String, default: null },
+    objectKey: { type: String, default: null },
+    /** TEST ou PROD — un média ne franchit jamais cette frontière. */
+    environment: { type: String, enum: ['TEST', 'PROD', null], default: null },
+    sha256: { type: String, default: null },
+    mime: { type: String, default: null },
+    size: { type: Number, default: null },
+    width: { type: Number, default: null },
+    height: { type: Number, default: null },
+    version: { type: Number, default: 1 },
+  },
+  { _id: false },
+);
+
 const brandingSchema = new mongoose.Schema(
   {
+    /**
+     * L'URL HISTORIQUE — conservée le temps que les consommateurs migrent.
+     *
+     * Elle porte désormais le chemin RELATIF (`/uploads/<clé>`), pas une
+     * adresse absolue : c'est le descripteur qui fait autorité, et l'adresse
+     * publiée aux projets est recomposée à chaque publication.
+     */
     logoUrl: { type: String, default: null },
     logoDarkUrl: { type: String, default: null },
     faviconUrl: { type: String, default: null },
+    /** LA SOURCE DE VÉRITÉ — le média, indépendamment de toute adresse. */
+    logo: { type: mediaDescriptorSchema, default: null },
+    favicon: { type: mediaDescriptorSchema, default: null },
     primaryColor: { type: String, default: null },
     secondaryColor: { type: String, default: null },
     accentColor: { type: String, default: null },
@@ -108,8 +154,10 @@ const teamMemberSchema = new mongoose.Schema(
     role: { type: String, default: '', trim: true },
     email: { type: String, default: '', trim: true, lowercase: true },
     phone: { type: String, default: '', trim: true },
-    // URL absolue résolue à la publication, comme le logo.
+    // Chemin relatif conservé pour compatibilité ; l'autorité est `photo`.
     photoUrl: { type: String, default: null },
+    /** Descripteur stable du portrait — même règle que le logo. */
+    photo: { type: mediaDescriptorSchema, default: null },
     active: { type: Boolean, default: true },
     // Mêmes références que l’entreprise : un membre peut porter son propre
     // canal de contact (ligne directe, profil, agenda).

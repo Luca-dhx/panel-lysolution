@@ -32,6 +32,7 @@ export const PIPELINE_STEPS = [
   'reload',
   'pm2',
   'health',
+  'media_publish',
   // L'ordre de cette liste est celui de l'EXÉCUTION : elle alimente l'affichage
   // et l'historique. `runtime_config` publie, `validate` constate — publier ne
   // peut pas précéder constater, ici comme dans le corps du pipeline.
@@ -335,6 +336,36 @@ export async function runPipeline({ transport, target, artifact, options, versio
       }
       health.local = local;
       return { local };
+    });
+
+    /**
+     * 8bis. PUBLICATION DES MÉDIAS DE L'APPLICATION — avant la validation.
+     *
+     * ── LE PROBLÈME QU'ELLE FERME ─────────────────────────────────────────
+     * Une instance se configure AVANT d'être déployée : on y importe un logo,
+     * des portraits, alors qu'aucune destination ne les sert encore. Ces
+     * médias existent en local et nulle part ailleurs. Sans cette étape, le
+     * premier déploiement rendait le site en ligne avec des images absentes —
+     * et il fallait tout réimporter depuis l'interface déployée.
+     *
+     * Ce que le moteur peut faire seul, il l'a déjà fait : les fichiers sont
+     * transférés à l'étape `uploads`. Ce qu'il ne peut PAS savoir, c'est
+     * QUELS médias la fiche métier référence, ni sous quelle empreinte. Cette
+     * connaissance appartient à l'application — d'où une capacité injectée.
+     *
+     * Placée AVANT `validate` : la validation contrôle les médias publics et
+     * doit constater l'état FINAL. Placée APRÈS `health` : la vérification
+     * lit le disque distant, ce qui n'a de sens qu'une fois le déploiement
+     * matériellement en place.
+     *
+     * En l'absence de capacité injectée (façade, test, projet sans médias),
+     * l'étape est neutre — jamais bloquante.
+     */
+    await step('media_publish', 'Publication des médias de la fiche', async () => {
+      if (typeof options.publishApplicationMedia !== 'function') {
+        return { skipped: true, reason: 'non configuré (façade/test)' };
+      }
+      return options.publishApplicationMedia({ transport, sharedUploads, host, env });
     });
 
     // 9. Validation finale : CHAQUE application publiée répond en HTTPS + bon ENV.

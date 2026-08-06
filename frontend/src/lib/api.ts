@@ -17,7 +17,7 @@ import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
 import type {
-  Company, CompanyState, IntegratedApi, MediaDescriptor, ProbeResult, PublishResult,
+  Company, CompanyState, IntegratedApi, MediaDescriptor, ProbeResult, PublishResult, StoredMediaDescriptor,
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
@@ -87,14 +87,19 @@ export async function uploadImage(
    */
   role?: string,
 ): Promise<{
-  /** Chemin RELATIF — clé de stockage, servie par le service statique. */
+  /** Chemin de stockage RELATIF — c'est lui que la fiche conserve. */
   url: string;
   /**
-   * Adresse ABSOLUE de l'autorité média : c'est CELLE-CI qui entre dans une
-   * fiche. La même quel que soit le Panel qui a servi l'import, puisque
-   * l'autorité est unique. `null` si aucune adresse publique n'est résolue.
+   * L'adresse UTILISABLE MAINTENANT : absolue si une destination sert déjà ce
+   * média, sinon locale. Elle sert l'aperçu, jamais l'identité — et n'est donc
+   * jamais enregistrée telle quelle.
    */
-  canonicalUrl: string | null;
+  publicUrl: string;
+  /**
+   * LE DESCRIPTEUR STABLE — la source de vérité de la fiche. Aucune adresse :
+   * l'identité d'un média ne dépend pas du domaine courant.
+   */
+  descriptor: StoredMediaDescriptor;
   filename: string;
   media?: MediaDescriptor;
 }> {
@@ -126,12 +131,17 @@ export async function uploadImage(
       payload?.error?.message || payload?.message || "L'image n'a pas pu être importée.",
     );
   }
-  // `canonicalUrl` peut manquer si l'autorité média répond depuis une version
-  // antérieure : on le ramène explicitement à `null` plutôt que de laisser un
-  // `undefined` traverser l'écran, où il se confondrait avec « pas encore lu ».
+  // Une autorité média antérieure ne rend ni `publicUrl` ni `descriptor` : on
+  // retombe alors sur le chemin de stockage, qui a toujours été rendu. Aucun
+  // `undefined` ne traverse l'écran, où il se confondrait avec « pas encore lu ».
+  const brut = payload as {
+    url: string; filename: string; publicUrl?: string;
+    descriptor?: StoredMediaDescriptor; media?: MediaDescriptor;
+  };
   return {
-    ...(payload as { url: string; filename: string; media?: MediaDescriptor }),
-    canonicalUrl: (payload as { canonicalUrl?: string | null })?.canonicalUrl ?? null,
+    ...brut,
+    publicUrl: brut.publicUrl ?? brut.url,
+    descriptor: brut.descriptor ?? { objectKey: brut.filename },
   };
 }
 

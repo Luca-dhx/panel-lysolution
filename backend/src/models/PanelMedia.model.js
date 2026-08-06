@@ -58,6 +58,41 @@ const mediaSchema = new mongoose.Schema(
     /** Rôle métier : logo · favicon · portrait d'équipe… */
     role: { type: String, default: null },
 
+    /**
+     * L'ENVIRONNEMENT PROPRIÉTAIRE — TEST ou PROD, jamais les deux.
+     *
+     * ── POURQUOI IL EST OBLIGATOIRE ──────────────────────────────────────
+     * Les deux environnements ont leur base, leurs destinations et leur
+     * stockage. Un média sans environnement pourrait être résolu contre la
+     * destination de l'autre : le logo d'une recette s'afficherait en
+     * production, ou l'inverse. Passer de TEST à PROD est une PROMOTION
+     * explicite, jamais un effet de bord d'une résolution d'URL.
+     */
+    environment: { type: String, enum: ['TEST', 'PROD'], required: true, index: true },
+
+    /**
+     * OÙ CE MÉDIA EXISTE RÉELLEMENT.
+     *
+     *   LOCAL_ONLY  le fichier n'existe que sur la machine qui l'a importé.
+     *               Ce n'est PAS une erreur : un Panel de recette se configure
+     *               entièrement avant son premier déploiement.
+     *   PUBLISHED   le fichier a été transféré vers le `shared/uploads` d'une
+     *               destination, et son empreinte y a été vérifiée.
+     *
+     * C'est cet état, et lui seul, qui autorise la publication d'une URL
+     * absolue vers les projets : tant qu'un média est LOCAL_ONLY, aucune
+     * adresse ne peut être annoncée à SB Auto — elle ne mènerait nulle part.
+     */
+    publicationState: {
+      type: String,
+      enum: ['LOCAL_ONLY', 'PUBLISHED'],
+      default: 'LOCAL_ONLY',
+      index: true,
+    },
+    /** Hôte de la destination où le fichier a été vérifié présent. */
+    publishedHost: { type: String, default: null },
+    publishedAt: { type: String, default: null },
+
     createdAt: { type: String, required: true },
     updatedAt: { type: String, required: true },
     /** Retiré : le descripteur survit, pour que la suppression soit publiable. */

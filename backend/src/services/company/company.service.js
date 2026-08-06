@@ -212,11 +212,18 @@ export async function saveCompany(companyId, patch, actor = {}) {
   const company = await updateCompany(companyId, patch, actor);
   try {
     const result = await publishConfiguration(companyId, {}, actor);
-    return { company: describeCompany(await getCompanyOrThrow(companyId)), published: true, ...result };
+    const frais = await getCompanyOrThrow(companyId);
+    return {
+      company: describeCompany(frais),
+      media: await companyMediaResolution(frais),
+      published: true,
+      ...result,
+    };
   } catch (err) {
     if (err?.code === RIEN_A_PUBLIER) {
       return {
         company: describeCompany(company),
+        media: await companyMediaResolution(company),
         published: false,
         version: company.publishedVersion,
         changes: [],
@@ -456,33 +463,82 @@ export async function companyPublishedProfile(company) {
    * descripteur chez le projet. L'omettre laisserait l'ancienne image en
    * place indéfiniment.
    */
+  /**
+   * LE DESCRIPTEUR EN FICHE FAIT AUTORITÉ ; l'URL historique n'est qu'un repli
+   * pour les fiches antérieures au descripteur.
+   *
+   * Et rien n'est publié tant qu'aucune destination active ne sert le média :
+   * `/uploads/…` n'existe pas depuis le serveur d'un client, et
+   * `http://localhost` encore moins. Le projet garde alors sa projection
+   * précédente — ce qui vaut mieux qu'une image cassée.
+   */
   const [logo, favicon] = await Promise.all([
-    publishableDescriptor(branding.logoUrl, { role: 'logo' }),
-    publishableDescriptor(branding.faviconUrl, { role: 'favicon' }),
+    publishableDescriptor(branding.logo?.objectKey ?? branding.logoUrl, { role: 'logo' }),
+    publishableDescriptor(branding.favicon?.objectKey ?? branding.faviconUrl, { role: 'favicon' }),
   ]);
 
   return {
     ...profil,
     branding: {
       ...branding,
-      logoUrl: await resolvePublicMediaUrl(branding.logoUrl),
-      faviconUrl: await resolvePublicMediaUrl(branding.faviconUrl),
+      /**
+       * L'URL HISTORIQUE ne part que si elle est réellement PUBLIQUE.
+       *
+       * Elle vient du descripteur publiable, jamais du champ stocké : ce
+       * dernier porte un chemin de stockage (`/uploads/…`) qui ne signifie
+       * rien depuis le serveur d'un client. `null` tant qu'aucune destination
+       * ne sert le média — et un projet qui reçoit `null` garde sa projection
+       * précédente plutôt que d'afficher un lien mort.
+       */
+      logoUrl: logo?.url ?? null,
+      faviconUrl: favicon?.url ?? null,
       // ADDITIF : le descripteur complet, à côté de l'URL historique.
       logo,
       favicon,
     },
-    // Les portraits suivent exactement la règle du logo : relatifs dans le
-    // Panel, absolus dès qu’ils partent — un projet les affiche depuis une
-    // autre origine.
-    team: await Promise.all((profil.team || []).map(async (m) => ({
-      ...m,
-      photoUrl: await resolvePublicMediaUrl(m.photoUrl),
-      // Même règle que le logo : le descripteur complet accompagne l'URL. Un
-      // portrait retiré donne `null` — la photographie remplace la
-      // photographie, elle ne s'y ajoute pas.
-      photo: await publishableDescriptor(m.photoUrl, { role: 'team-photo' }),
-    }))),
+    // Les portraits suivent exactement la règle du logo.
+    team: await Promise.all((profil.team || []).map(async (m) => {
+      const photo = await publishableDescriptor(m.photo?.objectKey ?? m.photoUrl, { role: 'team-photo' });
+      return { ...m, photoUrl: photo?.url ?? null, photo };
+    })),
   };
+}
+
+/**
+ * LES ADRESSES D'AFFICHAGE DES MÉDIAS DE LA FICHE — dérivées, jamais stockées.
+ *
+ * ── POURQUOI UN BLOC À PART, ET PAS UN CHAMP DANS LE DESCRIPTEUR ────────────
+ * Le descripteur est ce que l'écran RENVOIE au serveur en enregistrant. Y
+ * glisser une adresse calculée la ferait écrire en base au premier
+ * enregistrement — et l'on se retrouverait exactement avec ce qu'on vient de
+ * supprimer : une URL figée dans une fiche.
+ *
+ * Ce bloc est donc parallèle, indexé par le chemin du descripteur. Il est
+ * consultable en lecture et ignoré à l'écriture.
+ *
+ * L'unique producteur d'adresse reste `resolveMediaUrl` : un second endroit qui
+ * concatènerait un domaine et un chemin finirait par en diverger.
+ */
+export async function companyMediaResolution(company) {
+  const { resolveMediaUrl } = await import('../upload/mediaDescriptor.service.js');
+  const environment = company.environment;
+  const cibles = [
+    ['branding.logo', company.branding?.logo],
+    ['branding.favicon', company.branding?.favicon],
+    ...(company.team || []).map((m, i) => [`team.${i}.photo`, m.photo]),
+  ].filter(([, d]) => d?.objectKey);
+
+  const resolus = await Promise.all(cibles.map(async ([chemin, descripteur]) => {
+    const { url, absolute, reason } = await resolveMediaUrl(plain(descripteur), environment);
+    return [chemin, {
+      url,
+      // « Servi par une destination » — pas « enregistré ». Un média local est
+      // parfaitement valide ; il n'est simplement encore visible que d'ici.
+      published: absolute,
+      reason,
+    }];
+  }));
+  return Object.fromEntries(resolus);
 }
 
 /** Vue d'administration — ajoute l'état de publication. */

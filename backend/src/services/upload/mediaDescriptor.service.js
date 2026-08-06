@@ -25,12 +25,137 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import PanelMedia from '../../models/PanelMedia.model.js';
 import logger from '../../utils/logger.js';
+import { config } from '../../config/env.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
-import { resolveBackendUrl } from '../network/networkConfig.service.js';
 import { UPLOADS_PUBLIC_PREFIX } from './upload.service.js';
 
 /** Hôtes qui ne désignent que la machine courante — jamais publiables. */
 const HOTES_LOCAUX = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0', '[::1]']);
+
+/* -------------------------------------------------------------------------- */
+/*  LE RÉSOLVEUR CENTRAL D'ADRESSE                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * LA DESTINATION OÙ CE PANEL EST EN LIGNE, pour un environnement donné.
+ *
+ * ── CE QU'ELLE N'EST PAS ────────────────────────────────────────────────────
+ * Ni une destination retirée, ni une destination vidée, ni une destination en
+ * cours de retrait. Une adresse tirée de l'une d'elles mènerait à une
+ * quarantaine 410 ou à un domaine rendu — c'est-à-dire à une image cassée
+ * présentée comme publiée.
+ *
+ * `null` quand ce Panel n'est pas encore déployé dans cet environnement :
+ * c'est le cas NORMAL d'une recette qu'on configure avant sa mise en ligne.
+ */
+export async function activePanelDestination(environment) {
+  if (!environment) return null;
+  const PanelDeploymentTarget = (await import('../../models/PanelDeploymentTarget.model.js')).default;
+  return PanelDeploymentTarget.findOne({
+    environment,
+    lifecycleStatus: 'ACTIVE',
+    state: 'DEPLOYED',
+  }).sort({ lastDeployedAt: -1 }).lean();
+}
+
+/**
+ * L'adresse publique que CE Panel déclare, écrite par le déploiement.
+ *
+ * Repli de la destination ACTIVE, jamais son remplaçant : elle ne connaît ni
+ * le cycle de vie d'une destination, ni l'environnement. On ne s'en sert que
+ * lorsqu'aucune destination n'est enregistrée.
+ */
+async function adressePubliqueDeclaree() {
+  try {
+    const { resolveBackendUrl } = await import('../network/networkConfig.service.js');
+    const { url } = await resolveBackendUrl();
+    return url || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ADRESSE D'UN MÉDIA — la SEULE fonction autorisée à en produire une.
+ *
+ * ══ POURQUOI L'URL N'EST PLUS UNE IDENTITÉ ══════════════════════════════════
+ *
+ * L'adresse absolue était enregistrée dans les fiches. Deux conséquences, et
+ * les deux se sont produites :
+ *
+ *   · un Panel de RECETTE non encore déployé n'avait aucune adresse publique,
+ *     donc aucun logo enregistrable — on ne pouvait plus le configurer avant
+ *     sa première mise en ligne ;
+ *   · le jour où le Panel change de domaine, toutes les fiches pointaient
+ *     encore sur l'ancien.
+ *
+ * L'identité d'un média est son DESCRIPTEUR — clé d'objet, empreinte,
+ * environnement. L'adresse en est DÉRIVÉE, à la lecture, contre la destination
+ * active du moment. Une fiche n'a donc plus jamais à être réécrite.
+ *
+ * @param {object} media        descripteur (`PanelMedia` ou sa projection)
+ * @param {string} environment  environnement du LECTEUR — jamais celui deviné
+ * @returns {Promise<{url:string|null, absolute:boolean, reason:string}>}
+ */
+export async function resolveMediaUrl(media, environment) {
+  if (!media?.objectKey) return { url: null, absolute: false, reason: 'AUCUN_MEDIA' };
+
+  /**
+   * AUCUN MÉLANGE D'ENVIRONNEMENTS. Un média de recette n'a rien à faire en
+   * production, et réciproquement. Le résoudre « quand même » ferait afficher
+   * l'image d'un monde dans l'autre — sans que rien ne le signale.
+   */
+  if (media.environment && environment && media.environment !== environment) {
+    return { url: null, absolute: false, reason: 'ENVIRONNEMENT_DIFFERENT' };
+  }
+  if (media.deletedAt) return { url: null, absolute: false, reason: 'MEDIA_SUPPRIME' };
+
+  const chemin = media.path ?? `${UPLOADS_PUBLIC_PREFIX}/${media.objectKey}`;
+  const env = media.environment ?? environment;
+  const destination = await activePanelDestination(env);
+
+  /**
+   * DEUX SOURCES D'ADRESSE, DANS CET ORDRE, ET AUCUNE AUTRE.
+   *
+   *   1. la destination ACTIVE de cet environnement — l'autorité. Elle cesse
+   *      d'exister dès qu'elle est retirée, ce qui interdit par construction
+   *      d'annoncer l'adresse d'une destination rendue ou en quarantaine ;
+   *   2. à défaut, l'adresse publique inscrite dans la configuration réseau
+   *      par le déploiement — mais UNIQUEMENT si aucune destination n'est
+   *      enregistrée pour cet environnement. Un Panel mis en ligne avant que
+   *      le registre des destinations n'existe n'a pas de fiche : sans ce
+   *      repli, son logo cesserait d'être publié du jour au lendemain, alors
+   *      qu'il est bien servi.
+   *
+   * La condition « aucune destination » n'est pas un détail : dès qu'une
+   * destination existe, son cycle de vie fait autorité. Un Panel dont la
+   * destination a été RETIRÉE doit redevenir local — s'appuyer alors sur une
+   * configuration réseau devenue périmée publierait l'adresse d'un site rendu.
+   *
+   * Aucune adresse codée en dur, et jamais celle d'un autre environnement :
+   * la configuration réseau est propre à la base de CET environnement.
+   */
+  const aucuneDestination = !destination
+    && (await (await import('../../models/PanelDeploymentTarget.model.js')).default
+      .countDocuments({ environment: env })) === 0;
+
+  const candidats = [
+    [destination?.url, 'DESTINATION_ACTIVE'],
+    [aucuneDestination ? await adressePubliqueDeclaree() : null, 'CONFIGURATION_RESEAU'],
+  ];
+
+  for (const [brut, raison] of candidats) {
+    if (!brut) continue;
+    const base = String(brut).trim().replace(/\/+$/, '');
+    const absolue = `${base}${chemin}`;
+    if (isCanonicalMediaUrl(absolue).ok) return { url: absolue, absolute: true, reason: raison };
+  }
+
+  // Aucune adresse publiable : l'adresse LOCALE est la bonne réponse. Le Panel
+  // se sert lui-même ses médias, et l'aperçu fonctionne. C'est l'état NORMAL
+  // d'une recette qu'on configure avant sa première mise en ligne.
+  return { url: chemin, absolute: false, reason: 'LOCAL_SANS_DESTINATION' };
+}
 
 /** Empreinte du CONTENU — la seule chose qui distingue « même image » d'« autre ». */
 export function sha256Of(buffer) {
@@ -115,6 +240,7 @@ export function isCanonicalMediaUrl(url) {
 export async function registerMedia({
   mediaId = null, objectKey, path: chemin, mime, size, width, height, sha256,
   scope = 'DEVELOPER_IDENTITY', role = null, createdBy = null,
+  environment = config.env,
 }) {
   const at = nowIso();
   const existant = await PanelMedia.findOne({ objectKey }).lean();
@@ -140,6 +266,11 @@ export async function registerMedia({
     // L'identité est fournie par l'appelant quand elle a déjà servi à NOMMER
     // le fichier : la recréer ici ferait diverger le nom et le descripteur.
     mediaId: mediaId ?? randomUUID(),
+    environment,
+    // Un média neuf n'existe que sur la machine qui vient de l'écrire. Ce
+    // n'est pas un défaut : c'est l'état normal d'une recette qu'on configure
+    // avant de la déployer.
+    publicationState: 'LOCAL_ONLY',
     objectKey,
     path: chemin,
     mime,
@@ -257,18 +388,49 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
 }
 
 /**
- * Le descripteur d'un média que le Panel CONNAÎT, résolu contre l'adresse
- * canonique courante.
+ * LE DESCRIPTEUR STABLE — ce qu'une FICHE conserve.
  *
- * L'adresse est toujours recomposée depuis `media.path` et l'autorité du
- * moment — jamais reprise telle quelle de la fiche. C'est ce qui fait qu'un
- * changement d'adresse du Panel se répercute partout à la publication
- * suivante, sans qu'aucune fiche n'ait à être réécrite.
+ * Aucune adresse : l'identité d'un média ne dépend pas du domaine courant.
+ * Tous ces champs sont IMMUABLES pour une clé d'objet donnée — le nom porte
+ * l'empreinte du contenu depuis le versionnement par empreinte — ce qui rend
+ * leur recopie dans une fiche sans risque de dérive.
+ */
+export function stableDescriptorOf(media) {
+  if (!media?.objectKey) return null;
+  return {
+    mediaId: media.mediaId,
+    objectKey: media.objectKey,
+    environment: media.environment ?? null,
+    sha256: media.sha256,
+    mime: media.mime,
+    size: media.size,
+    width: media.width ?? null,
+    height: media.height ?? null,
+    version: media.version ?? 1,
+  };
+}
+
+/**
+ * Le descripteur d'un média que le Panel CONNAÎT, résolu contre la destination
+ * active du moment.
+ *
+ * L'adresse est toujours recomposée — jamais reprise telle quelle de la fiche.
+ * C'est ce qui fait qu'un changement de domaine du Panel se répercute partout
+ * à la publication suivante, sans qu'aucune fiche n'ait à être réécrite.
+ *
+ * ── AUCUNE ADRESSE LOCALE NE PART VERS UN PROJET ────────────────────────────
+ * Tant qu'aucune destination active ne sert cet environnement, le média n'est
+ * PAS publiable : `/uploads/…` ou `http://localhost` n'existent pas depuis le
+ * serveur d'un client. On rend `null` — le projet garde alors sa projection
+ * précédente, ce qui vaut mieux qu'une image cassée.
  */
 async function descriptorOfKnownMedia(media, role) {
-  const { url: base } = await resolveBackendUrl();
-  const racine = String(base ?? '').trim().replace(/\/+$/, '');
-  const absolue = `${racine}${media.path}`;
+  const { url: absolue, absolute } = await resolveMediaUrl(media, media.environment ?? config.env);
+  if (!absolute) {
+    logger.warn(`[media] Descripteur « ${media.objectKey} » non publié : `
+      + 'aucune destination active ne le sert encore (média local à cet environnement).');
+    return null;
+  }
   const verdict = isCanonicalMediaUrl(absolue);
   if (!verdict.ok) {
     // On le DIT. Un média absent d'une projection sans explication ferait
@@ -292,6 +454,95 @@ async function descriptorOfKnownMedia(media, role) {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  TRANSFERT VERS UNE DESTINATION — au déploiement                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * CONSTATE que les médias de cet environnement sont bien arrivés, et les
+ * marque PUBLIÉS.
+ *
+ * ══ CE QUE CETTE ÉTAPE FAIT, ET CE QU'ELLE NE FAIT PAS ══════════════════════
+ *
+ * Le transfert lui-même a déjà eu lieu : le pipeline synchronise le dossier
+ * `uploads` vivant vers le `shared/uploads` de la destination, à chaque
+ * déploiement. Cette étape ne recopie donc rien — elle VÉRIFIE, et c'est
+ * précisément ce qui manquait : sans preuve, marquer un média « publié »
+ * reviendrait à annoncer aux projets une adresse qu'on n'a jamais constatée.
+ *
+ * Pour chaque média LOCAL_ONLY de l'environnement déployé, on compare
+ * l'empreinte du fichier distant à celle mesurée à l'import. Identiques : le
+ * média devient PUBLISHED et son adresse absolue devient publiable. Absent ou
+ * divergent : il reste LOCAL_ONLY et on le dit.
+ *
+ * Idempotente : relancée, elle ne retouche que ce qui n'est pas déjà publié
+ * sur cet hôte. Aucun écrasement : on ne réécrit jamais un fichier distant.
+ *
+ * @param {object} args
+ * @param {object} args.transport      transport ouvert sur la destination
+ * @param {string} args.sharedUploads  chemin distant du dossier partagé
+ * @param {string} args.host           hôte de la destination
+ * @param {string} [args.environment]  environnement déployé
+ */
+export async function verifyPanelMediaOnDestination({
+  transport, sharedUploads, host, environment = config.env,
+}) {
+  const rapport = {
+    environment, host, scanned: 0, published: 0, missing: [], mismatched: [], alreadyPublished: 0,
+  };
+  if (!transport || !sharedUploads || !host) return rapport;
+
+  const medias = await PanelMedia.find({ environment, deletedAt: null }).lean();
+  rapport.scanned = medias.length;
+
+  for (const media of medias) {
+    if (media.publicationState === 'PUBLISHED' && media.publishedHost === host) {
+      rapport.alreadyPublished += 1;
+      continue;
+    }
+
+    // L'empreinte est lue SUR LE SERVEUR : c'est la seule preuve que le
+    // fichier y est, et qu'il y est intact.
+    const distant = `${sharedUploads}/${media.objectKey}`;
+    const res = await transport
+      .exec(`sha256sum ${distant} 2>/dev/null | cut -d' ' -f1 || echo ABSENT`)
+      .catch(() => ({ stdout: 'ABSENT' }));
+    const empreinte = String(res.stdout ?? '').trim();
+
+    if (empreinte === 'ABSENT' || empreinte === '') {
+      rapport.missing.push(media.objectKey);
+      continue;
+    }
+    if (empreinte !== media.sha256) {
+      // On ne « corrige » pas : deux contenus différents sous une même clé
+      // signifient qu'une hypothèse est fausse quelque part, et l'écraser
+      // effacerait la trace du problème.
+      rapport.mismatched.push({ objectKey: media.objectKey, expected: media.sha256, found: empreinte });
+      continue;
+    }
+
+    const at = nowIso();
+    await PanelMedia.updateOne(
+      { objectKey: media.objectKey },
+      { $set: { publicationState: 'PUBLISHED', publishedHost: host, publishedAt: at, updatedAt: at } },
+    );
+    rapport.published += 1;
+  }
+
+  if (rapport.published) {
+    logger.info(`[media] ${rapport.published} média(s) ${environment} vérifié(s) sur ${host} et publiés.`);
+  }
+  if (rapport.missing.length) {
+    logger.warn(`[media] ${rapport.missing.length} média(s) ${environment} absents de ${host} : `
+      + `${rapport.missing.slice(0, 5).join(', ')}. Ils restent locaux et ne seront pas publiés aux projets.`);
+  }
+  for (const m of rapport.mismatched) {
+    logger.error(`[media] Empreinte divergente pour « ${m.objectKey} » sur ${host} : `
+      + `attendu ${m.expected.slice(0, 12)}, trouvé ${m.found.slice(0, 12)}. Média NON publié.`);
+  }
+  return rapport;
+}
+
 export default {
   sha256Of,
   SHORT_HASH_LENGTH,
@@ -300,8 +551,12 @@ export default {
   shortHashOf,
   findMediaByContent,
   isCanonicalMediaUrl,
+  activePanelDestination,
+  resolveMediaUrl,
+  stableDescriptorOf,
   registerMedia,
   markMediaDeleted,
   findMedia,
   publishableDescriptor,
+  verifyPanelMediaOnDestination,
 };

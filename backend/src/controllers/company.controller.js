@@ -13,6 +13,7 @@ import ApiError from '../utils/ApiError.js';
 import {
   createCompany,
   describeCompany,
+  companyMediaResolution,
   getActiveCompany,
   getCompanyOrThrow,
   getPublishedConfiguration,
@@ -64,6 +65,9 @@ export async function current(_req, res) {
   const published = await getPublishedConfiguration(company.companyId);
   return ok(res, {
     company: describeCompany(company),
+    // Les adresses d'affichage des médias — dérivées à la lecture, jamais
+    // stockées. Voir `companyMediaResolution`.
+    media: await companyMediaResolution(company),
     published: published
       ? { version: published.version, publishedAt: published.publishedAt, reason: published.reason }
       : null,

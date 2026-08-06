@@ -358,6 +358,41 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
       // Le moteur ne cherche JAMAIS de source de médias : elle lui est
       // fournie, tirée de l'historique des emplacements de CE projet.
       resolveUploadsSources,
+
+      /**
+       * MÉDIAS DE LA FICHE ENTREPRISE — constatés sur la destination.
+       *
+       * ── CE QUE CETTE CAPACITÉ RÈGLE ───────────────────────────────────
+       * Un Panel se configure AVANT d'être déployé : le logo y est importé
+       * alors qu'aucune destination ne le sert. Il est alors LOCAL_ONLY —
+       * enregistrable, affichable ici, mais pas publiable aux projets.
+       *
+       * Le premier déploiement transporte les fichiers ; c'est ici qu'on
+       * PROUVE qu'ils sont arrivés intacts (empreinte relue sur le serveur)
+       * avant de les déclarer publiés. Sans cette preuve, on annoncerait aux
+       * projets une adresse jamais constatée.
+       *
+       * L'opérateur n'a donc rien à réimporter après une mise en ligne.
+       */
+      publishApplicationMedia: async ({ transport, sharedUploads, host }) => {
+        const { verifyPanelMediaOnDestination } = await import('../upload/mediaDescriptor.service.js');
+        const rapport = await verifyPanelMediaOnDestination({
+          transport, sharedUploads, host, environment: target.environment,
+        });
+        if (rapport.published) {
+          log(`${rapport.published} média(s) vérifié(s) sur ${host} et désormais publiables aux projets.`);
+        }
+        if (rapport.missing.length) {
+          // NON bloquant : un média manquant ne casse pas le déploiement, il
+          // reste local. Mais il doit se LIRE dans le rapport, sinon on croit
+          // publié ce qui ne l'est pas.
+          log(`${rapport.missing.length} média(s) absent(s) de la destination : ils restent locaux.`, 'WARNING');
+        }
+        for (const m of rapport.mismatched) {
+          log(`Empreinte divergente pour « ${m.objectKey} » : média NON publié.`, 'WARNING');
+        }
+        return rapport;
+      },
     },
     // Le moteur émet un évènement par transition d'étape. On le transcrit
     // dans le run persisté — c'est ce que l'interface relit.

@@ -4,7 +4,9 @@ import { ICONE_PAR_DEFAUT } from './referenceIcons';
 import { Card } from '@/components/ui';
 import { errorMessage, uploadImage } from '@/lib/api';
 import { EMPTY_SIGNER, getSignerGaps, isSignerEmpty, isValidEmail } from '@/lib/signer';
-import type { CompanyReference, CompanySigner, CompanyTeamMember } from '@/types.company';
+import type {
+  CompanyReference, CompanySigner, CompanyTeamMember, StoredMediaDescriptor,
+} from '@/types.company';
 
 /**
  * IDENTITÉ DÉVELOPPEUR — les blocs repris du Manager, adaptés au Panel.
@@ -274,15 +276,41 @@ export function ReferenceRows({
  */
 export function LogoField({
   value,
+  descriptor,
+  previewUrl,
+  published = false,
   onChange,
 }: {
   value: string | null;
-  onChange: (url: string) => void;
+  descriptor?: StoredMediaDescriptor | null;
+  previewUrl?: string | null;
+  /** Servi par une destination active — relevé par le serveur, jamais deviné ici. */
+  published?: boolean;
+  onChange: (path: string, descriptor: StoredMediaDescriptor | null, previewUrl?: string) => void;
 }) {
   return (
     <Card title="Logo">
       <p className="muted">Affiché par les projets. Format libre, redimensionné automatiquement.</p>
-      <ImageField value={value} onChange={onChange} kind="logo" label="le logo" />
+      <ImageField
+        value={value}
+        previewUrl={previewUrl}
+        onChange={onChange}
+        kind="logo"
+        label="le logo"
+      />
+      {/*
+        Un logo importé sur un Panel pas encore déployé est parfaitement
+        valide : il est enregistrable, et l'aperçu fonctionne. Il n'est
+        simplement pas encore publiable aux projets — le dire évite de le
+        prendre pour une panne.
+      */}
+      {descriptor?.objectKey && !published ? (
+        <p className="muted read-only-note">
+          Ce média est enregistré dans cet environnement mais n’est pas encore
+          publié : aucune destination ne le sert. Il le sera au premier
+          déploiement, sans réimport.
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -303,17 +331,34 @@ export function ImageField({
   onChange,
   kind,
   label,
+  previewUrl,
 }: {
+  /** Chemin de stockage conservé par la fiche — jamais une adresse publique. */
   value: string | null;
-  onChange: (url: string) => void;
+  /**
+   * Rend le chemin de stockage, le DESCRIPTEUR (la source de vérité) et
+   * l'adresse d'aperçu du moment. Le parent enregistre les deux premiers ; la
+   * troisième ne sert qu'à l'affichage.
+   */
+  onChange: (path: string, descriptor: StoredMediaDescriptor | null, previewUrl?: string) => void;
   kind: 'logo' | 'avatar';
   label: string;
+  /** Adresse d'affichage résolue par le parent, quand elle diffère du chemin. */
+  previewUrl?: string | null;
 }) {
   const [envoi, setEnvoi] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const url = (value || '').trim();
+  /**
+   * L'adresse d'APERÇU, qui n'est pas l'identité.
+   *
+   * Elle vient de l'import quand il vient d'avoir lieu, du parent sinon. À
+   * défaut, le chemin de stockage suffit : le Panel sert ses propres médias
+   * sur `/uploads/…`, y compris sur un poste jamais déployé.
+   */
+  const [apercuImport, setApercuImport] = useState<string | null>(null);
+  const url = (apercuImport ?? previewUrl ?? value ?? '').trim();
 
   /**
    * L'image a-t-elle échoué à se charger ?
@@ -342,31 +387,24 @@ export function ImageField({
       );
 
       /**
-       * ── CE QUI ENTRE DANS LA FICHE EST L'ADRESSE CANONIQUE ──────────────
+       * ── CE QUI ENTRE DANS LA FICHE EST LE DESCRIPTEUR, PAS UNE ADRESSE ──
        *
-       * On y écrivait le chemin RELATIF rendu par l'import. L'enregistrement
-       * échouait ensuite : la fiche d'entreprise exige une URL absolue en
-       * https, et `/uploads/…` ne s'analyse pas comme une URL. L'import
-       * réussissait, l'enregistrement non — et le refus parlait d'un champ que
-       * l'utilisateur n'avait jamais saisi, donc de rien qu'il puisse corriger.
+       * Une correction précédente y écrivait l'URL ABSOLUE, et refusait
+       * l'import quand aucune n'était résolue. Conséquence : un Panel de
+       * RECETTE non encore déployé n'a aucune adresse publique — on ne pouvait
+       * donc plus y enregistrer de logo, c'est-à-dire plus le configurer avant
+       * sa première mise en ligne. Le remède était pire que le mal.
        *
-       * L'adresse canonique est celle de l'AUTORITÉ média, identique que
-       * l'import ait été servi par le Panel local ou par le déployé : la fiche
-       * porte donc la même valeur dans les deux cas.
+       * L'identité d'un média est sa CLÉ D'OBJET et son empreinte. L'adresse
+       * en est dérivée à la lecture, contre la destination active du moment :
+       * la fiche n'a donc jamais à être réécrite quand le Panel est déployé,
+       * ni quand il change de domaine.
        *
-       * Sans adresse canonique, on REFUSE plutôt que de retomber sur le chemin
-       * relatif : l'enregistrement échouerait de toute façon, et il vaut mieux
-       * le dire ici, où l'on sait pourquoi.
+       * `publicUrl` — absolue ou locale selon ce qui existe — ne sert qu'à
+       * l'aperçu, et n'est jamais enregistrée.
        */
-      if (!importe.canonicalUrl) {
-        setErreur(
-          'L’image a bien été importée, mais le Panel ne connaît pas encore son '
-          + 'adresse publique : impossible de l’enregistrer dans la fiche. '
-          + 'Renseignez l’adresse publique du Panel dans la configuration réseau, puis réessayez.',
-        );
-        return;
-      }
-      onChange(importe.canonicalUrl);
+      setApercuImport(importe.publicUrl);
+      onChange(importe.url, importe.descriptor, importe.publicUrl);
     } catch (err) {
       setErreur(errorMessage(err, "L'image n'a pas pu être importée."));
     } finally {
@@ -418,7 +456,14 @@ export function ImageField({
               type="button"
               className="company-image-remove"
               aria-label={`Supprimer ${label}`}
-              onClick={(e) => { e.stopPropagation(); onChange(''); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Retirer, c'est effacer LES DEUX : le chemin et le
+                // descripteur. N'effacer que l'un laisserait la fiche décrire
+                // un média qu'elle ne référence plus.
+                setApercuImport(null);
+                onChange('', null);
+              }}
             >
               ×
             </button>
@@ -495,9 +540,16 @@ function Champ({
 export function TeamEditor({
   value,
   onChange,
+  previews,
 }: {
   value: CompanyTeamMember[];
   onChange: (team: CompanyTeamMember[]) => void;
+  /**
+   * Adresses d'affichage des portraits, résolues par le serveur et indexées
+   * par position. Elles ne sont QUE des aperçus : le portrait enregistré est
+   * le descripteur, jamais l'adresse.
+   */
+  previews?: Record<string, string | null>;
 }) {
   const membres = value ?? [];
 
@@ -547,7 +599,14 @@ export function TeamEditor({
               <div className="company-member-head">
                 <ImageField
                   value={m.photoUrl}
-                  onChange={(photoUrl) => set(i, { photoUrl: photoUrl || null })}
+                  previewUrl={previews?.[`team.${i}.photo`] ?? null}
+                  onChange={(photoUrl, photo) => set(i, {
+                    photoUrl: photoUrl || null,
+                    // Le descripteur suit toujours le chemin : les dissocier
+                    // laisserait la fiche décrire un média qu'elle ne
+                    // référence plus, ou l'inverse.
+                    photo: photo ?? null,
+                  })}
                   kind="avatar"
                   label={`Photo de ${m.firstName || 'ce membre'}`}
                 />

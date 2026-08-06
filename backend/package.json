@@ -49,6 +49,7 @@
     "test:media": "node ../tests/media-descriptor.test.js",
     "test:media-cache": "node ../tests/media-cache-versioning.test.js",
     "test:media-canonical": "node ../tests/media-canonical-save.test.js",
+    "test:media-first-deployment": "node ../tests/media-first-deployment.test.js",
     "test:duplication-e2e": "node ../tests/duplication-e2e.test.js"
   },
   "dependencies": {

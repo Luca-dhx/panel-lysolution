@@ -1,8 +1,8 @@
 {
   "engine": "deployment-engine",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "engineApiVersion": "1",
-  "contractVersion": "1.3.0",
+  "contractVersion": "1.4.0",
   "minimumCompatibleVersion": "1.0.0",
   "layoutVersion": "2",
   "releaseDate": "2026-08-06",
@@ -40,10 +40,18 @@
     "deprovision",
     "quarantine-410",
     "port-registry",
-    "service-health-proof"
+    "service-health-proof",
+    "application-media-publication"
   ],
   "breakingChanges": [],
   "history": [
+    {
+      "version": "1.4.0",
+      "date": "2026-08-06",
+      "type": "MINOR",
+      "summary": "Publication des médias de l'application au déploiement : une étape dédiée, placée avant la validation finale, laisse l'application prouver que les médias référencés par ses fiches sont arrivés intacts sur la destination avant de les déclarer publics. Une instance peut donc être entièrement configurée AVANT sa première mise en ligne, sans réimport ensuite.",
+      "breaking": false
+    },
     {
       "version": "1.3.0",
       "date": "2026-08-06",

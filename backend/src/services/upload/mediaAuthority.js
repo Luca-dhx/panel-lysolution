@@ -52,6 +52,32 @@ function estLocale(url) {
 }
 
 /**
+ * L'ADRESSE DE L'AUTORITÉ POUR CET ENVIRONNEMENT.
+ *
+ * ── POURQUOI LA DESTINATION ACTIVE PASSE DEVANT ─────────────────────────────
+ * L'autorité se lisait dans la configuration réseau. Deux défauts, tous deux
+ * observés :
+ *
+ *   · elle ne distingue pas TEST de PROD. Un poste de recette pouvait donc
+ *     relayer ses médias vers l'instance de production — un mélange
+ *     d'environnements que rien n'aurait signalé ;
+ *   · elle n'est pas remise à jour quand une destination est RETIRÉE. On
+ *     relayait alors vers une adresse rendue, ou mise en quarantaine.
+ *
+ * La destination ACTIVE de l'environnement courant répond aux deux : elle est
+ * unique par environnement, et cesse d'exister dès qu'elle est retirée. La
+ * configuration réseau reste le repli — un Panel dont aucune destination n'est
+ * encore enregistrée continue de fonctionner comme avant.
+ */
+async function adresseCanonique() {
+  const { activePanelDestination } = await import('./mediaDescriptor.service.js');
+  const destination = await activePanelDestination(config.env).catch(() => null);
+  if (destination?.url) return String(destination.url).trim().replace(/\/+$/, '');
+  const { url } = await resolveBackendUrl();
+  return url || null;
+}
+
+/**
  * L'autorité média, et le rôle de CETTE instance.
  *
  * @returns {Promise<{authority: string|null, isAuthority: boolean, reason: string}>}
@@ -59,7 +85,7 @@ function estLocale(url) {
  *   `isAuthority` : cette instance stocke-t-elle elle-même ?
  */
 export async function resolveMediaAuthority() {
-  const { url: canonique } = await resolveBackendUrl();
+  const canonique = await adresseCanonique();
   const moi = config.publicUrl || null;
 
   // Sans adresse canonique, il n'y a personne à qui relayer : cette instance

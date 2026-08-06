@@ -34,7 +34,7 @@ import {
   LogoField, ReferencesEditor, SignerSection, TeamEditor,
 } from '@/components/company/DeveloperIdentity';
 import { company as api, errorMessage } from '@/lib/api';
-import type { CompanyState, VersionRow } from '@/types.company';
+import type { CompanyState, StoredMediaDescriptor, VersionRow } from '@/types.company';
 
 /**
  * FICHE VIERGE — la même forme que celle du serveur, sans aucune valeur.
@@ -164,6 +164,9 @@ export function CompanyPage() {
     // chaque frappe.
     const body: Record<string, unknown> = {};
     for (const [path, value] of Object.entries(draft)) {
+      // Les aperçus sont des ADRESSES CALCULÉES, gardées le temps de l'écran.
+      // Les renvoyer les ferait écrire en fiche — le défaut même qu'on corrige.
+      if (path.endsWith('Preview')) continue;
       // Signataire, références et équipe sont des BLOCS entiers, pas des
       // champs : ils s'écrivent tels quels, sans passer par « groupe.clé ».
       if (!path.includes('.')) { body[path] = value; continue; }
@@ -178,7 +181,30 @@ export function CompanyPage() {
   const signataire = (draft.signer as typeof c.signer) ?? c.signer ?? null;
   const references = (draft.references as typeof c.references) ?? c.references ?? [];
   const equipe = (draft.team as typeof c.team) ?? c.team ?? [];
+  /**
+   * LE LOGO SE LIT EN TROIS MORCEAUX, ET C'EST VOULU.
+   *
+   * · `logo` — le chemin de stockage, ce qui part dans `branding.logoUrl` ;
+   * · `logoDescripteur` — LA source de vérité, ce qui part dans `branding.logo` ;
+   * · `logoApercu` — l'adresse d'affichage, calculée par le serveur, qui ne
+   *   repart JAMAIS. L'écrire en fiche est exactement le défaut qu'on corrige.
+   *
+   * Pendant l'édition, l'aperçu vient de l'import ; après rechargement, du bloc
+   * `media` résolu par le serveur.
+   */
   const logo = (draft['branding.logoUrl'] as string) ?? c.branding.logoUrl ?? '';
+  const logoDescripteur = (draft['branding.logo'] as StoredMediaDescriptor | null | undefined)
+    ?? c.branding.logo ?? null;
+  const logoApercu = (draft['branding.logoPreview'] as string | undefined)
+    ?? state.media?.['branding.logo']?.url
+    ?? null;
+  /** Les aperçus résolus par le serveur, à plat : `branding.logo`, `team.0.photo`. */
+  const apercusMedias = Object.fromEntries(
+    Object.entries(state.media ?? {}).map(([chemin, m]) => [chemin, m.url]),
+  );
+  const logoPublie = draft['branding.logoPreview'] !== undefined
+    ? /^https?:\/\//i.test(String(draft['branding.logoPreview'] ?? ''))
+    : Boolean(state.media?.['branding.logo']?.published);
 
   const modifie = Object.keys(draft).length > 0;
 
@@ -245,7 +271,18 @@ export function CompanyPage() {
         </div>
       </Card>
 
-      <LogoField value={logo} onChange={(url) => setDraft({ ...draft, 'branding.logoUrl': url })} />
+      <LogoField
+        value={logo}
+        descriptor={logoDescripteur}
+        previewUrl={logoApercu}
+        published={logoPublie}
+        onChange={(path, descriptor, previewUrl) => setDraft({
+          ...draft,
+          'branding.logoUrl': path,
+          'branding.logo': descriptor,
+          'branding.logoPreview': previewUrl ?? path,
+        })}
+      />
 
       {/* 2 — RÉFÉRENCES : tous les contacts publics passent par ici. */}
       <ReferencesEditor
@@ -262,6 +299,7 @@ export function CompanyPage() {
       {/* 4 — ÉQUIPE : les personnes affichées sur la page Support des projets. */}
       <TeamEditor
         value={equipe}
+        previews={apercusMedias}
         onChange={(team) => setDraft({ ...draft, team })}
       />
 

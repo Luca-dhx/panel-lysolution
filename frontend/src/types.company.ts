@@ -39,10 +39,36 @@ export interface CompanyIdentity {
   description: string | null;
 }
 
+/**
+ * DESCRIPTEUR STABLE D'UN MÉDIA — ce qu'une fiche conserve d'une image.
+ *
+ * Aucune adresse : l'identité d'un média est sa clé d'objet et son empreinte.
+ * L'URL en est DÉRIVÉE à la lecture, contre la destination active du moment.
+ *
+ * C'est ce qui permet de configurer un Panel de recette AVANT son premier
+ * déploiement : il n'a alors aucune adresse publique, et il n'en a pas besoin.
+ */
+export interface StoredMediaDescriptor {
+  mediaId?: string | null;
+  objectKey: string;
+  /** TEST ou PROD — un média ne franchit jamais cette frontière. */
+  environment?: 'TEST' | 'PROD' | null;
+  sha256?: string | null;
+  mime?: string | null;
+  size?: number | null;
+  width?: number | null;
+  height?: number | null;
+  version?: number | null;
+}
+
 export interface CompanyBranding {
+  /** Chemin de stockage (`/uploads/…`) — repli historique, plus l'autorité. */
   logoUrl: string | null;
   logoDarkUrl: string | null;
   faviconUrl: string | null;
+  /** LA SOURCE DE VÉRITÉ du média. */
+  logo?: StoredMediaDescriptor | null;
+  favicon?: StoredMediaDescriptor | null;
   primaryColor: string | null;
   secondaryColor: string | null;
   accentColor: string | null;
@@ -117,7 +143,10 @@ export interface CompanyTeamMember {
   role: string | null;
   email: string | null;
   phone: string | null;
+  /** Chemin de stockage — repli historique, plus l'autorité. */
   photoUrl: string | null;
+  /** LA SOURCE DE VÉRITÉ du portrait. */
+  photo?: StoredMediaDescriptor | null;
   active: boolean;
   /** Canaux propres à la personne : ligne directe, profil, agenda. */
   references: CompanyReference[];
@@ -150,8 +179,26 @@ export interface Company {
   updatedBy: string | null;
 }
 
+/**
+ * ADRESSE D'AFFICHAGE D'UN MÉDIA — calculée par le serveur à chaque lecture.
+ *
+ * Elle n'est jamais renvoyée en enregistrant : ce que la fiche conserve, c'est
+ * le descripteur. Une adresse écrite en base redeviendrait fausse au premier
+ * changement de domaine.
+ */
+export interface ResolvedMedia {
+  url: string | null;
+  /** Servi par une destination active — donc visible hors de ce Panel. */
+  published: boolean;
+  reason: string;
+}
+
+/** Indexé par le chemin du descripteur : `branding.logo`, `team.0.photo`. */
+export type MediaResolution = Record<string, ResolvedMedia>;
+
 export interface CompanyState {
   company: Company | null;
+  media?: MediaResolution;
   published: { version: number; publishedAt: string; reason: string } | null;
 }
 
@@ -183,6 +230,7 @@ export interface VersionDetail {
  */
 export interface SaveResult {
   company: Company;
+  media?: MediaResolution;
   published: boolean;
   version: number | null;
   changes: { path: string; from: unknown; to: unknown }[];
