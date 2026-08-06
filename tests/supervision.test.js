@@ -103,8 +103,27 @@ let declared;
   check('type issu du Manifest', d.type === 'vitrine');
   check('description issue du Manifest', d.description === 'Garage du Nord');
   check('layout issu du Manifest', d.layout === 'vitrine:web + backend:server');
-  check('domaine principal issu du Manifest', d.primaryDomain === 'garage-nord.exemple.com');
-  check('URLs issues du Manifest', d.urls.site === 'https://garage-nord.exemple.com');
+  /**
+   * ── LES ADRESSES NE VIENNENT PLUS DU MANIFESTE ──────────────────────────
+   *
+   * Elles viennent de la DESTINATION ACTIVE, alimentée par ce que le projet
+   * annonce — ici, le manifeste sondé à la déclaration. La différence n'est
+   * pas cosmétique : le manifeste est une photographie prise une fois, que
+   * rien ne rafraîchit ensuite. S'y fier laissait un projet ayant changé de
+   * domaine afficher l'ancien hôte à côté du nouveau.
+   *
+   * Le manifeste de ce projet ne déclare qu'une URL `site`, que le contrat ne
+   * nomme pas parmi `website`/`manager`/`backend` : l'hôte de la destination
+   * dérive donc de l'adresse saisie à la déclaration.
+   */
+  check('le domaine principal vient de la destination active',
+    d.primaryDomain === 'garage-nord.test');
+  check('…et son origine est annoncée', d.networkSource === 'DESTINATION_ACTIVE');
+  check('l’adresse du backend est celle déclarée',
+    d.urls.backend === 'https://garage-nord.test');
+  check('…une seule et même source pour toutes les adresses',
+    new Set(Object.values(d.urls).filter(Boolean)
+      .map((u) => new URL(u).hostname.replace(/^(api|manager)\./, ''))).size === 1);
   check('version de moteur de déploiement', d.versions.deploymentEngine === '1.1.0');
   check('version de moteur de duplication', d.versions.duplicationEngine === '1.1.0');
   check('version de contrat', d.versions.contract === CONTRACT_VERSION);

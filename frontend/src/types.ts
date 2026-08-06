@@ -203,7 +203,15 @@ export interface ProjectDescriptor {
   description: string | null;
   layout: string | null;
   environment: 'TEST' | 'PROD' | null;
+  /** Hôte de la destination ACTIVE — `null` si aucune n'est connue. */
   primaryDomain: string | null;
+  /**
+   * D'OÙ vient l'adresse. `DESTINATION_ACTIVE` quand elle est résolue ; sinon
+   * une raison lisible (`AUCUNE_DESTINATION_ACTIVE`, `ENVIRONNEMENT_INCONNU`).
+   * L'écran peut ainsi dire « inconnu » plutôt que de laisser un tiret muet.
+   */
+  networkSource?: string;
+  destinationId?: string | null;
   urls: Record<string, string> | null;
   versions: {
     software: string | null;
@@ -230,4 +238,55 @@ export interface AppliedConfiguration {
   integratedApiKeys: string[];
   lastSyncAt: string | null;
   observedAt: string;
+}
+
+/**
+ * DESTINATION D'UN PROJET — ce que le Panel sait de l'endroit où il vit.
+ *
+ * ══ LE PANEL NE DÉPLOIE JAMAIS ══════════════════════════════════════════════
+ *
+ * Il ENREGISTRE ce que le projet annonce depuis son propre poste, et arbitre
+ * les états. Il n'y a donc AUCUNE action « déployer », « redéployer » ni
+ * « migrer » — et il ne faut jamais en ajouter. Les deux seules actions
+ * humaines sont de constater qu'une destination retirée est vide, puis de
+ * supprimer sa fiche.
+ *
+ *   ACTIVE ──► RETIRED ──► EMPTY ──► DELETED
+ *
+ * `PENDING` : une migration annoncée dont la photographie n'est pas complète.
+ * Elle n'est jamais lue par les vues — basculer avant d'avoir tout reçu
+ * afficherait un projet à moitié décrit.
+ */
+export type ProjectDestinationStatus =
+  | 'PENDING' | 'ACTIVE' | 'RETIRED' | 'EMPTY' | 'DELETED';
+
+export interface ProjectDestination {
+  destinationId: string;
+  projectId: string;
+  environment: 'TEST' | 'PROD';
+  /** Hôte canonique, préfixe d'API retiré. */
+  host: string;
+  urls: { website: string | null; manager: string | null; backend: string | null };
+  status: ProjectDestinationStatus;
+  generation: string | null;
+  /** Par quel canal le projet l'a annoncée. */
+  announcedBy: 'BOOTSTRAP' | 'PRESENTATION' | 'MANIFEST' | 'REPAIR' | null;
+  /** Ce qui manque à la photographie réseau pour être complète. */
+  missing: string[];
+  announcedAt: string;
+  activatedAt: string | null;
+  retiredAt: string | null;
+  emptiedAt: string | null;
+  deletedAt: string | null;
+  lastSeenAt: string | null;
+  previousDestinationId: string | null;
+  /** Ce que l'écran a le droit de proposer — décidé par le backend. */
+  canMarkEmpty: boolean;
+  canDelete: boolean;
+}
+
+/** Une entrée par environnement : chacun a SA destination active. */
+export interface ProjectDestinationsByEnvironment {
+  TEST: { active: ProjectDestination | null; pending: ProjectDestination | null; history: ProjectDestination[] };
+  PROD: { active: ProjectDestination | null; pending: ProjectDestination | null; history: ProjectDestination[] };
 }

@@ -22,6 +22,7 @@ import ProjectBridgeClient from '../../bridge/ProjectBridgeClient.js';
 import { getOutboundBridgeToken } from '../pairing/pairing.service.js';
 import { PanelContractAction } from '../../models/PanelContractAction.model.js';
 import { PanelProjectContract } from '../../models/PanelProjectProjection.model.js';
+import { outboundBaseUrl } from '../registry/projectDestination.service.js';
 
 const nowIso = () => new Date().toISOString();
 
@@ -39,14 +40,14 @@ function clientFor(record) {
       'Ce projet n’est pas relié : aucune action contractuelle ne peut lui être transmise.',
     );
   }
-  if (!record.runtime?.publicBackendUrl) {
+  if (!outboundBaseUrl(record)) {
     throw ApiError.conflict(
       'PANEL_PROJECT_UNREACHABLE',
       'L’adresse du projet est inconnue : impossible de lui transmettre la demande.',
     );
   }
   return new ProjectBridgeClient({
-    baseUrl: record.runtime.publicBackendUrl,
+    baseUrl: outboundBaseUrl(record),
     bridgeToken,
   });
 }

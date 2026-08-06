@@ -43,6 +43,7 @@ import { DENIAL, confirmationRequirement, evaluatePolicy } from './execution-pol
 import { PHASE, createLog } from './execution-log.service.js';
 import * as executor from './executor.service.js';
 import * as plans from './execution-plan.service.js';
+import { outboundBaseUrl } from '../registry/projectDestination.service.js';
 
 export const MODE = Object.freeze({ SIMULATION: 'SIMULATION', EXECUTION: 'EXECUTION' });
 
@@ -452,10 +453,10 @@ function buildServices() {
  * projet hors de ce chemin.
  */
 function buildClient(record, { timeoutMs }) {
-  if (!record?.runtime?.publicBackendUrl) return null;
+  if (!outboundBaseUrl(record)) return null;
   const bridgeToken = getOutboundBridgeToken(record);
   if (!bridgeToken) return null;
-  return new ProjectBridgeClient({ baseUrl: record.runtime.publicBackendUrl, bridgeToken, timeoutMs });
+  return new ProjectBridgeClient({ baseUrl: outboundBaseUrl(record), bridgeToken, timeoutMs });
 }
 
 /**

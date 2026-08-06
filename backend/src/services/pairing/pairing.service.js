@@ -179,6 +179,42 @@ export async function bootstrap(dto) {
   const consumed = await registryStore.saveIfPairingCodeMatches(record, consumedHash);
   if (!consumed) throw codeInvalid;
 
+  /**
+   * LE PROJET ANNONCE SA DESTINATION — le Panel l'enregistre, sans déployer.
+   *
+   * Le bootstrap est le canal le plus complet : il porte l'URL du backend ET
+   * le manifeste, donc les trois adresses. C'est aussi le seul moment où un
+   * projet fraîchement appairé peut se faire connaître.
+   *
+   * Best-effort assumé, comme la découverte descendante plus bas : refuser un
+   * appairage parce qu'une adresse est mal formée serait disproportionné, et
+   * la première projection poussée rattrapera l'annonce.
+   */
+  /**
+   * ── SEULE L'ADRESSE ANNONCÉE COMPTE ICI, PAS CELLE DU MANIFESTE ───────────
+   *
+   * `publicBackendUrl` est l'adresse à laquelle le projet dit « rappelez-moi » :
+   * c'est l'adresse OPÉRATIONNELLE, celle où il répond à l'instant présent.
+   * `manifest.network.urls` est DESCRIPTIF — il peut nommer le domaine visé
+   * alors que le service répond ailleurs (recette locale, port éphémère,
+   * déploiement en cours). Faire gagner le manifeste ferait appeler une
+   * adresse où personne n'écoute, et conclure que le projet est en panne.
+   *
+   * Les adresses du site et du Manager viendront de la projection poussée,
+   * qui porte la photographie réseau complète. La destination est donc
+   * incomplète à cet instant — et le dit.
+   */
+  try {
+    const { announceDestination } = await import('../registry/projectDestination.service.js');
+    await announceDestination({
+      record,
+      urls: { backend: announcedUrl ?? null },
+      source: 'BOOTSTRAP',
+    });
+  } catch {
+    // L'appairage a réussi ; l'annonce se rattrapera au premier push.
+  }
+
   await recordEvent({
     projectId: record.projectId,
     type: EVENT_TYPES.PROJECT_PAIRED,

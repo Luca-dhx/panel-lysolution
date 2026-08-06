@@ -28,15 +28,36 @@
  * part ailleurs.
  */
 
-/** La génération d'un projet, telle que le registre la connaît AUJOURD'HUI. */
-export function currentGeneration(record) {
+/**
+ * ── CE QUI MANQUAIT À LA CLÉ, ET CE QUE ÇA A COÛTÉ ──────────────────────────
+ *
+ * La paire (environnement, appairage) ne suffit pas. Un projet qui change de
+ * DOMAINE en gardant sa base garde aussi son jeton de pont : il ne se
+ * réappaire pas, `pairedAt` ne bouge pas, l'environnement non plus. La
+ * génération restait donc IDENTIQUE de part et d'autre du déménagement, et
+ * aucune projection reçue avant n'était considérée comme périmée.
+ *
+ * Constaté sur « Demo SB Auto » : projections et manifeste portaient la même
+ * génération `TEST|2026-08-04T17:37:22.545Z`, alors que le projet était passé
+ * de `demo-sbauto.lycarz.com` à `demo-sbauto06.ly-solution.com`.
+ *
+ * La DESTINATION entre donc dans la clé. Elle est lue sur la destination
+ * ACTIVE — la seule autorité — et vaut `SANS-DESTINATION` tant qu'aucune n'est
+ * connue : une valeur stable, qui ne fabrique pas de fausse rupture.
+ *
+ * @param {object} record
+ * @param {string|null} [destinationHost]  hôte de la destination ACTIVE.
+ */
+export function currentGeneration(record, destinationHost = null) {
   const environment = record?.runtime?.environment ?? null;
   // À défaut d'appairage — fiche déclarée, jamais reliée — la création fait
   // office de repère : elle ne bougera plus.
   const paired = record?.pairing?.pairedAt ?? record?.createdAt ?? null;
+  const destination = destinationHost ?? record?.activeDestinationHost ?? null;
   return {
     environment,
-    generation: `${environment ?? 'INCONNU'}|${paired ?? 'JAMAIS'}`,
+    destination,
+    generation: `${environment ?? 'INCONNU'}|${paired ?? 'JAMAIS'}|${destination ?? 'SANS-DESTINATION'}`,
     softwareVersion: record?.runtime?.softwareVersion ?? null,
   };
 }
@@ -48,8 +69,8 @@ export function currentGeneration(record) {
  * qui permettra, plus tard, de dire « cette information a été synchronisée
  * depuis PROD » sans avoir à le deviner.
  */
-export function stampOf(record, receivedAt) {
-  const { environment, generation, softwareVersion } = currentGeneration(record);
+export function stampOf(record, receivedAt, destinationHost = null) {
+  const { environment, generation, softwareVersion } = currentGeneration(record, destinationHost);
   return {
     sourceEnvironment: environment,
     sourceGeneration: generation,

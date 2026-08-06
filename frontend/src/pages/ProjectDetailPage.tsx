@@ -15,9 +15,10 @@
  * cadre vide se lirait comme « ce client n'a pas de facture », ce qui serait
  * faux.
  */
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
+import { Disclosure } from '@/components/supervision';
 import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
 import { MeetingRow } from '@/components/EventLists';
@@ -34,9 +35,11 @@ import { useProject } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import { getProjectDataFreshness } from '@/lib/projectFreshness';
-import type { PublicProject, TeamMember } from '@/types';
+import type {
+  ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
+} from '@/types';
 import type { Meeting, ProjectEvent } from '@/types.events';
-import { api } from '@/lib/api';
+import { api, errorMessage } from '@/lib/api';
 import {
   connectionState,
   isBusinessSynchronized,
@@ -356,12 +359,20 @@ function DeveloperTab({ project }: { project: PublicProject }) {
         </dl>
       </Card>
 
+      <DestinationsCard projectId={project.projectId} />
+
       <Card title="Fiche technique du projet">
         <dl className="detail-list">
           <div><dt>Identifiant technique</dt><dd><code className="inline-code">{project.projectKey}</code></dd></div>
           <div><dt>URL du site</dt><dd>{tech.site ?? '—'}</dd></div>
           <div><dt>URL du Manager</dt><dd>{tech.manager ?? '—'}</dd></div>
-          <div><dt>URL du backend</dt><dd>{tech.backend ?? project.runtime.publicBackendUrl ?? '—'}</dd></div>
+          {/*
+            AUCUN REPLI sur `runtime.publicBackendUrl` : cette adresse est
+            posée au bootstrap et jamais revue. L'afficher en secours faisait
+            resurgir l'ancien domaine dès que la destination était incomplète —
+            et il ressemblait alors à une donnée à jour.
+          */}
+          <div><dt>URL du backend</dt><dd>{tech.backend ?? '—'}</dd></div>
           <div><dt>Environnement</dt><dd>{project.runtime.environment ?? '—'}</dd></div>
           <div><dt>Version applicative</dt><dd>{d?.versions?.software ?? '—'}</dd></div>
           <div><dt>Version de contrat Bridge</dt><dd>{d?.versions?.contract ?? '—'}</dd></div>
@@ -647,5 +658,173 @@ function EventsTab({ project }: { project: PublicProject }) {
         )}
       </Card>
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  DESTINATIONS — UNE PAR ENVIRONNEMENT, ET AUCUN BOUTON DE DÉPLOIEMENT      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * OÙ VIT CE PROJET — la vérité du Panel, environnement par environnement.
+ *
+ * ══ POURQUOI IL N'Y A NI « DÉPLOYER », NI « REDÉPLOYER », NI « MIGRER » ═════
+ *
+ * Le déploiement est piloté depuis le poste du projet. Le Panel ne déploie
+ * jamais : il ENREGISTRE ce que le projet lui annonce et arbitre les états.
+ * Ajouter ici un bouton qui déclenche un déploiement ferait du Panel un second
+ * moteur — et deux moteurs finissent toujours par se contredire.
+ *
+ * Les deux seules actions humaines sont donc : constater qu'une destination
+ * RETIRÉE ne contient plus rien, puis supprimer sa fiche. Le Panel ne vérifie
+ * pas ce constat : il ne se connecte à aucun serveur de projet.
+ *
+ * Les destinations sont chargées une fois, pas sondées : elles ne changent
+ * qu'au rythme des déménagements.
+ */
+function DestinationsCard({ projectId }: { projectId: string }) {
+  const isDev = useIsDev();
+  const [parEnv, setParEnv] = useState<ProjectDestinationsByEnvironment | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [occupe, setOccupe] = useState(false);
+
+  const charger = useCallback(async () => {
+    try {
+      setParEnv((await api.getProject(projectId)).destinations ?? null);
+      setErreur(null);
+    } catch (err) {
+      setErreur(errorMessage(err, 'Destinations indisponibles.'));
+    }
+  }, [projectId]);
+
+  useEffect(() => { void charger(); }, [charger]);
+
+  const agir = async (action: () => Promise<unknown>) => {
+    setOccupe(true);
+    setErreur(null);
+    try {
+      await action();
+      await charger();
+    } catch (err) {
+      setErreur(errorMessage(err, 'Action refusée.'));
+    } finally {
+      setOccupe(false);
+    }
+  };
+
+  if (!parEnv) {
+    return (
+      <Card title="Destinations">
+        <p className="muted">{erreur ?? 'Chargement…'}</p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card title="Destinations">
+      <p className="muted read-only-note">
+        Le Panel n’effectue aucun déploiement : ces destinations sont ce que le
+        projet lui a ANNONCÉ depuis son propre poste. Un changement de domaine
+        se déclenche là-bas, et la bascule n’a lieu ici qu’une fois la
+        photographie complète reçue.
+      </p>
+
+      {erreur ? <div className="alert alert-error">{erreur}</div> : null}
+
+      {(['TEST', 'PROD'] as const).map((env) => {
+        const bloc = parEnv[env];
+        return (
+          <section key={env} className="destination-env">
+            <h3 className="section-title">{env}</h3>
+
+            {bloc.active ? (
+              <DestinationRow d={bloc.active} occupe={occupe} isDev={isDev} onAgir={agir} />
+            ) : (
+              <p className="muted">
+                Aucune destination active. Le Panel ne sait pas où vit ce projet
+                dans cet environnement — et n’affichera aucune adresse plutôt
+                qu’une adresse périmée.
+              </p>
+            )}
+
+            {bloc.pending ? (
+              <div className="alert alert-warning">
+                <strong>Migration annoncée vers {bloc.pending.host}.</strong> La
+                bascule attend la photographie complète
+                {bloc.pending.missing.length
+                  ? ` — il manque : ${bloc.pending.missing.join(', ')}.`
+                  : '.'}
+              </div>
+            ) : null}
+
+            {bloc.history.length > 0 ? (
+              <Disclosure title={`Historique (${bloc.history.length})`}>
+                {bloc.history.map((d) => (
+                  <DestinationRow key={d.destinationId} d={d} occupe={occupe} isDev={isDev} onAgir={agir} />
+                ))}
+              </Disclosure>
+            ) : null}
+          </section>
+        );
+      })}
+    </Card>
+  );
+}
+
+/** Une destination, avec les seules actions que le backend autorise. */
+function DestinationRow({ d, occupe, isDev, onAgir }: {
+  d: ProjectDestination;
+  occupe: boolean;
+  isDev: boolean;
+  onAgir: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const libelle: Record<string, { texte: string; ton: string }> = {
+    PENDING: { texte: 'Annoncée — en attente', ton: 'warn' },
+    ACTIVE: { texte: 'Active', ton: 'ok' },
+    RETIRED: { texte: 'Retirée', ton: 'neutral' },
+    EMPTY: { texte: 'Vidée', ton: 'neutral' },
+    DELETED: { texte: 'Supprimée', ton: 'muted' },
+  };
+  const etat = libelle[d.status] ?? { texte: d.status, ton: 'neutral' };
+
+  return (
+    <div className="destination-row">
+      <div className="destination-head">
+        <code className="inline-code">{d.host}</code>
+        <span className={`badge badge-${etat.ton}`}>{etat.texte}</span>
+        {d.announcedBy ? <span className="muted">annoncée par {d.announcedBy}</span> : null}
+      </div>
+      <dl className="detail-list">
+        <div><dt>Site</dt><dd>{d.urls.website ?? '—'}</dd></div>
+        <div><dt>Manager</dt><dd>{d.urls.manager ?? '—'}</dd></div>
+        <div><dt>Backend</dt><dd>{d.urls.backend ?? '—'}</dd></div>
+        <div><dt>Annoncée le</dt><dd>{formatDateTime(d.announcedAt)}</dd></div>
+        {d.activatedAt ? <div><dt>Active depuis</dt><dd>{formatDateTime(d.activatedAt)}</dd></div> : null}
+        {d.retiredAt ? <div><dt>Retirée le</dt><dd>{formatDateTime(d.retiredAt)}</dd></div> : null}
+      </dl>
+
+      {isDev && (d.canMarkEmpty || d.canDelete) ? (
+        <div className="action-buttons">
+          {d.canMarkEmpty ? (
+            <button
+              type="button" className="btn btn-small" disabled={occupe}
+              title="Déclare qu’il ne reste plus rien sur le serveur. Le Panel ne le vérifie pas : il ne s’y connecte pas."
+              onClick={() => void onAgir(() => api.markDestinationEmpty(d.destinationId))}
+            >
+              Déclarer vide
+            </button>
+          ) : null}
+          {d.canDelete ? (
+            <button
+              type="button" className="btn btn-small btn-danger" disabled={occupe}
+              title="Retire la fiche des listes. Audit et historique conservés."
+              onClick={() => void onAgir(() => api.deleteDestination(d.destinationId))}
+            >
+              Supprimer la destination
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -12,6 +12,7 @@ import type {
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type { PanelTheme } from '@/lib/useTheme';
+import type { ProjectDestination, ProjectDestinationsByEnvironment } from '@/types';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
@@ -198,7 +199,26 @@ export const api = {
     ),
 
   getProject: (projectId: string) =>
-    request<{ project: PublicProject }>(`/api/projects/${projectId}`),
+    request<{ project: PublicProject; destinations: ProjectDestinationsByEnvironment }>(
+      `/api/projects/${projectId}`,
+    ),
+
+  /* ── DESTINATIONS D'UN PROJET ─────────────────────────────────────────────
+     DEUX actions, et deux seulement. Le Panel ne déploie pas, ne redéploie pas
+     et ne migre pas : c'est le projet qui annonce son déménagement depuis son
+     propre poste. Ne jamais ajouter ici de « déployer » ou de « basculer ». */
+
+  /** L'opérateur constate qu'il ne reste rien sur le serveur d'une destination RETIRÉE. */
+  markDestinationEmpty: (destinationId: string) =>
+    request<ProjectDestination>(`/api/projects/destinations/${destinationId}/empty`, {
+      method: 'POST',
+    }),
+
+  /** Retire la fiche des listes. Audit et historique conservés. */
+  deleteDestination: (destinationId: string) =>
+    request<ProjectDestination>(`/api/projects/destinations/${destinationId}`, {
+      method: 'DELETE',
+    }),
 
   /* ── CONTRAT — le Panel DEMANDE, le projet décide ────────────────────── */
   getContractOperations: (projectId: string) =>

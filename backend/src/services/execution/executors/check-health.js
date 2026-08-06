@@ -10,11 +10,12 @@
 // jamais lui-même — c'est ce qui garantit qu'aucun appel ne contourne le
 // moteur.
 import { PHASE } from '../execution-log.service.js';
+import { outboundBaseUrl } from '../../registry/projectDestination.service.js';
 
 export const id = 'check-health';
 
 export function simulate({ record, log }) {
-  const url = record?.runtime?.publicBackendUrl;
+  const url = outboundBaseUrl(record);
   log.info(PHASE.STEP, 'Simulation : aucun appel réseau ne sera effectué.');
   return {
     plan: [

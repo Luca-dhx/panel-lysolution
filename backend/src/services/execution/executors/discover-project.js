@@ -15,11 +15,12 @@
 // N'écrit QUE dans la base du Panel — comme `refresh-manifest`. Découvrir un
 // projet ne le modifie pas.
 import { PHASE } from '../execution-log.service.js';
+import { outboundBaseUrl } from '../../registry/projectDestination.service.js';
 
 export const id = 'discover-project';
 
 export function simulate({ record, log }) {
-  const url = record?.runtime?.publicBackendUrl;
+  const url = outboundBaseUrl(record);
   log.info(PHASE.STEP, 'Simulation : aucun appel réseau ne sera effectué.');
   return {
     plan: [

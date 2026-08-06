@@ -171,6 +171,30 @@ export async function declareProject({
     throw dejaDeclare(gagnant ?? { projectId: null, projectName: resolvedName });
   }
 
+  /**
+   * LA DÉCLARATION EST DÉJÀ UNE ANNONCE DE DESTINATION.
+   *
+   * L'adresse saisie, et le manifeste s'il a été sondé, disent où le projet
+   * vit. Attendre l'appairage priverait la fiche de toute adresse entre-temps
+   * — et l'écran retomberait sur le manifeste, c'est-à-dire sur la seconde
+   * source qu'on vient de supprimer.
+   *
+   * L'environnement vient du manifeste tant que le projet n'a pas parlé :
+   * c'est lui qui le déclare, le Panel ne le devine pas.
+   */
+  /**
+   * Seule l'adresse SAISIE est annoncée — celle où la sonde a répondu. Les
+   * URLs du manifeste sont descriptives : elles peuvent nommer le domaine visé
+   * alors que le service répond ailleurs. Le site et le Manager arriveront
+   * avec la projection poussée, qui porte la photographie réseau complète.
+   */
+  try {
+    const { announceDestination } = await import('./projectDestination.service.js');
+    await announceDestination({ record, urls: { backend: normalizedUrl }, source: 'MANIFEST' });
+  } catch {
+    // La déclaration a réussi ; l'annonce se rattrapera au bootstrap.
+  }
+
   await recordEvent({
     projectId: record.projectId,
     type: EVENT_TYPES.PROJECT_DECLARED,
@@ -413,6 +437,15 @@ export async function loadBusinessProjections(projectIds) {
 export function describeProject(record) {
   const manifest = record.manifest ?? null;
   const runtime = record.runtime ?? {};
+  /**
+   * LE RÉSEAU EST DÉJÀ RÉSOLU quand la fiche arrive ici.
+   *
+   * `registryStore` — le seul point de chargement — attache `activeNetwork` à
+   * toute fiche qu'il rend. Le descripteur n'a donc rien à choisir : il n'y a
+   * plus qu'une source, et elle est déjà là. C'est ce qui rend le résolveur
+   * unique par CONSTRUCTION plutôt que par discipline.
+   */
+  const network = record.activeNetwork ?? null;
   return {
     slug: record.projectKey,
     // PRÉSENTATION (contrat >= 1.4.x) — le nom COMMERCIAL prime sur le nom
@@ -427,8 +460,29 @@ export function describeProject(record) {
     description: manifest?.descriptor?.description ?? null,
     layout: manifest?.descriptor?.layout ?? null,
     environment: runtime.environment ?? manifest?.project?.environment ?? null,
-    primaryDomain: manifest?.network?.primaryDomain ?? domainFromUrl(runtime.publicBackendUrl),
-    urls: manifest?.network?.urls ?? (runtime.publicBackendUrl ? { backend: runtime.publicBackendUrl } : null),
+    /**
+     * ── LES URLs VIENNENT DE LA DESTINATION ACTIVE, ET DE NULLE PART AILLEURS ──
+     *
+     * Elles lisaient `manifest.network` puis, à défaut, `runtime.publicBackendUrl`.
+     * Les deux sont des photographies prises à l'APPAIRAGE : le battement de
+     * cœur ne porte pas d'URL, et le manifeste n'est relu que sur action
+     * manuelle. Un projet qui change de domaine sans se réappairer les laissait
+     * donc figées sur l'ancien hôte, pendant que la projection poussée suivait
+     * le nouveau. Le Panel affichait deux vérités — et appelait l'ancienne.
+     *
+     * Constaté sur « Demo SB Auto » : manifeste et runtime sur
+     * `demo-sbauto.lycarz.com`, présentation sur `demo-sbauto06.ly-solution.com`.
+     *
+     * `null` quand aucune destination active n'est connue. « Inconnu » est une
+     * réponse ; une adresse périmée présentée comme actuelle n'en est pas une.
+     */
+    primaryDomain: network?.host ?? null,
+    urls: network?.resolved
+      ? { website: network.website, manager: network.manager, backend: network.backend }
+      : null,
+    /** D'où vient cette adresse — pour que la déduction ne soit jamais magique. */
+    networkSource: network?.reason ?? 'NON_RESOLU',
+    destinationId: network?.destinationId ?? null,
     versions: {
       software: runtime.softwareVersion ?? manifest?.project?.softwareVersion ?? null,
       contract: runtime.contractVersion ?? manifest?.bridge?.contractVersion ?? null,
@@ -446,15 +500,16 @@ export function describeProject(record) {
   };
 }
 
-/** Domaine extrait d'une URL, sans jamais lever. */
-function domainFromUrl(url) {
-  if (!url) return null;
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
+/**
+ * ── `domainFromUrl` A DISPARU ───────────────────────────────────────────────
+ *
+ * Elle dérivait le domaine principal de `runtime.publicBackendUrl`. Cette
+ * adresse est figée au bootstrap : après un changement de domaine sans
+ * réappairage, elle désignait l'ancien hôte, et le « domaine principal »
+ * affiché était donc faux tout en paraissant certain.
+ *
+ * Le domaine vient désormais de la destination ACTIVE, ou vaut `null`.
+ */
 
 /** Santé détaillée d'un projet — déléguée au service de supervision. */
 export function projectHealth(record, context = {}) {

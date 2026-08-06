@@ -210,6 +210,25 @@ section('5. PROD : la résiliation immédiate est IMPOSSIBLE, même par l’API'
   fiche.runtime.environment = 'PROD';
   await registryStore.save(fiche);
 
+  /**
+   * ── CHANGER D'ENVIRONNEMENT, C'EST CHANGER DE MONDE ─────────────────────
+   *
+   * Une destination appartient à UN environnement. Basculer la fiche en PROD
+   * sans dire où le projet y vit laisserait le Panel sans adresse — et il
+   * refuserait l'action, à juste titre : appeler le backend de RECETTE pour
+   * une opération de PRODUCTION est précisément ce que le résolveur unique
+   * interdit désormais.
+   *
+   * Le projet annonce donc sa destination de production, comme il le ferait
+   * réellement depuis son propre poste.
+   */
+  const { announceDestination } = await import('../backend/src/services/registry/projectDestination.service.js');
+  await announceDestination({
+    record: await registryStore.getById(projectId),
+    urls: { backend: projetUrl },
+    source: 'BOOTSTRAP',
+  });
+
   const avant = recu.invocations.length;
   const res = await call('POST', `/api/projects/${projectId}/contract/cancel`, {
     headers: AUTH,
@@ -242,9 +261,19 @@ section('6. Une action inconnue ne part jamais');
 
 section('7. Projet injoignable : l’échec est tracé, pas avalé');
 {
-  const fiche = await registryStore.getById(projectId);
-  fiche.runtime.publicBackendUrl = 'http://127.0.0.1:1';
-  await registryStore.save(fiche);
+  /**
+   * L'ADRESSE APPELÉE EST CELLE DE LA DESTINATION, plus `runtime.publicBackendUrl`.
+   *
+   * Ce champ est posé au bootstrap et jamais revu ; le modifier ne changeait
+   * donc rien à ce que le Panel appelle. On rend la DESTINATION injoignable —
+   * c'est-à-dire l'adresse que le projet a réellement annoncée.
+   */
+  const { announceDestination: annoncer } = await import('../backend/src/services/registry/projectDestination.service.js');
+  await annoncer({
+    record: await registryStore.getById(projectId),
+    urls: { backend: 'http://127.0.0.1:1' },
+    source: 'BOOTSTRAP',
+  });
 
   const res = await call('POST', `/api/projects/${projectId}/contract/cancel`, {
     headers: AUTH, body: { operationId: 'contract.cancel_at_period_end', reason: 'Hors ligne' },

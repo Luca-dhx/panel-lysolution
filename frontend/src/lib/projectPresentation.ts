@@ -117,21 +117,44 @@ export function projectInitials(project: PublicProject): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
+/* -------------------------------------------------------------------------- */
+/*  ADRESSES — UNE SEULE SOURCE, POUR TOUTES LES VUES                         */
+/* -------------------------------------------------------------------------- */
+//
+// ══ LE DÉFAUT CORRIGÉ ══════════════════════════════════════════════════════
+//
+// Ces fonctions lisaient DEUX sources différentes, et pas les mêmes selon la
+// fonction :
+//
+//   · `projectSiteUrl`       → la projection poussée, puis le manifeste ;
+//   · `projectTechnicalUrls` → le manifeste seul ;
+//   · `BridgesPage`          → `runtime.publicBackendUrl` ;
+//
+// Or ces trois champs sont écrits à trois moments différents. Un projet qui
+// change de domaine sans se réappairer ne rafraîchit que la projection : la
+// vitrine passait donc au nouveau domaine pendant que le backend, le domaine
+// principal et la page Bridges restaient sur l'ancien. Deux vérités affichées
+// côte à côte, sans que rien ne signale laquelle était juste.
+//
+// Constaté sur « Demo SB Auto » : site sur `demo-sbauto06.ly-solution.com`,
+// backend et domaine principal sur `demo-sbauto.lycarz.com`.
+//
+// ══ LA RÈGLE ═══════════════════════════════════════════════════════════════
+//
+// Toutes lisent désormais `descriptor.urls`, que le backend remplit depuis la
+// DESTINATION ACTIVE du projet dans son environnement courant — et depuis rien
+// d'autre. Aucune concaténation, aucun repli sur un ancien manifeste. Quand
+// l'adresse est inconnue, elles rendent `null` : « inconnu » est une réponse,
+// une adresse périmée présentée comme actuelle n'en est pas une.
+
 /**
  * Adresse publique du SITE, et rien d'autre.
  *
- * Le manifeste nomme désormais ses URLs (`website`, `manager`, `backend`,
- * contrat >= 1.4.x) : on lit `website`, sans repli. Prendre « la première
- * venue » faisait afficher l'URL de l'API — `api.<domaine>` — comme adresse du
- * client, et « manager » aurait montré l'administration à sa place.
- *
- * Aucun repli non plus sur le domaine seul préfixé d'un schéma choisi par
- * nous : ce serait un lien jamais vérifié. `projectDomain` le rend comme
- * TEXTE, sans prétendre être cliquable.
+ * On lit `website`, jamais « la première venue » : cela ferait afficher l'URL
+ * de l'API — `api.<domaine>` — comme adresse du client, et `manager` montrerait
+ * l'administration à sa place.
  */
 export function projectSiteUrl(project: PublicProject): string | null {
-  const pushed = project.business?.presentation?.network?.website?.trim();
-  if (pushed) return pushed;
   const site = project.descriptor?.urls?.website?.trim();
   return site && site.length > 0 ? site : null;
 }
@@ -151,9 +174,20 @@ export function projectTechnicalUrls(project: PublicProject): {
   };
 }
 
-/** Domaine principal annoncé, pour l'afficher quand aucune URL complète n'existe. */
+/** Domaine principal, tel que la destination active le porte. */
 export function projectDomain(project: PublicProject): string | null {
   return project.descriptor?.primaryDomain ?? null;
+}
+
+/**
+ * Le Panel sait-il OÙ vit ce projet ?
+ *
+ * `false` quand aucune destination active n'est connue — un projet jamais
+ * appairé, ou qui n'a encore rien annoncé. L'écran doit alors dire « inconnu »,
+ * jamais afficher une adresse tirée d'ailleurs.
+ */
+export function hasResolvedNetwork(project: PublicProject): boolean {
+  return project.descriptor?.networkSource === 'DESTINATION_ACTIVE';
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,5 +1,6 @@
 import { Card, EmptyState, StatusBadge } from '@/components/ui';
 import { formatRelative } from '@/lib/format';
+import { projectTechnicalUrls } from '@/lib/projectPresentation';
 import { useProjects } from '@/lib/useProjects';
 
 export function BridgesPage() {
@@ -68,10 +69,17 @@ export function BridgesPage() {
                       )}
                     </td>
                     <td>
-                      {project.runtime.publicBackendUrl ? (
-                        <code className="inline-code">{project.runtime.publicBackendUrl}</code>
+                      {/*
+                        L'ADRESSE VIENT DE LA DESTINATION ACTIVE, comme partout
+                        ailleurs. Cette colonne lisait `runtime.publicBackendUrl`,
+                        posée au bootstrap et jamais revue : après un changement
+                        de domaine sans réappairage, elle montrait l'ancien hôte
+                        pendant que la fiche du projet montrait le nouveau.
+                      */}
+                      {projectTechnicalUrls(project).backend ? (
+                        <code className="inline-code">{projectTechnicalUrls(project).backend}</code>
                       ) : (
-                        <span className="muted">pull-only</span>
+                        <span className="muted">destination inconnue</span>
                       )}
                     </td>
                   </tr>

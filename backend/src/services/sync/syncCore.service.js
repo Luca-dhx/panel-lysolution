@@ -7,7 +7,11 @@
 // Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
 import { ENTITY_PAYLOAD_INVALID, PROJECTORS, needsRepair } from './projectors.js';
 import { currentGeneration, stampOf } from './projectGeneration.js';
+import {
+  activeDestination, announceDestination,
+} from '../registry/projectDestination.service.js';
 import { registryStore } from '../registry/registryStore.js';
+import logger from '../../utils/logger.js';
 import {
   ACK_STATUS,
   APPLIED_ENTITY_TYPES,
@@ -37,6 +41,35 @@ async function nextJournalSeq() {
 }
 
 // Applique un lot d'écritures poussé par un projet. Accusé PAR écriture —
+/**
+ * LA DESTINATION QUE CE LOT ANNONCE — extraite, jamais devinée.
+ *
+ * Seule une `PROJECT_PRESENTATION` non supprimée porte les adresses du projet.
+ * Un tombstone n'annonce rien : effacer la présentation ne signifie pas que le
+ * projet a déménagé, et en déduire une migration serait inventer.
+ *
+ * L'annonce ne casse jamais la synchronisation : si elle échoue, le lot
+ * s'applique quand même et l'incident est journalisé. Perdre des écritures
+ * métier parce qu'une adresse est mal formée serait un remède pire que le mal.
+ */
+async function announceFromChanges(record, changes) {
+  if (!record) return;
+  const presentation = [...changes]
+    .reverse()
+    .find((c) => c.entityType === 'PROJECT_PRESENTATION' && c.deleted !== true && c.payload?.network);
+  if (!presentation) return;
+
+  try {
+    await announceDestination({
+      record,
+      urls: presentation.payload.network,
+      source: 'PRESENTATION',
+    });
+  } catch (err) {
+    logger.warn(`[destination] Annonce impossible pour ${record.projectId} : ${err.message}`);
+  }
+}
+
 // jamais un échec global silencieux.
 export async function applyIncoming(projectId, changes) {
   const results = [];
@@ -50,8 +83,26 @@ export async function applyIncoming(projectId, changes) {
    * remplace tout ce que le précédent avait laissé.
    */
   const record = await registryStore.getById(projectId);
-  const generation = currentGeneration(record);
-  const stamp = stampOf(record, nowIso());
+
+  /**
+   * LA DESTINATION ANNONCÉE PAR CE LOT — avant d'appliquer quoi que ce soit.
+   *
+   * ── POURQUOI ICI, ET AVANT ────────────────────────────────────────────────
+   * Une projection `PROJECT_PRESENTATION` porte les trois adresses du projet.
+   * C'est aujourd'hui le SEUL canal qui suit un changement de domaine : le
+   * battement de cœur ne transporte aucune URL, et le manifeste n'est relu
+   * qu'à l'appairage. Lire cette annonce APRÈS avoir appliqué le lot ferait
+   * estampiller les projections avec l'ancienne génération — donc les rendre
+   * périmées à l'instant même où elles arrivent.
+   *
+   * Le Panel ne déploie rien pour autant : il enregistre ce que le projet
+   * déclare, et arbitre l'état de ses destinations.
+   */
+  await announceFromChanges(record, changes);
+
+  const destination = await activeDestination(record?.projectId, record?.runtime?.environment);
+  const generation = currentGeneration(record, destination?.host ?? null);
+  const stamp = stampOf(record, nowIso(), destination?.host ?? null);
 
   for (const change of changes) {
     // Sémantique du contrat, vérifiée par écriture (la forme l'a déjà été).

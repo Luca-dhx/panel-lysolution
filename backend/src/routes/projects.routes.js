@@ -8,8 +8,10 @@ import {
   cancelContract,
   contractDocument,
   contractOperations,
+  deleteDestinationHandler,
   detail,
   list,
+  markDestinationEmptyHandler,
   probe,
   putManifest,
   regeneratePairingCode,
@@ -39,5 +41,21 @@ router.post('/:projectId/pairing-code', requirePanelDev, asyncHandler(regenerate
 router.delete('/:projectId/pairing', requirePanelDev, asyncHandler(revokePairing));
 router.put('/:projectId/manifest', requirePanelDev, asyncHandler(putManifest));
 router.delete('/:projectId', requirePanelDev, asyncHandler(remove));
+
+/**
+ * ── DESTINATIONS D'UN PROJET ────────────────────────────────────────────────
+ *
+ * DEUX actions, et deux seulement. Il n'y a volontairement AUCUNE route pour
+ * déployer, redéployer, migrer ou activer une destination : le déploiement est
+ * piloté depuis le poste du projet, et c'est le projet qui annonce son
+ * déménagement. Le Panel arbitre des états, il ne pilote pas un moteur.
+ *
+ * `empty`  : l'opérateur constate qu'il ne reste rien sur le serveur d'une
+ *            destination déjà RETIRÉE. Le Panel ne le vérifie pas — il ne se
+ *            connecte à aucun serveur de projet — et trace la déclaration.
+ * `delete` : retire la fiche des listes. Audit et historique conservés.
+ */
+router.post('/destinations/:destinationId/empty', requirePanelDev, asyncHandler(markDestinationEmptyHandler));
+router.delete('/destinations/:destinationId', requirePanelDev, asyncHandler(deleteDestinationHandler));
 
 export default router;

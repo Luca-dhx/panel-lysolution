@@ -26,6 +26,9 @@ import {
 } from '../services/contract/contractActions.service.js';
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
+import {
+  deleteDestination, describeByEnvironment, markDestinationEmpty, outboundBaseUrl,
+} from '../services/registry/projectDestination.service.js';
 
 export async function list(_req, res) {
   const now = Date.now();
@@ -54,7 +57,34 @@ export async function detail(req, res) {
     createdAt: m.createdAt,
     receivedAt: m.receivedAt,
   }));
-  return ok(res, { project, conformity: describeConformity(record) });
+  /**
+   * LES DESTINATIONS, GROUPÉES PAR ENVIRONNEMENT.
+   *
+   * L'écran montre, pour TEST et pour PROD, la destination active et
+   * l'historique. Jamais une liste plate où deux environnements se
+   * mélangeraient à l'œil — c'est précisément la confusion qu'on corrige.
+   */
+  const destinations = await describeByEnvironment(record.projectId);
+  return ok(res, { project, conformity: describeConformity(record), destinations });
+}
+
+/**
+ * RETIRED → EMPTY. L'opérateur constate qu'il ne reste rien sur le serveur.
+ *
+ * Le Panel ne le vérifie pas : il ne se connecte à aucun serveur de projet, et
+ * ne déploie rien. C'est une déclaration humaine, tracée comme telle.
+ */
+export async function markDestinationEmptyHandler(req, res) {
+  return ok(res, await markDestinationEmpty(req.params.destinationId, {
+    actor: req.panelUser?.email ?? null,
+  }));
+}
+
+/** EMPTY → DELETED. Suppression LOGIQUE : audit et historique conservés. */
+export async function deleteDestinationHandler(req, res) {
+  return ok(res, await deleteDestination(req.params.destinationId, {
+    actor: req.panelUser?.email ?? null,
+  }));
 }
 
 /**
@@ -105,10 +135,10 @@ export async function revokePairing(req, res) {
 
   // Courtoisie de propagation, best-effort : le projet constatera de toute
   // façon le 401 à son prochain appel et passera STANDALONE de lui-même.
-  if (previousToken && record.runtime.publicBackendUrl) {
+  if (previousToken && outboundBaseUrl(record)) {
     try {
       const client = new ProjectBridgeClient({
-        baseUrl: record.runtime.publicBackendUrl,
+        baseUrl: outboundBaseUrl(record),
         bridgeToken: previousToken,
       });
       await client.notifyUnpair();
@@ -200,7 +230,7 @@ export async function contractDocument(req, res) {
   }
 
   const bridgeToken = record.pairing?.status === 'PAIRED' ? getOutboundBridgeToken(record) : null;
-  if (!bridgeToken || !record.runtime?.publicBackendUrl) {
+  if (!bridgeToken || !outboundBaseUrl(record)) {
     throw ApiError.conflict(
       'PANEL_PROJECT_NOT_PAIRED',
       'Le lien avec ce projet est rompu : le document ne peut pas être récupéré.',
@@ -208,7 +238,7 @@ export async function contractDocument(req, res) {
   }
 
   const client = new ProjectBridgeClient({
-    baseUrl: record.runtime.publicBackendUrl,
+    baseUrl: outboundBaseUrl(record),
     bridgeToken,
   });
   const amont = await client.fetchDocument(chemin);

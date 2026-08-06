@@ -9,6 +9,7 @@ import { seedFromEnv } from './services/auth/panelUsers.service.js';
 import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
 import { migrateDeploymentTargets } from './services/deployment/destinationLifecycle.service.js';
 import { migratePortRegistry } from './services/deployment/portRegistry.service.js';
+import { reconcileDestinations } from './services/registry/projectDestination.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -52,6 +53,29 @@ async function start() {
   }
   if (registre?.conflicts) {
     logger.warn(`${registre.conflicts} conflit(s) de port détecté(s) : deux destinations visent le même port sur un même serveur.`);
+  }
+
+  /**
+   * DESTINATIONS DES PROJETS — une seule ACTIVE par projet et par
+   * environnement, reprise depuis ce que chaque projet a déjà annoncé.
+   *
+   * Les fiches antérieures portaient leurs adresses dans trois champs écrits à
+   * trois moments (bootstrap, manifeste, projection). Quand un projet avait
+   * déménagé sans se réappairer, ces champs divergeaient — et le Panel
+   * affichait les deux. La reprise retient l'annonce la plus RÉCENTE du projet
+   * et conserve les hôtes antérieurs en RETIRED.
+   */
+  const destinations = await reconcileDestinations().catch((err) => {
+    logger.warn(`Reprise des destinations de projets impossible : ${err.message}`);
+    return null;
+  });
+  if (destinations?.activated) {
+    logger.info(`${destinations.activated} destination(s) de projet reprise(s), ${destinations.retired} retirée(s).`);
+  }
+  for (const d of destinations?.divergences ?? []) {
+    logger.warn(`Destinations divergentes reprises pour « ${d.projectName} » (${d.environment}) : `
+      + `retenue « ${d.retained.host} » (${d.retained.source}), `
+      + `écartée(s) ${d.superseded.map((s) => `« ${s.host} » (${s.source})`).join(', ')}.`);
   }
 
   const backend = await resolveBackendUrl();

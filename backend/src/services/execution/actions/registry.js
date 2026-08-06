@@ -13,6 +13,7 @@
 // C'est vérifié par un test : le cœur ne doit citer aucun identifiant
 // d'action.
 import { RISK } from '../execution-policy.service.js';
+import { outboundBaseUrl } from '../../registry/projectDestination.service.js';
 
 /**
  * FORME D'UN DESCRIPTEUR
@@ -59,7 +60,7 @@ export const PREREQUISITES = Object.freeze({
   REACHABLE: {
     id: 'reachable',
     label: 'Projet joignable',
-    check: (ctx) => (ctx.record?.runtime?.publicBackendUrl
+    check: (ctx) => (outboundBaseUrl(ctx.record)
       ? ALWAYS_OK
       : { ok: false, reason: 'Aucune URL publique connue pour ce projet : il ne peut pas être contacté.' }),
   },
