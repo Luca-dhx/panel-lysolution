@@ -347,33 +347,106 @@ export async function releaseDeploymentLock(targetId, { ok = false, runId = null
 /* -------------------------------------------------------------------------- */
 
 /**
+ * CODES D'ARRÊT DE DÉMARRAGE — nommés, parce qu'un arrêt anonyme n'aide personne.
+ */
+export const MIGRATION_ERRORS = Object.freeze({
+  ACTIVE_CONFLICT: 'DEPLOYMENT_ENVIRONMENT_ACTIVE_CONFLICT',
+  ACTIVE_INDEX_MISSING: 'DEPLOYMENT_ACTIVE_INDEX_MISSING',
+});
+
+/** Le nom de l'index qui PORTE la garantie « une seule ACTIVE par environnement ». */
+export const ACTIVE_INDEX_NAME = 'environnement_actif_unique';
+
+/** Une erreur de démarrage : elle porte un code et la liste des fiches en cause. */
+class MigrationBlockedError extends Error {
+  constructor(code, message, details = {}) {
+    super(message);
+    this.name = 'MigrationBlockedError';
+    this.code = code;
+    this.details = details;
+  }
+}
+
+/**
+ * Les environnements portant PLUSIEURS destinations ACTIVE.
+ *
+ * Lu AVANT toute tentative de construction d'index : c'est la seule façon de
+ * dire QUELLES fiches posent problème. Une erreur d'index Mongo dit « E11000 »
+ * et une clé ; elle ne dit pas quoi arbitrer.
+ */
+export async function activeConflicts() {
+  const actives = await PanelDeploymentTarget.find({ lifecycleStatus: LIFECYCLE.ACTIVE })
+    .select('_id host environment backendPort state sshHost')
+    .lean();
+  const parEnv = new Map();
+  for (const t of actives) {
+    const cle = t.environment ?? 'SANS_ENVIRONNEMENT';
+    if (!parEnv.has(cle)) parEnv.set(cle, []);
+    parEnv.get(cle).push(t);
+  }
+  return [...parEnv.entries()]
+    .filter(([, fiches]) => fiches.length > 1)
+    .map(([environment, fiches]) => ({ environment, fiches }));
+}
+
+/**
  * REPRISE DES FICHES ANTÉRIEURES — appelée au démarrage du backend.
  *
- * Deux choses, et rien d'autre :
+ * ══ FAIL-CLOSED, ET POURQUOI ═══════════════════════════════════════════════
  *
- *  1. toute destination sans `lifecycleStatus` devient ACTIVE. C'est le choix
- *     conservateur : on ne sait pas ce qu'il y a sur le serveur, donc on
- *     suppose que tout y est. Supposer l'inverse autoriserait la suppression
- *     directe d'une fiche dont le service tourne encore ;
+ * Cette fonction avalait l'échec de construction d'index (`.catch(() => {})`).
+ * Sur des données réelles portant deux destinations ACTIVE sans environnement,
+ * le résultat mesuré était : les deux backfillées dans le même environnement,
+ * l'index REFUSÉ, l'échec avalé, le démarrage annoncé sain — et la garantie
+ * « une seule ACTIVE par environnement » ABSENTE sans que rien ne le dise.
  *
- *  2. l'ancien index unique absolu sur `host` est retiré s'il existe. Il
- *     interdisait de recréer une destination sur un domaine libéré, puisque la
- *     fiche supprimée conserve son hôte. L'index PARTIEL du modèle le
- *     remplace (unique parmi les fiches vivantes).
+ * C'est le pire état possible : un système qui paraît conforme et ne l'est
+ * pas. Exactement la panne que l'index était censé rendre impossible.
  *
- * AUCUNE fiche n'est supprimée, ni vidée, ni modifiée autrement.
+ * Le démarrage S'ARRÊTE donc désormais, dans deux cas et avec deux codes :
+ *
+ *   · plusieurs ACTIVE pour un même environnement → on nomme les fiches, on
+ *     n'en arbitre AUCUNE. Le choix appartient à l'exploitant, pas à une date ;
+ *   · l'index n'existe pas après construction → on ne peut pas prouver la
+ *     garantie, donc on ne la promet pas.
+ *
+ * L'ordre compte : on migre les champs, PUIS on détecte les conflits, PUIS on
+ * construit, PUIS on RELIT les index de Mongo pour vérifier. Construire avant
+ * de détecter ne dirait jamais quelles fiches sont en cause.
+ *
+ * AUCUNE fiche n'est supprimée, ni vidée, ni arbitrée.
  */
 export async function migrateDeploymentTargets() {
-  // L'index unique partiel doit EXISTER avant la première création : c'est lui
-  // qui empêche deux fiches vivantes de revendiquer le même hôte. Mongoose le
-  // construit en tâche de fond ; attendre est un préalable, pas un confort.
-  await PanelDeploymentTarget.init().catch(() => {});
+  /* ── 1. MIGRER LES CHAMPS ─────────────────────────────────────────────── */
 
+  // Toute destination sans cycle de vie devient ACTIVE : choix conservateur.
+  // On ne sait pas ce qu'il y a sur le serveur, donc on suppose que tout y est.
+  // Supposer l'inverse autoriserait la suppression d'une fiche dont le service
+  // tourne encore.
   const result = await PanelDeploymentTarget.updateMany(
     { $or: [{ lifecycleStatus: { $exists: false } }, { lifecycleStatus: null }] },
     { $set: { lifecycleStatus: LIFECYCLE.ACTIVE } },
   );
 
+  /**
+   * L'ENVIRONNEMENT DES FICHES ANTÉRIEURES.
+   *
+   * Il n'existait pas : il était choisi au déploiement, avec PROD par défaut.
+   * On reprend donc ce défaut historique — c'est ce que ces destinations
+   * FAISAIENT réellement, et supposer autre chose réécrirait le passé.
+   *
+   * Quand ce report produit un conflit, il n'est pas résolu ici : il est
+   * SIGNALÉ, et le démarrage s'arrête.
+   */
+  const envResult = await PanelDeploymentTarget.updateMany(
+    { $or: [{ environment: { $exists: false } }, { environment: null }] },
+    { $set: { environment: 'PROD' } },
+  );
+
+  /* ── 2. L'ANCIEN INDEX ABSOLU SUR L'HÔTE ──────────────────────────────── */
+
+  // Il interdisait de recréer une destination sur un domaine libéré, puisqu'une
+  // fiche supprimée conserve son hôte. L'index PARTIEL du modèle le remplace.
   let indexDropped = false;
   try {
     const indexes = await PanelDeploymentTarget.collection.indexes();
@@ -384,18 +457,87 @@ export async function migrateDeploymentTargets() {
     if (legacy) {
       await PanelDeploymentTarget.collection.dropIndex(legacy.name);
       indexDropped = true;
-      logger.info(`Index unique historique « ${legacy.name} » retiré : l’unicité de l’hôte ne vaut plus que parmi les destinations vivantes.`);
+      logger.info(`Index unique historique « ${legacy.name} » retiré : l'unicité de l'hôte ne vaut plus que parmi les destinations vivantes.`);
     }
   } catch {
-    // Collection absente, droits insuffisants, index déjà retiré : la
-    // migration d'index est un confort, jamais un prérequis de démarrage.
+    // Collection absente ou index déjà retiré : le retrait de l'ancien index
+    // est un confort. La garantie, elle, est vérifiée plus bas — et bloquante.
   }
 
-  return { lifecycleBackfilled: result.modifiedCount ?? 0, legacyHostIndexDropped: indexDropped };
+  /* ── 3. DÉTECTER LES CONFLITS AVANT DE CONSTRUIRE ─────────────────────── */
+
+  const conflits = await activeConflicts();
+  if (conflits.length > 0) {
+    const detail = conflits
+      .map(({ environment, fiches }) =>
+        `${environment} : ${fiches.map((f) => `${f.host} (port ${f.backendPort}, _id ${f._id})`).join(' ET ')}`)
+      .join(' — ');
+    logger.error(`[destinations] Démarrage REFUSÉ : plusieurs destinations ACTIVE pour un même environnement. ${detail}`);
+    throw new MigrationBlockedError(
+      MIGRATION_ERRORS.ACTIVE_CONFLICT,
+      'Démarrage refusé : plusieurs destinations ACTIVE partagent un environnement. '
+      + `${detail}. Une seule peut servir un environnement à la fois. Reclassez les autres `
+      + '(RETIRED, ou retrait complet) avant de redémarrer — aucune n\'est arbitrée automatiquement.',
+      { conflicts: conflits },
+    );
+  }
+
+  /* ── 4. CONSTRUIRE, PUIS RELIRE POUR VÉRIFIER ─────────────────────────── */
+
+  /**
+   * ON CONSTRUIT EXPLICITEMENT, sans dépendre d'`autoIndex`.
+   *
+   * `init()` respecte le réglage global `autoIndex` : sur une installation qui
+   * le désactive — pratique courante en production, pour éviter des
+   * constructions d'index surprises au démarrage — l'index n'aurait jamais été
+   * créé, et la garantie aurait manqué sans que rien ne le dise. Une invariante
+   * ne doit pas dépendre d'un drapeau de confort.
+   *
+   * `createIndexes()` construit ce que le schéma déclare, quoi qu'il arrive.
+   * Son échec n'est PLUS avalé : sans index, la garantie n'existe pas.
+   */
+  try {
+    await PanelDeploymentTarget.createIndexes();
+  } catch (err) {
+    logger.error(`[destinations] Construction de l'index « ${ACTIVE_INDEX_NAME} » impossible : ${err.message}`);
+    throw new MigrationBlockedError(
+      MIGRATION_ERRORS.ACTIVE_INDEX_MISSING,
+      `Démarrage refusé : l'index « ${ACTIVE_INDEX_NAME} » n'a pas pu être construit (${err.message}). `
+      + 'Sans lui, rien n\'empêche deux destinations d\'être actives dans le même environnement.',
+      { cause: err.message },
+    );
+  }
+
+  /**
+   * ON RELIT MONGO. Un `init()` qui rend sans lever ne prouve pas qu'un index
+   * existe — c'est précisément l'hypothèse qui a échoué en silence avec le
+   * filtre partiel en `$ne`. On demande donc à la base ce qu'elle a vraiment.
+   */
+  const presents = await PanelDeploymentTarget.collection.indexes();
+  const garantie = presents.find((i) => i.name === ACTIVE_INDEX_NAME && i.unique === true);
+  if (!garantie) {
+    logger.error(`[destinations] L'index « ${ACTIVE_INDEX_NAME} » est ABSENT après construction.`);
+    throw new MigrationBlockedError(
+      MIGRATION_ERRORS.ACTIVE_INDEX_MISSING,
+      `Démarrage refusé : l'index « ${ACTIVE_INDEX_NAME} » est absent après construction. `
+      + 'La garantie « une seule destination active par environnement » ne peut pas être promise.',
+      { indexes: presents.map((i) => i.name) },
+    );
+  }
+
+  return {
+    lifecycleBackfilled: result.modifiedCount ?? 0,
+    environmentBackfilled: envResult.modifiedCount ?? 0,
+    legacyHostIndexDropped: indexDropped,
+    activeIndexVerified: true,
+  };
 }
 
 export default {
   LIFECYCLE,
+  MIGRATION_ERRORS,
+  ACTIVE_INDEX_NAME,
+  activeConflicts,
   lifecycleLabel,
   statusOf,
   assertDeployable,

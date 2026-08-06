@@ -656,8 +656,79 @@ export async function unpublishPanelMediaOfDestination({ host = null, environmen
   return { environment, host, unpublished: nombre };
 }
 
+/**
+ * REPRISE DES MÉDIAS ANTÉRIEURS — appelée au démarrage, AVANT toute publication.
+ *
+ * ══ CE QU'ELLE FERME ════════════════════════════════════════════════════════
+ *
+ * `environment` vient d'apparaître sur `PanelMedia`. Les descripteurs
+ * antérieurs ne le portent pas — et `publishPanelMediaOnDestination` filtre sur
+ * `{ environment, deletedAt: null }`. Ces médias n'auraient donc JAMAIS été
+ * transférés ni publiés au déploiement : invisibles depuis les projets, sans le
+ * moindre message d'erreur. Constaté sur `panel_test` : 2 médias concernés.
+ *
+ * ══ CE QU'ELLE DÉDUIT, ET CE QU'ELLE REFUSE DE DÉDUIRE ══════════════════════
+ *
+ * L'environnement retenu est celui de l'INSTANCE qui lit — c'est-à-dire de la
+ * BASE dans laquelle ces documents vivent. C'est la seule information vraie
+ * dont on dispose : un média présent dans `panel_test` appartient au monde de
+ * recette, par construction.
+ *
+ * On ne le déduit JAMAIS d'un nom de domaine : une adresse dit où un fichier a
+ * été servi, pas à quel monde il appartient — et c'est précisément la confusion
+ * que le descripteur supprime.
+ *
+ * ══ CE QU'ELLE NE TOUCHE PAS ════════════════════════════════════════════════
+ *
+ * `mediaId`, `objectKey`, `sha256`, `mime`, dimensions, dates : inchangés.
+ * Aucun contenu n'est réécrit. `publicationState` reste à sa valeur — jamais
+ * promu à PUBLISHED : rien n'a été constaté sur un serveur, et déclarer publié
+ * ce qu'on n'a pas vérifié est exactement la faute que cette architecture
+ * supprime. Le prochain déploiement le prouvera, ou pas.
+ *
+ * Idempotente : elle ne touche que les documents auxquels le champ manque.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.apply]  faux par défaut : le mode normal est le
+ *        DRY-RUN. Une reprise qui écrit avant d'avoir été lue est une reprise
+ *        qu'on n'a pas relue.
+ */
+export async function migratePanelMedia({ apply = false } = {}) {
+  const filtre = { $or: [{ environment: { $exists: false } }, { environment: null }] };
+  const concernes = await PanelMedia.find(filtre)
+    .select('mediaId objectKey sha256 mime publicationState createdAt')
+    .lean();
+
+  const rapport = {
+    environment: config.env,
+    scanned: concernes.length,
+    applied: false,
+    backfilled: 0,
+    medias: concernes.map((m) => ({
+      mediaId: m.mediaId,
+      objectKey: m.objectKey,
+      sha256: (m.sha256 ?? '').slice(0, 12),
+      mime: m.mime,
+      publicationState: m.publicationState ?? 'LOCAL_ONLY',
+      createdAt: m.createdAt,
+    })),
+  };
+  if (!apply || concernes.length === 0) return rapport;
+
+  const res = await PanelMedia.updateMany(filtre, {
+    $set: { environment: config.env, updatedAt: nowIso() },
+  });
+  rapport.applied = true;
+  rapport.backfilled = res.modifiedCount ?? 0;
+  if (rapport.backfilled) {
+    logger.info(`[media] ${rapport.backfilled} média(s) antérieur(s) repris dans l'environnement ${config.env}.`);
+  }
+  return rapport;
+}
+
 export default {
   sha256Of,
+  migratePanelMedia,
   SHORT_HASH_LENGTH,
   objectKeyFor,
   objectKeyOf,

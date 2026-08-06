@@ -9,6 +9,7 @@ import { seedFromEnv } from './services/auth/panelUsers.service.js';
 import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
 import { migrateDeploymentTargets } from './services/deployment/destinationLifecycle.service.js';
 import { migratePortRegistry } from './services/deployment/portRegistry.service.js';
+import { migratePanelMedia } from './services/upload/mediaDescriptor.service.js';
 import { reconcileDestinations } from './services/registry/projectDestination.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
@@ -32,12 +33,38 @@ async function start() {
   // ACTIVE — le choix conservateur. On ne sait pas ce qu'il reste sur le
   // serveur, donc on suppose que tout y est : supposer l'inverse autoriserait
   // la suppression directe d'une fiche dont le service tourne encore.
-  const lifecycle = await migrateDeploymentTargets().catch((err) => {
-    logger.warn(`Reprise du cycle de vie des destinations impossible : ${err.message}`);
-    return null;
-  });
+  //
+  // ── ELLE EST BLOQUANTE, ET ELLE SEULE ─────────────────────────────────
+  // Elle porte la garantie « une seule destination active par
+  // environnement ». Absorber son échec annoncerait un démarrage sain sans
+  // la garantie — l'état le plus dangereux, puisque plus rien ne signale
+  // qu'elle manque. Les autres reprises complètent des données ; leur échec
+  // reste non bloquant.
+  const lifecycle = await migrateDeploymentTargets();
   if (lifecycle?.lifecycleBackfilled) {
     logger.info(`${lifecycle.lifecycleBackfilled} destination(s) reprise(s) en état ACTIVE.`);
+  }
+  if (lifecycle?.activeIndexVerified) {
+    logger.info('Garantie vérifiée : une seule destination active par environnement (index relu en base).');
+  }
+
+  /**
+   * MÉDIAS ANTÉRIEURS — repris AVANT toute publication.
+   *
+   * `publishPanelMediaOnDestination` filtre sur l'environnement : un média
+   * qui n'en porte pas ne serait jamais transféré ni publié, sans qu'aucun
+   * message ne le signale. La reprise doit donc précéder le premier
+   * déploiement, pas le suivre.
+   *
+   * Non bloquante : elle complète une donnée, elle ne promet aucune
+   * invariante — contrairement à la reprise des destinations ci-dessus.
+   */
+  const medias = await migratePanelMedia({ apply: true }).catch((err) => {
+    logger.warn(`Reprise des médias impossible : ${err.message}`);
+    return null;
+  });
+  if (medias?.backfilled) {
+    logger.info(`${medias.backfilled} média(s) repris dans l'environnement courant.`);
   }
 
   // REGISTRE DES PORTS : chaque destination vivante reçoit la réservation de
