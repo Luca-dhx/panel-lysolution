@@ -42,7 +42,50 @@ const WORKER_PATH = path.join(backendRoot, 'src', 'scripts', 'deploy-worker.js')
 export function startDeploymentWorker({
   runId, targetId, operationType, sshPassword, releaseId = null, user = null, options = null,
 }) {
-  const child = spawn(process.execPath, [WORKER_PATH], {
+  /**
+   * ROMPRE LE LIEN DE FILIATION — `detached` n'y suffit pas.
+   *
+   * ── CE QUI A RÉELLEMENT TUÉ LE WORKER ─────────────────────────────────────
+   * `detached: true` fait du worker le chef de son propre GROUPE de processus :
+   * il n'est plus atteint par un signal envoyé au groupe du backend. Mais il
+   * n'en reste pas moins son ENFANT — son PPID pointe toujours sur l'API tant
+   * qu'elle vit.
+   *
+   * Or PM2 arrête ses applications en tuant l'ARBRE (`treekill`, actif par
+   * défaut) : il énumère les descendants par PPID et les signale tous. Au
+   * `pm2 reload` de l'étape `services.start`, le worker était donc trouvé et
+   * tué avec le service qu'il était en train de déployer — exactement au
+   * moment où il devait constater le redémarrage.
+   *
+   * `setsid` règle cela d'une manière que rien ne contourne : il se dédouble,
+   * puis s'efface. Le worker est alors adopté par le processus initial, son
+   * PPID vaut 1, et aucune énumération de descendants ne peut plus le
+   * rattacher au backend. Absent (Windows en développement), on retombe sur le
+   * lancement direct : le comportement est celui d'avant, jamais pire.
+   */
+  const parSetsid = process.platform !== 'win32';
+  const commande = parSetsid ? 'setsid' : process.execPath;
+  const arguments_ = parSetsid ? [process.execPath, WORKER_PATH] : [WORKER_PATH];
+
+  const environnement = {
+    ...process.env,
+    PANEL_DEPLOY_RUN_ID: runId,
+    PANEL_DEPLOY_TARGET_ID: targetId,
+    PANEL_DEPLOY_OPERATION: operationType,
+    // Le secret voyage ici, et nulle part ailleurs. `argv` serait lisible par
+    // `ps aux` pour tout utilisateur de la machine ; l'environnement d'un
+    // processus ne l'est que par son propriétaire et root.
+    PANEL_DEPLOY_SSH_PASSWORD: sshPassword ?? '',
+    PANEL_DEPLOY_RELEASE_ID: releaseId ?? '',
+    PANEL_DEPLOY_USER: user ?? '',
+    // Options NON SECRÈTES de l'opération (ex. « oui, efface aussi les données
+    // persistantes »). Elles décrivent une décision de l'opérateur que le
+    // worker doit connaître, et qui ne doit pas être relue depuis la fiche —
+    // la fiche ne porte pas une confirmation.
+    PANEL_DEPLOY_OPTIONS: options ? JSON.stringify(options) : '',
+  };
+
+  const child = spawn(commande, arguments_, {
     cwd: backendRoot,
     // `detached` permet au worker de survivre au redémarrage du backend — c'est
     // indispensable quand le Panel se déploie LUI-MÊME. Sur Windows, un enfant
@@ -52,28 +95,34 @@ export function startDeploymentWorker({
     detached: true,
     windowsHide: true,
     stdio: 'ignore',
-    env: {
-      ...process.env,
-      PANEL_DEPLOY_RUN_ID: runId,
-      PANEL_DEPLOY_TARGET_ID: targetId,
-      PANEL_DEPLOY_OPERATION: operationType,
-      // Le secret voyage ici, et nulle part ailleurs. `argv` serait lisible
-      // par `ps aux` pour tout utilisateur de la machine ; l'environnement
-      // d'un processus ne l'est que par son propriétaire et root.
-      PANEL_DEPLOY_SSH_PASSWORD: sshPassword ?? '',
-      PANEL_DEPLOY_RELEASE_ID: releaseId ?? '',
-      PANEL_DEPLOY_USER: user ?? '',
-      // Options NON SECRÈTES de l'opération (ex. « oui, efface aussi les
-      // données persistantes »). Sérialisées : elles décrivent une décision
-      // de l'opérateur que le worker doit connaître, et qui ne doit pas être
-      // relue depuis la fiche — la fiche ne porte pas une confirmation.
-      PANEL_DEPLOY_OPTIONS: options ? JSON.stringify(options) : '',
-    },
+    env: environnement,
+  });
+
+  /**
+   * `setsid` absent sur cette machine : on relance sans lui plutôt que
+   * d'échouer. Le déploiement reste possible, avec la réserve d'avant — et
+   * elle est journalisée, pas tue.
+   */
+  child.on('error', (err) => {
+    if (!parSetsid || err.code !== 'ENOENT') {
+      logger.error(`Worker de déploiement non démarré (run ${runId}) : ${err.message}`);
+      return;
+    }
+    logger.warn('`setsid` introuvable : worker lancé en filiation directe, '
+      + 'il ne survivra pas à un arrêt en arbre du backend.');
+    const secours = spawn(process.execPath, [WORKER_PATH], {
+      cwd: backendRoot, detached: true, windowsHide: true, stdio: 'ignore', env: environnement,
+    });
+    secours.unref();
   });
 
   child.unref();
-  logger.info(`Worker de déploiement démarré (pid ${child.pid}, run ${runId}, ${operationType}).`);
-  return { pid: child.pid };
+  logger.info(`Worker de déploiement démarré (run ${runId}, ${operationType})`
+    + `${parSetsid ? ', détaché de sa filiation' : ` — pid ${child.pid}`}.`);
+  // Le PID rendu ici est celui du lanceur, pas du worker : avec `setsid`, le
+  // worker s'enregistre lui-même par `attachWorker`, et c'est CE pid qui fait
+  // foi. Aucun appelant ne se sert de celui-ci autrement que pour un message.
+  return { pid: child.pid ?? null };
 }
 
 /** Chemin du worker — exposé pour que les tests vérifient sa présence. */

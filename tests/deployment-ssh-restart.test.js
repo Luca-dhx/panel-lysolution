@@ -28,6 +28,8 @@ const { SshTransport } = await import('../backend/src/deployment-engine/transpor
 const DeploymentRun = (await import('../backend/src/models/PanelDeploymentRun.model.js')).default;
 const DeploymentTarget = (await import('../backend/src/models/PanelDeploymentTarget.model.js')).default;
 const marqueur = await import('../backend/src/services/deployment/forensics/restartMarker.service.js');
+const runs = await import('../backend/src/services/deployment/deploymentRun.service.js');
+const targets = await import('../backend/src/services/deployment/deploymentTarget.service.js');
 const etapes = await import('../backend/src/services/deployment/forensics/runSteps.service.js');
 const pm2t = await import('../backend/src/services/deployment/forensics/pm2Trace.js');
 const garde = await import('../backend/src/services/deployment/forensics/processGuard.js');
@@ -364,6 +366,152 @@ section('LE WORKER DÉTACHÉ — il annonce, il n’est pas relancé tout seul')
   check('le worker pose lui aussi les gardes de process', /installProcessGuards\(/.test(worker));
   check('…et ne relance JAMAIS un déploiement de lui-même',
     !/executeDeployment\([^)]*\)[\s\S]{0,200}executeDeployment\(/.test(worker));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LE RUN RÉEL add86c82 — un redémarrage attendu ne clôt plus le déploiement');
+{
+  /**
+   * On rejoue exactement la séquence observée : le pipeline atteint
+   * `services.start`, écrit le marqueur, PM2 redémarre l'API — et le nouveau
+   * process démarre pendant que le worker, lui, poursuit son travail.
+   */
+  const maintenant = new Date().toISOString();
+  // Une seule destination ACTIVE par environnement : l'index le garantit, et
+  // les sections précédentes en ont laissé une.
+  await DeploymentTarget.deleteMany({});
+  const cible = await DeploymentTarget.create({
+    targetId: randomUUID(), name: 'Panel TEST', url: 'https://panel-test.exemple.com',
+    host: 'panel-test.exemple.com', type: 'subdomain', environment: 'TEST',
+    backendPort: 4600, lifecycleStatus: 'ACTIVE', state: 'DEPLOYING',
+    createdAt: maintenant, updatedAt: maintenant,
+  });
+  const r = await nouveauRun({ targetId: cible.targetId, selfDeployment: true });
+
+  for (const fait of ['artifact.build', 'artifact.upload', 'dependencies.install',
+    'uploads.migrate', 'nginx.configure', 'https.configure']) {
+    await etapes.recordStep(r.runId, { stepId: fait, label: fait, status: 'ok' });
+  }
+  await etapes.recordStep(r.runId, { stepId: 'services.start', label: 'Démarrage des services', status: 'running' });
+
+  // Le worker bat — c'est LUI qui exécute, et il est vivant.
+  await runs.attachWorker(r.runId, 36740);
+  await runs.heartbeat(r.runId);
+
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: cible.targetId, operation: 'DEPLOYMENT',
+    nextExpectedStep: 'services.verify', expectedProcessName: 'panel-test', expectedPort: 4600,
+  });
+  // PM2 redémarre l'API : le marqueur a été écrit par un AUTRE pid que celui-ci.
+  await DeploymentRun.base.models.PanelDeploymentRestartMarker
+    .updateOne({ key: 'SINGLETON' }, { $set: { pidBefore: 224082 } });
+
+  /* — LE NOUVEAU BACKEND DÉMARRE : c'est ici que tout se jouait — */
+  const reprise = await marqueur.consommerMarqueurReprise();
+  check('le redémarrage attendu est constaté', reprise.consumed === true);
+  const bilan = await etapes.recoverOrphanRuns({
+    reason: 'process_restart', runRepris: reprise.runId,
+  });
+
+  check('AUCUN run n’est déclaré interrompu', bilan.recovered === 0);
+  check('…le run est explicitement ÉPARGNÉ', bilan.preservedRuns.includes(r.runId));
+
+  let relu = await DeploymentRun.findOne({ runId: r.runId }).lean();
+  check('le run reste « en cours », pas « interrompu »', relu.status === 'running');
+  check('services.start n’est pas figé en interrompu',
+    relu.steps.find((s) => s.id === 'services.start').status === 'running');
+
+  const codes = relu.journal.map((e) => e.eventCode);
+  check('le journal porte APPLICATION_RESTART_COMPLETED', codes.includes('APPLICATION_RESTART_COMPLETED'));
+  check('…suivi de RUN_RESUMED_AFTER_EXPECTED_RESTART',
+    codes.indexOf('RUN_RESUMED_AFTER_EXPECTED_RESTART') > codes.indexOf('APPLICATION_RESTART_COMPLETED'));
+  check('…et JAMAIS de RUN_INTERRUPTED_BY_PROCESS_RESTART',
+    !codes.includes('RUN_INTERRUPTED_BY_PROCESS_RESTART'));
+
+  /* — LE WORKER, LUI, N'A PAS ÉTÉ TUÉ : il termine — */
+  await etapes.recordStep(r.runId, { stepId: 'services.start', label: 'Démarrage des services', status: 'ok' });
+  for (const suite of ['services.verify', 'public.healthcheck', 'runtime.sync', 'deployment.finalize']) {
+    await etapes.recordStep(r.runId, { stepId: suite, label: suite, status: 'running' });
+    await etapes.recordStep(r.runId, { stepId: suite, label: suite, status: 'ok' });
+  }
+  await runs.finalizeRun(r.runId, { status: 'ok', summary: 'Déploiement réussi.' });
+  await targets.recordDeployment(cible.targetId, {
+    operationType: 'DEPLOYMENT', ok: true, version: '1.0.0', releaseId: null,
+    user: 'dev@exemple.com', durationMs: 1000, error: null, steps: [],
+  });
+
+  relu = await DeploymentRun.findOne({ runId: r.runId }).lean();
+  check('services.start finit au VERT', relu.steps.find((s) => s.id === 'services.start').status === 'ok');
+  check('services.verify a bien été exécuté', relu.steps.find((s) => s.id === 'services.verify').status === 'ok');
+  check('le contrôle public aussi', relu.steps.find((s) => s.id === 'public.healthcheck').status === 'ok');
+  check('la synchronisation réseau aussi', relu.steps.find((s) => s.id === 'runtime.sync').status === 'ok');
+  check('la finalisation aussi', relu.steps.find((s) => s.id === 'deployment.finalize').status === 'ok');
+  check('le run se conclut en succès', relu.status === 'ok');
+  check('…avec une heure de fin', Boolean(relu.finishedAt));
+  check('…et plus AUCUNE étape en attente ou interrompue',
+    !relu.steps.some((s) => ['pending', 'running', 'interrupted'].includes(s.status)));
+
+  const fiche = await DeploymentTarget.findOne({ targetId: cible.targetId }).lean();
+  check('la destination est persistée DEPLOYED', fiche.state === 'DEPLOYED');
+  check('…son historique est écrit', (fiche.history ?? []).length >= 1);
+  check('…et son cycle de vie reste ACTIVE', fiche.lifecycleStatus === 'ACTIVE');
+  check('le badge « Publication… » ne peut plus subsister : plus rien n’est DEPLOYING',
+    relu.status === 'ok' && fiche.state !== 'DEPLOYING');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('SCÉNARIOS NÉGATIFS — la reprise ne doit rien inventer');
+{
+  // 1. Le worker est RÉELLEMENT mort : silence prolongé, aucun marqueur valide.
+  const mort = await nouveauRun();
+  await etapes.recordStep(mort.runId, { stepId: 'services.start', label: 'Démarrage', status: 'running' });
+  await DeploymentRun.updateOne({ runId: mort.runId }, {
+    $set: { workerPid: 11111, workerHeartbeatAt: new Date(Date.now() - 10 * 60_000).toISOString() },
+  });
+
+  const bilan = await etapes.recoverOrphanRuns({ reason: 'process_restart' });
+  check('un worker silencieux depuis 10 min est tenu pour mort', bilan.recovered >= 1);
+  const relu = await DeploymentRun.findOne({ runId: mort.runId }).lean();
+  check('…le run est clos comme interrompu', relu.status === 'interrupted');
+  check('…l’étape en cours devient interrompue, pas en erreur',
+    relu.steps.find((s) => s.id === 'services.start').status === 'interrupted');
+  check('…et la cause est nommée',
+    relu.journal.some((e) => e.eventCode === 'RUN_INTERRUPTED_BY_PROCESS_RESTART'));
+  check('…sans jamais prétendre à une reprise',
+    !relu.journal.some((e) => e.eventCode === 'RUN_RESUMED_AFTER_EXPECTED_RESTART'));
+
+  // 2. Un run sans AUCUN battement : on ne peut pas prouver la vie, on clôt.
+  const jamais = await nouveauRun();
+  await etapes.recordStep(jamais.runId, { stepId: 'ssh.connect', label: 'Connexion', status: 'running' });
+  const b2 = await etapes.recoverOrphanRuns({ reason: 'process_restart' });
+  check('un run sans battement de cœur est clos, pas laissé en suspens', b2.recovered >= 1);
+
+  // 3. Redémarrage ATTENDU mais backend jamais revenu : le marqueur SUBSISTE.
+  const attente = await nouveauRun();
+  await marqueur.ecrireMarqueurReprise({
+    runId: attente.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'services.verify', expectedProcessName: 'panel-x', expectedPort: 4700,
+  });
+  const memeProcess = await marqueur.consommerMarqueurReprise();
+  check('tant que le process n’a pas changé, rien n’est conclu', memeProcess.consumed === false);
+  check('…le marqueur est CONSERVÉ pour le vrai redémarrage', (await marqueur.lireMarqueurReprise()) !== null);
+  check('…et aucune reprise n’est journalisée',
+    !(await journalDe(attente.runId)).some((e) => e.eventCode === 'RUN_RESUMED_AFTER_EXPECTED_RESTART'));
+  await marqueur.effacerMarqueurReprise();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LE WORKER SURVIT À L’ARRÊT EN ARBRE DE PM2');
+{
+  const src = sansCommentaires(
+    await lireSource('../backend/src/services/deployment/deploymentWorker.service.js'),
+  );
+  check('le worker est détaché de son groupe de processus', /detached: true/.test(src));
+  check('…et de sa FILIATION, ce que `detached` ne fait pas', /setsid/.test(src));
+  check('…sans quoi PM2 le retrouverait par son PPID', /parSetsid/.test(src));
+  check('l’absence de `setsid` ne fait pas échouer le déploiement', /ENOENT/.test(src));
+  check('…et elle est signalée, pas tue', /logger\.warn/.test(src));
+  check('aucun tube ne relie le worker au backend', /stdio: 'ignore'/.test(src));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

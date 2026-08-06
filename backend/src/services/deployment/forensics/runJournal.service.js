@@ -97,6 +97,15 @@ export const EVENTS = Object.freeze({
   APPLICATION_RESTART_COMPLETED: 'APPLICATION_RESTART_COMPLETED',
   // Cycle de vie du process
   RUN_INTERRUPTED_BY_PROCESS_RESTART: 'RUN_INTERRUPTED_BY_PROCESS_RESTART',
+  /**
+   * Le run a TRAVERSÉ un redémarrage attendu sans être interrompu.
+   *
+   * C'est l'exact contraire du précédent, et les deux ne peuvent pas décrire
+   * le même redémarrage. Voir `APPLICATION_RESTART_COMPLETED` suivi de
+   * `RUN_INTERRUPTED_BY_PROCESS_RESTART` était le symptôme d'une reprise qui
+   * ignorait ce qu'elle venait elle-même de constater.
+   */
+  RUN_RESUMED_AFTER_EXPECTED_RESTART: 'RUN_RESUMED_AFTER_EXPECTED_RESTART',
   UNHANDLED_REJECTION: 'UNHANDLED_REJECTION',
   UNCAUGHT_EXCEPTION: 'UNCAUGHT_EXCEPTION',
   // Étapes

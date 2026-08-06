@@ -70,12 +70,21 @@ async function start() {
    * REPRISE DES RUNS ORPHELINS — l'invariant « toute étape RUNNING finit ».
    *
    * Le worker du Panel est DÉTACHÉ : il survit au redémarrage de l'API. Seuls
-   * les runs dont le worker est réellement mort sont donc concernés — et c'est
-   * exactement ce que cette reprise doit clore, sans toucher aux autres.
+   * les runs dont le worker est réellement mort sont concernés — ce que cette
+   * reprise VÉRIFIE désormais au battement de cœur, au lieu de le supposer.
+   * Le run dont le marqueur vient d'être consommé lui est transmis : c'est
+   * précisément celui qu'il ne faut pas déclarer interrompu après avoir
+   * journalisé que son redémarrage était attendu et confirmé.
    */
-  const repris = await recoverOrphanRuns({ reason: 'process_restart' }).catch(() => null);
+  const repris = await recoverOrphanRuns({
+    reason: 'process_restart',
+    runRepris: reprise?.consumed ? reprise.runId : null,
+  }).catch(() => null);
   if (repris?.recovered) {
     logger.warn(`${repris.recovered} déploiement(s) interrompu(s) : étapes closes et journalisées.`);
+  }
+  if (repris?.preserved) {
+    logger.info(`${repris.preserved} déploiement(s) toujours exécuté(s) par leur worker : laissés en cours.`);
   }
 
   const lifecycle = await migrateDeploymentTargets();

@@ -22,6 +22,16 @@
 import PanelDeploymentRun from '../../../models/PanelDeploymentRun.model.js';
 import { EVENTS, LEVELS, SOURCES, journal } from './runJournal.service.js';
 
+/**
+ * Âge maximal d'un battement de cœur pour tenir l'exécutant pour vivant.
+ *
+ * Le worker bat toutes les 5 s ; 90 s laisse passer un redémarrage de l'API,
+ * une pause du planificateur ou une base momentanément lente sans conclure à
+ * tort qu'il est mort. La valeur est celle qui sert déjà à `finalizeOrphanRuns`
+ * — deux seuils différents pour la même question finiraient par se contredire.
+ */
+export const HEARTBEAT_TIMEOUT_MS = 90_000;
+
 /** Le statut d'étape → l'évènement de journal correspondant. */
 const EVENEMENT = Object.freeze({
   running: EVENTS.STEP_STARTED,
@@ -109,19 +119,77 @@ export async function recordStep(runId, {
  *
  * ── POURQUOI AU DÉMARRAGE, ET PAS SUR MINUTERIE ─────────────────────────────
  * Un run `running` n'est orphelin que si le process qui l'exécutait a disparu.
- * Le seul instant où l'on en est certain est le démarrage d'un NOUVEAU
- * process : aucun run antérieur ne peut encore être en cours, puisque son
- * exécutant est mort. Une minuterie, elle, devrait deviner un délai — et
- * finirait par tuer un déploiement lent mais vivant.
+ * Une minuterie devrait deviner un délai, et finirait par tuer un déploiement
+ * lent mais vivant.
+ *
+ * ── CE QUE CETTE FONCTION A LONGTEMPS SUPPOSÉ À TORT ────────────────────────
+ * Elle traitait TOUT run « en cours » comme orphelin, au motif qu'un nouveau
+ * process implique la mort de l'ancien. C'est faux ici : le déploiement du
+ * Panel ne vit pas dans l'API, mais dans un worker DÉTACHÉ qui lui survit.
+ * Redémarrer l'API — ce que le Panel fait en se déployant lui-même — faisait
+ * donc déclarer « interrompu » un déploiement qui se poursuivait, quelques
+ * millisecondes après avoir journalisé que le redémarrage était attendu et
+ * confirmé. Le run réel `add86c82` s'est arrêté exactement là.
+ *
+ * ── LA PREUVE EXIGÉE MAINTENANT ─────────────────────────────────────────────
+ * On ne clôt un run que si son exécutant est PROUVÉ mort, et la preuve est le
+ * battement de cœur qu'il écrit toutes les 5 secondes. Sans preuve, on laisse
+ * le run tel quel : un run vivant faussement clos est irrécupérable, alors
+ * qu'un run mort laissé ouvert sera repris au démarrage suivant. L'erreur
+ * qu'on refuse n'est pas la même des deux côtés, et c'est délibéré.
  *
  * L'étape active est marquée `interrupted`, jamais `error` : elle n'a pas
- * échoué, elle a été coupée. Confondre les deux ferait chercher une cause
- * technique là où il n'y a qu'un redémarrage.
+ * échoué, elle a été coupée.
+ *
+ * @param {object}  args
+ * @param {string} [args.reason]        motif journalisé
+ * @param {string} [args.runRepris]     run dont le marqueur vient d'être consommé
+ * @param {number} [args.toleranceMs]   âge maximal d'un battement de cœur
  */
-export async function recoverOrphanRuns({ reason = 'process_restart' } = {}) {
-  const orphelins = await PanelDeploymentRun.find({ status: 'running' })
-    .select('runId targetId currentStepId steps startedAt operationType')
+export async function recoverOrphanRuns({
+  reason = 'process_restart', runRepris = null, toleranceMs = HEARTBEAT_TIMEOUT_MS,
+} = {}) {
+  const candidats = await PanelDeploymentRun.find({ status: 'running' })
+    .select('runId targetId currentStepId steps startedAt operationType workerPid workerHeartbeatAt')
     .lean();
+
+  const limite = Date.now() - toleranceMs;
+  const vivant = (run) => {
+    const battement = run.workerHeartbeatAt ? new Date(run.workerHeartbeatAt).getTime() : null;
+    return Number.isFinite(battement) && battement !== null && battement >= limite;
+  };
+
+  const orphelins = [];
+  const survivants = [];
+  for (const run of candidats) (vivant(run) ? survivants : orphelins).push(run);
+
+  /**
+   * LE RUN QUI A SURVÉCU AU REDÉMARRAGE ATTENDU — on le DIT.
+   *
+   * Sans cette entrée, le journal montrait le redémarrage confirmé puis plus
+   * rien jusqu'à la fin : impossible de distinguer « le worker continue » de
+   * « personne ne reprend la main ». C'est l'évènement que le contrat interdit
+   * de voir remplacé par une interruption.
+   */
+  for (const run of survivants) {
+    await journal(run.runId, {
+      source: SOURCES.SYSTEM,
+      level: LEVELS.INFO,
+      eventCode: EVENTS.RUN_RESUMED_AFTER_EXPECTED_RESTART,
+      stepId: run.currentStepId ?? null,
+      message: run.runId === runRepris
+        ? 'Le redémarrage était attendu et le worker y a survécu : le déploiement se poursuit sans interruption.'
+        : 'Ce déploiement est toujours exécuté par son worker : le redémarrage de l’API ne l’a pas interrompu.',
+      details: {
+        reason,
+        marqueurConsomme: run.runId === runRepris,
+        workerPid: run.workerPid ?? null,
+        workerHeartbeatAt: run.workerHeartbeatAt ?? null,
+        newPid: process.pid,
+      },
+      pid: process.pid,
+    });
+  }
 
   const repris = [];
   for (const run of orphelins) {
@@ -163,7 +231,14 @@ export async function recoverOrphanRuns({ reason = 'process_restart' } = {}) {
     repris.push({ runId: run.runId, steps: enCours.map((s) => s.id) });
   }
 
-  return { recovered: repris.length, runs: repris };
+  return {
+    recovered: repris.length,
+    runs: repris,
+    // Ce qu'on a délibérément ÉPARGNÉ : sans ce compte, une reprise qui ne
+    // ferme rien est indistinguable d'une reprise qui n'a rien trouvé.
+    preserved: survivants.length,
+    preservedRuns: survivants.map((r) => r.runId),
+  };
 }
 
 export default { recordStep, recoverOrphanRuns };
