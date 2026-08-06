@@ -56,6 +56,16 @@ export class DeploymentEngine {
     this.transportFactory = deps.transportFactory || defaultTransportFactory;
     this.mongoUri = deps.mongoUri || process.env.MONGODB_URI;
     this.wildcardBases = deps.wildcardBases || wildcardBasesFromEnv();
+
+    /**
+     * OBSERVATEUR DE TRANSPORT — injecté, jamais construit ici.
+     *
+     * Le moteur est MIROIR entre les projets : lui donner un journal
+     * applicatif le rendrait spécifique à l'un d'eux. Il transmet donc un
+     * simple rappel jusqu'au transport, et c'est l'application qui décide ce
+     * qu'elle en fait — ou rien du tout.
+     */
+    this.transportObserver = typeof deps.transportObserver === 'function' ? deps.transportObserver : null;
   }
 
   /**
@@ -886,7 +896,9 @@ export class DeploymentEngine {
     if (!session) {
       throw new DeploymentError('NO_VPS_SESSION', 'Session VPS absente ou expirée.');
     }
-    const tx = this.transportFactory(session);
+    // L'observateur suit la session jusqu'au transport : c'est le seul chemin
+    // par lequel une trace de connexion peut remonter à l'application.
+    const tx = this.transportFactory({ ...session, observer: this.transportObserver });
     return { tx, session, ephemeral: true };
   }
 }
@@ -897,6 +909,8 @@ function defaultTransportFactory(session) {
     host: session.host,
     username: session.username,
     password: session.password,
+    // Facultatif : sans observateur, le transport se comporte comme avant.
+    observer: session.observer ?? null,
   });
 }
 

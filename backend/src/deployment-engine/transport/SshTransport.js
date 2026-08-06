@@ -35,6 +35,42 @@ export class SshTransport extends Transport {
     this._creds = creds;
     this._client = null;
     this._sftp = null;
+
+    /**
+     * OBSERVATEUR INJECTÉ — le moteur reste générique.
+     *
+     * ── POURQUOI UN RAPPEL, ET PAS UN JOURNAL ────────────────────────────
+     * Le blocage historique se produisait ici, sur `ssh.connect`, et rien ne
+     * le racontait. Il fallait donc tracer la connexion — mais le moteur est
+     * MIROIR entre les projets : lui faire importer un modèle Mongo ou un
+     * service applicatif le rendrait spécifique à l'un d'eux, et le contrôle
+     * de dérive le refuserait à juste titre.
+     *
+     * Il émet donc des faits ; c'est l'application qui décide où les écrire.
+     * Sans observateur, le transport se comporte exactement comme avant.
+     */
+    this._observer = typeof creds.observer === 'function' ? creds.observer : null;
+  }
+
+  /**
+   * Émet un fait d'observation. Ne lève JAMAIS : observer une connexion ne
+   * doit pas pouvoir la faire échouer.
+   *
+   * Le mot de passe et les clés ne franchissent jamais cette frontière — seule
+   * la MÉTHODE d'authentification est publiée, pas son secret.
+   */
+  _emettre(eventCode, details = {}) {
+    if (!this._observer) return;
+    try {
+      this._observer({
+        eventCode,
+        host: this._creds.host,
+        port: this._creds.port || 22,
+        username: this._creds.username,
+        authMethod: this._creds.password ? 'password' : 'key',
+        ...details,
+      });
+    } catch { /* un observateur défaillant n'a pas à casser un déploiement */ }
   }
 
   get kind() {
@@ -68,6 +104,10 @@ export class SshTransport extends Transport {
     const client = await this._newClient();
     const plafond = this._creds.connectTimeoutMs || CONNECT_TIMEOUT_MS;
 
+    const debut = Date.now();
+    const startedAt = new Date(debut).toISOString();
+    this._emettre('SSH_CONNECT_STARTED', { startedAt, connectTimeoutMs: plafond });
+
     await new Promise((resolve, reject) => {
       let regle = false;
       let minuteur = null;
@@ -84,10 +124,27 @@ export class SshTransport extends Transport {
        * cherche à supprimer. Ils restent donc attachés, et `terminer` ne fait
        * plus rien après la première issue.
        */
-      const terminer = (err) => {
+      /**
+       * `issue` NOMME le chemin de sortie emprunté.
+       *
+       * Toutes les sorties ratées produisent une erreur, mais pas la même
+       * panne : un délai dépassé, une fermeture avant la poignée de main et
+       * une interruption par le pair demandent trois enquêtes différentes.
+       * Les confondre sous « SSH_ERROR » aurait reproduit le défaut d'origine
+       * — un symptôme unique pour des causes distinctes.
+       */
+      const terminer = (err, issue = 'SSH_ERROR') => {
         if (regle) return; // exactement une issue, jamais deux
         regle = true;
         if (minuteur) clearTimeout(minuteur);
+        const durationMs = Date.now() - debut;
+        if (err) {
+          this._emettre(issue, {
+            startedAt, durationMs, errorCode: err.code ?? null, reason: err.message,
+          });
+        } else {
+          this._emettre('SSH_READY', { startedAt, readyAt: new Date().toISOString(), durationMs });
+        }
         if (err) {
           // Échec : on rend la socket. Sans cela, une tentative ratée laissait
           // un client ssh2 vivant, donc une socket ouverte, à chaque essai.
@@ -100,10 +157,10 @@ export class SshTransport extends Transport {
       };
 
       const surPret = () => terminer(null);
-      const surErreur = (err) => terminer(err instanceof Error ? err : new Error(String(err)));
-      const surFermeture = () => terminer(new Error('Connexion SSH fermée avant la fin de la négociation.'));
-      const surFin = () => terminer(new Error('Connexion SSH interrompue par le serveur.'));
-      const surDelai = () => terminer(new Error(`Délai de connexion SSH dépassé (${plafond} ms).`));
+      const surErreur = (err) => terminer(err instanceof Error ? err : new Error(String(err)), 'SSH_ERROR');
+      const surFermeture = () => terminer(new Error('Connexion SSH fermée avant la fin de la négociation.'), 'SSH_CLOSED');
+      const surFin = () => terminer(new Error('Connexion SSH interrompue par le serveur.'), 'SSH_ENDED');
+      const surDelai = () => terminer(new Error(`Délai de connexion SSH dépassé (${plafond} ms).`), 'SSH_TIMEOUT');
 
       minuteur = setTimeout(surDelai, plafond);
       minuteur.unref?.();
@@ -127,7 +184,7 @@ export class SshTransport extends Transport {
       } catch (err) {
         // `connect()` peut lever de façon synchrone (options invalides, hôte
         // vide) : sans ce filet, l'exception court-circuiterait la promesse.
-        terminer(err instanceof Error ? err : new Error(String(err)));
+        terminer(err instanceof Error ? err : new Error(String(err)), 'SSH_ERROR');
       }
     });
 
