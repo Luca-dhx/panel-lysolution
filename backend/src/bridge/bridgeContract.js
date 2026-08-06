@@ -175,6 +175,55 @@ const isoDate = z.string().datetime({ offset: true });
 // propriétés additionnelles d'une mineure de format plus récente sont
 // tolérées (pas de .strict() — l'OpenAPI ne déclare pas
 // additionalProperties: false sur ces objets).
+/**
+ * DESCRIPTEUR MÉDIA CANONIQUE (>= 1.5.0, ADDITIF).
+ *
+ * ── CE QUE L'URL SEULE NE DISAIT PAS ────────────────────────────────────────
+ * Le Bridge ne transportait qu'une adresse. Un projet qui la recevait ne
+ * pouvait savoir ni si l'image avait changé (aucune empreinte), ni son type
+ * réel, ni ses dimensions, ni si la projection reçue était plus récente que
+ * celle qu'il appliquait déjà. Il ne pouvait que recharger l'adresse et
+ * espérer — d'où des images remplacées qui restaient affichées depuis le
+ * cache, et des liens morts qu'aucun écran ne savait qualifier.
+ *
+ * ── ADDITIF, DONC SANS RUPTURE ──────────────────────────────────────────────
+ * Le descripteur ACCOMPAGNE `logoUrl` / `photoUrl` / `faviconUrl` ; il ne les
+ * remplace pas. Un projet antérieur continue de fonctionner sans rien changer,
+ * et la migration se fait projet par projet.
+ *
+ * `url` est TOUJOURS absolue et canonique : jamais une boucle locale, jamais
+ * un chemin disque, jamais un `blob:`. Un projet affiche ce média depuis une
+ * AUTRE origine que le Panel — une adresse locale y donne une image cassée.
+ *
+ * `null` est une valeur SIGNIFIANTE : elle publie la SUPPRESSION du média.
+ * L'omettre laisserait l'ancien descripteur en place chez le projet.
+ */
+export const mediaDescriptorSchema = z
+  .object({
+    /** Identité stable du média. `null` pour une URL externe non gérée. */
+    mediaId: z.string().nullable().optional(),
+    url: z.string().url(),
+    mime: z.string().nullable().optional(),
+    size: z.number().int().nonnegative().nullable().optional(),
+    width: z.number().int().positive().nullable().optional(),
+    height: z.number().int().positive().nullable().optional(),
+    /** Empreinte du CONTENU — ce qui distingue « même image » d'« autre ». */
+    sha256: z.string().nullable().optional(),
+    /** Monotone : un projet refuse une projection plus ancienne. */
+    version: z.number().int().nonnegative().nullable().optional(),
+    updatedAt: z.string().nullable().optional(),
+    role: z.string().nullable().optional(),
+    /**
+     * Servi par une destination ACTIVE — relevé sur le serveur, jamais déduit.
+     * Un descripteur `LOCAL_ONLY` décrit un média qui existe, mais que
+     * personne d'autre ne peut encore atteindre.
+     */
+    publicationState: z.enum(['LOCAL_ONLY', 'PUBLISHED']).nullable().optional(),
+    /** Vrai pour une URL externe dont le Panel n'a aucune métadonnée. */
+    external: z.boolean().optional(),
+  })
+  .passthrough();
+
 export const projectManifestSchema = z.object({
   manifestVersion: semver,
   project: z.object({
@@ -232,6 +281,16 @@ export const projectManifestSchema = z.object({
       tagline: z.string().min(1).optional(),
       logoUrl: z.string().url().optional(),
       faviconUrl: z.string().url().optional(),
+      /**
+       * ADDITIF — le descripteur complet annoncé par le PROJET.
+       *
+       * Le Panel en publiait déjà vers les projets ; il n'en recevait aucun.
+       * Le Bridge était asymétrique : le même objet ne se décrivait pas de la
+       * même façon selon le sens de circulation. Optionnel : un projet
+       * antérieur reste pleinement conforme.
+       */
+      logo: mediaDescriptorSchema.optional(),
+      favicon: mediaDescriptorSchema.optional(),
       contacts: z
         .object({
           email: z.string().min(1).optional(),
@@ -510,49 +569,6 @@ export const syncPullQuerySchema = z
 // Le Panel SERT ces charges utiles ; il ne les reçoit jamais. Les valider ici
 // n'est donc pas une garde d'entrée mais une garantie de SORTIE : ce que le
 // Panel promet dans sa spec est ce qu'il envoie réellement.
-
-/**
- * DESCRIPTEUR MÉDIA CANONIQUE (>= 1.5.0, ADDITIF).
- *
- * ── CE QUE L'URL SEULE NE DISAIT PAS ────────────────────────────────────────
- * Le Bridge ne transportait qu'une adresse. Un projet qui la recevait ne
- * pouvait savoir ni si l'image avait changé (aucune empreinte), ni son type
- * réel, ni ses dimensions, ni si la projection reçue était plus récente que
- * celle qu'il appliquait déjà. Il ne pouvait que recharger l'adresse et
- * espérer — d'où des images remplacées qui restaient affichées depuis le
- * cache, et des liens morts qu'aucun écran ne savait qualifier.
- *
- * ── ADDITIF, DONC SANS RUPTURE ──────────────────────────────────────────────
- * Le descripteur ACCOMPAGNE `logoUrl` / `photoUrl` / `faviconUrl` ; il ne les
- * remplace pas. Un projet antérieur continue de fonctionner sans rien changer,
- * et la migration se fait projet par projet.
- *
- * `url` est TOUJOURS absolue et canonique : jamais une boucle locale, jamais
- * un chemin disque, jamais un `blob:`. Un projet affiche ce média depuis une
- * AUTRE origine que le Panel — une adresse locale y donne une image cassée.
- *
- * `null` est une valeur SIGNIFIANTE : elle publie la SUPPRESSION du média.
- * L'omettre laisserait l'ancien descripteur en place chez le projet.
- */
-export const mediaDescriptorSchema = z
-  .object({
-    /** Identité stable du média. `null` pour une URL externe non gérée. */
-    mediaId: z.string().nullable().optional(),
-    url: z.string().url(),
-    mime: z.string().nullable().optional(),
-    size: z.number().int().nonnegative().nullable().optional(),
-    width: z.number().int().positive().nullable().optional(),
-    height: z.number().int().positive().nullable().optional(),
-    /** Empreinte du CONTENU — ce qui distingue « même image » d'« autre ». */
-    sha256: z.string().nullable().optional(),
-    /** Monotone : un projet refuse une projection plus ancienne. */
-    version: z.number().int().nonnegative().nullable().optional(),
-    updatedAt: z.string().nullable().optional(),
-    role: z.string().nullable().optional(),
-    /** Vrai pour une URL externe dont le Panel n'a aucune métadonnée. */
-    external: z.boolean().optional(),
-  })
-  .passthrough();
 
 export const companyProfileSchema = z
   .object({

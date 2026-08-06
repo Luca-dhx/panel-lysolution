@@ -152,13 +152,13 @@ section('4 · DESTINATION TEST ACTIVE — l’URL https absolue est résolue');
   config.env = 'TEST';
   const logo = await upload.processImage(await image(30, 30, 220), { role: 'logo' });
 
-  const avant = await descripteurs.resolveMediaUrl(logo.media, 'TEST');
+  const avant = await descripteurs.resolvePanelMediaUrl(logo.media, 'TEST');
   check('sans destination, l’adresse reste locale', avant.absolute === false);
   check('…et le dit', avant.reason === 'LOCAL_SANS_DESTINATION');
 
   await poserDestination({ environment: 'TEST', url: HOTE_TEST });
 
-  const apres = await descripteurs.resolveMediaUrl(logo.media, 'TEST');
+  const apres = await descripteurs.resolvePanelMediaUrl(logo.media, 'TEST');
   check('4 · avec une destination ACTIVE, l’adresse devient absolue', apres.absolute === true);
   check('…en https', apres.url.startsWith('https://'));
   check('…sur la destination TEST', apres.url === `${HOTE_TEST}/uploads/${logo.filename}`);
@@ -183,11 +183,11 @@ section('5 · PROD EST ÉTANCHE DE TEST');
 
   await poserDestination({ environment: 'PROD', url: HOTE_PROD });
 
-  const croise = await descripteurs.resolveMediaUrl(enTest.media, 'PROD');
+  const croise = await descripteurs.resolvePanelMediaUrl(enTest.media, 'PROD');
   check('5 · un média TEST n’est jamais résolu en PROD', croise.url === null);
   check('…et le refus est nommé', croise.reason === 'ENVIRONNEMENT_DIFFERENT');
 
-  const dansSonMonde = await descripteurs.resolveMediaUrl(enTest.media, 'TEST');
+  const dansSonMonde = await descripteurs.resolvePanelMediaUrl(enTest.media, 'TEST');
   check('…tandis qu’en TEST, sans destination TEST, il reste local',
     dansSonMonde.absolute === false && dansSonMonde.url.startsWith('/uploads/'));
 
@@ -196,9 +196,9 @@ section('5 · PROD EST ÉTANCHE DE TEST');
   const enProd = await upload.processImage(await image(190, 10, 190), { role: 'logo' });
   check('un média importé en PROD est estampillé PROD', enProd.media.environment === 'PROD');
   check('…et résolu sur la destination PROD',
-    (await descripteurs.resolveMediaUrl(enProd.media, 'PROD')).url === `${HOTE_PROD}/uploads/${enProd.filename}`);
+    (await descripteurs.resolvePanelMediaUrl(enProd.media, 'PROD')).url === `${HOTE_PROD}/uploads/${enProd.filename}`);
   check('…jamais sur celle de TEST',
-    (await descripteurs.resolveMediaUrl(enProd.media, 'TEST')).url === null);
+    (await descripteurs.resolvePanelMediaUrl(enProd.media, 'TEST')).url === null);
   config.env = 'TEST';
 }
 
@@ -212,7 +212,7 @@ section('6 · UNE DESTINATION RETIRÉE N’EST JAMAIS UTILISÉE');
   for (const etat of ['DEPROVISIONING', 'EMPTY', 'DELETED', 'DEPROVISION_FAILED']) {
     await sansDestination();
     await poserDestination({ environment: 'TEST', url: HOTE_TEST, lifecycleStatus: etat });
-    const r = await descripteurs.resolveMediaUrl(logo.media, 'TEST');
+    const r = await descripteurs.resolvePanelMediaUrl(logo.media, 'TEST');
     check(`6 · une destination ${etat} ne sert aucune adresse`, r.absolute === false);
   }
 
@@ -221,7 +221,7 @@ section('6 · UNE DESTINATION RETIRÉE N’EST JAMAIS UTILISÉE');
   await sansDestination();
   await poserDestination({ environment: 'TEST', url: HOTE_TEST, state: 'DEPLOYING' });
   check('…ni une destination ACTIVE en cours de déploiement',
-    (await descripteurs.resolveMediaUrl(logo.media, 'TEST')).absolute === false);
+    (await descripteurs.resolvePanelMediaUrl(logo.media, 'TEST')).absolute === false);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

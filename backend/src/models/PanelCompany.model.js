@@ -85,6 +85,7 @@ const brandingSchema = new mongoose.Schema(
     faviconUrl: { type: String, default: null },
     /** LA SOURCE DE VÉRITÉ — le média, indépendamment de toute adresse. */
     logo: { type: mediaDescriptorSchema, default: null },
+    logoDark: { type: mediaDescriptorSchema, default: null },
     favicon: { type: mediaDescriptorSchema, default: null },
     primaryColor: { type: String, default: null },
     secondaryColor: { type: String, default: null },

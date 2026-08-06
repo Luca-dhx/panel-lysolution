@@ -97,7 +97,7 @@ async function adressePubliqueDeclaree() {
  * @param {string} environment  environnement du LECTEUR — jamais celui deviné
  * @returns {Promise<{url:string|null, absolute:boolean, reason:string}>}
  */
-export async function resolveMediaUrl(media, environment) {
+export async function resolvePanelMediaUrl(media, environment) {
   if (!media?.objectKey) return { url: null, absolute: false, reason: 'AUCUN_MEDIA' };
 
   /**
@@ -425,7 +425,7 @@ export function stableDescriptorOf(media) {
  * précédente, ce qui vaut mieux qu'une image cassée.
  */
 async function descriptorOfKnownMedia(media, role) {
-  const { url: absolue, absolute } = await resolveMediaUrl(media, media.environment ?? config.env);
+  const { url: absolue, absolute } = await resolvePanelMediaUrl(media, media.environment ?? config.env);
   if (!absolute) {
     logger.warn(`[media] Descripteur « ${media.objectKey} » non publié : `
       + 'aucune destination active ne le sert encore (média local à cet environnement).');
@@ -626,6 +626,36 @@ export async function publishPanelMediaOnDestination({
   return rapport;
 }
 
+/**
+ * DÉPUBLICATION — la destination ne sert plus ces médias.
+ *
+ * ── POURQUOI CE N'EST PAS FACULTATIF ────────────────────────────────────────
+ * Un média restait `PUBLISHED` avec, pour `publishedHost`, un hôte qui
+ * n'existait plus. Le champ mentait : il affirmait une présence constatée sur
+ * un serveur dont on venait d'effacer les fichiers. Toute décision prise
+ * ensuite sur cet état reposait sur une affirmation fausse.
+ *
+ * Appelée à la fin d'un retrait. Le média n'est pas supprimé : il redevient
+ * ce qu'il était avant la mise en ligne — présent ici, nulle part ailleurs.
+ */
+export async function unpublishPanelMediaOfDestination({ host = null, environment }) {
+  const filtre = { environment, publicationState: 'PUBLISHED' };
+  // Un hôte donné ne dépublie que CE qu'il servait : deux destinations d'un
+  // même environnement ne doivent pas se dépublier l'une l'autre.
+  if (host) filtre.publishedHost = host;
+
+  const at = nowIso();
+  const res = await PanelMedia.updateMany(filtre, {
+    $set: { publicationState: 'LOCAL_ONLY', publishedHost: null, publishedAt: null, updatedAt: at },
+  });
+  const nombre = res.modifiedCount ?? 0;
+  if (nombre) {
+    logger.info(`[media] ${nombre} média(s) ${environment} redeviennent locaux : `
+      + `${host ?? 'la destination'} ne les sert plus.`);
+  }
+  return { environment, host, unpublished: nombre };
+}
+
 export default {
   sha256Of,
   SHORT_HASH_LENGTH,
@@ -635,11 +665,12 @@ export default {
   findMediaByContent,
   isCanonicalMediaUrl,
   activePanelDestination,
-  resolveMediaUrl,
+  resolvePanelMediaUrl,
   stableDescriptorOf,
   registerMedia,
   markMediaDeleted,
   findMedia,
   publishableDescriptor,
   publishPanelMediaOnDestination,
+  unpublishPanelMediaOfDestination,
 };

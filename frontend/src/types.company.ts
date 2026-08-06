@@ -68,6 +68,7 @@ export interface CompanyBranding {
   faviconUrl: string | null;
   /** LA SOURCE DE VÉRITÉ du média. */
   logo?: StoredMediaDescriptor | null;
+  logoDark?: StoredMediaDescriptor | null;
   favicon?: StoredMediaDescriptor | null;
   primaryColor: string | null;
   secondaryColor: string | null;

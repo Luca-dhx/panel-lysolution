@@ -202,6 +202,26 @@ export function CompanyPage() {
   const apercusMedias = Object.fromEntries(
     Object.entries(state.media ?? {}).map(([chemin, m]) => [chemin, m.url]),
   );
+  /** Les trois médias de marque suivent EXACTEMENT le même chemin. */
+  const mediaMarque = (cle: 'logo' | 'logoDark' | 'favicon', champUrl: string) => ({
+    value: (draft[champUrl] as string)
+      ?? (c.branding as unknown as Record<string, string | null>)[champUrl.split('.')[1]]
+      ?? '',
+    descriptor: (draft[`branding.${cle}`] as StoredMediaDescriptor | null | undefined)
+      ?? (c.branding as unknown as Record<string, StoredMediaDescriptor | null>)[cle] ?? null,
+    previewUrl: (draft[`branding.${cle}Preview`] as string | undefined)
+      ?? state.media?.[`branding.${cle}`]?.url ?? null,
+    published: draft[`branding.${cle}Preview`] !== undefined
+      ? /^https?:\/\//i.test(String(draft[`branding.${cle}Preview`] ?? ''))
+      : Boolean(state.media?.[`branding.${cle}`]?.published),
+    onChange: (path: string, descriptor: StoredMediaDescriptor | null, previewUrl?: string) => setDraft({
+      ...draft,
+      [champUrl]: path,
+      [`branding.${cle}`]: descriptor,
+      [`branding.${cle}Preview`]: previewUrl ?? path,
+    }),
+  });
+
   const logoPublie = draft['branding.logoPreview'] !== undefined
     ? /^https?:\/\//i.test(String(draft['branding.logoPreview'] ?? ''))
     : Boolean(state.media?.['branding.logo']?.published);
@@ -284,6 +304,29 @@ export function CompanyPage() {
         })}
       />
 
+      {/*
+        LOGO SOMBRE ET FAVICON — importés, comme le logo.
+        Ils se saisissaient en collant une adresse, dans « Configuration
+        technique ». Deux images hors de tout pipeline : sans empreinte, sans
+        environnement, sans état de publication, et invalides le jour d'un
+        changement de domaine. Trois médias, un seul chemin.
+      */}
+      <LogoField
+        {...mediaMarque('logoDark', 'branding.logoDarkUrl')}
+        title="Logo sombre"
+        description="Variante utilisée par les projets sur fond sombre. Facultative."
+        role="logo-dark"
+        label="le logo sombre"
+      />
+
+      <LogoField
+        {...mediaMarque('favicon', 'branding.faviconUrl')}
+        title="Favicon"
+        description="Icône d’onglet transmise aux projets. Carrée, redimensionnée automatiquement."
+        role="favicon"
+        label="le favicon"
+      />
+
       {/* 2 — RÉFÉRENCES : tous les contacts publics passent par ici. */}
       <ReferencesEditor
         value={references}
@@ -330,13 +373,6 @@ export function CompanyPage() {
               Transmis à Let’s Encrypt lors d’un déploiement, pour les alertes
               d’expiration. Ce n’est PAS un contact client — ceux-ci sont des
               références.
-            </span>
-          </label>
-          <label className="field">
-            <span className="field-label">Favicon</span>
-            {field('branding.faviconUrl', c.branding.faviconUrl)}
-            <span className="field-hint">
-              Adresse de l’icône d’onglet transmise aux projets.
             </span>
           </label>
         </div>

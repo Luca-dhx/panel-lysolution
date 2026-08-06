@@ -73,6 +73,26 @@ section('Le Panel possède un profil de déploiement complet');
   check('…et supporte le profil du Panel', manifest.supportedProfiles.includes('panel'));
 }
 
+
+/**
+ * VIDE la destination active d'un environnement, pour pouvoir en déclarer une
+ * autre.
+ *
+ * Le Panel n'a QU'UNE destination active par environnement — garanti par un
+ * index unique partiel. Un test qui veut en créer plusieurs doit donc suivre
+ * le chemin réel : vider, puis déclarer. Contourner la règle en écrivant
+ * directement en base testerait un monde qui n'existe pas.
+ */
+async function libererEnvironnement(environment) {
+  const active = await PanelDeploymentTarget.findOne({ environment, lifecycleStatus: 'ACTIVE' }).lean();
+  if (!active) return;
+  // Un verrou de déploiement posé par une section précédente empêcherait le
+  // retrait : on le lève d'abord, comme le ferait la fin d'une opération.
+  await lifecycle.releaseDeploymentLock(active.targetId, { ok: false });
+  await lifecycle.beginDeprovision(active.targetId, { runId: `libere-${active.targetId}` });
+  await lifecycle.markEmpty(active.targetId, { runId: `libere-${active.targetId}`, quarantine: false });
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite');
 {
@@ -103,6 +123,7 @@ section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite'
   // règle « le plus haut attribué + 1 », globale, interdisait des
   // configurations correctes tout en ne protégeant de rien — elle ne
   // regardait ni PM2 ni les sockets réelles.
+  await libererEnvironnement('TEST');
   const memeServeur = await targets.createTarget({
     name: 'Voisine', url: 'https://voisine.exemple.com', environment: 'TEST',
     sshHost: '203.0.113.10',
@@ -128,6 +149,7 @@ section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite'
     created.derived.find((d) => d.label === 'Service PM2').value === profile.serviceName(created.host));
 
   // ── CE QUE LE FRONTEND NE PEUT PLUS IMPOSER ──────────────────────────
+  await libererEnvironnement('TEST');
   const forced = await targets.createTarget({
     name: 'Tentative', url: 'https://tentative.exemple.com', environment: 'TEST',
     sshHost: '203.0.113.12',
@@ -199,15 +221,28 @@ section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
   check('…sans que son port attribué ne change',
     updated.backendPort === created.backendPort);
 
-  // Une destination JAMAIS mise en ligne se supprime tout de même — mais
-  // seulement après être passée par l'état « vidée ». C'est la même règle
-  // pour tout le monde : on ne supprime pas ce qu'on n'a pas constaté vide.
-  await lifecycle.beginDeprovision(created.targetId, { runId: 'run-menage' });
-  await lifecycle.markEmpty(created.targetId, { runId: 'run-menage', quarantine: false });
-  await targets.deleteTarget(created.targetId);
+  /**
+   * Une destination JAMAIS mise en ligne se supprime tout de même — mais
+   * seulement après être passée par l'état « vidée ». C'est la même règle pour
+   * tout le monde : on ne supprime pas ce qu'on n'a pas constaté vide.
+   *
+   * On vide et supprime TOUTES les destinations créées par cette section : la
+   * règle « une seule active par environnement » impose de les avoir vidées au
+   * fur et à mesure, et une vérification sur un compte total doit donc porter
+   * sur l'ensemble, pas sur la dernière.
+   */
+  const vivantes = await targets.listTargets();
+  for (const t of vivantes) {
+    await lifecycle.releaseDeploymentLock(t.targetId, { ok: false });
+    if (t.lifecycleStatus !== 'EMPTY') {
+      await lifecycle.beginDeprovision(t.targetId, { runId: 'run-menage' });
+      await lifecycle.markEmpty(t.targetId, { runId: 'run-menage', quarantine: false });
+    }
+    await targets.deleteTarget(t.targetId);
+  }
   check('…et se supprime une fois VIDÉE', (await targets.listTargets()).length === 0);
   check('…sa fiche restant lisible pour l’audit',
-    (await targets.listDeletedTargets()).length === 1);
+    (await targets.listDeletedTargets()).length === vivantes.length);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -353,6 +388,11 @@ section('L’exécuteur DÉLÈGUE au moteur, il ne réimplémente rien');
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('Surface /api/deployment');
 {
+  // Chaque section repart d'un registre vide : la règle « une seule
+  // destination active par environnement » est GLOBALE, et les fiches laissées
+  // par les sections précédentes en occuperaient les deux places.
+  await PanelDeploymentTarget.deleteMany({});
+
   const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
   await seedFromEnv();
   const { createApp } = await import('../backend/src/app.js');
@@ -360,10 +400,33 @@ section('Surface /api/deployment');
 
   check('la surface est fermée sans jeton', (await call('GET', '/api/deployment')).status === 401);
 
+
   const login = await call('POST', '/api/auth/login', {
     body: { email: 'dev@panel.test', password: 'motdepasse-test' },
   });
   const auth = { authorization: `Bearer ${login.json.data.token}` };
+
+  /**
+   * CRÉE une destination via HTTP, en libérant d'abord la place.
+   *
+   * Une seule destination est ACTIVE par environnement — c'est la règle que
+   * cette architecture garantit par un index unique. Un test qui enchaîne
+   * plusieurs créations doit donc suivre le chemin réel : vider, puis
+   * déclarer. Écrire directement en base pour contourner testerait un monde
+   * qui n'existe pas.
+   */
+  const creerDestination = async (body) => {
+    for (const t of await targets.listTargets()) {
+      if (t.environment !== body.environment) continue;
+      await lifecycle.releaseDeploymentLock(t.targetId, { ok: false });
+      if (t.lifecycleStatus !== 'EMPTY') {
+        await lifecycle.beginDeprovision(t.targetId, { runId: `libere-${t.targetId}` });
+        await lifecycle.markEmpty(t.targetId, { runId: `libere-${t.targetId}`, quarantine: false });
+      }
+    }
+    return call('POST', '/api/deployment/targets', { headers: auth, body });
+  };
+
 
   const overview = await call('GET', '/api/deployment', { headers: auth });
   check('GET / rend destinations, compteurs et exécutions récentes',
@@ -379,15 +442,12 @@ section('Surface /api/deployment');
   // ── LE PAYLOAD EXACT DU FORMULAIRE, EN HTTP RÉEL ─────────────────────
   // Quatre champs, rien d'autre. C'est ce que l'écran envoie réellement, et
   // c'est ce qui doit suffire.
-  const created = await call('POST', '/api/deployment/targets', {
-    headers: auth,
-    body: {
+  const created = await creerDestination({
       name: 'Recette HTTP',
       url: 'https://panel-http.exemple.com',
       environment: 'TEST',
       sshHost: '203.0.113.20',
-    },
-  });
+    });
   check('POST /targets avec le payload MINIMAL du formulaire → 201', created.status === 201);
   const targetId = created.json.data.targetId;
 
@@ -422,7 +482,10 @@ section('Surface /api/deployment');
   // gratuite envers un utilisateur non technique.
   const sansSchema = await call('POST', '/api/deployment/targets', {
     headers: auth,
-    body: { name: 'Sans schéma', url: 'panel-brut.exemple.com', environment: 'TEST', sshHost: '1.2.3.4' },
+    // PROD : la place TEST est déjà prise par « Recette HTTP » ci-dessus, et
+    // une seule destination est active par environnement. Ce que la ligne
+    // vérifie — la complétion du schéma d'URL — n'en dépend pas.
+    body: { name: 'Sans schéma', url: 'panel-brut.exemple.com', environment: 'PROD', sshHost: '1.2.3.4' },
   });
   check('une URL sans « https:// » est acceptée et complétée',
     sansSchema.status === 201 && sansSchema.json.data.host === 'panel-brut.exemple.com');
@@ -455,13 +518,10 @@ section('Surface /api/deployment');
     /n’en conserve aucun/.test(noPassword.json.message));
 
   // Production : la confirmation explicite est exigée.
-  const prod = await call('POST', '/api/deployment/targets', {
-    headers: auth,
-    body: {
+  const prod = await creerDestination({
       name: 'Production', url: 'https://panel.exemple.com', environment: 'PROD',
       sshHost: '203.0.113.30', backendPort: 4400,
-    },
-  });
+    });
   const unconfirmed = await call('POST', `/api/deployment/targets/${prod.json.data.targetId}/deploy`, {
     headers: auth, body: { sshPassword: 'x' },
   });
@@ -483,13 +543,10 @@ section('Surface /api/deployment');
   check('un run inconnu → 404 propre', unknownRun.status === 404);
 
   // ── LA ROUTE UNIQUE : 202 + executionId ─────────────────────────────
-  const solo = await call('POST', '/api/deployment/targets', {
-    headers: auth,
-    body: {
+  const solo = await creerDestination({
       name: 'Route unique', url: 'https://unique.exemple.com',
       environment: 'TEST', sshHost: '203.0.113.50',
-    },
-  });
+    });
   const soloId = solo.json.data.targetId;
 
   const launched = await call('POST', `/api/deployment/targets/${soloId}/deploy`, {

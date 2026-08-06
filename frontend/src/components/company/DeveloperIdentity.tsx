@@ -280,6 +280,11 @@ export function LogoField({
   previewUrl,
   published = false,
   onChange,
+  title = 'Logo',
+  description = 'Affiché par les projets. Format libre, redimensionné automatiquement.',
+  role = 'logo',
+  label = 'le logo',
+  kind = 'logo',
 }: {
   value: string | null;
   descriptor?: StoredMediaDescriptor | null;
@@ -287,16 +292,28 @@ export function LogoField({
   /** Servi par une destination active — relevé par le serveur, jamais deviné ici. */
   published?: boolean;
   onChange: (path: string, descriptor: StoredMediaDescriptor | null, previewUrl?: string) => void;
+  /* ── UN SEUL COMPOSANT POUR TOUS LES MÉDIAS DE MARQUE ──────────────────
+     Logo, logo sombre et favicon suivaient trois chemins différents : un
+     import pour le premier, un champ texte pour les deux autres. Trois
+     gestes pour trois images, et deux d'entre elles hors de tout pipeline —
+     sans empreinte, sans environnement, sans état de publication.
+     Ce ne sont pas trois composants : c'est le même, paramétré. */
+  title?: string;
+  description?: string;
+  role?: string;
+  label?: string;
+  kind?: 'logo' | 'avatar';
 }) {
   return (
-    <Card title="Logo">
-      <p className="muted">Affiché par les projets. Format libre, redimensionné automatiquement.</p>
+    <Card title={title}>
+      <p className="muted">{description}</p>
       <ImageField
         value={value}
         previewUrl={previewUrl}
         onChange={onChange}
-        kind="logo"
-        label="le logo"
+        kind={kind}
+        role={role}
+        label={label}
       />
       {/*
         Un logo importé sur un Panel pas encore déployé est parfaitement
@@ -332,6 +349,7 @@ export function ImageField({
   kind,
   label,
   previewUrl,
+  role,
 }: {
   /** Chemin de stockage conservé par la fiche — jamais une adresse publique. */
   value: string | null;
@@ -342,6 +360,15 @@ export function ImageField({
    */
   onChange: (path: string, descriptor: StoredMediaDescriptor | null, previewUrl?: string) => void;
   kind: 'logo' | 'avatar';
+  /**
+   * Le RÔLE MÉTIER — logo, favicon, logo sombre, portrait.
+   *
+   * Il n'est pas déduit de `kind`, qui ne décrit que la FORME du cadre :
+   * un favicon et un logo sont tous deux carrés, et ne représentent pas la
+   * même chose. Le descripteur publié porte ce rôle, et c'est lui que les
+   * projets lisent pour savoir quoi afficher où.
+   */
+  role?: string;
   label: string;
   /** Adresse d'affichage résolue par le parent, quand elle diffère du chemin. */
   previewUrl?: string | null;
@@ -383,7 +410,7 @@ export function ImageField({
       const importe = await uploadImage(
         file,
         kind === 'avatar' ? 'avatar' : 'logo',
-        kind === 'avatar' ? 'team-photo' : 'logo',
+        role ?? (kind === 'avatar' ? 'team-photo' : 'logo'),
       );
 
       /**

@@ -681,6 +681,21 @@ async function deprovision({ engine, target, sessionId, step, log, runId, option
   const rendu = await ports.releasePort(target.targetId, { verifiedFree: true });
   if (rendu.released) log(`Port ${target.backendPort} rendu à la plage libre (constaté libre sur le serveur).`);
 
+  /**
+   * LES MÉDIAS REDEVIENNENT LOCAUX — la destination ne les sert plus.
+   *
+   * Un média laissé `PUBLISHED` sur un hôte qu'on vient de vider affirmerait
+   * une présence constatée sur un serveur dont les fichiers ont été effacés.
+   * Le descripteur survit intact ; seule sa publication tombe.
+   */
+  const { unpublishPanelMediaOfDestination } = await import('../upload/mediaDescriptor.service.js');
+  const depub = await unpublishPanelMediaOfDestination({
+    host: target.host, environment: target.environment,
+  });
+  if (depub.unpublished) {
+    log(`${depub.unpublished} média(s) redeviennent locaux : ${target.host} ne les sert plus.`);
+  }
+
   const inv = result.inventory ?? {};
   return {
     status: 'ok',

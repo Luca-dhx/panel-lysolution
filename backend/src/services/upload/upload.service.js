@@ -77,10 +77,10 @@ export async function processImage(buffer, {
     const surDisque = path.join(dossier, deja.objectKey);
     const present = await fs.access(surDisque).then(() => true).catch(() => false);
     if (present) {
-      const { resolveMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
+      const { resolvePanelMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
       return {
         url: deja.path,
-        publicUrl: (await resolveMediaUrl(deja, deja.environment)).url,
+        publicUrl: (await resolvePanelMediaUrl(deja, deja.environment)).url,
         descriptor: stableDescriptorOf(deja),
         filename: deja.objectKey,
         media: deja,
@@ -137,7 +137,7 @@ export async function processImage(buffer, {
   // les appelants existants, et volontairement sans effet sur l'adresse.
   void prefix;
 
-  const { resolveMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
+  const { resolvePanelMediaUrl, stableDescriptorOf } = await import('./mediaDescriptor.service.js');
 
   return {
     /**
@@ -160,7 +160,7 @@ export async function processImage(buffer, {
      * ce média, sinon locale. Elle sert l'APERÇU, pas l'identité, et n'est
      * jamais enregistrée telle quelle.
      */
-    publicUrl: (await resolveMediaUrl(descripteur, descripteur.environment)).url,
+    publicUrl: (await resolvePanelMediaUrl(descripteur, descripteur.environment)).url,
     /** Le descripteur STABLE, celui que la fiche conserve. */
     descriptor: stableDescriptorOf(descripteur),
     filename: unique,

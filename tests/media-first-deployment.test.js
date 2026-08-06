@@ -128,7 +128,7 @@ section('PREMIER DÉPLOIEMENT — destination VIERGE, média seulement local');
   check('le média est LOCAL_ONLY', logo.media.publicationState === 'LOCAL_ONLY');
   check('…estampillé de son environnement', logo.media.environment === 'TEST');
   check('…et son adresse reste locale',
-    (await descripteurs.resolveMediaUrl(logo.media, 'TEST')).absolute === false);
+    (await descripteurs.resolvePanelMediaUrl(logo.media, 'TEST')).absolute === false);
 
   const surDisque = await fs.readFile(path.join(DOSSIER, logo.filename));
   check('…le fichier existe bien dans le stockage local', surDisque.length > 0);
@@ -182,7 +182,7 @@ section('PREMIER DÉPLOIEMENT — destination VIERGE, média seulement local');
 
   // 4 · L'URL HTTPS EST RÉSOLUE — SANS AUCUN RÉIMPORT.
   await poserDestinationActive();
-  const resolue = await descripteurs.resolveMediaUrl(apres, 'TEST');
+  const resolue = await descripteurs.resolvePanelMediaUrl(apres, 'TEST');
   check('4 · l’adresse devient absolue', resolue.absolute === true);
   check('…en https, sur la destination', resolue.url === `https://${HOTE}/uploads/${logo.filename}`);
   check('…et le descripteur publiable est produit',

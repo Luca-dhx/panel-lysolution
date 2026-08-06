@@ -130,6 +130,7 @@ const brandingSchema = z.object({
   logoDarkUrl: mediaRef('branding.logoDarkUrl'),
   faviconUrl: mediaRef('branding.faviconUrl'),
   logo: mediaDescriptor('branding.logo'),
+  logoDark: mediaDescriptor('branding.logoDark'),
   favicon: mediaDescriptor('branding.favicon'),
   primaryColor: color('branding.primaryColor'),
   secondaryColor: color('branding.secondaryColor'),

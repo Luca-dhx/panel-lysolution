@@ -190,7 +190,31 @@ const targetSchema = new mongoose.Schema(
   { minimize: false, versionKey: false },
 );
 
-targetSchema.index({ environment: 1 });
+/**
+ * UNE SEULE DESTINATION ACTIVE PAR ENVIRONNEMENT — garanti par la BASE.
+ *
+ * ── LE DÉFAUT CORRIGÉ ───────────────────────────────────────────────────────
+ * L'unicité ne portait que sur l'hôte. Deux destinations TEST pouvaient donc
+ * être ACTIVE en même temps sur deux domaines différents — et
+ * `activePanelDestination()` en choisissait une par date de dernier
+ * déploiement. La résolution des adresses et la publication des médias
+ * devenaient une loterie arbitrée par un horodatage.
+ *
+ * Un contrôle applicatif ne suffirait pas : il lit puis écrit, et deux
+ * requêtes simultanées passent toutes deux la lecture. L'index, lui, ne peut
+ * être contourné ni par une écriture concurrente, ni par un script.
+ */
+targetSchema.index(
+  { environment: 1 },
+  {
+    name: 'environnement_actif_unique',
+    unique: true,
+    partialFilterExpression: { lifecycleStatus: { $in: ['ACTIVE'] } },
+  },
+);
+
+/** Lecture courante : « la destination ACTIVE de cet environnement ». */
+targetSchema.index({ environment: 1, lifecycleStatus: 1, state: 1 });
 
 /**
  * Unicité de l'hôte parmi les destinations VIVANTES.

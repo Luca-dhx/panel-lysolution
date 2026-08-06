@@ -322,8 +322,10 @@ section('REGISTRE — réservation transactionnelle et propriétaire unique');
   const a = await targets.createTarget({
     name: 'Alpha', url: 'https://a.exemple.com', environment: 'TEST', sshHost: SERVEUR,
   });
+  // Une seule destination ACTIVE par environnement : la seconde est donc PROD.
+  // Deux mondes, deux destinations, un seul serveur — le cas réel.
   const b = await targets.createTarget({
-    name: 'Beta', url: 'https://b.exemple.com', environment: 'TEST', sshHost: SERVEUR,
+    name: 'Beta', url: 'https://b.exemple.com', environment: 'PROD', sshHost: SERVEUR,
   });
 
   check('deux destinations d’un même serveur reçoivent deux ports',
@@ -346,13 +348,23 @@ section('REGISTRE — réservation transactionnelle et propriétaire unique');
   check('la même destination retrouve TOUJOURS son port',
     encore.port === a.backendPort && encore.reused === true);
 
-  // Un autre serveur peut porter le même numéro : un port appartient à une
-  // machine, pas au Panel.
-  const ailleurs = await targets.createTarget({
-    name: 'Ailleurs', url: 'https://ailleurs.exemple.com', environment: 'PROD', sshHost: '203.0.113.99',
+  /**
+   * Un autre SERVEUR peut porter le même numéro : un port appartient à une
+   * machine, pas au Panel.
+   *
+   * On s'adresse ici au REGISTRE directement, sans créer de destination : le
+   * Panel n'a qu'une destination active par environnement, et les deux sont
+   * déjà prises ci-dessus. Ce que l'on vérifie — la portée par serveur — est
+   * une propriété du registre, pas du cycle de vie des fiches.
+   */
+  const ailleurs = await registry.reservePort({
+    target: {
+      targetId: 'ailleurs', sshHost: '203.0.113.99',
+      environment: 'PROD', host: 'ailleurs.exemple.com',
+    },
   });
   check('un autre serveur peut réutiliser le même numéro',
-    ailleurs.backendPort === a.backendPort);
+    ailleurs.port === a.backendPort);
 
   // CONCURRENCE : deux réservations simultanées ne peuvent pas obtenir le
   // même port. L'index unique partiel tranche ; la perdante prend le suivant.
@@ -528,7 +540,7 @@ section('CYCLE COMPLET — vidée puis redéployée, sans jamais partager un por
     (await registry.reservedPorts(SERVEUR)).includes(port));
 
   const voisine = await targets.createTarget({
-    name: 'Voisine', url: 'https://voisine-cycle.exemple.com', environment: 'TEST', sshHost: SERVEUR,
+    name: 'Voisine', url: 'https://voisine-cycle.exemple.com', environment: 'PROD', sshHost: SERVEUR,
   });
   check('…et une nouvelle destination reçoit donc un AUTRE port',
     voisine.backendPort !== port);
@@ -557,8 +569,11 @@ section('MIGRATION — les ports existants sont enregistrés, jamais réattribu�
     history: [],
   };
   await PanelDeploymentTarget.collection.insertMany([
+    // Une seule ACTIVE par environnement : ces fiches héritées se répartissent
+    // donc sur les deux mondes. C'est bien ce que la migration doit accepter —
+    // elle reprend l'existant, elle ne le réarbitre pas.
     { ...base, targetId: 'legacy-1', name: 'Un', url: 'https://un.exemple.com', host: 'un.exemple.com', backendPort: 5100, sshHost: SERVEUR },
-    { ...base, targetId: 'legacy-2', name: 'Deux', url: 'https://deux.exemple.com', host: 'deux.exemple.com', backendPort: 5101, sshHost: SERVEUR },
+    { ...base, environment: 'TEST', targetId: 'legacy-2', name: 'Deux', url: 'https://deux.exemple.com', host: 'deux.exemple.com', backendPort: 5101, sshHost: SERVEUR },
     { ...base, targetId: 'legacy-3', name: 'Vidée', url: 'https://vide.exemple.com', host: 'vide.exemple.com', backendPort: 5102, sshHost: SERVEUR, lifecycleStatus: 'EMPTY' },
   ]);
 

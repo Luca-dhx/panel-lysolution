@@ -341,6 +341,29 @@ export async function createTarget(input, actor = {}) {
     throw ApiError.conflict('PANEL_TARGET_HOST_TAKEN',
       `Destination refusée parce que l’hôte « ${value.host} » est déjà déclaré.`);
   }
+
+  /**
+   * UNE SEULE DESTINATION ACTIVE PAR ENVIRONNEMENT.
+   *
+   * L'index unique partiel du modèle est la GARANTIE — il ne peut pas être
+   * contourné. Ce contrôle-ci ne sert qu'à formuler le refus dans des termes
+   * exploitables : une erreur de doublon Mongo dit « E11000 », pas « retirez
+   * d'abord la destination existante ».
+   *
+   * Ce qu'il ferme : deux destinations TEST actives font de la résolution des
+   * adresses et de la publication des médias une loterie, arbitrée par la date
+   * du dernier déploiement.
+   */
+  const dejaActive = await PanelDeploymentTarget.findOne({
+    environment: value.environment, lifecycleStatus: LIFECYCLE.ACTIVE,
+  }).lean();
+  if (dejaActive) {
+    throw ApiError.conflict('PANEL_TARGET_ENVIRONMENT_TAKEN',
+      `Destination refusée parce qu’une destination ${value.environment} est déjà active : `
+      + `« ${dejaActive.name} » (${dejaActive.host}). Le Panel a une destination active par `
+      + 'environnement, et une seule. Retirez l’existante avant d’en déclarer une nouvelle.',
+      { host: dejaActive.host, environment: value.environment });
+  }
   const at = nowIso();
   const targetId = randomUUID();
 

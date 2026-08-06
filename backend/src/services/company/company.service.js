@@ -472,8 +472,9 @@ export async function companyPublishedProfile(company) {
    * `http://localhost` encore moins. Le projet garde alors sa projection
    * précédente — ce qui vaut mieux qu'une image cassée.
    */
-  const [logo, favicon] = await Promise.all([
+  const [logo, logoDark, favicon] = await Promise.all([
     publishableDescriptor(branding.logo?.objectKey ?? branding.logoUrl, { role: 'logo' }),
+    publishableDescriptor(branding.logoDark?.objectKey ?? branding.logoDarkUrl, { role: 'logo-dark' }),
     publishableDescriptor(branding.favicon?.objectKey ?? branding.faviconUrl, { role: 'favicon' }),
   ]);
 
@@ -491,9 +492,11 @@ export async function companyPublishedProfile(company) {
        * précédente plutôt que d'afficher un lien mort.
        */
       logoUrl: logo?.url ?? null,
+      logoDarkUrl: logoDark?.url ?? null,
       faviconUrl: favicon?.url ?? null,
       // ADDITIF : le descripteur complet, à côté de l'URL historique.
       logo,
+      logoDark,
       favicon,
     },
     // Les portraits suivent exactement la règle du logo.
@@ -516,20 +519,21 @@ export async function companyPublishedProfile(company) {
  * Ce bloc est donc parallèle, indexé par le chemin du descripteur. Il est
  * consultable en lecture et ignoré à l'écriture.
  *
- * L'unique producteur d'adresse reste `resolveMediaUrl` : un second endroit qui
+ * L'unique producteur d'adresse reste `resolvePanelMediaUrl` : un second endroit qui
  * concatènerait un domaine et un chemin finirait par en diverger.
  */
 export async function companyMediaResolution(company) {
-  const { resolveMediaUrl } = await import('../upload/mediaDescriptor.service.js');
+  const { resolvePanelMediaUrl } = await import('../upload/mediaDescriptor.service.js');
   const environment = company.environment;
   const cibles = [
     ['branding.logo', company.branding?.logo],
+    ['branding.logoDark', company.branding?.logoDark],
     ['branding.favicon', company.branding?.favicon],
     ...(company.team || []).map((m, i) => [`team.${i}.photo`, m.photo]),
   ].filter(([, d]) => d?.objectKey);
 
   const resolus = await Promise.all(cibles.map(async ([chemin, descripteur]) => {
-    const { url, absolute, reason } = await resolveMediaUrl(plain(descripteur), environment);
+    const { url, absolute, reason } = await resolvePanelMediaUrl(plain(descripteur), environment);
     return [chemin, {
       url,
       // « Servi par une destination » — pas « enregistré ». Un média local est
