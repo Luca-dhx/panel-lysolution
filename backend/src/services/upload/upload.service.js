@@ -34,20 +34,61 @@ export function uploadsDir() {
  * Le redimensionnement n'est pas cosmétique : un logo de 12 Mo publié dans le
  * pied de page de chaque projet serait téléchargé par chaque visiteur.
  */
-export async function processImage(buffer, { maxWidth = 1920, prefix = 'img' } = {}) {
+export async function processImage(buffer, {
+  maxWidth = 1920, prefix = 'img', role = null, scope = 'DEVELOPER_IDENTITY', createdBy = null,
+} = {}) {
   const dossier = uploadsDir();
   await fs.mkdir(dossier, { recursive: true });
 
   const unique = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
   const destination = path.join(dossier, unique);
 
-  await sharp(buffer)
+  /**
+   * LES MÉTADONNÉES SONT MESURÉES ICI, ET NULLE PART AILLEURS.
+   *
+   * ── POURQUOI PAS À LA PUBLICATION ───────────────────────────────────────
+   * Recalculer une empreinte au moment de publier supposerait que le fichier
+   * n'a pas bougé entre-temps — supposition qu'on ne peut pas faire, et qui
+   * serait fausse précisément le jour où elle compte. On mesure le fichier
+   * que l'on vient d'écrire, quand il est encore en main.
+   *
+   * On mesure la SORTIE, pas l'entrée : c'est l'image RÉELLEMENT servie qui
+   * doit être décrite. L'entrée a été pivotée, redimensionnée et convertie —
+   * ses dimensions et sa taille ne sont plus celles du fichier publié.
+   */
+  const encode = await sharp(buffer)
     .rotate()
     .resize({ width: maxWidth, withoutEnlargement: true })
     .webp({ quality: 82 })
-    .toFile(destination);
+    .toBuffer({ resolveWithObject: true });
 
-  return { url: `${UPLOADS_PUBLIC_PREFIX}/${unique}`, filename: unique };
+  await fs.writeFile(destination, encode.data);
+
+  const chemin = `${UPLOADS_PUBLIC_PREFIX}/${unique}`;
+  const { registerMedia, sha256Of } = await import('./mediaDescriptor.service.js');
+  const descripteur = await registerMedia({
+    objectKey: unique,
+    path: chemin,
+    // Le type RÉEL, tel que l'encodeur vient de le produire — jamais déduit
+    // d'une extension : un « .webp » peut être n'importe quoi, et c'est le
+    // navigateur du client qui découvrirait le mensonge.
+    mime: `image/${encode.info.format}`,
+    size: encode.info.size ?? encode.data.length,
+    width: encode.info.width ?? null,
+    height: encode.info.height ?? null,
+    sha256: sha256Of(encode.data),
+    scope,
+    role,
+    createdBy,
+  });
+
+  return {
+    url: chemin,
+    filename: unique,
+    // Le descripteur complet, disponible dès l'import : l'écran peut afficher
+    // le poids et les dimensions sans relire le disque.
+    media: descripteur,
+  };
 }
 
 /**
@@ -86,6 +127,13 @@ export async function deleteImage(filename) {
     throw ApiError.badRequest('PANEL_MEDIA_PATH_ESCAPE',
       'Chemin de média hors du dossier autorisé.');
   }
+
+  // Le DESCRIPTEUR survit à la suppression du fichier — c'est lui qui permet
+  // de PUBLIER la disparition. Un descripteur effacé en même temps que son
+  // fichier laisserait les projets avec leur ancienne projection, et une
+  // image supprimée continuerait de s'afficher chez eux.
+  const { markMediaDeleted } = await import('./mediaDescriptor.service.js');
+  await markMediaDeleted(nom).catch(() => null);
 
   try {
     await fs.unlink(cible);

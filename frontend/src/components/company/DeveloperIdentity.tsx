@@ -320,7 +320,14 @@ export function ImageField({
     setEnvoi(true);
     setErreur(null);
     try {
-      const { url: chemin } = await uploadImage(file, kind === 'avatar' ? 'avatar' : 'logo');
+      // Le RÔLE métier accompagne le fichier : c'est lui que le descripteur
+      // publié porte, et que les projets lisent pour savoir quoi afficher où.
+      // Le préfixe, lui, ne fait que nommer le fichier.
+      const { url: chemin } = await uploadImage(
+        file,
+        kind === 'avatar' ? 'avatar' : 'logo',
+        kind === 'avatar' ? 'team-photo' : 'logo',
+      );
       onChange(chemin);
     } catch (err) {
       setErreur(errorMessage(err, "L'image n'a pas pu être importée."));

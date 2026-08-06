@@ -92,7 +92,16 @@ router.post('/image', upload.single('file'), async (req, res, next) => {
       return rendreAmont(res, amont);
     }
 
-    const result = await processImage(req.file.buffer, { prefix });
+    /**
+     * Le RÔLE métier accompagne le fichier — logo, favicon, portrait.
+     *
+     * Il n'est pas déduit du préfixe : un préfixe sert à nommer un fichier,
+     * pas à décrire ce qu'il représente. Le descripteur publié porte ce rôle,
+     * et c'est lui que le projet lit pour savoir quoi afficher où.
+     */
+    const role = String(req.query.role || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || null;
+
+    const result = await processImage(req.file.buffer, { prefix, role });
     return res.status(201).json(result);
   } catch (err) {
     return next(err);

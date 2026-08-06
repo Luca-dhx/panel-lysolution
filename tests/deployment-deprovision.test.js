@@ -1,4 +1,4 @@
-﻿// CYCLE DE VIE DES DESTINATIONS — LOT 8.
+// CYCLE DE VIE DES DESTINATIONS — LOT 8.
 //
 // ══ CE QUI EST PROUVÉ ICI ═══════════════════════════════════════════════════
 //

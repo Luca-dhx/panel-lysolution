@@ -79,8 +79,15 @@ section('3. L’URL rendue par l’API reste relative');
 
   // Une URL absolue figée dans la base survivrait à un changement de domaine et
   // pointerait sur l'ancien. Le chemin relatif, lui, suit toujours son origine.
+  // On vérifie la RÈGLE, pas une expression littérale : le chemin rendu est
+  // construit à partir du préfixe public, et l'import ne rend jamais d'adresse
+  // absolue. Verrouiller la forme exacte du `return` interdisait au service
+  // d'évoluer — l'import rend désormais aussi un descripteur de média.
   check('l’upload rend un chemin relatif',
-    /return \{ url: `\$\{UPLOADS_PUBLIC_PREFIX\}\/\$\{unique\}`/.test(service));
+    /const chemin = `\$\{UPLOADS_PUBLIC_PREFIX\}\/\$\{unique\}`/.test(service)
+    && /url: chemin,/.test(service));
+  check('…et jamais une adresse absolue',
+    !/return \{[^}]*url: `https?:/.test(service));
   check('le préfixe est celui servi en statique',
     /UPLOADS_PUBLIC_PREFIX = '\/uploads'/.test(service));
 

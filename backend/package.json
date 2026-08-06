@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "panel-backend",
   "version": "0.1.0",
   "description": "Panel L.Y Solution — backend (squelette Phase 2B) : registre, appairage, bridge, manifest, auth",
@@ -45,6 +45,7 @@
     "test:rollback": "node ../tests/deployment-rollback.test.js",
     "test:deprovision": "node ../tests/deployment-deprovision.test.js",
     "test:ports": "node ../tests/deployment-ports.test.js",
+    "test:media": "node ../tests/media-descriptor.test.js",
     "test:duplication-e2e": "node ../tests/duplication-e2e.test.js"
   },
   "dependencies": {

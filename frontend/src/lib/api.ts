@@ -16,7 +16,7 @@ import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
 } from '@/types.execution';
 import type {
-  Company, CompanyState, IntegratedApi, ProbeResult, PublishResult,
+  Company, CompanyState, IntegratedApi, MediaDescriptor, ProbeResult, PublishResult,
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
@@ -74,7 +74,18 @@ interface RequestOptions {
  * La réponse porte un chemin relatif (`/uploads/…`) ; c'est le Panel qui le
  * rendra absolu au moment de publier aux projets.
  */
-export async function uploadImage(file: File, prefix = 'img'): Promise<{ url: string; filename: string }> {
+export async function uploadImage(
+  file: File,
+  prefix = 'img',
+  /**
+   * RÔLE MÉTIER du média — logo, favicon, portrait d'équipe.
+   *
+   * Il n'est pas déduit du préfixe : un préfixe nomme un fichier, il ne dit
+   * pas ce que l'image représente. Le descripteur publié aux projets porte ce
+   * rôle, et c'est lui qu'ils lisent pour savoir quoi afficher où.
+   */
+  role?: string,
+): Promise<{ url: string; filename: string; media?: MediaDescriptor }> {
   const form = new FormData();
   form.append('file', file);
 
@@ -82,9 +93,12 @@ export async function uploadImage(file: File, prefix = 'img'): Promise<{ url: st
   const token = tokenStore.get();
   if (token) headers.Authorization = `Bearer ${token}`;
 
+  const query = new URLSearchParams({ prefix });
+  if (role) query.set('role', role);
+
   let res: Response;
   try {
-    res = await fetch(`/api/uploads/image?prefix=${encodeURIComponent(prefix)}`, {
+    res = await fetch(`/api/uploads/image?${query.toString()}`, {
       method: 'POST',
       headers,
       body: form,

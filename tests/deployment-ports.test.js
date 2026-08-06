@@ -1,4 +1,4 @@
-﻿// REGISTRE ET ALLOCATION DES PORTS — LOT 9.
+// REGISTRE ET ALLOCATION DES PORTS — LOT 9.
 //
 // ══ CE QUI EST PROUVÉ ICI ═══════════════════════════════════════════════════
 //

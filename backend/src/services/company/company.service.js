@@ -433,12 +433,43 @@ export function companyPublicProfile(company) {
 export async function companyPublishedProfile(company) {
   const profil = companyPublicProfile(company);
   const branding = profil.branding || {};
+  const { publishableDescriptor } = await import('../upload/mediaDescriptor.service.js');
+
+  /**
+   * LE DESCRIPTEUR CANONIQUE ACCOMPAGNE L'URL — il ne la remplace pas.
+   *
+   * ── CE QUE L'URL SEULE NE DISAIT PAS ────────────────────────────────────
+   * Un projet qui recevait `logoUrl` ne pouvait savoir ni si l'image avait
+   * changé (aucune empreinte), ni son type réel, ni ses dimensions, ni si la
+   * projection reçue était plus récente que celle déjà appliquée. Il ne
+   * pouvait que recharger l'adresse et espérer — d'où des images remplacées
+   * qui restaient affichées depuis le cache.
+   *
+   * ── POURQUOI LES DEUX ───────────────────────────────────────────────────
+   * `logoUrl` reste publié : un projet antérieur au descripteur continue de
+   * fonctionner sans rien changer. La migration se fait projet par projet, et
+   * aucun écran ne casse le jour où le Panel se met à en dire davantage.
+   *
+   * ── LA SUPPRESSION EST PUBLIÉE, PAS OMISE ───────────────────────────────
+   * Un média retiré donne `null` — explicitement. La charge utile est une
+   * PHOTOGRAPHIE complète : c'est cette valeur nulle qui remplace l'ancien
+   * descripteur chez le projet. L'omettre laisserait l'ancienne image en
+   * place indéfiniment.
+   */
+  const [logo, favicon] = await Promise.all([
+    publishableDescriptor(branding.logoUrl, { role: 'logo' }),
+    publishableDescriptor(branding.faviconUrl, { role: 'favicon' }),
+  ]);
+
   return {
     ...profil,
     branding: {
       ...branding,
       logoUrl: await resolvePublicMediaUrl(branding.logoUrl),
       faviconUrl: await resolvePublicMediaUrl(branding.faviconUrl),
+      // ADDITIF : le descripteur complet, à côté de l'URL historique.
+      logo,
+      favicon,
     },
     // Les portraits suivent exactement la règle du logo : relatifs dans le
     // Panel, absolus dès qu’ils partent — un projet les affiche depuis une
@@ -446,6 +477,10 @@ export async function companyPublishedProfile(company) {
     team: await Promise.all((profil.team || []).map(async (m) => ({
       ...m,
       photoUrl: await resolvePublicMediaUrl(m.photoUrl),
+      // Même règle que le logo : le descripteur complet accompagne l'URL. Un
+      // portrait retiré donne `null` — la photographie remplace la
+      // photographie, elle ne s'y ajoute pas.
+      photo: await publishableDescriptor(m.photoUrl, { role: 'team-photo' }),
     }))),
   };
 }

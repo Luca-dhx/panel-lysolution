@@ -5,6 +5,33 @@
 // `fingerprints` des empreintes. Le navigateur ne peut pas afficher un secret
 // qu'il ne reçoit jamais.
 
+/**
+ * DESCRIPTEUR MÉDIA CANONIQUE — ce que le Panel publie à côté d'une URL.
+ *
+ * Une URL seule ne dit ni si l'image a changé (aucune empreinte), ni son type
+ * réel, ni ses dimensions — donc ni comment réserver la place à l'écran, ni
+ * comment distinguer un remplacement d'un simple rechargement.
+ *
+ * Il est rendu par l'import, et republié aux projets à chaque publication.
+ */
+export interface MediaDescriptor {
+  mediaId: string | null;
+  /** Absolue et canonique — jamais localhost, jamais un chemin disque. */
+  url: string;
+  mime: string | null;
+  size: number | null;
+  width: number | null;
+  height: number | null;
+  /** Empreinte du CONTENU : ce qui distingue « même image » d'« autre ». */
+  sha256: string | null;
+  /** Monotone — un projet refuse une projection plus ancienne. */
+  version: number | null;
+  updatedAt: string | null;
+  role: string | null;
+  /** Vrai pour une URL externe dont le Panel n'a aucune métadonnée. */
+  external?: boolean;
+}
+
 export interface CompanyIdentity {
   name: string;
   legalName: string | null;
