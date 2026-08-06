@@ -236,6 +236,24 @@ export class SshTransport extends Transport {
     return { files, bytes };
   }
 
+  /**
+   * UN SEUL FICHIER, en binaire, via SFTP.
+   *
+   * Le dossier de destination est créé au besoin : transférer un média isolé
+   * ne suppose pas qu'un dossier partagé existe déjà — c'est précisément le
+   * cas d'une destination neuve.
+   */
+  async uploadFile(localPath, remotePath) {
+    const fs = await import('node:fs/promises');
+    const sftp = await this._getSftp();
+    const dossier = remotePath.slice(0, remotePath.lastIndexOf('/'));
+    if (dossier) await this.exec(`mkdir -p ${dossier}`);
+    await new Promise((resolve, reject) => {
+      sftp.fastPut(localPath, remotePath, (err) => (err ? reject(err) : resolve()));
+    });
+    return { bytes: (await fs.stat(localPath)).size };
+  }
+
   async close() {
     try {
       this._sftp?.end?.();

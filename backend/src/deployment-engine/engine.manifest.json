@@ -41,7 +41,8 @@
     "quarantine-410",
     "port-registry",
     "service-health-proof",
-    "application-media-publication"
+    "application-media-publication",
+    "binary-file-transfer"
   ],
   "breakingChanges": [],
   "history": [
@@ -49,7 +50,7 @@
       "version": "1.4.0",
       "date": "2026-08-06",
       "type": "MINOR",
-      "summary": "Publication des médias de l'application au déploiement : une étape dédiée, placée avant la validation finale, laisse l'application prouver que les médias référencés par ses fiches sont arrivés intacts sur la destination avant de les déclarer publics. Une instance peut donc être entièrement configurée AVANT sa première mise en ligne, sans réimport ensuite.",
+      "summary": "Publication des medias de l'application au deploiement : une etape dediee, placee avant la validation finale, TRANSFERE vers la destination les medias que l'application declare manquants, RELIT leur empreinte et leur taille sur le serveur apres transfert, et ne les declare publics qu'ensuite. Le transport gagne uploadFile (un seul fichier, en binaire) : la copie de dossier de l'etape upload est un effet de bord tente au mieux, elle ne pouvait pas porter la preuve. Une instance peut donc etre entierement configuree AVANT sa premiere mise en ligne, sans reimport.",
       "breaking": false
     },
     {

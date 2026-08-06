@@ -46,6 +46,22 @@ export class Transport {
     throw new Error('Transport.uploadDir non implémenté');
   }
 
+  /**
+   * UN SEUL FICHIER, en binaire.
+   *
+   * `writeFile` ne convient pas : il écrit du texte, et un octet d'image
+   * réinterprété en UTF-8 arrive corrompu à destination — un fichier présent,
+   * de la bonne taille apparente, mais d'empreinte différente. `uploadDir`,
+   * lui, synchronise tout un dossier là où il ne faut transférer que ce qui
+   * manque réellement.
+   *
+   * @returns {Promise<{bytes:number}>}
+   */
+  // eslint-disable-next-line no-unused-vars
+  async uploadFile(localPath, remotePath) {
+    throw new Error('Transport.uploadFile non implémenté');
+  }
+
   async close() {
     /* no-op par défaut */
   }

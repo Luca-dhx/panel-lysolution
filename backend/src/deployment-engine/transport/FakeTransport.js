@@ -149,6 +149,23 @@ export class FakeTransport extends Transport {
     return { files: 1, bytes: 0 };
   }
 
+  /**
+   * UN SEUL FICHIER — le contenu RÉEL est lu depuis le disque local.
+   *
+   * Le double ne se contente pas d'enregistrer l'intention : il transporte les
+   * octets. C'est ce qui permet à un test de relire ensuite l'empreinte « sur
+   * le serveur » et de constater qu'elle correspond — un double qui rendrait
+   * seulement `{ok:true}` prouverait qu'on a appelé la fonction, pas que le
+   * fichier est arrivé intact.
+   */
+  async uploadFile(localPath, remotePath) {
+    const fs = await import('node:fs/promises');
+    const contenu = await fs.readFile(localPath);
+    this.uploads.push({ localPath, remotePath, bytes: contenu.length });
+    this.files.set(remotePath, contenu);
+    return { bytes: contenu.length };
+  }
+
   /** True si une commande contenant `needle` (string|RegExp) a été exécutée. */
   ran(needle) {
     return this.commands.some(({ command }) =>

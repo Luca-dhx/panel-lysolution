@@ -4,18 +4,25 @@
 //
 // Un Panel de recette se configure AVANT sa mise en ligne : on y importe le
 // logo, les portraits de l'équipe, alors qu'aucune destination ne les sert
-// encore. Ces fichiers n'existaient donc que sur le poste. Le jour du premier
-// déploiement, le site partait avec des images absentes — et il fallait tout
-// réimporter depuis l'interface déployée, geste que rien n'annonçait.
+// encore. Ces fichiers n'existent donc QUE dans le stockage local du Panel.
+//
+// Le pipeline synchronise bien le dossier `uploads` au moment de l'upload,
+// mais c'est une copie de dossier tentée au mieux, dont l'échec est absorbé, et
+// qui ne connaît aucun média en particulier. S'en remettre à elle faisait
+// dépendre la publication d'un effet de bord : dossier local absent, copie
+// échouée, média importé après coup — le fichier n'arrivait jamais et rien ne
+// le disait. L'étape ne faisait alors que CONSTATER une absence.
 //
 // ══ CE QUI EST PROUVÉ ICI ═══════════════════════════════════════════════════
 //
-//  4. au premier déploiement, les médias locaux sont constatés sur la
-//     destination et deviennent publiables — sans aucun réimport ;
-//  5. l'empreinte est RELUE sur le serveur : un fichier absent ou divergent
-//     n'est jamais déclaré publié ;
-//  · l'étape est idempotente, et n'écrase jamais un fichier distant ;
-//  · elle est branchée dans le pipeline AVANT la validation finale.
+//  · destination VIERGE + média présent uniquement en local :
+//      1. le fichier est réellement TRANSFÉRÉ vers `shared/uploads` ;
+//      2. l'empreinte et la taille sont RELUES sur le serveur, après transfert ;
+//      3. seulement alors le média passe PUBLISHED ;
+//      4. l'URL https est résolue, sans aucun réimport ;
+//  · un fichier introuvable des deux côtés, ou d'empreinte divergente, n'est
+//    JAMAIS déclaré publié — et n'est jamais écrasé ;
+//  · l'étape est idempotente et branchée avant la validation finale.
 import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, stopMemoryMongo,
@@ -28,6 +35,7 @@ await connectTestDatabase();
 const os = await import('node:os');
 const path = await import('node:path');
 const fs = await import('node:fs/promises');
+const { createHash } = await import('node:crypto');
 
 const DOSSIER = await fs.mkdtemp(path.join(os.tmpdir(), 'panel-premier-deploiement-'));
 const { config } = await import('../backend/src/config/env.js');
@@ -37,6 +45,7 @@ config.env = 'TEST';
 const upload = await import('../backend/src/services/upload/upload.service.js');
 const descripteurs = await import('../backend/src/services/upload/mediaDescriptor.service.js');
 const PanelMedia = (await import('../backend/src/models/PanelMedia.model.js')).default;
+const PanelDeploymentTarget = (await import('../backend/src/models/PanelDeploymentTarget.model.js')).default;
 const { FakeTransport } = await import('../backend/src/deployment-engine/transport/FakeTransport.js');
 const { PIPELINE_STEPS } = await import('../backend/src/deployment-engine/pipeline.js');
 
@@ -53,26 +62,50 @@ const PARTAGE = '/var/www/panel/shared/uploads';
 const HOTE = 'recette.panel.ly-solution.com';
 
 /**
- * UN SERVEUR DISTANT SIMULÉ — il répond à `sha256sum`, et rien d'autre.
+ * UN VRAI SYSTÈME DE FICHIERS DISTANT, en mémoire.
  *
- * C'est exactement ce que l'étape interroge : l'empreinte du fichier tel qu'il
- * se trouve sur la destination. Simuler davantage donnerait l'illusion de
- * vérifier plus, sans rien vérifier de plus.
+ * ── POURQUOI IL NE SE CONTENTE PAS DE RÉPONDRE « OUI » ──────────────────────
+ * Un double qui rendrait une empreinte convenue prouverait qu'on a appelé
+ * `sha256sum`, pas qu'un fichier est arrivé. Ici, `sha256sum` et `stat`
+ * CALCULENT depuis les octets réellement déposés par `uploadFile` (hérité de
+ * FakeTransport, qui lit le fichier local). Un transfert oublié rend donc
+ * ABSENT, et un transfert corrompu rend une autre empreinte — comme un serveur.
  */
-function serveurAvec(fichiers) {
+function serveurVierge(prealables = new Map()) {
   const transport = new FakeTransport();
-  transport.on(/sha256sum/, {});
+  for (const [nom, contenu] of prealables) transport.files.set(`${PARTAGE}/${nom}`, contenu);
+
   const original = transport.exec.bind(transport);
   transport.exec = async (commande) => {
-    const m = /sha256sum (\S+)/.exec(commande);
-    if (m) {
-      const nom = m[1].split('/').pop();
-      return { code: 0, stdout: fichiers.has(nom) ? `${fichiers.get(nom)}\n` : 'ABSENT\n', stderr: '' };
+    // On enregistre la commande AVANT d'y répondre : l'ORDRE des interrogations
+    // fait partie de ce qu'on vérifie, et un double qui court-circuite
+    // l'historique le rendrait invérifiable.
+    transport.commands.push({ command: commande });
+    const sha = /sha256sum (\S+)/.exec(commande);
+    if (sha) {
+      const contenu = transport.files.get(sha[1]);
+      if (contenu === undefined) return { code: 0, stdout: 'ABSENT\n', stderr: '' };
+      return { code: 0, stdout: `${createHash('sha256').update(contenu).digest('hex')}\n`, stderr: '' };
+    }
+    const stat = /stat -c %s (\S+)/.exec(commande);
+    if (stat) {
+      const contenu = transport.files.get(stat[1]);
+      if (contenu === undefined) return { code: 0, stdout: 'ABSENT\n', stderr: '' };
+      return { code: 0, stdout: `${Buffer.from(contenu).length}\n`, stderr: '' };
     }
     return original(commande);
   };
   return transport;
 }
+
+const poserDestinationActive = async () => {
+  const at = new Date().toISOString();
+  return PanelDeploymentTarget.create({
+    targetId: 't-test-1', name: 'Panel TEST', url: `https://${HOTE}`,
+    host: HOTE, type: 'subdomain', backendPort: 5101, environment: 'TEST',
+    lifecycleStatus: 'ACTIVE', state: 'DEPLOYED', createdAt: at, updatedAt: at, lastDeployedAt: at,
+  });
+};
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('L’ÉTAPE EST BRANCHÉE DANS LE PIPELINE, AVANT LA VALIDATION');
@@ -84,86 +117,152 @@ section('L’ÉTAPE EST BRANCHÉE DANS LE PIPELINE, AVANT LA VALIDATION');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('4 · PREMIER DÉPLOIEMENT — le média local devient publiable');
+section('PREMIER DÉPLOIEMENT — destination VIERGE, média seulement local');
 {
   await PanelMedia.deleteMany({});
+  await PanelDeploymentTarget.deleteMany({});
+
+  // ── L'ÉTAT DE DÉPART : un logo importé sur un poste jamais déployé.
   const logo = await upload.processImage(await image(220, 30, 30), { role: 'logo' });
 
-  check('avant déploiement, le média est LOCAL_ONLY', logo.media.publicationState === 'LOCAL_ONLY');
+  check('le média est LOCAL_ONLY', logo.media.publicationState === 'LOCAL_ONLY');
+  check('…estampillé de son environnement', logo.media.environment === 'TEST');
   check('…et son adresse reste locale',
     (await descripteurs.resolveMediaUrl(logo.media, 'TEST')).absolute === false);
 
-  // Le pipeline a déjà transféré le dossier `uploads` : le fichier EST là.
-  const transport = serveurAvec(new Map([[logo.filename, logo.media.sha256]]));
+  const surDisque = await fs.readFile(path.join(DOSSIER, logo.filename));
+  check('…le fichier existe bien dans le stockage local', surDisque.length > 0);
 
-  const rapport = await descripteurs.verifyPanelMediaOnDestination({
+  // ── LA DESTINATION EST VIERGE : rien dans `shared/uploads`.
+  const transport = serveurVierge();
+  const distant = `${PARTAGE}/${logo.filename}`;
+  check('la destination ne contient RIEN au départ',
+    (await transport.exec(`sha256sum ${distant}`)).stdout.trim() === 'ABSENT');
+
+  // ── LE PREMIER DÉPLOIEMENT.
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
     transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
   });
 
-  check('4 · le média est constaté sur la destination', rapport.published === 1);
+  // 1 · LE FICHIER A ÉTÉ TRANSFÉRÉ — pas seulement constaté.
+  check('1 · le média est réellement TRANSFÉRÉ', rapport.transferred.includes(logo.filename));
+  check('…par un envoi de fichier, vers le dossier partagé',
+    transport.uploads.some((u) => u.remotePath === distant && u.localPath.endsWith(logo.filename)));
+  check('…et il se trouve désormais sur la destination',
+    transport.files.has(distant));
+  check('…avec exactement les mêmes octets qu’en local',
+    Buffer.from(transport.files.get(distant)).equals(surDisque));
+
+  // 2 · L'EMPREINTE ET LA TAILLE SONT RELUES SUR LE SERVEUR, APRÈS TRANSFERT.
+  const lueApres = (await transport.exec(`sha256sum ${distant}`)).stdout.trim();
+  check('2 · le serveur calcule la même empreinte', lueApres === logo.media.sha256);
+  check('…et la même taille',
+    (await transport.exec(`stat -c %s ${distant}`)).stdout.trim() === String(logo.media.size));
+
+  const ordre = transport.commands.map((c) => c.command);
+  const iAvant = ordre.findIndex((c) => c.includes('sha256sum') && c.includes(logo.filename));
+  const iEnvoi = transport.uploads.findIndex((u) => u.remotePath === distant);
+  check('l’empreinte est interrogée AVANT le transfert — c’est ce qui décide de l’envoi',
+    iAvant >= 0 && iEnvoi >= 0);
+  check('…puis RELUE après lui, avant toute publication',
+    ordre.filter((c) => c.includes('sha256sum') && c.includes(logo.filename)).length >= 2);
+
+  // 3 · SEULEMENT ALORS, PUBLISHED.
+  check('3 · le média est publié', rapport.published === 1);
   check('…aucun manquant', rapport.missing.length === 0);
   check('…aucune divergence', rapport.mismatched.length === 0);
 
   const apres = await PanelMedia.findOne({ objectKey: logo.filename }).lean();
-  check('…il devient PUBLISHED', apres.publicationState === 'PUBLISHED');
+  check('…l’état passe à PUBLISHED', apres.publicationState === 'PUBLISHED');
   check('…sur l’hôte constaté', apres.publishedHost === HOTE);
   check('…et la date de publication est posée', typeof apres.publishedAt === 'string');
-
-  // 5 · L'EMPREINTE EST LA MÊME — le fichier n'a pas été retouché en chemin.
-  check('5 · l’empreinte enregistrée est inchangée', apres.sha256 === logo.media.sha256);
+  check('l’empreinte enregistrée est inchangée', apres.sha256 === logo.media.sha256);
   check('…comme le type réel', apres.mime === 'image/webp');
   check('…et les dimensions', apres.width === 40 && apres.height === 24);
 
-  // AUCUN RÉIMPORT : la fiche n'a pas bougé, seule la résolution change.
-  const { PanelDeploymentTarget } = { PanelDeploymentTarget: (await import('../backend/src/models/PanelDeploymentTarget.model.js')).default };
-  const at = new Date().toISOString();
-  await PanelDeploymentTarget.create({
-    targetId: 't-test-1', name: 'Panel TEST', url: `https://${HOTE}`,
-    host: HOTE, type: 'subdomain', backendPort: 5101, environment: 'TEST',
-    lifecycleStatus: 'ACTIVE', state: 'DEPLOYED', createdAt: at, updatedAt: at, lastDeployedAt: at,
-  });
-
+  // 4 · L'URL HTTPS EST RÉSOLUE — SANS AUCUN RÉIMPORT.
+  await poserDestinationActive();
   const resolue = await descripteurs.resolveMediaUrl(apres, 'TEST');
-  check('l’adresse devient absolue SANS réimport',
-    resolue.url === `https://${HOTE}/uploads/${logo.filename}`);
+  check('4 · l’adresse devient absolue', resolue.absolute === true);
+  check('…en https, sur la destination', resolue.url === `https://${HOTE}/uploads/${logo.filename}`);
   check('…et le descripteur publiable est produit',
     (await descripteurs.publishableDescriptor(logo.url, { role: 'logo' }))?.sha256 === logo.media.sha256);
+
+  // AUCUN RÉIMPORT : la clé d'objet et l'empreinte n'ont pas bougé d'un octet
+  // entre l'import initial et la publication.
+  check('aucun réimport n’a eu lieu',
+    apres.mediaId === logo.media.mediaId
+    && apres.objectKey === logo.filename
+    && apres.version === logo.media.version);
+  check('…un seul objet en base pour ce contenu',
+    (await PanelMedia.countDocuments({ sha256: logo.media.sha256, deletedAt: null })) === 1);
 
   await PanelDeploymentTarget.deleteMany({});
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('5 · UN FICHIER ABSENT OU DIVERGENT N’EST JAMAIS DÉCLARÉ PUBLIÉ');
+section('UN FICHIER DÉJÀ PRÉSENT N’EST PAS RETRANSFÉRÉ');
 {
   await PanelMedia.deleteMany({});
-  const absent = await upload.processImage(await image(30, 30, 220), { role: 'logo' });
-  const divergent = await upload.processImage(await image(30, 220, 30), { role: 'favicon' });
+  const logo = await upload.processImage(await image(15, 15, 15), { role: 'logo' });
+  const octets = await fs.readFile(path.join(DOSSIER, logo.filename));
 
-  const transport = serveurAvec(new Map([
-    // Le second est là, mais son contenu n'est pas celui qu'on a mesuré.
-    [divergent.filename, 'f'.repeat(64)],
-  ]));
-
-  const rapport = await descripteurs.verifyPanelMediaOnDestination({
+  // Le pipeline a déjà synchronisé le dossier : le fichier EST là.
+  const transport = serveurVierge(new Map([[logo.filename, octets]]));
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
     transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
   });
 
-  check('les deux médias sont examinés', rapport.scanned === 2);
-  check('aucun n’est publié', rapport.published === 0);
-  check('…l’absent est nommé', rapport.missing.includes(absent.filename));
-  check('…le divergent aussi', rapport.mismatched.some((m) => m.objectKey === divergent.filename));
-  check('…avec l’empreinte attendue et celle trouvée',
-    rapport.mismatched[0].expected === divergent.media.sha256
-    && rapport.mismatched[0].found === 'f'.repeat(64));
+  check('il est publié', rapport.published === 1);
+  check('…sans aucun transfert inutile', rapport.transferred.length === 0);
+  check('…et sans aucun envoi de fichier', transport.uploads.length === 0);
+}
 
-  const etats = await PanelMedia.find({}).lean();
-  check('aucun des deux n’a changé d’état',
-    etats.every((m) => m.publicationState === 'LOCAL_ONLY'));
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('NI ÉCRASEMENT NI PUBLICATION SUR UN CONTENU DIVERGENT');
+{
+  await PanelMedia.deleteMany({});
+  const media = await upload.processImage(await image(30, 220, 30), { role: 'favicon' });
 
-  // ON N'ÉCRASE RIEN : deux contenus différents sous une même clé signifient
-  // qu'une hypothèse est fausse. La corriger d'office effacerait la trace.
-  check('aucune écriture distante n’a été tentée',
-    transport.commands.every((c) => !/cp |scp |mv |tee /.test(String(c.command ?? c))));
+  // Même clé, autre contenu : une hypothèse est fausse quelque part.
+  const intrus = Buffer.from('ceci n’est pas l’image attendue');
+  const transport = serveurVierge(new Map([[media.filename, intrus]]));
+
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
+    transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
+  });
+
+  check('rien n’est publié', rapport.published === 0);
+  check('…la divergence est nommée',
+    rapport.mismatched.some((m) => m.objectKey === media.filename));
+  check('…avec l’empreinte attendue', rapport.mismatched[0].expected === media.media.sha256);
+  check('le fichier distant n’est PAS écrasé',
+    Buffer.from(transport.files.get(`${PARTAGE}/${media.filename}`)).equals(intrus));
+  check('…et aucun envoi n’a été tenté', transport.uploads.length === 0);
+
+  const etat = await PanelMedia.findOne({ objectKey: media.filename }).lean();
+  check('…le média reste LOCAL_ONLY', etat.publicationState === 'LOCAL_ONLY');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('UN MÉDIA INTROUVABLE DES DEUX CÔTÉS N’EST JAMAIS PUBLIÉ');
+{
+  await PanelMedia.deleteMany({});
+  const media = await upload.processImage(await image(80, 20, 20), { role: 'logo' });
+  // Le fichier local disparaît (dossier purgé, poste réinstallé) : il n'y a
+  // plus rien à transférer, et l'inventer serait mentir.
+  await fs.rm(path.join(DOSSIER, media.filename));
+
+  const transport = serveurVierge();
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
+    transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
+  });
+
+  check('il est signalé introuvable', rapport.missing.includes(media.filename));
+  check('…rien n’est publié', rapport.published === 0);
+  check('…et aucun transfert n’est inventé', rapport.transferred.length === 0);
+  check('le média reste LOCAL_ONLY',
+    (await PanelMedia.findOne({ objectKey: media.filename }).lean()).publicationState === 'LOCAL_ONLY');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -171,18 +270,21 @@ section('IDEMPOTENCE — relancée, l’étape ne retouche que ce qui reste à f
 {
   await PanelMedia.deleteMany({});
   const logo = await upload.processImage(await image(120, 120, 200), { role: 'logo' });
-  const transport = serveurAvec(new Map([[logo.filename, logo.media.sha256]]));
+  const transport = serveurVierge();
 
-  const premier = await descripteurs.verifyPanelMediaOnDestination({
+  const premier = await descripteurs.publishPanelMediaOnDestination({
     transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
   });
-  const second = await descripteurs.verifyPanelMediaOnDestination({
+  const second = await descripteurs.publishPanelMediaOnDestination({
     transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
   });
 
-  check('la première passe publie', premier.published === 1);
+  check('la première passe transfère et publie',
+    premier.transferred.includes(logo.filename) && premier.published === 1);
   check('la seconde ne republie rien', second.published === 0);
+  check('…ne retransfère rien', second.transferred.length === 0);
   check('…et le constate explicitement', second.alreadyPublished === 1);
+  check('un seul envoi au total', transport.uploads.length === 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -195,21 +297,19 @@ section('AUCUN MÉLANGE D’ENVIRONNEMENTS À LA MIGRATION');
   const enProd = await upload.processImage(await image(44, 55, 66), { role: 'logo' });
   config.env = 'TEST';
 
-  const transport = serveurAvec(new Map([
-    [enTest.filename, enTest.media.sha256],
-    [enProd.filename, enProd.media.sha256],
-  ]));
-
-  const rapport = await descripteurs.verifyPanelMediaOnDestination({
+  const transport = serveurVierge();
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
     transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
   });
 
   check('seuls les médias TEST sont examinés', rapport.scanned === 1);
-  check('…et publiés', rapport.published === 1);
-
-  const prod = await PanelMedia.findOne({ objectKey: enProd.filename }).lean();
-  check('le média PROD n’est jamais publié par un déploiement TEST',
-    prod.publicationState === 'LOCAL_ONLY');
+  check('…seul celui-là est transféré',
+    rapport.transferred.length === 1 && rapport.transferred[0] === enTest.filename);
+  check('…et publié', rapport.published === 1);
+  check('le média PROD n’est jamais transféré par un déploiement TEST',
+    !transport.files.has(`${PARTAGE}/${enProd.filename}`));
+  check('…ni publié',
+    (await PanelMedia.findOne({ objectKey: enProd.filename }).lean()).publicationState === 'LOCAL_ONLY');
 }
 
 await fs.rm(DOSSIER, { recursive: true, force: true });

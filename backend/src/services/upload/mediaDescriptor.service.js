@@ -458,25 +458,49 @@ async function descriptorOfKnownMedia(media, role) {
 /*  TRANSFERT VERS UNE DESTINATION — au déploiement                           */
 /* -------------------------------------------------------------------------- */
 
+/** L'empreinte du fichier telle que LE SERVEUR la calcule — ou `ABSENT`. */
+async function empreinteDistante(transport, chemin) {
+  const res = await transport
+    .exec(`sha256sum ${chemin} 2>/dev/null | cut -d' ' -f1 || echo ABSENT`)
+    .catch(() => ({ stdout: 'ABSENT' }));
+  const valeur = String(res.stdout ?? '').trim();
+  return valeur === '' ? 'ABSENT' : valeur;
+}
+
 /**
- * CONSTATE que les médias de cet environnement sont bien arrivés, et les
- * marque PUBLIÉS.
+ * TRANSFÈRE les médias de cet environnement vers la destination, VÉRIFIE ce
+ * qui est arrivé, et ne marque PUBLIÉ que ce qui est prouvé.
  *
- * ══ CE QUE CETTE ÉTAPE FAIT, ET CE QU'ELLE NE FAIT PAS ══════════════════════
+ * ══ POURQUOI CETTE ÉTAPE TRANSFÈRE, ET NE SE CONTENTE PAS DE CONSTATER ══════
  *
- * Le transfert lui-même a déjà eu lieu : le pipeline synchronise le dossier
- * `uploads` vivant vers le `shared/uploads` de la destination, à chaque
- * déploiement. Cette étape ne recopie donc rien — elle VÉRIFIE, et c'est
- * précisément ce qui manquait : sans preuve, marquer un média « publié »
- * reviendrait à annoncer aux projets une adresse qu'on n'a jamais constatée.
+ * Le pipeline synchronise déjà le dossier `uploads` vivant vers le
+ * `shared/uploads` de la destination — mais c'est une copie de dossier, tentée
+ * au mieux et dont l'échec est absorbé (`.catch`), qui ne connaît aucun média
+ * en particulier. S'en remettre à elle, c'était faire dépendre la publication
+ * d'un effet de bord : le jour où le dossier local n'existe pas, où la copie
+ * échoue, ou où un média a été importé après elle, le fichier n'arrive jamais
+ * et rien ne le dit. Le premier déploiement d'un Panel configuré en local est
+ * exactement ce jour-là.
  *
- * Pour chaque média LOCAL_ONLY de l'environnement déployé, on compare
- * l'empreinte du fichier distant à celle mesurée à l'import. Identiques : le
- * média devient PUBLISHED et son adresse absolue devient publiable. Absent ou
- * divergent : il reste LOCAL_ONLY et on le dit.
+ * L'étape prend donc la responsabilité complète, média par média :
+ *
+ *   1. lire l'empreinte SUR LE SERVEUR ;
+ *   2. si le fichier est ABSENT, l'ENVOYER depuis le stockage local ;
+ *   3. relire l'empreinte sur le serveur — après transfert, jamais avant ;
+ *   4. comparer taille et empreinte à ce qui a été mesuré à l'import ;
+ *   5. seulement alors, marquer PUBLISHED.
+ *
+ * L'ordre compte : publier sur la foi de ce qu'on vient d'envoyer reviendrait
+ * à prouver qu'on a appelé une fonction, pas qu'un fichier est arrivé intact.
+ *
+ * ── CE QU'ELLE NE FAIT JAMAIS ───────────────────────────────────────────────
+ * Écraser un fichier distant. Un contenu déjà présent sous la même clé mais
+ * d'empreinte différente signifie qu'une hypothèse est fausse quelque part :
+ * on le SIGNALE et on laisse le média local. Le corriger d'office effacerait
+ * la trace du problème.
  *
  * Idempotente : relancée, elle ne retouche que ce qui n'est pas déjà publié
- * sur cet hôte. Aucun écrasement : on ne réécrit jamais un fichier distant.
+ * sur cet hôte, et ne retransfère que ce qui manque réellement.
  *
  * @param {object} args
  * @param {object} args.transport      transport ouvert sur la destination
@@ -484,13 +508,26 @@ async function descriptorOfKnownMedia(media, role) {
  * @param {string} args.host           hôte de la destination
  * @param {string} [args.environment]  environnement déployé
  */
-export async function verifyPanelMediaOnDestination({
+export async function publishPanelMediaOnDestination({
   transport, sharedUploads, host, environment = config.env,
 }) {
   const rapport = {
-    environment, host, scanned: 0, published: 0, missing: [], mismatched: [], alreadyPublished: 0,
+    environment,
+    host,
+    scanned: 0,
+    published: 0,
+    /** Médias réellement ENVOYÉS pendant cette passe — le premier déploiement. */
+    transferred: [],
+    /** Introuvables des DEUX côtés : plus rien à transférer. */
+    missing: [],
+    mismatched: [],
+    alreadyPublished: 0,
   };
   if (!transport || !sharedUploads || !host) return rapport;
+
+  const fs = await import('node:fs/promises');
+  const pathMod = await import('node:path');
+  const { uploadsDir } = await import('./upload.service.js');
 
   const medias = await PanelMedia.find({ environment, deletedAt: null }).lean();
   rapport.scanned = medias.length;
@@ -501,23 +538,66 @@ export async function verifyPanelMediaOnDestination({
       continue;
     }
 
-    // L'empreinte est lue SUR LE SERVEUR : c'est la seule preuve que le
-    // fichier y est, et qu'il y est intact.
     const distant = `${sharedUploads}/${media.objectKey}`;
-    const res = await transport
-      .exec(`sha256sum ${distant} 2>/dev/null | cut -d' ' -f1 || echo ABSENT`)
-      .catch(() => ({ stdout: 'ABSENT' }));
-    const empreinte = String(res.stdout ?? '').trim();
+    let empreinte = await empreinteDistante(transport, distant);
 
-    if (empreinte === 'ABSENT' || empreinte === '') {
-      rapport.missing.push(media.objectKey);
+    /**
+     * LE FICHIER N'EST PAS LÀ — on l'ENVOIE.
+     *
+     * C'est le cas nominal du premier déploiement : le média n'a jamais existé
+     * ailleurs que dans le stockage local du Panel. Sans cet envoi, il resterait
+     * LOCAL_ONLY indéfiniment et l'opérateur devrait le réimporter depuis
+     * l'interface déployée — précisément ce qu'on supprime.
+     */
+    if (empreinte === 'ABSENT') {
+      const local = pathMod.join(uploadsDir(), media.objectKey);
+      const presentEnLocal = await fs.access(local).then(() => true).catch(() => false);
+      if (!presentEnLocal) {
+        // Absent des deux côtés : il n'y a rien à transférer, et le dire vaut
+        // mieux que de laisser croire à un transfert manqué.
+        rapport.missing.push(media.objectKey);
+        continue;
+      }
+
+      if (typeof transport.uploadFile !== 'function') {
+        rapport.missing.push(media.objectKey);
+        continue;
+      }
+      await transport.uploadFile(local, distant);
+      rapport.transferred.push(media.objectKey);
+
+      // On RELIT l'empreinte sur le serveur. Se fier au transfert lui-même
+      // prouverait qu'on a appelé une fonction, pas qu'un fichier est arrivé.
+      empreinte = await empreinteDistante(transport, distant);
+      if (empreinte === 'ABSENT') {
+        rapport.missing.push(media.objectKey);
+        continue;
+      }
+    }
+
+    if (empreinte !== media.sha256) {
+      rapport.mismatched.push({ objectKey: media.objectKey, expected: media.sha256, found: empreinte });
       continue;
     }
-    if (empreinte !== media.sha256) {
-      // On ne « corrige » pas : deux contenus différents sous une même clé
-      // signifient qu'une hypothèse est fausse quelque part, et l'écraser
-      // effacerait la trace du problème.
-      rapport.mismatched.push({ objectKey: media.objectKey, expected: media.sha256, found: empreinte });
+
+    /**
+     * LA TAILLE AUSSI — relevée sur le serveur.
+     *
+     * L'empreinte suffirait en théorie. En pratique, une taille distante qui
+     * diverge alors que l'empreinte correspond signale un `sha256sum` qui n'a
+     * pas mesuré ce qu'on croit (lien, montage, troncature silencieuse). Le
+     * contrôle est gratuit ; l'illusion de preuve ne l'est pas.
+     */
+    const tailleRes = await transport
+      .exec(`stat -c %s ${distant} 2>/dev/null || echo ABSENT`)
+      .catch(() => ({ stdout: 'ABSENT' }));
+    const taille = String(tailleRes.stdout ?? '').trim();
+    if (taille !== 'ABSENT' && Number.isFinite(Number(taille)) && Number(taille) !== media.size) {
+      rapport.mismatched.push({
+        objectKey: media.objectKey,
+        expected: `${media.size} octets`,
+        found: `${taille} octets`,
+      });
       continue;
     }
 
@@ -529,16 +609,19 @@ export async function verifyPanelMediaOnDestination({
     rapport.published += 1;
   }
 
+  if (rapport.transferred.length) {
+    logger.info(`[media] ${rapport.transferred.length} média(s) ${environment} transféré(s) vers ${host}.`);
+  }
   if (rapport.published) {
     logger.info(`[media] ${rapport.published} média(s) ${environment} vérifié(s) sur ${host} et publiés.`);
   }
   if (rapport.missing.length) {
-    logger.warn(`[media] ${rapport.missing.length} média(s) ${environment} absents de ${host} : `
+    logger.warn(`[media] ${rapport.missing.length} média(s) ${environment} introuvables pour ${host} : `
       + `${rapport.missing.slice(0, 5).join(', ')}. Ils restent locaux et ne seront pas publiés aux projets.`);
   }
   for (const m of rapport.mismatched) {
-    logger.error(`[media] Empreinte divergente pour « ${m.objectKey} » sur ${host} : `
-      + `attendu ${m.expected.slice(0, 12)}, trouvé ${m.found.slice(0, 12)}. Média NON publié.`);
+    logger.error(`[media] Divergence pour « ${m.objectKey} » sur ${host} : `
+      + `attendu ${String(m.expected).slice(0, 20)}, trouvé ${String(m.found).slice(0, 20)}. Média NON publié.`);
   }
   return rapport;
 }
@@ -558,5 +641,5 @@ export default {
   markMediaDeleted,
   findMedia,
   publishableDescriptor,
-  verifyPanelMediaOnDestination,
+  publishPanelMediaOnDestination,
 };

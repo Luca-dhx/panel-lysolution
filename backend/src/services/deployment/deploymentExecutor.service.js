@@ -375,8 +375,8 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
        * L'opérateur n'a donc rien à réimporter après une mise en ligne.
        */
       publishApplicationMedia: async ({ transport, sharedUploads, host }) => {
-        const { verifyPanelMediaOnDestination } = await import('../upload/mediaDescriptor.service.js');
-        const rapport = await verifyPanelMediaOnDestination({
+        const { publishPanelMediaOnDestination } = await import('../upload/mediaDescriptor.service.js');
+        const rapport = await publishPanelMediaOnDestination({
           transport, sharedUploads, host, environment: target.environment,
         });
         if (rapport.published) {
