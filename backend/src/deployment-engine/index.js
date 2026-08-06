@@ -21,6 +21,20 @@ export { ensureCertificate } from './certbot.js';
 export { restartBackend, pm2AppName } from './pm2.js';
 export { checkLocalHealth, checkPublicHealth } from './health.js';
 export { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
+export {
+  DEPROVISION_STEPS,
+  DEPROVISION_STEP_IDS,
+  NEVER_DELETE,
+  assertSafeSiteRoot,
+  renderNginxQuarantine,
+  quarantineConfigPath,
+  quarantineEnabledPath,
+  applyQuarantine,
+  removeQuarantine,
+  removeApplicationSite,
+  inspectDestination,
+  runDeprovision,
+} from './deprovision.js';
 export { planSites, servedHosts } from './nginx.js';
 export { Transport, execOrThrow } from './transport/Transport.js';
 export { FakeTransport } from './transport/FakeTransport.js';

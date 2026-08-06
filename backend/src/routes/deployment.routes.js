@@ -12,7 +12,10 @@ import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.midd
 import {
   create,
   deploy,
+  deprovision,
+  destroy,
   detail,
+  inspect,
   overview,
   preflight,
   releases,
@@ -56,6 +59,22 @@ router.post('/targets/:targetId/deploy', asyncHandler(deploy));
 
 // Retour à une release antérieure — également une intention, pas une étape.
 router.post('/targets/:targetId/rollback', asyncHandler(rollback));
+
+// ── LE RETRAIT ────────────────────────────────────────────────────────────
+// L'opération inverse du déploiement. Elle vide la destination du serveur —
+// service, port, routage, fichiers — et pose une quarantaine 410 sur son
+// domaine. La fiche subsiste : elle passe à l'état EMPTY.
+//
+// `inspect` est une lecture seule exécutée dans la requête : c'est ce que la
+// fenêtre de confirmation affiche. On ne fait pas confirmer une destruction
+// sans montrer ce qui sera détruit.
+router.post('/targets/:targetId/inspect', asyncHandler(inspect));
+router.post('/targets/:targetId/deprovision', asyncHandler(deprovision));
+
+// Suppression DÉFINITIVE de la fiche — refusée tant que la destination n'est
+// pas vidée. En POST parce qu'elle transporte la confirmation du nom d'hôte
+// et, quand une quarantaine doit être levée, un mot de passe SSH.
+router.post('/targets/:targetId/delete', asyncHandler(destroy));
 
 // ── OUTILS DE DIAGNOSTIC ──────────────────────────────────────────────────
 // Ces trois opérations ne font PLUS partie du parcours : le déploiement les

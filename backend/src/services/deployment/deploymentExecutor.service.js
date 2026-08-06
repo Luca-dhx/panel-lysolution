@@ -25,6 +25,19 @@ export const OPERATIONS = Object.freeze({
   SIMULATION: 'SIMULATION',
   DEPLOYMENT: 'DEPLOYMENT',
   ROLLBACK: 'ROLLBACK',
+  /**
+   * RETRAIT — l'opération inverse du déploiement. Elle vide la destination du
+   * serveur : service arrêté et supprimé, port libéré, routage retiré,
+   * quarantaine 410 posée, fichiers effacés, le tout vérifié.
+   */
+  DEPROVISION: 'DEPROVISION',
+  /**
+   * SUPPRESSION DÉFINITIVE de la fiche — lève la quarantaine et marque la
+   * destination `DELETED`. N'existe que parce que lever la quarantaine exige
+   * une connexion au serveur : sans elle, une simple écriture en base
+   * suffirait.
+   */
+  DESTINATION_DELETE: 'DESTINATION_DELETE',
 });
 
 /**
@@ -41,6 +54,7 @@ export const OPERATIONS = Object.freeze({
  */
 export async function executeOperation({
   operationType, target, sshPassword, releaseId = null, user = null, runId = null,
+  options = {},
   onStep = () => {}, onLog = () => {}, engine: injectedEngine = null,
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
@@ -76,6 +90,10 @@ export async function executeOperation({
         return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId });
       case OPERATIONS.ROLLBACK:
         return await rollback({ engine, target, sessionId, releaseId, step, log });
+      case OPERATIONS.DEPROVISION:
+        return await deprovision({ engine, target, sessionId, step, log, runId, options });
+      case OPERATIONS.DESTINATION_DELETE:
+        return await destinationDelete({ engine, target, sessionId, step, log, user });
       default:
         return {
           status: 'error',
@@ -483,6 +501,165 @@ async function rollback({ engine, target, sessionId, releaseId, step, log }) {
     error: result.ok ? null : { code: 'ROLLBACK_FAILED', message: 'Le retour arrière a échoué.' },
     releaseId: result.to ?? releaseId,
     deployedUrl: target.url,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  RETRAIT                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * RETRAIT D'UNE DESTINATION — l'opération inverse du déploiement.
+ *
+ * ── CE QUE CET ADAPTATEUR FAIT, ET CE QU'IL NE FAIT PAS ─────────────────────
+ * Il ne contient AUCUNE commande distante : ni PM2, ni Nginx, ni `rm`. Tout
+ * cela vit dans `deployment-engine/deprovision.js`, identique dans les deux
+ * dépôts. Ici, on traduit une destination du Panel en arguments du moteur, et
+ * l'issue du moteur en TRANSITION DE CYCLE DE VIE — la seule chose que le
+ * moteur ne peut pas décider, parce qu'elle appartient à la base du Panel.
+ *
+ * Les transitions sont écrites même si le worker meurt ensuite : `EMPTY` n'est
+ * posé qu'après la vérification finale du moteur, et `DEPROVISION_FAILED`
+ * conserve la cause. Une destination laissée en `DEPROVISIONING` par un
+ * processus mort est reprenable — les étapes du moteur sont idempotentes.
+ */
+async function deprovision({ engine, target, sessionId, step, log, runId, options = {} }) {
+  const lifecycle = await import('./destinationLifecycle.service.js');
+
+  log(`Retrait de ${target.url} (port ${target.backendPort}, serveur ${target.sshHost}).`);
+  if (options.removePersistentData === true) {
+    log('Suppression des données persistantes CONFIRMÉE par l’opérateur : '
+      + 'shared/uploads et shared/storage seront effacés.', 'WARNING');
+  }
+
+  const result = await engine.deprovision({
+    url: target.url,
+    sessionId,
+    options: {
+      remoteRoot: target.remoteRoot,
+      backendPort: target.backendPort,
+      removePersistentData: options.removePersistentData === true,
+      // Les autres destinations connues du Panel sont protégées explicitement :
+      // aucun retrait ne doit pouvoir toucher au dossier d'un autre projet,
+      // même si une fiche porte une valeur incohérente.
+      protectedPaths: options.protectedPaths ?? [],
+    },
+    onStep: (evt) => {
+      step({
+        id: evt.step,
+        label: evt.label ?? evt.step,
+        status: evt.status,
+        message: evt.detail ? describeDeprovisionDetail(evt.step, evt.detail) : null,
+        errorCode: evt.error?.code ?? null,
+      });
+      if (evt.status === 'error') log(`[${evt.step}] ${evt.error?.message ?? 'échec'}`, 'ERROR');
+      else if (evt.status === 'ok' && evt.detail) {
+        const ligne = describeDeprovisionDetail(evt.step, evt.detail);
+        if (ligne) log(`[${evt.step}] ${ligne}`);
+      }
+    },
+  });
+
+  if (!result.ok) {
+    await lifecycle.markDeprovisionFailed(target.targetId, {
+      runId,
+      error: { code: result.error?.code, message: result.error?.message, step: result.failedStep },
+    });
+    return {
+      status: 'error',
+      summary: `Retrait interrompu à l’étape « ${result.failedStep ?? 'inconnue'} » : ${result.error?.message ?? 'échec.'} `
+        + 'La destination reste connue du Panel — rien n’a été supprimé de sa fiche.',
+      error: {
+        code: result.error?.code ?? 'DEPROVISION_FAILED',
+        message: result.error?.message ?? 'Échec du retrait.',
+        step: result.failedStep ?? null,
+      },
+      inventory: result.inventory ?? null,
+    };
+  }
+
+  await lifecycle.markEmpty(target.targetId, { runId, quarantine: true });
+
+  const inv = result.inventory ?? {};
+  return {
+    status: 'ok',
+    summary: `Destination vidée : service arrêté, port ${target.backendPort} libéré, routage retiré, `
+      + `quarantaine 410 posée sur ${inv.servedHosts?.length ?? 1} hôte(s), `
+      + `${inv.files ?? 0} fichier(s) supprimé(s)${inv.size ? ` (${inv.size})` : ''}. `
+      + 'Sa fiche peut maintenant être supprimée.',
+    error: null,
+    inventory: result.inventory ?? null,
+  };
+}
+
+/** Une ligne lisible pour l'étape courante — jamais un objet brut à l'écran. */
+function describeDeprovisionDetail(stepId, detail) {
+  if (!detail || typeof detail !== 'object') return null;
+  switch (stepId) {
+    case 'deprovision.lock':
+      return `Chemin validé : ${detail.siteRoot}`;
+    case 'deprovision.inventory':
+      return detail.exists
+        ? `${detail.files} fichier(s)${detail.size ? `, ${detail.size}` : ''} — `
+          + `persistants : ${detail.persistentFiles ?? 0}`
+        : 'Aucun fichier sur le serveur.';
+    case 'deprovision.services.stop':
+      return `Process « ${detail.pm2Name} » arrêté et supprimé.`;
+    case 'deprovision.services.verify':
+      return 'Le process a bien disparu de PM2.';
+    case 'deprovision.port.release':
+      return detail.skipped ? 'Aucun port applicatif déclaré.' : `Port ${detail.port} libéré.`;
+    case 'deprovision.nginx.remove':
+      return 'Configuration applicative retirée.';
+    case 'deprovision.quarantine':
+      return `410 Gone servi sur : ${(detail.hosts ?? []).join(', ')}`;
+    case 'deprovision.files.remove':
+      return detail.alreadyAbsent ? 'Dossier déjà absent.' : `Dossier ${detail.siteRoot} supprimé.`;
+    case 'deprovision.verify':
+      return 'Plus de fichiers, plus de process, plus de routage applicatif.';
+    case 'deprovision.finalize':
+      return 'Destination vidée.';
+    default:
+      return null;
+  }
+}
+
+/**
+ * SUPPRESSION DÉFINITIVE de la fiche.
+ *
+ * Elle lève la quarantaine — le domaine cesse alors d'être servi du tout — puis
+ * marque la destination `DELETED`. L'ordre compte : marquer d'abord laisserait
+ * une quarantaine sans propriétaire sur le serveur, que plus aucun écran ne
+ * saurait désigner.
+ */
+async function destinationDelete({ engine, target, sessionId, step, log, user }) {
+  const lifecycle = await import('./destinationLifecycle.service.js');
+
+  step({ id: 'quarantine.release', label: 'Levée de la quarantaine', status: 'running' });
+  await engine.releaseQuarantine({ url: target.url, sessionId });
+  await lifecycle.setQuarantine(target.targetId, false);
+  step({
+    id: 'quarantine.release',
+    label: 'Levée de la quarantaine',
+    status: 'ok',
+    message: `Le domaine ${target.host} n’est plus servi par ce serveur.`,
+  });
+  log(`Quarantaine levée sur ${target.host}.`);
+
+  step({ id: 'destination.delete', label: 'Suppression de la fiche', status: 'running' });
+  await lifecycle.softDelete(target.targetId, { actor: { userEmail: user } });
+  step({
+    id: 'destination.delete',
+    label: 'Suppression de la fiche',
+    status: 'ok',
+    message: 'Historique et audit conservés.',
+  });
+
+  return {
+    status: 'ok',
+    summary: `Destination « ${target.name} » supprimée. Son historique et son audit restent consultables ; `
+      + `le domaine ${target.host} n’est plus servi par ce serveur.`,
+    error: null,
   };
 }
 

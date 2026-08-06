@@ -59,15 +59,63 @@ const targetSchema = new mongoose.Schema(
     projectIdentityId: { type: String, default: null, index: true },
 
     /**
-     * Cycle de vie de la DESTINATION, distinct de l'état du dernier
-     * déploiement. `EMPTY` : les fichiers ont été retirés du serveur, la
-     * fiche subsiste.
+     * CYCLE DE VIE DE LA DESTINATION, distinct de l'état du dernier
+     * déploiement.
+     *
+     * ── LE DÉFAUT CORRIGÉ ────────────────────────────────────────────────
+     * Supprimer une fiche ne retirait rien du serveur : process PM2 en ligne
+     * détenant le port, configuration Nginx active, 49 Mo de fichiers. La
+     * fiche disparue, plus personne ne savait qu'il restait quelque chose à
+     * nettoyer — et l'allocation de port a recyclé un numéro encore détenu.
+     *
+     * Une destination ACTIVE ne peut donc plus être supprimée. Elle doit
+     * d'abord être VIDÉE :
+     *
+     *   ACTIVE → DEPROVISIONING → EMPTY → DELETED
+     *                  ↓
+     *          DEPROVISION_FAILED  (reprenable)
+     *
+     * `EMPTY` : les fichiers ont été retirés du serveur, la fiche subsiste.
+     * `DELETED` : suppression LOGIQUE — la fiche sort des listes actives,
+     * son audit et son historique restent lisibles.
      */
     lifecycleStatus: {
       type: String,
-      enum: ['ACTIVE', 'DEPROVISIONING', 'EMPTY', 'DEPROVISION_FAILED'],
+      enum: ['ACTIVE', 'DEPROVISIONING', 'EMPTY', 'DEPROVISION_FAILED', 'DELETED'],
       default: 'ACTIVE',
+      index: true,
     },
+    // ── HORODATAGE DU RETRAIT ───────────────────────────────────────────
+    // Chaque transition laisse sa date. Un retrait qui a échoué garde la
+    // date de son échec ET celle de son démarrage : reprendre n'efface pas
+    // la trace de la tentative précédente.
+    deprovisionStartedAt: { type: String, default: null },
+    deprovisionCompletedAt: { type: String, default: null },
+    deprovisionFailedAt: { type: String, default: null },
+    lastDeprovisionRunId: { type: String, default: null },
+    emptiedAt: { type: String, default: null },
+    deletedAt: { type: String, default: null },
+    // Dernière erreur connue sur cette destination (retrait ou déploiement).
+    lastError: { type: mongoose.Schema.Types.Mixed, default: null },
+
+    /**
+     * Une quarantaine Nginx (410 Gone) est-elle installée sur ce domaine ?
+     *
+     * Posée pendant le retrait, AVANT la suppression des fichiers : sans
+     * elle, le domaine retomberait sur le `default_server` du serveur et
+     * servirait le site d'un AUTRE projet. Elle n'est levée qu'à la
+     * suppression définitive de la fiche.
+     */
+    quarantineEnabled: { type: Boolean, default: false },
+
+    /**
+     * Run de déploiement actuellement en cours sur cette destination.
+     *
+     * C'est le verrou lisible : tant qu'il est posé, aucun retrait ne peut
+     * démarrer. Effacé par la conclusion du run, quelle qu'elle soit.
+     */
+    activeDeploymentRunId: { type: String, default: null },
+
     // Dernier run réellement validé : ce qui fait d'un emplacement une source sûre.
     lastHealthyDeploymentRunId: { type: String, default: null },
     // Emplacement courant sur le serveur, tel que déployé.
@@ -77,7 +125,16 @@ const targetSchema = new mongoose.Schema(
 
     // Déductions de `parseTargetUrl`, recalculées à chaque enregistrement.
     // Stockées pour être filtrables et affichables sans relancer le moteur.
-    host: { type: String, required: true, lowercase: true, unique: true },
+    /**
+     * L'hôte est UNIQUE parmi les destinations VIVANTES, pas dans l'absolu.
+     *
+     * L'unicité absolue interdisait de recréer une destination sur un domaine
+     * dont la fiche avait été supprimée — alors que c'est précisément le
+     * scénario normal après un retrait : on vide, on supprime, et le domaine
+     * redevient disponible. L'index partiel (voir plus bas) exprime cette
+     * règle sans obliger le service à être le seul garde-fou.
+     */
+    host: { type: String, required: true, lowercase: true },
     type: { type: String, enum: ['subdomain', 'domain'], required: true },
     registrableDomain: { type: String, default: null },
     subdomain: { type: String, default: null },
@@ -134,6 +191,19 @@ const targetSchema = new mongoose.Schema(
 );
 
 targetSchema.index({ environment: 1 });
+
+/**
+ * Unicité de l'hôte parmi les destinations VIVANTES.
+ *
+ * Une fiche `DELETED` conserve son hôte — c'est ce qui rend son audit
+ * relisible — mais ne réserve plus le domaine. L'index PARTIEL dit exactement
+ * cela ; un index unique classique disait autre chose et interdisait de
+ * redéployer un domaine qu'on venait de libérer.
+ */
+targetSchema.index(
+  { host: 1 },
+  { unique: true, partialFilterExpression: { lifecycleStatus: { $ne: 'DELETED' } } },
+);
 
 /** Historique borné — il ne doit pas croître sans fin. */
 targetSchema.methods.pushHistory = function pushHistory(entry, max = 50) {

@@ -30,6 +30,7 @@ import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { runLocalPreflight } from './localPreflight.js';
 import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
+import { inspectDestination, removeQuarantine, runDeprovision } from './deprovision.js';
 
 /**
  * Regroupement des contrôles préflight en étapes canoniques. La vérification DNS
@@ -113,6 +114,74 @@ export class DeploymentEngine {
         env: options.env || 'PROD',
         onStep,
       });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * INVENTAIRE d'une destination sur le serveur — lecture seule.
+   *
+   * Ce que l'opérateur doit voir AVANT de confirmer un retrait : taille,
+   * nombre de fichiers, données persistantes, process, port, liens sortants.
+   * Aucune écriture, aucune décision : la façade constate.
+   */
+  async inspectDestination({ url, sessionId, options = {}, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await inspectDestination(tx, {
+        host: target.host,
+        remoteRoot: options.remoteRoot,
+        port: options.backendPort ?? null,
+        profile: options.profile,
+      });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * RETRAIT d'une destination — l'opération inverse du déploiement.
+   *
+   * Toute la logique appartient au moteur (`deprovision.js`) : validation
+   * canonique du chemin, inventaire, arrêt et suppression du service, preuve
+   * de libération du port, retrait du routage, quarantaine 410, suppression
+   * des fichiers, vérification finale.
+   *
+   * Le moteur ne décide PAS du cycle de vie de la fiche : il rend le résultat,
+   * et l'appelant en tire l'état (EMPTY ou DEPROVISION_FAILED). Un moteur qui
+   * écrirait lui-même dans la base du Panel cesserait d'être générique.
+   */
+  async deprovision({ url, sessionId, options = {}, onStep = () => {}, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await runDeprovision({
+        transport: tx,
+        host: target.host,
+        remoteRoot: options.remoteRoot,
+        port: options.backendPort ?? null,
+        profile: options.profile,
+        removePersistentData: options.removePersistentData === true,
+        protectedPaths: options.protectedPaths ?? [],
+        onStep,
+      });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
+  /**
+   * LEVÉE de la quarantaine — au moment où la fiche disparaît pour de bon,
+   * jamais avant : tant qu'une destination retirée est connue du Panel, son
+   * domaine doit répondre 410 plutôt que de retomber sur un autre site.
+   */
+  async releaseQuarantine({ url, sessionId, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await removeQuarantine(tx, { host: target.host });
     } finally {
       if (ephemeral) await tx.close?.();
     }

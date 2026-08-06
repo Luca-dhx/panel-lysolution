@@ -20,7 +20,7 @@ import type {
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
-  DeploymentOverview, DeploymentRun, DeploymentTarget, PanelSelfInfo,
+  DeploymentOverview, DeploymentRun, DeploymentTarget, DestinationInspection, PanelSelfInfo,
   ReleaseList, RunRow, StartedOperation, TargetDetail,
   DeployStreamEvent,
 } from '@/types.deployment';
@@ -561,8 +561,41 @@ export const deployment = {
   updateTarget: (targetId: string, body: Partial<DeploymentTarget>) =>
     request<DeploymentTarget>(`/api/deployment/targets/${targetId}`, { method: 'PATCH', body }),
 
+  /**
+   * Suppression de la FICHE — refusée tant que la destination n'est pas vidée.
+   * Ne convient qu'aux destinations jamais mises en ligne : dès qu'une
+   * quarantaine 410 est posée, passer par `destroyTarget`.
+   */
   deleteTarget: (targetId: string) =>
     request<{ deleted: true }>(`/api/deployment/targets/${targetId}`, { method: 'DELETE' }),
+
+  // — Retrait d'une destination ---------------------------------------------
+  /** Inventaire du serveur AVANT retrait — lecture seule, affichée à l'écran. */
+  inspectTarget: (targetId: string, sshPassword: string) =>
+    request<DestinationInspection>(`/api/deployment/targets/${targetId}/inspect`, {
+      method: 'POST', body: { sshPassword },
+    }),
+
+  /** Retrait : vide la destination du serveur et pose la quarantaine 410. */
+  deprovision: (
+    targetId: string,
+    sshPassword: string,
+    confirmHostname: string,
+    removePersistentData = false,
+  ) =>
+    request<StartedOperation>(`/api/deployment/targets/${targetId}/deprovision`, {
+      method: 'POST', body: { sshPassword, confirmHostname, removePersistentData },
+    }),
+
+  /**
+   * Suppression DÉFINITIVE de la fiche. Rend un `StartedOperation` quand une
+   * quarantaine doit être levée sur le serveur, sinon la suppression est
+   * immédiate — l'appelant distingue les deux par la présence de `runId`.
+   */
+  destroyTarget: (targetId: string, confirmHostname: string, sshPassword?: string) =>
+    request<StartedOperation | { deleted: true }>(`/api/deployment/targets/${targetId}/delete`, {
+      method: 'POST', body: { confirmHostname, sshPassword },
+    }),
 
   // — Opérations : toutes rendent un runId ---------------------------------
   testConnection: (targetId: string, sshPassword: string) =>

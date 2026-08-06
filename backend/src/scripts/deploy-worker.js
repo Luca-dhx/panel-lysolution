@@ -39,6 +39,18 @@ const operationType = process.env.PANEL_DEPLOY_OPERATION;
 const sshPassword = process.env.PANEL_DEPLOY_SSH_PASSWORD;
 const releaseId = process.env.PANEL_DEPLOY_RELEASE_ID || null;
 
+// Options non secrètes de l'opération (retrait : confirmation de suppression
+// des données persistantes, chemins d'autres projets à protéger). Illisible ou
+// absente, on retombe sur le comportement le PLUS PRUDENT : aucune option.
+let operationOptions = {};
+try {
+  operationOptions = process.env.PANEL_DEPLOY_OPTIONS
+    ? JSON.parse(process.env.PANEL_DEPLOY_OPTIONS)
+    : {};
+} catch {
+  operationOptions = {};
+}
+
 if (!runId || !targetId || !operationType) {
   console.error('deploy-worker : PANEL_DEPLOY_RUN_ID, _TARGET_ID et _OPERATION sont requis.');
   process.exit(2);
@@ -92,6 +104,7 @@ try {
     sshPassword,
     releaseId,
     runId,
+    options: operationOptions,
     user: process.env.PANEL_DEPLOY_USER || null,
     onStep: (step) => enqueueStep(step),
     onLog: (message, level) => runs.appendLog(runId, message, level),

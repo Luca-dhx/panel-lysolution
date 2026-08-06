@@ -15,6 +15,7 @@ import PanelDeploymentRun from '../../models/PanelDeploymentRun.model.js';
 import ApiError from '../../utils/ApiError.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { CANONICAL_STEPS } from '../../deployment-engine/steps.js';
+import { DEPROVISION_STEPS } from '../../deployment-engine/deprovision.js';
 
 /** Un journal ne doit pas faire exploser la limite BSON de 16 Mo. */
 /** Borne du journal reprenable (suffisant pour un déploiement complet). */
@@ -50,8 +51,14 @@ export async function createRun({
   target, operationType, user = null, selfDeployment = false,
 }) {
   const runId = randomUUID();
-  const checklist = operationType === 'DEPLOYMENT'
-    ? CANONICAL_STEPS.map((step, order) => ({
+  // Le RETRAIT a sa propre checklist canonique, elle aussi tenue par le
+  // moteur : l'opérateur doit voir d'emblée ce qui va être fait sur son
+  // serveur — arrêt, port, routage, quarantaine, suppression, vérification.
+  const catalogue = operationType === 'DEPLOYMENT'
+    ? CANONICAL_STEPS
+    : (operationType === 'DEPROVISION' ? DEPROVISION_STEPS : null);
+  const checklist = catalogue
+    ? catalogue.map((step, order) => ({
       id: step.id,
       label: step.label,
       order,

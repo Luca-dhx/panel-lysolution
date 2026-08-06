@@ -7,7 +7,49 @@
 export type DeploymentState = 'NEW' | 'DEPLOYING' | 'DEPLOYED' | 'FAILED';
 export type RunStatus = 'running' | 'ok' | 'warning' | 'error' | 'interrupted';
 export type OperationType =
-  | 'CONNECTION_TEST' | 'PRECHECK' | 'SIMULATION' | 'DEPLOYMENT' | 'ROLLBACK';
+  | 'CONNECTION_TEST' | 'PRECHECK' | 'SIMULATION' | 'DEPLOYMENT' | 'ROLLBACK'
+  | 'DEPROVISION' | 'DESTINATION_DELETE';
+
+/**
+ * CYCLE DE VIE d'une destination — distinct de `DeploymentState`.
+ *
+ * `DeploymentState` dit comment s'est passé le dernier déploiement.
+ * `LifecycleStatus` dit ce que la destination OCCUPE encore sur le serveur —
+ * et c'est lui, et lui seul, qui autorise une suppression.
+ */
+export type LifecycleStatus =
+  | 'ACTIVE' | 'DEPROVISIONING' | 'EMPTY' | 'DEPROVISION_FAILED' | 'DELETED';
+
+/** Ce qu'une destination occupe RÉELLEMENT sur le serveur, lu avant retrait. */
+export interface DestinationInventory {
+  host: string;
+  siteRoot: string;
+  sharedUploads: string;
+  sharedStorage: string;
+  servedHosts: string[];
+  pm2Name: string;
+  exists: boolean;
+  resolvedPath: string | null;
+  size: string | null;
+  files: number;
+  persistentFiles: number;
+  uploads: number;
+  storage: number;
+  outboundSymlinks: string[];
+  pm2: { present: boolean; pid?: number | null; status?: string | null; execPath?: string | null; restarts?: number | null };
+  port: number | null;
+  portFree: boolean;
+  portHolder: string | null;
+}
+
+export interface DestinationInspection {
+  target: DeploymentTarget;
+  inventory: DestinationInventory;
+  /** Des données métier seront perdues : le retrait exigera une confirmation. */
+  requiresPersistentDataConfirmation: boolean;
+  /** Un lien sortant a été trouvé : le retrait sera refusé tel quel. */
+  blockedBySymlinks: boolean;
+}
 
 export interface DeploymentTarget {
   targetId: string;
@@ -23,6 +65,8 @@ export interface DeploymentTarget {
   sshUser: string;
   sshPort: number;
   backendPort: number;
+  /** Même valeur que `backendPort`, sous le nom qu'emploie le registre des ports. */
+  port: number;
   remoteRoot: string;
   dbName: string | null;
   certbotEmail: string | null;
@@ -30,6 +74,30 @@ export interface DeploymentTarget {
   /** Cette destination héberge le Panel qui pilote — déduit, jamais saisi. */
   selfHosted: boolean;
   state: DeploymentState;
+
+  // ── Cycle de vie ────────────────────────────────────────────────────────
+  lifecycleStatus: LifecycleStatus;
+  lifecycleLabel: string;
+  deprovisionStartedAt: string | null;
+  deprovisionCompletedAt: string | null;
+  deprovisionFailedAt: string | null;
+  lastDeprovisionRunId: string | null;
+  emptiedAt: string | null;
+  deletedAt: string | null;
+  lastError: { at?: string; code?: string; message?: string | null; step?: string | null } | null;
+  /** Le domaine répond 410 Gone : posé au retrait, levé à la suppression. */
+  quarantineEnabled: boolean;
+  activeDeploymentRunId: string | null;
+  currentSiteRoot: string | null;
+  projectIdentityId: string | null;
+  /**
+   * Ce que le BACKEND autorise. Calculé côté serveur pour que la règle ne
+   * soit pas réécrite dans le navigateur, où elle divergerait dès la
+   * première évolution du cycle de vie.
+   */
+  canDeploy: boolean;
+  canDeprovision: boolean;
+  canDelete: boolean;
   currentVersion: string | null;
   currentReleaseId: string | null;
   lastDeployedAt: string | null;
@@ -147,6 +215,13 @@ export interface DeploymentOverview {
     failed: number;
     deploying: number;
     environments: { TEST: number; PROD: number };
+    lifecycle: {
+      active: number;
+      deprovisioning: number;
+      empty: number;
+      deprovisionFailed: number;
+      deleted: number;
+    };
     panelEnvironment: string;
   };
   recentRuns: RunRow[];

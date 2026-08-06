@@ -22,6 +22,10 @@ import {
   getTargetOrThrow, listTargets, markDeploying, updateTarget,
 } from '../services/deployment/deploymentTarget.service.js';
 import {
+  LIFECYCLE, assertDeletable, assertDeployable, assertDeprovisionable, beginDeprovision,
+} from '../services/deployment/destinationLifecycle.service.js';
+import PanelDeploymentTarget from '../models/PanelDeploymentTarget.model.js';
+import {
   activeRunFor, createRun, getRunOrThrow, listRuns, readEventsSince,
 } from '../services/deployment/deploymentRun.service.js';
 import { startDeploymentWorker } from '../services/deployment/deploymentWorker.service.js';
@@ -61,8 +65,16 @@ export async function update(req, res) {
   return ok(res, await updateTarget(req.params.targetId, req.body ?? {}, actorOf(req)));
 }
 
+/**
+ * Suppression de la FICHE — refusée tant que la destination n'est pas vidée.
+ *
+ * Ne convient qu'aux destinations jamais mises en ligne, ou déjà vidées ET
+ * sans quarantaine à lever. Dès qu'une quarantaine 410 est posée sur le
+ * serveur, la suppression définitive doit passer par `destroy` : lever la
+ * quarantaine exige une connexion, et une connexion exige un mot de passe.
+ */
 export async function remove(req, res) {
-  return ok(res, await deleteTarget(req.params.targetId));
+  return ok(res, await deleteTarget(req.params.targetId, actorOf(req)));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -85,6 +97,12 @@ async function startOperation(req, res, operationType) {
       'Opération refusée parce qu’aucun mot de passe SSH n’a été fourni. '
       + 'Le Panel n’en conserve aucun : il est demandé à chaque opération.');
   }
+
+  // ── CYCLE DE VIE ────────────────────────────────────────────────────────
+  // Déployer sur une destination en cours de retrait produirait un état que
+  // personne ne sait décrire : des fichiers réécrits sous un dossier qu'on
+  // efface, un service relancé sur un port qu'on vient de libérer.
+  assertDeployable(target);
 
   // Une seule opération à la fois par destination : deux déploiements
   // simultanés sur le même hôte se marcheraient dessus (mêmes chemins, même
@@ -171,6 +189,195 @@ async function startOperation(req, res, operationType) {
         : null,
     },
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  RETRAIT D'UNE DESTINATION                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * INVENTAIRE avant retrait — lecture seule, exécutée DANS la requête.
+ *
+ * Comme la lecture des releases : c'est une lecture courte, sans effet, et
+ * l'opérateur en a besoin immédiatement — c'est ce qu'affiche la fenêtre de
+ * confirmation. Lui demander de confirmer un retrait sans lui montrer ce qui
+ * sera détruit reviendrait à lui faire signer une page blanche.
+ */
+export async function inspect(req, res) {
+  const target = await getTargetOrThrow(req.params.targetId);
+  const sshPassword = req.body?.sshPassword;
+  if (!sshPassword) {
+    throw ApiError.badRequest('PANEL_DEPLOY_PASSWORD_REQUIRED',
+      'Inventaire refusé parce qu’aucun mot de passe SSH n’a été fourni.');
+  }
+
+  const { openSession, closeSession } = await import('../deployment-engine/passwordVault.js');
+  const session = openSession({
+    host: target.sshHost, username: target.sshUser, password: sshPassword, keep: false,
+  });
+  try {
+    const engine = new DeploymentEngine({ mongoUri: config.mongoUri });
+    const inventory = await engine.inspectDestination({
+      url: target.url,
+      sessionId: session.sessionId,
+      options: { remoteRoot: target.remoteRoot, backendPort: target.backendPort },
+    });
+    return ok(res, {
+      target: describeTarget(target),
+      inventory,
+      // Ce que le retrait EXIGERA avant d'accepter. Annoncé maintenant : une
+      // confirmation refusée après coup pour une raison qu'on connaissait
+      // déjà est une perte de temps et une perte de confiance.
+      requiresPersistentDataConfirmation: (inventory.persistentFiles ?? 0) > 0,
+      blockedBySymlinks: (inventory.outboundSymlinks ?? []).length > 0,
+    });
+  } catch (err) {
+    throw ApiError.badRequest('PANEL_DEPLOY_UNREACHABLE',
+      `Inventaire impossible : ${err.message}`);
+  } finally {
+    closeSession(session.sessionId);
+  }
+}
+
+/**
+ * RETRAIT — l'opérateur doit saisir EXACTEMENT le nom d'hôte.
+ *
+ * Ce n'est pas une formalité : c'est le seul contrôle qui distingue « je veux
+ * retirer CETTE destination » de « j'ai cliqué sur la mauvaise ligne ». Une
+ * case à cocher ne fait pas cette distinction.
+ */
+export async function deprovision(req, res) {
+  const target = await getTargetOrThrow(req.params.targetId);
+  const sshPassword = req.body?.sshPassword;
+  if (!sshPassword) {
+    throw ApiError.badRequest('PANEL_DEPLOY_PASSWORD_REQUIRED',
+      'Retrait refusé parce qu’aucun mot de passe SSH n’a été fourni.');
+  }
+  assertHostnameConfirmed(req.body?.confirmHostname, target,
+    'Retrait refusé parce que le nom d’hôte saisi ne correspond pas.');
+
+  const active = await activeRunFor(target.targetId);
+  assertDeprovisionable(target, { activeRun: active });
+  if (active) {
+    throw ApiError.conflict('PANEL_DEPLOY_ALREADY_RUNNING',
+      `Retrait refusé parce qu’une exécution est déjà en cours sur « ${target.name} ».`,
+      { runId: active.runId });
+  }
+
+  const runId = await createRun({
+    target, operationType: OPERATIONS.DEPROVISION, user: req.panelUser.email,
+  });
+
+  // LE VERROU — atomique et conditionnel. Posé AVANT le worker : si deux
+  // retraits partent en même temps, le second ne trouvera plus de fiche
+  // correspondant à sa condition et sera refusé ici, pas sur le serveur.
+  await beginDeprovision(target.targetId, { runId });
+
+  startDeploymentWorker({
+    runId,
+    targetId: target.targetId,
+    operationType: OPERATIONS.DEPROVISION,
+    sshPassword,
+    user: req.panelUser.email,
+    options: {
+      removePersistentData: req.body?.removePersistentData === true,
+      protectedPaths: await otherDestinationRoots(target),
+    },
+  });
+
+  return res.status(202).json({
+    success: true,
+    data: {
+      runId,
+      executionId: runId,
+      status: 'queued',
+      operationType: OPERATIONS.DEPROVISION,
+      selfDeployment: false,
+      notice: target.selfHosted === true
+        ? 'Cette destination héberge le Panel que vous utilisez : son retrait coupera '
+          + 'cette interface. L’opération se poursuit dans un processus séparé.'
+        : null,
+    },
+  });
+}
+
+/**
+ * SUPPRESSION DÉFINITIVE de la fiche, quarantaine comprise.
+ *
+ * Deux chemins, selon qu'il reste ou non quelque chose à faire sur le serveur :
+ *   · quarantaine posée → opération asynchrone (levée du 410, puis fiche) ;
+ *   · rien à lever      → suppression logique immédiate.
+ *
+ * Dans les deux cas, la destination doit être `EMPTY` : c'est la règle du lot,
+ * et elle est vérifiée ici comme dans le service.
+ */
+export async function destroy(req, res) {
+  const target = await getTargetOrThrow(req.params.targetId);
+  assertDeletable(target);
+  assertHostnameConfirmed(req.body?.confirmHostname, target,
+    'Suppression refusée parce que le nom d’hôte saisi ne correspond pas.');
+
+  const active = await activeRunFor(target.targetId);
+  if (active) {
+    throw ApiError.conflict('PANEL_DEPLOY_ALREADY_RUNNING',
+      `Suppression refusée parce qu’une exécution est en cours sur « ${target.name} ».`,
+      { runId: active.runId });
+  }
+
+  // Rien à lever sur le serveur : la suppression est une écriture en base.
+  if (target.quarantineEnabled !== true) {
+    return ok(res, await deleteTarget(target.targetId, actorOf(req)));
+  }
+
+  const sshPassword = req.body?.sshPassword;
+  if (!sshPassword) {
+    throw ApiError.badRequest('PANEL_DEPLOY_PASSWORD_REQUIRED',
+      `Suppression refusée parce que le domaine « ${target.host} » est encore neutralisé (410) `
+      + 'sur le serveur : lever cette quarantaine exige une connexion, donc un mot de passe SSH.');
+  }
+
+  const runId = await createRun({
+    target, operationType: OPERATIONS.DESTINATION_DELETE, user: req.panelUser.email,
+  });
+  startDeploymentWorker({
+    runId,
+    targetId: target.targetId,
+    operationType: OPERATIONS.DESTINATION_DELETE,
+    sshPassword,
+    user: req.panelUser.email,
+  });
+
+  return res.status(202).json({
+    success: true,
+    data: {
+      runId, executionId: runId, status: 'queued',
+      operationType: OPERATIONS.DESTINATION_DELETE, selfDeployment: false,
+      notice: null,
+    },
+  });
+}
+
+/** Le nom d'hôte saisi doit être EXACT — comparaison insensible à la casse seule. */
+function assertHostnameConfirmed(saisi, target, message) {
+  if (String(saisi ?? '').trim().toLowerCase() !== String(target.host).toLowerCase()) {
+    throw ApiError.badRequest('PANEL_TARGET_CONFIRMATION_MISMATCH',
+      `${message} Attendu : « ${target.host} ».`, { expected: target.host });
+  }
+}
+
+/**
+ * Racines des AUTRES destinations connues — protégées explicitement.
+ *
+ * Le moteur refuse déjà tout chemin qui ne serait pas exactement celui dérivé
+ * de l'hôte retiré. Cette liste est une seconde barrière : même une fiche
+ * incohérente ne peut pas désigner le dossier d'un autre projet.
+ */
+async function otherDestinationRoots(target) {
+  const autres = await PanelDeploymentTarget.find({
+    targetId: { $ne: target.targetId },
+    lifecycleStatus: { $ne: LIFECYCLE.DELETED },
+  }).select('host remoteRoot').lean();
+  return autres.map((t) => `${t.remoteRoot ?? '/var/www'}/${t.host}`);
 }
 
 export const testConnection = (req, res) => startOperation(req, res, OPERATIONS.CONNECTION_TEST);

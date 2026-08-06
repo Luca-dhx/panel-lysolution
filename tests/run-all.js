@@ -43,6 +43,7 @@ const TESTS = [
   'execution.test.js',
   'spec-drift.check.mjs',
   'deployment-rollback.test.js',
+  'deployment-deprovision.test.js',
   'deployment-ui.test.js',
   'engine-governance.test.js',
   'duplication-e2e.test.js',

@@ -93,6 +93,7 @@ export function DeploymentPage() {
                     {target.environment}
                   </span>
                   <StateBadge state={target.state} />
+                  <LifecycleBadge status={target.lifecycleStatus} />
                   {target.selfHosted ? (
                     <span className="badge badge-warn" title="Cette destination héberge le Panel que vous utilisez">
                       auto-hébergé
@@ -108,17 +109,25 @@ export function DeploymentPage() {
                 <div className="action-buttons">
                   <Link to={`/deployment/${target.targetId}`} className="btn btn-small">Ouvrir</Link>
                   <button type="button" className="btn btn-small" onClick={() => setEditing(target)}>Modifier</button>
-                  <button
-                    type="button" className="btn btn-small"
-                    onClick={() => {
-                      setError(null);
-                      api.deleteTarget(target.targetId)
-                        .then(() => { setNotice(`Destination « ${target.name} » supprimée.`); return load(); })
-                        .catch((err) => setError(errorMessage(err, 'Suppression refusée.')));
-                    }}
-                  >
-                    Supprimer
-                  </button>
+                  {/*
+                    LA SUPPRESSION N'EST PLUS UN BOUTON DE LISTE.
+
+                    Supprimer d'ici une destination encore en ligne laissait sur
+                    le serveur son service PM2, son port et ses fichiers — sans
+                    plus aucune fiche pour dire qu'il fallait les nettoyer. Le
+                    retrait vit désormais sur la fiche, avec l'inventaire de ce
+                    qui sera détruit ; seule une destination déjà VIDÉE se
+                    supprime, et cela se décide là où on voit son état.
+                  */}
+                  {target.canDelete ? (
+                    <Link to={`/deployment/${target.targetId}`} className="btn btn-small">
+                      Supprimer la destination →
+                    </Link>
+                  ) : (
+                    <Link to={`/deployment/${target.targetId}`} className="btn btn-small">
+                      Retirer le déploiement →
+                    </Link>
+                  )}
                 </div>
               </li>
             ))}
@@ -348,6 +357,26 @@ export function RunBadge({ status }: { status: string }) {
   return <span className={`badge badge-${d.tone}`}>{d.label}</span>;
 }
 
+/**
+ * ÉTAT DU CYCLE DE VIE — ce que la destination occupe encore sur le serveur.
+ *
+ * Volontairement distinct de `StateBadge` : une destination peut avoir été
+ * « Déployée » avec succès ET être aujourd'hui vidée. Confondre les deux
+ * laisserait croire qu'un site est en ligne alors qu'il n'y a plus rien.
+ */
+export function LifecycleBadge({ status }: { status: string }) {
+  const def: Record<string, { label: string; tone: string; title: string }> = {
+    ACTIVE: { label: 'En place', tone: 'ok', title: 'Fichiers, service et routage sont sur le serveur.' },
+    DEPROVISIONING: { label: 'Retrait en cours', tone: 'warn', title: 'Le retrait est en cours ; aucun déploiement n’est possible.' },
+    EMPTY: { label: 'Vidée', tone: 'neutral', title: 'Plus rien sur le serveur ; le domaine répond 410. La fiche peut être supprimée.' },
+    DEPROVISION_FAILED: { label: 'Retrait en échec', tone: 'danger', title: 'Le retrait s’est interrompu ; il peut être relancé.' },
+    DELETED: { label: 'Supprimée', tone: 'muted', title: 'Fiche supprimée ; historique conservé.' },
+  };
+  const d = def[status];
+  if (!d) return null;
+  return <span className={`badge badge-${d.tone}`} title={d.title}>{d.label}</span>;
+}
+
 export function operationLabel(type: string): string {
   return {
     CONNECTION_TEST: 'Test de connexion',
@@ -355,5 +384,7 @@ export function operationLabel(type: string): string {
     SIMULATION: 'Simulation',
     DEPLOYMENT: 'Déploiement',
     ROLLBACK: 'Retour arrière',
+    DEPROVISION: 'Retrait du déploiement',
+    DESTINATION_DELETE: 'Suppression de la destination',
   }[type] ?? type;
 }

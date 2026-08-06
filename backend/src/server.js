@@ -7,6 +7,7 @@ import createApp from './app.js';
 import logger from './utils/logger.js';
 import { seedFromEnv } from './services/auth/panelUsers.service.js';
 import { finalizeOrphanRuns } from './services/deployment/deploymentRun.service.js';
+import { migrateDeploymentTargets } from './services/deployment/destinationLifecycle.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -23,6 +24,18 @@ async function start() {
   const orphans = await finalizeOrphanRuns().catch(() => 0);
   if (orphans) {
     logger.warn(`${orphans} exécution(s) de déploiement interrompue(s) — issue inconnue, à vérifier.`);
+  }
+
+  // CYCLE DE VIE DES DESTINATIONS : toute fiche antérieure au LOT 8 devient
+  // ACTIVE — le choix conservateur. On ne sait pas ce qu'il reste sur le
+  // serveur, donc on suppose que tout y est : supposer l'inverse autoriserait
+  // la suppression directe d'une fiche dont le service tourne encore.
+  const lifecycle = await migrateDeploymentTargets().catch((err) => {
+    logger.warn(`Reprise du cycle de vie des destinations impossible : ${err.message}`);
+    return null;
+  });
+  if (lifecycle?.lifecycleBackfilled) {
+    logger.info(`${lifecycle.lifecycleBackfilled} destination(s) reprise(s) en état ACTIVE.`);
   }
 
   const backend = await resolveBackendUrl();

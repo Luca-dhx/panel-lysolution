@@ -40,7 +40,7 @@ const WORKER_PATH = path.join(backendRoot, 'src', 'scripts', 'deploy-worker.js')
  * @returns {{pid: number}}
  */
 export function startDeploymentWorker({
-  runId, targetId, operationType, sshPassword, releaseId = null, user = null,
+  runId, targetId, operationType, sshPassword, releaseId = null, user = null, options = null,
 }) {
   const child = spawn(process.execPath, [WORKER_PATH], {
     cwd: backendRoot,
@@ -63,6 +63,11 @@ export function startDeploymentWorker({
       PANEL_DEPLOY_SSH_PASSWORD: sshPassword ?? '',
       PANEL_DEPLOY_RELEASE_ID: releaseId ?? '',
       PANEL_DEPLOY_USER: user ?? '',
+      // Options NON SECRÈTES de l'opération (ex. « oui, efface aussi les
+      // données persistantes »). Sérialisées : elles décrivent une décision
+      // de l'opérateur que le worker doit connaître, et qui ne doit pas être
+      // relue depuis la fiche — la fiche ne porte pas une confirmation.
+      PANEL_DEPLOY_OPTIONS: options ? JSON.stringify(options) : '',
     },
   });
 

@@ -1510,3 +1510,37 @@ textarea:focus {
 .event-confirm { display: block; }
 
 .section-title { margin: 1rem 0 0.25rem; font-size: 0.95rem; }
+
+/* ---------- Fenêtre modale (confirmations destructives) ----------
+   Réservée aux actions IRRÉVERSIBLES qui doivent montrer ce qu'elles vont
+   détruire. Une fenêtre bloquante n'est justifiée que là : partout ailleurs,
+   le Panel préfère un écran, où l'on peut revenir en arrière. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 1rem;
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--bg) 70%, #000000);
+}
+
+.modal {
+  width: min(46rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 1.5rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 1.5rem 3rem color-mix(in srgb, var(--bg) 60%, #000000);
+}
+
+/* La bordure dit la nature de l'action avant qu'on ait lu le titre. */
+.modal-danger { border-color: var(--danger); }
+
+.modal-head { display: flex; flex-direction: column; gap: 0.25rem; }
+.modal-head h2 { font-size: 1.15rem; }

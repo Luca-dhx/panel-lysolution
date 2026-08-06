@@ -22,8 +22,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Card } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
 import { deployment as api, errorMessage } from '@/lib/api';
-import type { ReleaseList, TargetDetail } from '@/types.deployment';
-import { RunBadge, StateBadge, operationLabel } from '@/pages/DeploymentPage';
+import type {
+  DeploymentTarget, DestinationInspection, ReleaseList, TargetDetail,
+} from '@/types.deployment';
+import { LifecycleBadge, RunBadge, StateBadge, operationLabel } from '@/pages/DeploymentPage';
 
 /** Nombre d'étapes du moteur — annoncé à l'opérateur avant qu'il ne lance. */
 const STEP_COUNT = 20;
@@ -39,6 +41,7 @@ export function DeploymentTargetPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<'deprovision' | 'delete' | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +98,7 @@ export function DeploymentTargetPage() {
         <div className="execution-head">
           <span className={`badge badge-${t.environment === 'PROD' ? 'danger' : 'neutral'}`}>{t.environment}</span>
           <StateBadge state={t.state} />
+          <LifecycleBadge status={t.lifecycleStatus} />
           {t.selfHosted ? <span className="badge badge-warn">auto-hébergé</span> : null}
         </div>
         <p className="target-url"><code>{t.url}</code></p>
@@ -116,6 +120,39 @@ export function DeploymentTargetPage() {
         <div className="alert alert-warning">
           Une opération est en cours ({operationLabel(data.activeRun.operationType)}).{' '}
           <Link to={`/deployment/runs/${data.activeRun.runId}`}>Suivre son avancement →</Link>
+        </div>
+      ) : null}
+
+      {/* — ÉTAT DU CYCLE DE VIE ————————————————————————
+          Ce que la destination occupe encore sur le serveur. C'est cet état,
+          et non le résultat du dernier déploiement, qui décide de ce qui est
+          permis : une destination en place ne se supprime pas. */}
+      {t.lifecycleStatus === 'EMPTY' ? (
+        <p className="mode-notice">
+          <strong>Cette destination est vidée.</strong> Son service est arrêté, son
+          port {t.port} est libéré, ses fichiers sont supprimés, et{' '}
+          <code>{t.host}</code> répond <code>410 Gone</code> plutôt que de retomber
+          sur un autre site du serveur. Sa fiche — historique compris — peut
+          maintenant être supprimée, ou la destination redéployée.
+          {t.emptiedAt ? ` Vidée le ${t.emptiedAt.slice(0, 16).replace('T', ' ')}.` : ''}
+        </p>
+      ) : null}
+
+      {t.lifecycleStatus === 'DEPROVISIONING' ? (
+        <div className="alert alert-warning">
+          <strong>Retrait en cours.</strong> Aucun déploiement n’est possible tant
+          qu’il n’est pas terminé. Si le processus a été interrompu, relancez le
+          retrait : chaque étape est sans effet quand elle a déjà été faite.
+        </div>
+      ) : null}
+
+      {t.lifecycleStatus === 'DEPROVISION_FAILED' ? (
+        <div className="alert alert-error">
+          <strong>Le retrait s’est interrompu</strong>
+          {t.lastError?.step ? ` à l’étape « ${t.lastError.step} »` : ''}
+          {t.lastError?.message ? ` : ${t.lastError.message}` : '.'}
+          {' '}La destination est toujours connue du Panel, et rien n’a été supprimé
+          de sa fiche. Corrigez la cause, puis relancez le retrait.
         </div>
       ) : null}
 
@@ -210,14 +247,19 @@ export function DeploymentTargetPage() {
         <div className="action-buttons">
           <button
             type="button" className="btn btn-primary btn-deploy"
-            disabled={busy || locked || (t.environment === 'PROD' && !confirmProd)}
+            disabled={busy || locked || !t.canDeploy || (t.environment === 'PROD' && !confirmProd)}
             onClick={() => start('Déploiement', () => api.deploy(targetId, password, confirmProd))}
           >
-            Déployer
+            {t.lifecycleStatus === 'EMPTY' ? 'Redéployer' : 'Déployer'}
           </button>
         </div>
         {locked ? (
           <p className="muted">Un déploiement est déjà en cours sur cette destination.</p>
+        ) : null}
+        {!t.canDeploy && !locked ? (
+          <p className="muted">
+            Déploiement indisponible : la destination est {t.lifecycleLabel}.
+          </p>
         ) : null}
       </Card>
 
@@ -298,6 +340,74 @@ export function DeploymentTargetPage() {
         </p>
       </Card>
 
+      {/* — RETRAIT ET SUPPRESSION ——————————————————————————
+          Deux actions, dans cet ordre, et jamais l'une sans l'autre.
+
+          Supprimer la fiche d'une destination encore en ligne laissait sur le
+          serveur son service PM2 — qui détenait toujours son port —, sa
+          configuration Nginx et ses fichiers. Plus aucune fiche ne disait
+          qu'il restait quelque chose à nettoyer, et l'allocation de port
+          recyclait un numéro déjà pris. On vide d'abord, on supprime ensuite. */}
+      <Card title="Retirer cette destination">
+        <p className="muted">
+          Le retrait est l’opération inverse du déploiement : il arrête et
+          supprime le service, libère le port, retire le routage, installe une
+          quarantaine <code>410 Gone</code> sur le domaine, supprime les
+          fichiers, puis vérifie qu’il ne reste rien. La fiche, elle, subsiste :
+          elle passe à l’état <em>vidée</em>.
+        </p>
+
+        <div className="action-buttons">
+          <button
+            type="button" className="btn btn-danger"
+            disabled={busy || locked || !t.canDeprovision}
+            onClick={() => { setError(null); setNotice(null); setRemoving('deprovision'); }}
+          >
+            {t.lifecycleStatus === 'DEPROVISION_FAILED' || t.lifecycleStatus === 'DEPROVISIONING'
+              ? 'Reprendre le retrait'
+              : 'Retirer le déploiement'}
+          </button>
+
+          {/* Visible en permanence — mais actif UNIQUEMENT sur une destination
+              vidée. Le cacher laisserait croire que la suppression n'existe
+              pas ; l'activer trop tôt referait exactement le défaut corrigé. */}
+          <button
+            type="button" className="btn btn-danger"
+            disabled={busy || locked || !t.canDelete}
+            title={t.canDelete
+              ? 'Supprime la fiche ; historique et audit conservés.'
+              : 'Disponible seulement une fois la destination vidée.'}
+            onClick={() => { setError(null); setNotice(null); setRemoving('delete'); }}
+          >
+            Supprimer la destination
+          </button>
+        </div>
+
+        {!t.canDelete ? (
+          <p className="muted read-only-note">
+            « Supprimer la destination » ne devient possible qu’à l’état
+            <strong> vidée</strong>. Tant que des fichiers, un service ou un
+            routage subsistent sur le serveur, supprimer la fiche ferait perdre
+            la seule trace de ce qu’il reste à nettoyer — et le port resterait
+            détenu par un process que plus rien ne désigne.
+          </p>
+        ) : null}
+      </Card>
+
+      {removing ? (
+        <RemovalDialog
+          mode={removing}
+          target={t}
+          onCancel={() => setRemoving(null)}
+          onDone={(message, runId) => {
+            setRemoving(null);
+            if (runId) { navigate(`/deployment/runs/${runId}`); return; }
+            setNotice(message);
+            void load();
+          }}
+        />
+      ) : null}
+
       {/* — Historique ——————————————————————————————————— */}
       <Disclosure title={`Exécutions (${data.runs.length})`} defaultOpen={data.runs.length > 0}>
         {data.runs.length === 0 ? (
@@ -324,6 +434,212 @@ export function DeploymentTargetPage() {
           </div>
         )}
       </Disclosure>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  FENÊTRE DE CONFIRMATION DU RETRAIT                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ── POURQUOI UNE FENÊTRE DÉDIÉE, ET NON UN `confirm()` ──────────────────────
+ *
+ * Un `confirm()` du navigateur pose une question sans montrer de réponse : il
+ * ne peut afficher ni le port, ni le service, ni la taille, ni le nombre de
+ * médias qui vont disparaître. On ne fait pas confirmer une destruction sans
+ * montrer ce qui sera détruit — sinon l'opérateur ne confirme pas un retrait,
+ * il valide une phrase.
+ *
+ * Le déroulé est donc en deux temps :
+ *   1. mot de passe SSH → INVENTAIRE réel lu sur le serveur ;
+ *   2. saisie EXACTE du nom d'hôte → exécution.
+ *
+ * La saisie du nom d'hôte n'est pas une friction décorative : c'est le seul
+ * contrôle qui distingue « je veux retirer CETTE destination » de « j'ai
+ * cliqué sur la mauvaise ligne ». Une case à cocher ne fait pas cette
+ * distinction.
+ */
+function RemovalDialog({ mode, target, onCancel, onDone }: {
+  mode: 'deprovision' | 'delete';
+  target: DeploymentTarget;
+  onCancel: () => void;
+  onDone: (message: string, runId?: string) => void;
+}) {
+  const [password, setPassword] = useState('');
+  const [hostname, setHostname] = useState('');
+  const [dropData, setDropData] = useState(false);
+  const [inspection, setInspection] = useState<DestinationInspection | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const inv = inspection?.inventory ?? null;
+  const hostOk = hostname.trim().toLowerCase() === target.host.toLowerCase();
+  // La suppression d'une destination vidée SANS quarantaine ne touche pas au
+  // serveur : elle n'a donc pas besoin d'un mot de passe.
+  const sshNeeded = mode === 'deprovision' || target.quarantineEnabled;
+
+  const inspecter = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setInspection(await api.inspectTarget(target.targetId, password));
+    } catch (err) {
+      setError(errorMessage(err, 'Inventaire impossible : le serveur n’a pas répondu.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const executer = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (mode === 'deprovision') {
+        const started = await api.deprovision(target.targetId, password, hostname.trim(), dropData);
+        setPassword('');
+        onDone('Retrait lancé.', started.runId);
+        return;
+      }
+      const result = await api.destroyTarget(
+        target.targetId, hostname.trim(), sshNeeded ? password : undefined,
+      );
+      setPassword('');
+      const runId = (result as { runId?: string }).runId;
+      onDone(`Destination « ${target.name} » supprimée. Son historique reste consultable.`, runId);
+    } catch (err) {
+      setError(errorMessage(err, 'Opération refusée.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const titre = mode === 'deprovision'
+    ? 'Retirer le déploiement'
+    : 'Supprimer définitivement la destination';
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={titre}>
+      <div className="modal modal-danger">
+        <header className="modal-head">
+          <h2>{titre}</h2>
+          <p className="muted"><code>{target.url}</code></p>
+        </header>
+
+        {error ? <div className="alert alert-error">{error}</div> : null}
+
+        {/* — CE QUI SERA TOUCHÉ ———————————————————————— */}
+        <DetailList
+          items={[
+            ['Nom d’hôte', <code key="h">{target.host}</code>],
+            ['Environnement', target.environment],
+            ['Serveur', `${target.sshUser}@${target.sshHost}`],
+            ['Port applicatif', String(target.port)],
+            ['Service PM2', <code key="p">{inv?.pm2Name ?? `panel-${target.host}`}</code>],
+            ['Dossier', <code key="r">{inv?.siteRoot ?? `${target.remoteRoot}/${target.host}`}</code>],
+            ['Taille', inv ? (inv.size ?? '—') : <span className="muted">à lire sur le serveur</span>],
+            ['Fichiers', inv ? String(inv.files) : <span className="muted">à lire sur le serveur</span>],
+            ['Médias (shared/uploads)', inv ? String(inv.uploads) : <span className="muted">à lire</span>],
+            ['Stockage (shared/storage)', inv ? String(inv.storage) : <span className="muted">à lire</span>],
+          ]}
+        />
+
+        {mode === 'deprovision' ? (
+          <p className="mode-notice mode-execution">
+            <strong>Cette opération est irréversible.</strong> Le service sera
+            arrêté et supprimé, le port {target.port} libéré, le routage retiré,
+            les fichiers effacés. Le domaine <code>{target.host}</code> répondra
+            ensuite <code>410 Gone</code>. L’historique de la destination, lui,
+            est conservé.
+          </p>
+        ) : (
+          <p className="mode-notice mode-execution">
+            <strong>Cette opération est irréversible.</strong> La fiche sortira
+            des destinations actives{target.quarantineEnabled
+              ? ` et la quarantaine 410 sera levée : ${target.host} ne sera plus servi du tout par ce serveur`
+              : ''}. Son historique et son audit restent consultables.
+          </p>
+        )}
+
+        {inv && inv.outboundSymlinks.length > 0 ? (
+          <div className="alert alert-error">
+            <strong>Retrait bloqué :</strong> {inv.outboundSymlinks.length} lien(s)
+            symbolique(s) pointent hors de la destination
+            (<code>{inv.outboundSymlinks.join(', ')}</code>). Les suivre effacerait
+            des fichiers d’un autre projet. Corrigez-les d’abord.
+          </div>
+        ) : null}
+
+        {inv && inv.persistentFiles > 0 ? (
+          <label className="key-option">
+            <input type="checkbox" checked={dropData} onChange={(e) => setDropData(e.target.checked)} />
+            Je confirme la perte de <strong>{inv.persistentFiles} fichier(s)</strong> de
+            données persistantes (médias et documents). Sans cette confirmation,
+            le retrait est refusé.
+          </label>
+        ) : null}
+
+        {/* — MOT DE PASSE ————————————————————————————— */}
+        {sshNeeded ? (
+          <label className="field">
+            <span className="field-label">Mot de passe SSH du serveur</span>
+            <input
+              type="password" value={password} autoComplete="off"
+              placeholder="demandé à chaque opération"
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <span className="field-hint muted">
+              Jamais enregistré. Il sert ici à lire l’inventaire, puis à exécuter
+              l’opération.
+            </span>
+          </label>
+        ) : null}
+
+        {sshNeeded && !inspection ? (
+          <div className="action-buttons">
+            <button type="button" className="btn" disabled={busy || !password} onClick={() => void inspecter()}>
+              Lire l’état réel du serveur
+            </button>
+            <button type="button" className="btn btn-small" onClick={onCancel}>Annuler</button>
+          </div>
+        ) : (
+          <>
+            {/* — CONFIRMATION PAR LE NOM D'HÔTE ——————————— */}
+            <label className="field">
+              <span className="field-label">
+                Saisissez <code>{target.host}</code> pour confirmer
+              </span>
+              <input
+                type="text" value={hostname} autoComplete="off" spellCheck={false}
+                placeholder={target.host}
+                onChange={(e) => setHostname(e.target.value)}
+              />
+            </label>
+
+            <div className="action-buttons">
+              <button
+                type="button" className="btn btn-danger"
+                disabled={
+                  busy
+                  || !hostOk
+                  || (sshNeeded && !password)
+                  || (mode === 'deprovision' && (inv?.outboundSymlinks.length ?? 0) > 0)
+                  || (mode === 'deprovision' && (inv?.persistentFiles ?? 0) > 0 && !dropData)
+                }
+                onClick={() => void executer()}
+              >
+                {mode === 'deprovision' ? 'Retirer le déploiement' : 'Supprimer la destination'}
+              </button>
+              <button type="button" className="btn btn-small" onClick={onCancel}>Annuler</button>
+            </div>
+          </>
+        )}
+
+        <p className="muted read-only-note">
+          L’avancement s’affiche étape par étape : arrêt du service, libération
+          du port, retrait du routage, quarantaine, suppression, vérification.
+        </p>
+      </div>
     </div>
   );
 }

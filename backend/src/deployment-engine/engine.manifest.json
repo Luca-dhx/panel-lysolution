@@ -1,12 +1,12 @@
 {
   "engine": "deployment-engine",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "engineApiVersion": "1",
-  "contractVersion": "1.1.0",
+  "contractVersion": "1.2.0",
   "minimumCompatibleVersion": "1.0.0",
   "layoutVersion": "2",
-  "releaseDate": "2026-07-27",
-  "lastStandardization": "2026-07-27",
+  "releaseDate": "2026-08-06",
+  "lastStandardization": "2026-08-06",
   "supportedProfiles": [
     "sbauto",
     "panel"
@@ -36,10 +36,19 @@
     "dns",
     "reports",
     "engine-introspection",
-    "engine-migrations"
+    "engine-migrations",
+    "deprovision",
+    "quarantine-410"
   ],
   "breakingChanges": [],
   "history": [
+    {
+      "version": "1.2.0",
+      "date": "2026-08-06",
+      "type": "MINOR",
+      "summary": "Retrait d'une destination (deprovision) : validation canonique du chemin, inventaire, arrêt et suppression du service, preuve de libération du port, retrait du routage, quarantaine 410, suppression des fichiers, vérification finale. Une destination ne peut plus être oubliée sur un serveur.",
+      "breaking": false
+    },
     {
       "version": "1.1.0",
       "date": "2026-07-27",

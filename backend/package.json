@@ -43,6 +43,7 @@
     "test:engine-drift": "node ../tests/engine-drift.check.mjs",
     "test:engine-governance": "node ../tests/engine-governance.test.js",
     "test:rollback": "node ../tests/deployment-rollback.test.js",
+    "test:deprovision": "node ../tests/deployment-deprovision.test.js",
     "test:duplication-e2e": "node ../tests/duplication-e2e.test.js"
   },
   "dependencies": {

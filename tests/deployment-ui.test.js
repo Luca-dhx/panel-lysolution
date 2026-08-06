@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  check, connectTestDatabase, finish, section, setTestEnv,
+  check, connectTestDatabase, finish, rejectsWith, section, setTestEnv,
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
 
@@ -27,6 +27,7 @@ const src = path.join(root, 'backend', 'src');
 const read = (...parts) => fs.readFileSync(path.join(src, ...parts), 'utf8');
 
 const targets = await import('../backend/src/services/deployment/deploymentTarget.service.js');
+const lifecycle = await import('../backend/src/services/deployment/destinationLifecycle.service.js');
 const runs = await import('../backend/src/services/deployment/deploymentRun.service.js');
 const worker = await import('../backend/src/services/deployment/deploymentWorker.service.js');
 const executor = await import('../backend/src/services/deployment/deploymentExecutor.service.js');
@@ -127,8 +128,19 @@ section('Destinations : l’INTENTION est saisie, la CONFIGURATION est déduite'
   check('…et aucune variable technique ne passe',
     Object.keys(forced.extraEnv ?? {}).length === 0);
 
-  await targets.deleteTarget(second.targetId);
-  await targets.deleteTarget(forced.targetId);
+  // ── LA SUPPRESSION N'EST PLUS UN NETTOYAGE (LOT 8) ────────────────────
+  // Une destination ACTIVE ne se supprime plus : supprimer sa fiche laissait
+  // sur le serveur son service PM2 — qui détenait toujours son port —, sa
+  // configuration Nginx et ses fichiers, sans plus rien pour le signaler.
+  const refus = await rejectsWith(() => targets.deleteTarget(second.targetId),
+    'PANEL_TARGET_NOT_EMPTY');
+  check('supprimer une destination ACTIVE est REFUSÉ', refus);
+
+  // Nettoyage du jeu d'essai : on passe par le modèle, pas par le service —
+  // c'est un ménage de test, pas une opération du Panel.
+  await PanelDeploymentTarget.deleteMany({
+    targetId: { $in: [second.targetId, forced.targetId] },
+  });
 }
 
 section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
@@ -174,8 +186,15 @@ section('Destinations : l’URL fait autorité, rien n’est saisi deux fois');
   check('…sans que son port attribué ne change',
     updated.backendPort === created.backendPort);
 
+  // Une destination JAMAIS mise en ligne se supprime tout de même — mais
+  // seulement après être passée par l'état « vidée ». C'est la même règle
+  // pour tout le monde : on ne supprime pas ce qu'on n'a pas constaté vide.
+  await lifecycle.beginDeprovision(created.targetId, { runId: 'run-menage' });
+  await lifecycle.markEmpty(created.targetId, { runId: 'run-menage', quarantine: false });
   await targets.deleteTarget(created.targetId);
-  check('…et se supprime', (await targets.listTargets()).length === 0);
+  check('…et se supprime une fois VIDÉE', (await targets.listTargets()).length === 0);
+  check('…sa fiche restant lisible pour l’audit',
+    (await targets.listDeletedTargets()).length === 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -709,7 +728,51 @@ section('L’interface ne contourne rien et n’expose aucun secret');
   const buttonCount = (deployCard.match(/<button/g) ?? []).length;
   check(`le parcours principal n’expose qu’UN bouton (${buttonCount} trouvé(s))`,
     buttonCount === 1);
-  check('…et ce bouton dit « Déployer »', />\s*Déployer\s*</.test(deployCard));
+  // Le libellé dit l'INTENTION. Sur une destination vidée, cette intention
+  // s'écrit « Redéployer » : c'est le seul chemin de retour depuis EMPTY, et
+  // le nommer autrement laisserait croire à une première mise en ligne.
+  check('…et ce bouton dit « Déployer » (ou « Redéployer » sur une destination vidée)',
+    /'Redéployer' : 'Déployer'/.test(deployCard) || />\s*Déployer\s*</.test(deployCard));
+
+  // ── LE RETRAIT (LOT 8) ──────────────────────────────────────────────
+  // Deux actions, dans cet ordre. La seconde n'est active qu'après la
+  // première : c'est la traduction visible de la règle « une destination
+  // ACTIVE ne se supprime pas ».
+  check('l’écran propose « Retirer le déploiement »',
+    /Retirer le déploiement/.test(targetPageSource));
+  check('…et « Supprimer la destination »',
+    /Supprimer la destination/.test(targetPageSource));
+  check('…la suppression n’est active QUE sur une destination vidée',
+    /disabled=\{busy \|\| locked \|\| !t\.canDelete\}/.test(targetPageSource));
+  check('…et le déploiement est bloqué pendant un retrait',
+    /!t\.canDeploy/.test(targetPageSource));
+
+  // La confirmation n'est PAS un `confirm()` : elle doit montrer ce qui sera
+  // détruit — port, service, dossier, taille, médias — avant de demander.
+  // Le motif exclut les mentions entre accents graves : le fichier EXPLIQUE
+  // pourquoi il n'utilise pas `confirm()`, et cette explication ne doit pas
+  // être confondue avec un appel.
+  check('la confirmation passe par une fenêtre dédiée, jamais confirm()',
+    /modal-backdrop/.test(targetPageSource)
+    && !/window\.confirm\(/.test(targetPageSource)
+    && !/[^A-Za-z0-9_.`]confirm\(/.test(targetPageSource));
+  for (const champ of ['Nom d’hôte', 'Environnement', 'Serveur', 'Port applicatif',
+    'Service PM2', 'Dossier', 'Taille', 'Fichiers', 'shared/uploads', 'shared/storage']) {
+    check(`la fenêtre annonce « ${champ} »`, targetPageSource.includes(champ));
+  }
+  check('…et dit que l’opération est irréversible',
+    /irréversible/.test(targetPageSource));
+  check('la saisie EXACTE du nom d’hôte est exigée',
+    /hostname\.trim\(\)\.toLowerCase\(\) === target\.host\.toLowerCase\(\)/.test(targetPageSource));
+  check('…et le bouton reste inerte tant qu’elle ne correspond pas',
+    /!hostOk/.test(targetPageSource));
+  check('la perte de données persistantes exige une confirmation séparée',
+    /persistentFiles/.test(targetPageSource) && /dropData/.test(targetPageSource));
+  check('un lien symbolique sortant bloque le retrait à l’écran',
+    /outboundSymlinks/.test(targetPageSource));
+  check('l’état du cycle de vie est affiché', /LifecycleBadge/.test(targetPageSource));
+  check('…et l’état « vidée » explique ce qu’il reste possible',
+    /410 Gone|410/.test(targetPageSource) && /redéployée/.test(targetPageSource));
 
   check('les opérations techniques sont hors du parcours, repliées',
     /Disclosure title="Outils de diagnostic"/.test(targetPageSource));
@@ -769,6 +832,10 @@ section('L’interface ne contourne rien et n’expose aucun secret');
     '/api/deployment/targets/:id/test-connection', '/api/deployment/targets/:id/preflight',
     '/api/deployment/targets/:id/simulate', '/api/deployment/targets/:id/deploy',
     '/api/deployment/targets/:id/rollback', '/api/deployment/targets/:id/releases',
+    // Cycle de vie de la destination (LOT 8) : inventaire avant retrait,
+    // retrait, suppression définitive de la fiche.
+    '/api/deployment/targets/:id/inspect', '/api/deployment/targets/:id/deprovision',
+    '/api/deployment/targets/:id/delete',
   ];
   const unknown = routes.filter((r) => !known.includes(r));
   check(`le client n’appelle que les routes du moteur${unknown.length ? ` — ${unknown}` : ''}`,
