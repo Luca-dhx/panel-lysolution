@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import ApiError from '../../utils/ApiError.js';
 import fs from 'node:fs/promises';
 import sharp from 'sharp';
@@ -40,9 +41,6 @@ export async function processImage(buffer, {
   const dossier = uploadsDir();
   await fs.mkdir(dossier, { recursive: true });
 
-  const unique = `${prefix}-${Date.now()}-${Math.round(Math.random() * 1e9)}.webp`;
-  const destination = path.join(dossier, unique);
-
   /**
    * LES MÉTADONNÉES SONT MESURÉES ICI, ET NULLE PART AILLEURS.
    *
@@ -62,11 +60,57 @@ export async function processImage(buffer, {
     .webp({ quality: 82 })
     .toBuffer({ resolveWithObject: true });
 
+  const { findMediaByContent, objectKeyFor, registerMedia, sha256Of } = await import('./mediaDescriptor.service.js');
+  const empreinte = sha256Of(encode.data);
+
+  /**
+   * RÉIMPORT DU MÊME FICHIER — on rend le média existant.
+   *
+   * Deux imports du même contenu produisent le même objet : même empreinte,
+   * même adresse. Créer un second fichier identique ne servirait qu'à occuper
+   * du disque et à faire diverger deux descripteurs qui décrivent la même
+   * image. La déduplication est SCOPÉE : un même contenu importé pour un autre
+   * usage reste un autre objet, et rien n'est jamais partagé entre projets.
+   */
+  const deja = await findMediaByContent({ sha256: empreinte, scope });
+  if (deja) {
+    const surDisque = path.join(dossier, deja.objectKey);
+    const present = await fs.access(surDisque).then(() => true).catch(() => false);
+    if (present) {
+      return { url: deja.path, filename: deja.objectKey, media: deja, deduplicated: true };
+    }
+  }
+
+  /**
+   * LE NOM PORTE L'EMPREINTE DU CONTENU — c'est tout le lot.
+   *
+   * ── LE DÉFAUT CORRIGÉ ───────────────────────────────────────────────────
+   * Le nom était `<préfixe>-<horodatage>-<aléa>.webp`. Rien, dans cette
+   * adresse, ne dépendait du CONTENU : deux images différentes pouvaient donc
+   * partager une URL si le fichier était réécrit, et rien ne permettait à un
+   * cache de savoir qu'il détenait une version périmée. Le seul recours était
+   * un paramètre temporel collé à l'URL — c'est-à-dire une adresse qui change
+   * sans que l'image change, donc un cache qui ne sert jamais.
+   *
+   * Avec `<mediaId>-<empreinte courte>.webp`, l'adresse EST le contenu :
+   *   · un contenu différent a forcément une autre adresse ;
+   *   · une adresse donnée ne peut plus jamais désigner autre chose ;
+   *   · le fichier peut donc être déclaré `immutable` pour un an, sans qu'une
+   *     ancienne image puisse jamais réapparaître après un remplacement.
+   *
+   * Le nom ne porte plus le préfixe d'usage : ce que représente une image est
+   * dit par son DESCRIPTEUR (`role`), et une information écrite à deux
+   * endroits finit par diverger.
+   */
+  const mediaId = randomUUID();
+  const unique = objectKeyFor({ mediaId, sha256: empreinte });
+  const destination = path.join(dossier, unique);
+
   await fs.writeFile(destination, encode.data);
 
   const chemin = `${UPLOADS_PUBLIC_PREFIX}/${unique}`;
-  const { registerMedia, sha256Of } = await import('./mediaDescriptor.service.js');
   const descripteur = await registerMedia({
+    mediaId,
     objectKey: unique,
     path: chemin,
     // Le type RÉEL, tel que l'encodeur vient de le produire — jamais déduit
@@ -76,11 +120,14 @@ export async function processImage(buffer, {
     size: encode.info.size ?? encode.data.length,
     width: encode.info.width ?? null,
     height: encode.info.height ?? null,
-    sha256: sha256Of(encode.data),
+    sha256: empreinte,
     scope,
     role,
     createdBy,
   });
+  // `prefix` ne nomme plus le fichier : il est conservé à la signature pour
+  // les appelants existants, et volontairement sans effet sur l'adresse.
+  void prefix;
 
   return {
     url: chemin,
@@ -105,7 +152,21 @@ export async function processImage(buffer, {
  * avoir déjà disparu. On le dit (`alreadyGone`) plutôt que de lever — le
  * résultat voulu est atteint dans les deux cas.
  */
-const NOM_MEDIA = /^[a-z0-9_-]{1,32}-\d{10,}-\d{1,12}\.webp$/i;
+/**
+ * DEUX FORMES ACCEPTÉES, ET PAS UNE DE PLUS.
+ *
+ *   · `<mediaId>-<empreinte courte>.webp` — la forme actuelle, où l'adresse
+ *     dépend du CONTENU ;
+ *   · `<préfixe>-<horodatage>-<aléa>.webp` — la forme HISTORIQUE. Elle reste
+ *     acceptée parce que des fichiers portant ce nom existent déjà sur les
+ *     serveurs déployés : cesser de les reconnaître rendrait leur suppression
+ *     impossible, et ils resteraient là pour toujours.
+ */
+const NOM_MEDIA_EMPREINTE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-[0-9a-f]{12}\.webp$/i;
+const NOM_MEDIA_HISTORIQUE = /^[a-z0-9_-]{1,32}-\d{10,}-\d{1,12}\.webp$/i;
+const NOM_MEDIA = {
+  test: (nom) => NOM_MEDIA_EMPREINTE.test(nom) || NOM_MEDIA_HISTORIQUE.test(nom),
+};
 
 export async function deleteImage(filename) {
   const nom = String(filename ||'').trim();

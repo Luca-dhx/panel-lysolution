@@ -37,6 +37,49 @@ export function sha256Of(buffer) {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+/** Longueur de l'empreinte inscrite dans le nom : 48 bits, sans collision réaliste. */
+export const SHORT_HASH_LENGTH = 12;
+
+/**
+ * NOM DE L'OBJET STOCKÉ — `<mediaId>-<empreinte courte>.webp`.
+ *
+ * ── POURQUOI L'EMPREINTE EST DANS LE NOM ────────────────────────────────────
+ * Parce que l'adresse doit DÉPENDRE du contenu. Tant que ce n'était pas le
+ * cas, rien ne permettait à un cache de savoir qu'il détenait une version
+ * périmée : le seul recours était un paramètre temporel collé à l'URL,
+ * c'est-à-dire une adresse qui change sans que l'image change — donc un cache
+ * qui ne sert jamais.
+ *
+ * Avec l'empreinte dans le nom : un contenu différent a forcément une autre
+ * adresse, et une adresse donnée ne peut plus jamais désigner autre chose. Le
+ * fichier devient légitimement `immutable`.
+ *
+ * Le `mediaId` reste présent : deux médias de contenu identique mais de
+ * portées différentes doivent rester deux objets distincts.
+ */
+export function objectKeyFor({ mediaId, sha256, extension = 'webp' }) {
+  const court = String(sha256).slice(0, SHORT_HASH_LENGTH);
+  return `${mediaId}-${court}.${extension}`;
+}
+
+/** L'empreinte lisible dans un nom d'objet, ou `null` pour un nom historique. */
+export function shortHashOf(objectKey) {
+  const m = /-([0-9a-f]{12})\.[a-z0-9]+$/i.exec(String(objectKey ?? ''));
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * UN MÉDIA DE MÊME CONTENU, DANS LA MÊME PORTÉE — pour la déduplication.
+ *
+ * La portée compte : dédupliquer sans elle ferait partager un objet entre deux
+ * usages, et la suppression de l'un ferait disparaître l'autre. Un média
+ * SUPPRIMÉ n'est jamais rendu — son fichier n'existe plus.
+ */
+export async function findMediaByContent({ sha256, scope = 'DEVELOPER_IDENTITY' }) {
+  if (!sha256) return null;
+  return PanelMedia.findOne({ sha256, scope, deletedAt: null }).lean();
+}
+
 /**
  * Une adresse est-elle CANONIQUE, c'est-à-dire publiable vers un autre projet ?
  *
@@ -70,7 +113,7 @@ export function isCanonicalMediaUrl(url) {
  * non le fichier, qui fait autorité sur ce que le Panel a publié.
  */
 export async function registerMedia({
-  objectKey, path: chemin, mime, size, width, height, sha256,
+  mediaId = null, objectKey, path: chemin, mime, size, width, height, sha256,
   scope = 'DEVELOPER_IDENTITY', role = null, createdBy = null,
 }) {
   const at = nowIso();
@@ -94,7 +137,9 @@ export async function registerMedia({
   }
 
   const doc = await PanelMedia.create({
-    mediaId: randomUUID(),
+    // L'identité est fournie par l'appelant quand elle a déjà servi à NOMMER
+    // le fichier : la recréer ici ferait diverger le nom et le descripteur.
+    mediaId: mediaId ?? randomUUID(),
     objectKey,
     path: chemin,
     mime,
@@ -197,6 +242,10 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
 
 export default {
   sha256Of,
+  SHORT_HASH_LENGTH,
+  objectKeyFor,
+  shortHashOf,
+  findMediaByContent,
   isCanonicalMediaUrl,
   registerMedia,
   markMediaDeleted,

@@ -315,6 +315,18 @@ export function ImageField({
 
   const url = (value || '').trim();
 
+  /**
+   * L'image a-t-elle échoué à se charger ?
+   *
+   * L'état est indexé sur l'URL COURANTE : une nouvelle adresse remet
+   * l'ardoise à zéro. Sans cela, une image cassée resterait annoncée cassée
+   * après un remplacement réussi — exactement le genre de résidu que ce lot
+   * cherche à supprimer.
+   */
+  const [casseeUrl, setCasseeUrl] = useState<string | null>(null);
+  const casse = Boolean(url) && casseeUrl === url;
+  const setCasse = (valeur: boolean) => setCasseeUrl(valeur ? url : null);
+
   const importer = async (file: File | undefined) => {
     if (!file) return;
     setEnvoi(true);
@@ -360,9 +372,22 @@ export function ImageField({
           if (!envoi) void importer(e.dataTransfer.files?.[0]);
         }}
       >
-        {url ? (
+        {url && !casse ? (
           <>
-            <img src={url} alt="" />
+            {/*
+              L'APERÇU SE MET À JOUR SEUL, sans paramètre anti-cache.
+
+              L'adresse d'un média porte l'empreinte de son contenu : une image
+              remplacée a forcément une AUTRE adresse, et React remonte donc une
+              autre image. Ajouter un `?t=…` reviendrait à faire changer
+              l'adresse alors que l'image n'a pas changé — un cache qui ne sert
+              jamais, pour résoudre un problème qui n'existe plus.
+
+              `key` sur l'URL garantit que l'élément est bien remplacé plutôt
+              que réutilisé avec un `src` modifié — c'est ce qui efface aussi
+              l'état d'erreur d'une image précédente.
+            */}
+            <img key={url} src={url} alt="" onError={() => setCasse(true)} />
             <button
               type="button"
               className="company-image-remove"
@@ -374,7 +399,13 @@ export function ImageField({
           </>
         ) : (
           <span className="muted">
-            {envoi ? 'Envoi…' : 'Cliquez ou déposez une image'}
+            {envoi
+              ? 'Envoi…'
+              : (casse
+                /* Un média retiré côté serveur répond 410 : on le DIT, plutôt
+                   que de laisser une vignette cassée sans explication. */
+                ? 'Image indisponible — elle a peut-être été supprimée. Cliquez pour en importer une autre.'
+                : 'Cliquez ou déposez une image')}
           </span>
         )}
         {envoi && url ? <span className="company-image-veil">Envoi…</span> : null}

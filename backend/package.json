@@ -46,6 +46,7 @@
     "test:deprovision": "node ../tests/deployment-deprovision.test.js",
     "test:ports": "node ../tests/deployment-ports.test.js",
     "test:media": "node ../tests/media-descriptor.test.js",
+    "test:media-cache": "node ../tests/media-cache-versioning.test.js",
     "test:duplication-e2e": "node ../tests/duplication-e2e.test.js"
   },
   "dependencies": {

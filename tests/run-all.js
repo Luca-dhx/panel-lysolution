@@ -46,6 +46,7 @@ const TESTS = [
   'deployment-deprovision.test.js',
   'deployment-ports.test.js',
   'media-descriptor.test.js',
+  'media-cache-versioning.test.js',
   'deployment-ui.test.js',
   'engine-governance.test.js',
   'duplication-e2e.test.js',
