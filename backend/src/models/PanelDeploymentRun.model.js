@@ -63,6 +63,26 @@ const eventSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/** Une entrée du journal forensique — forme identique à celle de SB Auto. */
+const journalEntrySchema = new mongoose.Schema(
+  {
+    at: { type: Date, required: true },
+    source: { type: String, required: true },
+    level: { type: String, default: 'info' },
+    eventCode: { type: String, required: true },
+    stepId: { type: String, default: null },
+    message: { type: String, default: null },
+    details: { type: mongoose.Schema.Types.Mixed, default: null },
+    pid: { type: Number, default: null },
+    port: { type: Number, default: null },
+    processName: { type: String, default: null },
+    requestId: { type: String, default: null },
+    errorCode: { type: String, default: null },
+    stack: { type: String, default: null },
+  },
+  { _id: false },
+);
+
 const runSchema = new mongoose.Schema(
   {
     runId: { type: String, required: true, unique: true },
@@ -82,7 +102,40 @@ const runSchema = new mongoose.Schema(
     // INCONNU, et le dire est plus honnête que de trancher.
     status: { type: String, default: 'running' },
 
+    /**
+     * L'ÉTAPE EN COURS — alignée sur SB Auto.
+     *
+     * Elle se déduisait des étapes (`status === 'running'`). La rendre
+     * explicite permet de la remettre à `null` d'une seule écriture quand un
+     * run est repris : sans elle, un chargement éternel pouvait subsister sur
+     * une opération pourtant close.
+     */
+    currentStepId: { type: String, default: null },
+
     steps: { type: [stepSchema], default: [] },
+
+    /**
+     * JOURNAL FORENSIQUE — append-only, écrit par `$push` atomique.
+     *
+     * Même forme et mêmes codes d'évènement que SB Auto : deux doctrines
+     * divergentes seraient pires que pas de journal, puisqu'on ne saurait plus
+     * lequel des deux dit la vérité.
+     *
+     * Aucun secret n'y entre — tout passe par le sanitizer central.
+     */
+    journal: { type: [journalEntrySchema], default: [] },
+
+    /**
+     * FINALISATION — un run n'est « réussi » que si l'état persistant le
+     * confirme. Un pipeline vert ne suffit pas.
+     */
+    finalization: {
+      attemptedAt: { type: Date, default: null },
+      succeeded: { type: Boolean, default: null },
+      error: { type: String, default: null },
+      targetState: { type: String, default: null },
+      checks: { type: mongoose.Schema.Types.Mixed, default: null },
+    },
     log: { type: [logSchema], default: [] },
 
     // Journal reprenable + compteur monotone. `eventSeq` est incrémenté par

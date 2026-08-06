@@ -24,6 +24,7 @@ import { DetailList, Disclosure } from '@/components/supervision';
 import { deployment as api, errorMessage } from '@/lib/api';
 import type { DeploymentRun, DeployStreamEvent, RunStep } from '@/types.deployment';
 import { RunBadge, operationLabel } from '@/pages/DeploymentPage';
+import { RunDiagnostics } from '@/components/deployment/RunDiagnostics';
 
 /**
  * Délai avant de retenter le flux après une coupure.
@@ -33,6 +34,23 @@ import { RunBadge, operationLabel } from '@/pages/DeploymentPage';
  * lui-même. On reprend alors au dernier `seq` traité, sans perte ni doublon.
  */
 const RECONNECT_MS = 800;
+
+/**
+ * RECULS successifs entre deux tentatives, en millisecondes.
+ *
+ * Un délai fixe martèle le serveur pendant tout son redémarrage, et n'apprend
+ * rien de son silence. On s'écarte progressivement, puis on plafonne : la
+ * reconnexion reste rapide quand la coupure est brève — le cas normal — sans
+ * transformer une panne durable en tempête de requêtes.
+ */
+const RECULS = [RECONNECT_MS, 1200, 2000, 3000, 5000, 8000];
+
+/**
+ * Au-delà de ce nombre de tentatives infructueuses, on cesse de dire « ça va
+ * revenir ». Ce n'est plus vrai, et une interface qui rassure à tort empêche
+ * précisément d'aller voir ce qui se passe.
+ */
+const TENTATIVES_AVANT_AVEU = RECULS.length;
 
 const STEP_MARKS: Record<string, string> = {
   pending: '·', running: '⟳', ok: '✓', warning: '!', error: '✗', skipped: '–',
@@ -46,6 +64,9 @@ export function DeploymentRunPage() {
   // Une coupure momentanée n'est PAS une erreur quand le Panel se déploie
   // lui-même : c'est le symptôme attendu. On la distingue d'un vrai échec.
   const [unreachable, setUnreachable] = useState(false);
+  // Combien de tentatives de reconnexion ont échoué d'affilée. Zéro dès qu'une
+  // seule réussit : c'est la SUITE d'échecs qui est significative, pas leur total.
+  const [echecsSuccessifs, setEchecsSuccessifs] = useState(0);
   const [copied, setCopied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const currentRef = useRef<HTMLLIElement | null>(null);
@@ -84,6 +105,7 @@ export function DeploymentRunPage() {
     const controller = new AbortController();
     let stopped = false;
     let retry: number | undefined;
+    let echecs = 0;
 
     const applyEvent = (evt: DeployStreamEvent) => {
       if (evt.kind === 'step') {
@@ -130,14 +152,21 @@ export function DeploymentRunPage() {
             }
             applyEvent(evt);
             setUnreachable(false);
+            // Le compteur repart de zéro : c'est la SUITE d'échecs qui compte,
+            // et un évènement reçu prouve que le backend est de nouveau là.
+            echecs = 0;
+            setEchecsSuccessifs(0);
           }
         } catch {
           if (stopped) return;
           // Coupure (backend en redémarrage) : ce n'est pas une erreur.
           setUnreachable(true);
+          echecs += 1;
+          setEchecsSuccessifs(echecs);
         }
         if (stopped) return;
-        await new Promise((r) => { retry = window.setTimeout(r, RECONNECT_MS); });
+        const recul = RECULS[Math.min(echecs, RECULS.length - 1)];
+        await new Promise((r) => { retry = window.setTimeout(r, recul); });
       }
     };
 
@@ -191,9 +220,13 @@ export function DeploymentRunPage() {
         <p className="muted">Chargement de l’exécution…</p>
         {unreachable ? (
           <p className="mode-notice mode-execution">
-            Le backend du Panel ne répond pas. S’il s’agit d’un déploiement du
-            Panel lui-même, c’est attendu : il redémarre. Cette page se
-            reconnectera seule.
+            {echecsSuccessifs >= TENTATIVES_AVANT_AVEU
+              ? 'Le backend du Panel n’est pas revenu après plusieurs tentatives. '
+                + 'L’opération, elle, se poursuit dans son processus séparé : ce run '
+                + 'reste consultable dès que l’API répond de nouveau.'
+              : 'Le backend du Panel ne répond pas. S’il s’agit d’un déploiement du '
+                + 'Panel lui-même, c’est attendu : il redémarre. Cette page se '
+                + 'reconnectera seule.'}
           </p>
         ) : null}
       </div>
@@ -225,9 +258,13 @@ export function DeploymentRunPage() {
       {unreachable ? (
         <p className="mode-notice mode-execution">
           Le backend ne répond pas actuellement.{' '}
-          {run.selfDeployment
-            ? 'C’est attendu : ce déploiement redémarre le Panel. L’opération se poursuit dans son processus séparé.'
-            : 'La page se reconnectera automatiquement.'}
+          {echecsSuccessifs >= TENTATIVES_AVANT_AVEU
+            ? 'Il n’est pas revenu après plusieurs tentatives. Le déploiement se '
+              + 'poursuit dans son processus détaché : cette page le retrouvera dès '
+              + 'que l’API répondra.'
+            : run.selfDeployment
+              ? 'C’est attendu : ce déploiement redémarre le Panel. L’opération se poursuit dans son processus séparé.'
+              : 'La page se reconnectera automatiquement.'}
         </p>
       ) : null}
 
@@ -381,6 +418,16 @@ export function DeploymentRunPage() {
           Panel et reste consultable des semaines plus tard.
         </p>
       </Disclosure>
+
+      {/*
+        DIAGNOSTIC TECHNIQUE — tout ce qui a été enregistré pendant l'opération.
+
+        Le journal ci-dessus raconte l'opération en termes métier ; celui-ci
+        donne les faits bruts — HTTP, SSH, PM2, sockets, finalisation — avec
+        leur source et leur code. C'est lui qu'on ouvre quand le premier ne
+        suffit pas à expliquer.
+      */}
+      <RunDiagnostics run={run} />
     </div>
   );
 }

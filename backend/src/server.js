@@ -15,8 +15,20 @@ import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
 import { migrateLegacyEvents, migrateParticipants } from './services/events/eventsMigration.js';
+import { installProcessGuards } from './services/deployment/forensics/processGuard.js';
+import { recoverOrphanRuns } from './services/deployment/forensics/runSteps.service.js';
+import { consommerMarqueurReprise } from './services/deployment/forensics/restartMarker.service.js';
 
 async function start() {
+  /**
+   * LES OBSERVATEURS D'ERREURS D'ABORD — avant toute autre chose.
+   *
+   * Une exception pendant la connexion à la base ou les migrations doit elle
+   * aussi laisser une trace. Les installer après serait trop tard pour les
+   * pannes de démarrage.
+   */
+  installProcessGuards({ logger });
+
   await connectDatabase();
   await seedFromEnv();
   await refreshAllowedOrigins();
@@ -40,6 +52,32 @@ async function start() {
   // la garantie — l'état le plus dangereux, puisque plus rien ne signale
   // qu'elle manque. Les autres reprises complètent des données ; leur échec
   // reste non bloquant.
+  /**
+   * L'ORDRE COMPTE — le marqueur de reprise AVANT la reprise générique.
+   *
+   * `recoverOrphanRuns()` classe tout run « en cours » comme interrompu.
+   * Appelé en premier, il qualifierait d'incident un redémarrage parfaitement
+   * attendu — celui que le Panel provoque en se déployant lui-même.
+   */
+  const reprise = await consommerMarqueurReprise().catch(() => null);
+  if (reprise?.consumed) {
+    logger.info(`Redémarrage attendu constaté : run ${reprise.runId} repris (étape suivante ${reprise.nextExpectedStep ?? 'inconnue'}).`);
+  } else if (reprise?.reason === 'PROCESS_INCHANGE') {
+    logger.warn(`Marqueur de reprise présent mais le process n'a pas changé : run ${reprise.runId} laissé en l'état.`);
+  }
+
+  /**
+   * REPRISE DES RUNS ORPHELINS — l'invariant « toute étape RUNNING finit ».
+   *
+   * Le worker du Panel est DÉTACHÉ : il survit au redémarrage de l'API. Seuls
+   * les runs dont le worker est réellement mort sont donc concernés — et c'est
+   * exactement ce que cette reprise doit clore, sans toucher aux autres.
+   */
+  const repris = await recoverOrphanRuns({ reason: 'process_restart' }).catch(() => null);
+  if (repris?.recovered) {
+    logger.warn(`${repris.recovered} déploiement(s) interrompu(s) : étapes closes et journalisées.`);
+  }
+
   const lifecycle = await migrateDeploymentTargets();
   if (lifecycle?.lifecycleBackfilled) {
     logger.info(`${lifecycle.lifecycleBackfilled} destination(s) reprise(s) en état ACTIVE.`);

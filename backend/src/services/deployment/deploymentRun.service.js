@@ -309,6 +309,29 @@ export function describeRun(doc) {
     && Date.now() - Date.parse(doc.workerHeartbeatAt) > HEARTBEAT_TIMEOUT_MS;
 
   return {
+    /**
+     * LE JOURNAL FORENSIQUE — ce qui rend un incident lisible sans terminal.
+     *
+     * Il part tel qu'il a été écrit : les entrées ont traversé le sanitizer au
+     * moment de leur création, côté serveur. Le refiltrer ici laisserait croire
+     * que la base contient des secrets — elle n'en contient pas, et c'est là
+     * que la garantie doit être tenue.
+     */
+    journal: (doc.journal ?? []).map((e) => ({
+      at: e.at, source: e.source, level: e.level, eventCode: e.eventCode,
+      stepId: e.stepId ?? null, message: e.message ?? null, details: e.details ?? null,
+      pid: e.pid ?? null, port: e.port ?? null, processName: e.processName ?? null,
+      requestId: e.requestId ?? null, errorCode: e.errorCode ?? null, stack: e.stack ?? null,
+    })),
+    /** Le verdict de finalisation — pourquoi un succès n'en est pas un. */
+    finalization: doc.finalization?.attemptedAt ? {
+      attemptedAt: doc.finalization.attemptedAt,
+      succeeded: doc.finalization.succeeded,
+      error: doc.finalization.error ?? null,
+      targetState: doc.finalization.targetState ?? null,
+      checks: doc.finalization.checks ?? null,
+    } : null,
+
     runId: doc.runId,
     targetId: doc.targetId,
     targetName: doc.targetName,

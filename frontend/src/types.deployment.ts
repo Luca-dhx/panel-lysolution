@@ -160,7 +160,42 @@ export type DeployStreamEvent =
   | { kind: 'ping'; seq: number }
   | { kind: 'reload'; reason: string; lastSeq: number };
 
+/**
+ * UNE ENTRÉE DU JOURNAL FORENSIQUE.
+ *
+ * Forme IDENTIQUE à celle de SB Auto : deux doctrines divergentes seraient
+ * pires que pas de journal, puisqu'on ne saurait plus lequel dit la vérité.
+ * Elle a déjà traversé le sanitizer côté serveur.
+ */
+export interface RunJournalEntry {
+  at: string;
+  source: 'ENGINE' | 'HTTP' | 'SSH' | 'PM2' | 'SOCKET' | 'WORKER' | 'FINALIZATION' | 'BRIDGE' | 'SYSTEM';
+  level: 'debug' | 'info' | 'warning' | 'error';
+  eventCode: string;
+  stepId: string | null;
+  message: string | null;
+  details: unknown;
+  pid: number | null;
+  port: number | null;
+  processName: string | null;
+  requestId: string | null;
+  errorCode: string | null;
+  stack: string | null;
+}
+
 export interface DeploymentRun {
+  /** Le journal forensique — vide pour les runs antérieurs à l'instrumentation. */
+  journal?: RunJournalEntry[];
+  /** Le verdict de finalisation : pourquoi un succès n'en est pas un. */
+  finalization?: {
+    attemptedAt: string;
+    succeeded: boolean;
+    error: string | null;
+    targetState: string | null;
+    checks: Record<string, unknown> | null;
+  } | null;
+  /** Dernière étape atteinte — présente sur les runs finalisés. */
+  finalStepId?: string | null;
   runId: string;
   targetId: string;
   targetName: string | null;

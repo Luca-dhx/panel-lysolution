@@ -63,9 +63,33 @@ delete process.env.PANEL_DEPLOY_SSH_PASSWORD;
 const { connectDatabase, disconnectDatabase } = await import('../config/db.js');
 const runs = await import('../services/deployment/deploymentRun.service.js');
 const targets = await import('../services/deployment/deploymentTarget.service.js');
+const { installProcessGuards, setActiveRun } = await import('../services/deployment/forensics/processGuard.js');
+const { journal, SOURCES, LEVELS } = await import('../services/deployment/forensics/runJournal.service.js');
+const { verifyFinalization } = await import('../services/deployment/forensics/finalization.service.js');
 
 await connectDatabase();
 await runs.attachWorker(runId, process.pid);
+
+/**
+ * LES OBSERVATEURS D'ERREURS, ICI ET PAS SEULEMENT DANS L'API.
+ *
+ * Le déploiement vit dans CE processus. Une erreur non gérée y tue le worker
+ * au milieu d'une mise en ligne, et l'API — qui a rendu 202 depuis longtemps —
+ * n'en saurait rien. Le run resterait « en cours » sans la moindre cause.
+ *
+ * Le run actif est déclaré : une erreur sans contexte s'inscrit ainsi dans le
+ * bon run plutôt que nulle part.
+ */
+installProcessGuards({ logger: console });
+setActiveRun(runId);
+await journal(runId, {
+  source: SOURCES.WORKER,
+  level: LEVELS.INFO,
+  eventCode: 'WORKER_STARTED',
+  message: `Worker détaché démarré (pid ${process.pid}).`,
+  details: { pid: process.pid, operation: process.env.PANEL_DEPLOY_OPERATION ?? null },
+  pid: process.pid,
+});
 
 // Battement de cœur : c'est lui qui permettra de conclure qu'un run est
 // orphelin si ce processus meurt sans avoir conclu.
@@ -127,6 +151,18 @@ try {
     // qu'une écriture est en vol condamnerait une étape déjà terminée.
     await stepQueue;
     await runs.finalizeRun(runId, outcome);
+
+    /**
+     * L'INVARIANT DU SUCCÈS — vérifié, jamais déduit.
+     *
+     * Un pipeline vert ne suffit pas : on RELIT la destination et la
+     * réservation de port. C'est en déduisant le succès sans relire l'état
+     * persisté qu'un écran de succès a pu coexister avec une destination
+     * figée en « Publication… ».
+     */
+    if (outcome?.status === 'ok') {
+      await verifyFinalization(runId, targetId).catch(() => null);
+    }
     await targets.recordDeployment(targetId, {
       operationType,
       ok: outcome.status === 'ok',

@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import asyncHandler from '../utils/asyncHandler.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
+import { traceDeploymentErrors, traceDeploymentRequests } from '../services/deployment/forensics/httpTrace.js';
 import {
   create,
   deploy,
@@ -34,6 +35,15 @@ const router = Router();
 
 router.use(asyncHandler(requirePanelUser));
 router.use(requirePanelDev);
+
+/**
+ * TRACE FORENSIQUE — montée AVANT toute route.
+ *
+ * Elle ouvre une trace dès la première ligne de la requête, donc AVANT que le
+ * run n'existe. C'est ce qui rend diagnosticable un HTTP 500 survenu avant
+ * `createRun` — le symptôme que le Panel a déjà produit.
+ */
+router.use(traceDeploymentRequests());
 
 // — Lecture ----------------------------------------------------------------
 router.get('/', asyncHandler(overview));
@@ -88,5 +98,8 @@ router.post('/targets/:targetId/simulate', asyncHandler(simulate));
 // Lecture courte exécutée dans la requête : l'opérateur en a besoin tout de
 // suite pour choisir une release.
 router.post('/targets/:targetId/releases', asyncHandler(releases));
+
+/** Trace des erreurs — montée APRÈS les routes, là où la pile a encore un sens. */
+router.use(traceDeploymentErrors());
 
 export default router;

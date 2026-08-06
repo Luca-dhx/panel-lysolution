@@ -17,6 +17,9 @@ import { canonicalStep } from '../../deployment-engine/steps.js';
 import { syncRuntimeNetworkConfiguration } from '../../deployment-engine/runtimeConfig.js';
 import config from '../../config/env.js';
 import * as identity from './projectIdentity.service.js';
+import { EVENTS, LEVELS, SOURCES, journal } from './forensics/runJournal.service.js';
+import { journalPm2After, journalPm2Before } from './forensics/pm2Trace.js';
+import { ecrireMarqueurReprise, effacerMarqueurReprise } from './forensics/restartMarker.service.js';
 
 /** Opérations que le Panel sait exécuter sur une destination. */
 export const OPERATIONS = Object.freeze({
@@ -59,6 +62,33 @@ export async function executeOperation({
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
   const steps = [];
+
+  /**
+   * L'OBSERVATEUR SSH — le moteur émet des faits, le run les conserve.
+   *
+   * Sans lui, un `ssh.connect` figé ne laissait rien : ni tentative, ni délai,
+   * ni motif de refus. Le moteur reste générique — il ne connaît qu'un rappel
+   * injecté, jamais Mongo — et le mot de passe ne franchit pas cette
+   * frontière : le transport ne publie que la MÉTHODE d'authentification.
+   */
+  if (runId) {
+    engine.transportObserver = ({ eventCode, host, port, username, authMethod, ...reste }) => {
+      void journal(runId, {
+        source: SOURCES.SSH,
+        level: eventCode === 'SSH_READY' || eventCode === 'SSH_CONNECT_STARTED' ? LEVELS.INFO : LEVELS.ERROR,
+        eventCode,
+        stepId: 'ssh.connect',
+        message: eventCode === 'SSH_READY'
+          ? `Connexion établie avec ${username}@${host}:${port} en ${reste.durationMs} ms.`
+          : eventCode === 'SSH_CONNECT_STARTED'
+            ? `Connexion à ${username}@${host}:${port} (${authMethod}).`
+            : `${eventCode} sur ${username}@${host}:${port}${reste.reason ? ` — ${reste.reason}` : ''}.`,
+        errorCode: reste.errorCode ?? null,
+        details: { host, port, username, authMethod, ...reste },
+        port,
+      });
+    };
+  }
 
   // On enveloppe les rappels : le run doit garder la trace des étapes même
   // quand l'opération échoue en cours de route.
@@ -290,6 +320,7 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
    * échoué avant le transfert n'a peut-être reçu aucun fichier, et en faire
    * une source reviendrait à migrer du vide en croyant migrer des médias.
    */
+  let etatPm2Avant = null;
   let locationId = null;
   const resolveUploadsSources = async ({ host, siteRoot, sharedUploads }) => {
     if (!projectIdentityId) return null;
@@ -337,6 +368,45 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
        * le détenait encore.
        */
       beforeServiceStart: async ({ transport, pm2Name }) => {
+        /**
+         * ÉTAT AVANT, puis MARQUEUR — dans cet ordre.
+         *
+         * Le Panel redémarre parfois SA PROPRE application. Le worker est
+         * détaché et survit, mais l'API meurt : tout ce qui doit traverser la
+         * coupure est écrit AVANT, jamais après.
+         */
+        etatPm2Avant = await journalPm2Before(runId, transport, {
+          processName: pm2Name, port: target.backendPort,
+        }).catch(() => null);
+
+        await journal(runId, {
+          source: SOURCES.PM2, level: LEVELS.WARNING,
+          eventCode: EVENTS.APPLICATION_RESTART_EXPECTED,
+          stepId: 'pm2', processName: pm2Name, port: target.backendPort,
+          message: 'Redémarrage du service imminent. Si ce backend sert l’interface, '
+            + 'elle deviendra brièvement injoignable : c’est attendu, pas une panne.',
+          details: { expectedProcessName: pm2Name, expectedPort: target.backendPort },
+        }).catch(() => null);
+
+        await ecrireMarqueurReprise({
+          runId, targetId: target.targetId, operation: 'DEPLOYMENT',
+          nextExpectedStep: 'health', expectedProcessName: pm2Name, expectedPort: target.backendPort,
+        }).catch(() => null);
+
+        // L'interface doit savoir AVANT la coupure, sinon elle l'interprète
+        // comme une erreur serveur générique.
+        const { appendEvent } = await import('./deploymentRun.service.js');
+        await appendEvent(runId, 'backend_restarting', {
+          message: 'Redémarrage du serveur…',
+          expectedProcessName: pm2Name, expectedPort: target.backendPort,
+        }).catch(() => null);
+
+        await journal(runId, {
+          source: SOURCES.PM2, level: LEVELS.INFO, eventCode: EVENTS.PM2_RESTART_REQUESTED,
+          stepId: 'pm2', processName: pm2Name, port: target.backendPort,
+          message: `Redémarrage de « ${pm2Name} » demandé.`,
+        }).catch(() => null);
+
         const verdict = await ports.verifyBeforeStart({ target, transport, expectedPm2Name: pm2Name });
         log(`Port ${verdict.port} vérifié juste avant démarrage : `
           + `${verdict.free ? 'libre' : 'détenu par notre propre service'}.`);
@@ -349,6 +419,17 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
        */
       afterServiceStarted: async (info) => {
         await ports.activateReservation(target.targetId, { pid: info.pid ?? null, processName: info.name ?? null });
+        /**
+         * ÉTAT APRÈS — et la PREUVE que le port nous appartient.
+         *
+         * Un `pm2 restart` qui rend 0 ne prouve rien : c'est ainsi qu'un
+         * ancien service a pu conserver un port pendant que le nouveau
+         * bouclait sur EADDRINUSE.
+         */
+        await journalPm2After(runId, info.transport ?? null, {
+          processName: info.name ?? null, port: target.backendPort, avant: etatPm2Avant,
+        }).catch(() => null);
+        await effacerMarqueurReprise(runId).catch(() => null);
         log(`Service « ${info.name} » actif (pid ${info.pid ?? '?'}) sur le port ${info.port}.`);
       },
       // Écrit les URLs publiques dans le SystemConfiguration de la DESTINATION
