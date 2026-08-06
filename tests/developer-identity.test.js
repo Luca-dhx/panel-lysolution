@@ -136,8 +136,13 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
   check('plus aucun champ « adresse du logo »', !/Adresse du logo/.test(blocs));
   // Le composant sert au logo ET aux portraits d'équipe : le dossier suit
   // l'usage. Deux composants jumeaux auraient divergé au premier correctif.
+  // L'import passe le fichier ET le RÔLE MÉTIER. Le rôle n'est pas déduit du
+  // préfixe : un préfixe nomme un fichier, il ne dit pas ce que l'image
+  // représente — et c'est le rôle que le descripteur publié transporte.
   check('le fichier s’importe',
-    /uploadImage\(file, kind === 'avatar' \? 'avatar' : 'logo'\)/.test(blocs));
+    /uploadImage\(/.test(blocs) && /kind === 'avatar' \? 'avatar' : 'logo'/.test(blocs));
+  check('…en déclarant son rôle métier',
+    /kind === 'avatar' \? 'team-photo' : 'logo'/.test(blocs));
   check('…au clic', /inputRef\.current\?\.click\(\)/.test(blocs));
   check('…et au glisser-déposer', /onDrop=/.test(blocs) && /dataTransfer\.files/.test(blocs));
   check('…au clavier aussi', /e\.key === 'Enter'/.test(blocs));
