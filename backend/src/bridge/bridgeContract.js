@@ -200,6 +200,24 @@ const isoDate = z.string().datetime({ offset: true });
  */
 export const mediaDescriptorSchema = z
   .object({
+    /**
+     * QUI DÉTIENT CE MÉDIA — ADDITIF, déclaré, jamais déduit.
+     *
+     * ── LE DÉFAUT QUE CE CHAMP FERME ──────────────────────────────────────
+     * Les deux côtés du pont décrivaient leurs médias de la même façon : clé
+     * d'objet, empreinte, dimensions. Le lecteur concluait donc « média du
+     * projet » sur la simple présence d'une clé, et recomposait l'adresse
+     * contre le domaine du CLIENT. Le logo du développeur, servi par le Panel,
+     * devenait `https://<client>/uploads/<clé du Panel>` — un 404.
+     *
+     * `PANEL` : le média reste sur le Panel et garde l'adresse qu'il publie.
+     * `PROJECT` : le média suit la destination active du projet.
+     *
+     * Optionnel pour la LECTURE des projections antérieures — l'autorité leur
+     * est alors donnée par le schéma du champ qui les porte. Toute émission
+     * nouvelle le renseigne.
+     */
+    authority: z.enum(['PANEL', 'PROJECT']).nullable().optional(),
     /** Identité stable du média. `null` pour une URL externe non gérée. */
     mediaId: z.string().nullable().optional(),
     url: z.string().url(),

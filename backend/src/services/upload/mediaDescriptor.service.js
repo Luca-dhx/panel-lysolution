@@ -378,6 +378,9 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
       return null;
     }
     return {
+      // Le Panel PUBLIE cette référence : elle est sous son autorité, même
+      // s'il n'héberge pas le fichier. Un projet ne la recompose jamais.
+      authority: 'PANEL',
       mediaId: null, url: brut, mime: null, size: null,
       width: null, height: null, sha256: null, version: null,
       updatedAt: null, role, external: true,
@@ -398,6 +401,8 @@ export async function publishableDescriptor(valeur, { role = null } = {}) {
 export function stableDescriptorOf(media) {
   if (!media?.objectKey) return null;
   return {
+    /** Le Panel détient ce média : aucune destination de projet ne le sert. */
+    authority: 'PANEL',
     mediaId: media.mediaId,
     objectKey: media.objectKey,
     environment: media.environment ?? null,
@@ -440,6 +445,15 @@ async function descriptorOfKnownMedia(media, role) {
   }
 
   return {
+    /**
+     * L'AUTORITÉ, ÉCRITE — jamais laissée à deviner.
+     *
+     * Sans elle, le projet qui recevait ce descripteur concluait « média du
+     * projet » sur la présence d'une clé d'objet, et recomposait l'adresse
+     * contre SON domaine. Le logo du développeur devenait un 404 sur le site
+     * du client. Ce champ est le seul énoncé qui l'en empêche.
+     */
+    authority: 'PANEL',
     mediaId: media.mediaId,
     url: absolue,
     mime: media.mime,
@@ -450,6 +464,14 @@ async function descriptorOfKnownMedia(media, role) {
     version: media.version,
     updatedAt: media.updatedAt,
     role: role ?? media.role ?? null,
+    /**
+     * CE QUE LE PANEL A CONSTATÉ SUR SON SERVEUR — pas ce qu'il espère.
+     *
+     * Le projet le lit pour refuser d'afficher un média que le Panel sait
+     * n'être servi de nulle part. Il n'était pas publié : le lecteur ne
+     * pouvait donc pas distinguer « joignable » de « décrit ».
+     */
+    publicationState: media.publicationState ?? 'LOCAL_ONLY',
     external: false,
   };
 }

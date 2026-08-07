@@ -1,12 +1,12 @@
 {
   "engine": "deployment-engine",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "engineApiVersion": "1",
-  "contractVersion": "1.4.0",
+  "contractVersion": "1.5.0",
   "minimumCompatibleVersion": "1.0.0",
   "layoutVersion": "2",
-  "releaseDate": "2026-08-06",
-  "lastStandardization": "2026-08-06",
+  "releaseDate": "2026-08-07",
+  "lastStandardization": "2026-08-07",
   "supportedProfiles": [
     "sbauto",
     "panel"
@@ -42,10 +42,19 @@
     "port-registry",
     "service-health-proof",
     "application-media-publication",
-    "binary-file-transfer"
+    "binary-file-transfer",
+    "application-media-adoption",
+    "media-authority-preserving-healthcheck"
   ],
   "breakingChanges": [],
   "history": [
+    {
+      "version": "1.5.0",
+      "date": "2026-08-07",
+      "type": "MINOR",
+      "summary": "Autorite des medias et reprise du parc existant. Le healthcheck public ne RECONSTRUIT plus l'adresse d'un media : une URL absolue exposee par la projection est testee TELLE QUELLE, sur son propre hote ; seuls les chemins relatifs sont eprouves contre chaque origine servie. Un media legitimement heberge ailleurs (le logo du developpeur, servi par le Panel) ne fait donc plus echouer un deploiement sain. Nouvelle etape 'project_media_adopt', placee entre la migration des medias et leur publication : capacite injectee, executee sur la DESTINATION, qui decrit les medias existants avant qu'on tente de les publier. Le coeur n'importe aucun modele de media.",
+      "breaking": false
+    },
     {
       "version": "1.4.0",
       "date": "2026-08-06",

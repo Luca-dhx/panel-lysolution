@@ -27,6 +27,9 @@ export const PIPELINE_STEPS = [
   'upload',
   'dirs',
   'uploads_migrate',
+  // La reprise des médias EXISTANTS suit immédiatement leur migration : c'est
+  // le premier instant où les octets sont tous réunis sur la destination.
+  'project_media_adopt',
   'nginx',
   'certbot',
   'reload',
@@ -263,6 +266,40 @@ export async function runPipeline({ transport, target, artifact, options, versio
         identityId: plan.identityId,
         sources: plan.sources || [],
         remoteRoot,
+      });
+    });
+
+    /**
+     * 3bis. REPRISE DES MÉDIAS EXISTANTS DE L'APPLICATION — sur la destination.
+     *
+     * ── LE CAS RÉEL, ET IL EST LE PLUS FRÉQUENT ───────────────────────────
+     * Un projet en service depuis des mois n'a AUCUN descripteur : ses fiches
+     * ne portent qu'un chemin (`/uploads/img-1783953966067-898120780.webp`),
+     * et les octets correspondants ne vivent nulle part ailleurs que dans le
+     * `shared/uploads` de la destination. Le poste qui déploie, lui, n'a qu'un
+     * `.gitkeep`. Toute reprise conduite depuis ce poste inventorierait donc
+     * du vide, et conclurait qu'il n'y a rien à reprendre.
+     *
+     * L'étape s'exécute là où sont les FICHIERS. Le moteur ne sait pas les
+     * reconnaître — quel champ les référence, sous quel type métier — et cette
+     * connaissance appartient à l'application : d'où une capacité injectée.
+     * Le moteur n'importe aucun modèle de média, ici comme ailleurs.
+     *
+     * ── PLACÉE ICI, ET NULLE PART AILLEURS ────────────────────────────────
+     * APRÈS `uploads_migrate` : les médias d'un emplacement antérieur viennent
+     * d'arriver, et une reprise qui les manquerait devrait être rejouée.
+     * AVANT `media_publish` : la publication ne voit que ce qui est décrit.
+     * AVANT `validate` : le contrôle public constate l'état FINAL.
+     *
+     * En l'absence de capacité injectée (façade, test, application sans
+     * médias), l'étape est neutre — jamais bloquante.
+     */
+    await step('project_media_adopt', 'Reprise des médias existants', async () => {
+      if (typeof options.adoptApplicationMedia !== 'function') {
+        return { skipped: true, reason: 'non configuré (façade/test)' };
+      }
+      return options.adoptApplicationMedia({
+        transport, backendDir, sharedUploads, siteRoot, host, env,
       });
     });
 

@@ -87,11 +87,31 @@ async function headResource(transport, url) {
  * Test FONCTIONNEL EXHAUSTIF des médias (LOT 12 renforcé).
  * 1) récupère la sonde publique DÉCLARÉE AU PROFIL et REFUSE toute URL d'upload
  *    locale/non sûre ;
- * 2) extrait les chemins de médias ESSENTIELS et vérifie que CHACUN se télécharge
- *    RÉELLEMENT (HTTP 200 + type MIME image) depuis CHAQUE origine servie du
- *    profil — un front charge ses médias relativement à sa propre origine.
+ * 2) vérifie que CHAQUE média RÉELLEMENT EXPOSÉ par la projection se télécharge
+ *    (HTTP 200 + type MIME image).
  * Un simple « pas de localhost » ne suffit pas : un fichier absent (404) rend un
  * logo cassé tout en passant l'ancien contrôle.
+ *
+ * ══ CE CONTRÔLE NE RECONSTRUIT PLUS D'ADRESSE ═══════════════════════════════
+ *
+ * Il extrayait `/uploads/…` de la sonde — y compris le CHEMIN d'une adresse
+ * absolue — puis recomposait cette adresse contre chaque origine servie. Une
+ * image légitimement hébergée ailleurs devenait donc :
+ *
+ *     exposée :  https://panel.ly-solution.com/uploads/7dda…webp   (200)
+ *     testée  :  https://<client>/uploads/7dda…webp                (404)
+ *
+ * … et le déploiement échouait sur un média parfaitement sain. Le contrôle
+ * inventait une adresse que rien n'avait publiée.
+ *
+ * L'invariant est désormais :
+ *
+ *     URL affichée par l'application === URL testée par le healthcheck
+ *
+ *   · une adresse ABSOLUE est testée TELLE QUELLE, sur son propre hôte ;
+ *   · un chemin RELATIF est testé contre chaque origine servie — c'est bien
+ *     ainsi qu'un navigateur le chargerait.
+ *
  * @returns {Promise<{ok, probed, reachable, localHits, checked, brokenCount}>}
  */
 export async function checkPublicMedia(transport, host, { origins: originSpec, path = PUBLIC_MEDIA_PROBE_PATH, maxAssets = 8 } = {}) {
@@ -109,8 +129,26 @@ export async function checkPublicMedia(transport, host, { origins: originSpec, p
     ...(body.match(/http:\/\/[^\s"'\\]*\/uploads\/[^\s"'\\]*/gi) || []),
   ])].slice(0, 5);
 
-  // (2) Chemins de médias à vérifier réellement.
-  const paths = [...new Set((body.match(/\/uploads\/[^\s"'\\?]+/g) || []))].slice(0, maxAssets);
+  /**
+   * (2) LES MÉDIAS TELS QUE LA PROJECTION LES EXPOSE.
+   *
+   * Deux formes, deux façons de les charger — et on ne convertit jamais l'une
+   * en l'autre :
+   *
+   *   · ABSOLUE — l'application a publié un hôte. C'est CET hôte qui sert le
+   *     fichier ; le tester ailleurs testerait une adresse que personne
+   *     n'affiche. On retire ces adresses du corps avant de chercher les
+   *     chemins relatifs, sinon leur `/uploads/…` serait compté deux fois — et
+   *     la seconde fois contre le mauvais domaine.
+   *
+   *   · RELATIVE — le navigateur la résout contre l'origine qui l'a servie. On
+   *     la contrôle donc depuis CHAQUE origine du profil.
+   */
+  const ABSOLUE = /https?:\/\/[^\s"'\\<>]+\/uploads\/[^\s"'\\?<>]+/gi;
+  const absolues = [...new Set(body.match(ABSOLUE) || [])].slice(0, maxAssets);
+  const corpsSansAbsolues = body.replace(ABSOLUE, ' ');
+  const paths = [...new Set((corpsSansAbsolues.match(/\/uploads\/[^\s"'\\?<>]+/g) || []))].slice(0, maxAssets);
+
   // Origines à contrôler : fournies par la TOPOLOGIE (une par application
   // servie). À défaut, l'hôte principal seul.
   const origins = (originSpec?.length ? originSpec : [{ label: 'site', host }])
@@ -118,6 +156,7 @@ export async function checkPublicMedia(transport, host, { origins: originSpec, p
 
   const checked = [];
   let brokenCount = 0;
+
   for (const p of paths) {
     const perOrigin = {};
     let assetOk = true;
@@ -128,7 +167,19 @@ export async function checkPublicMedia(transport, host, { origins: originSpec, p
       if (!ok) assetOk = false;
     }
     if (!assetOk) brokenCount += 1;
-    checked.push({ path: p, origins: perOrigin, ok: assetOk });
+    checked.push({ path: p, absolute: false, origins: perOrigin, ok: assetOk });
+  }
+
+  for (const url of absolues) {
+    // Une seule sonde, sur l'hôte que la projection a réellement publié. Le
+    // libellé porte cet hôte : un rapport qui dirait « site » pour une adresse
+    // servie ailleurs ferait chercher la panne au mauvais endroit.
+    let libelle = 'externe';
+    try { libelle = new URL(url).hostname; } catch { /* libellé par défaut */ }
+    const r = await headResource(transport, url);
+    const ok = r.code === 200 && /^image\//i.test(r.mime);
+    if (!ok) brokenCount += 1;
+    checked.push({ path: url, absolute: true, origins: { [libelle]: { code: r.code, mime: r.mime, ok } }, ok });
   }
 
   const ok = localHits.length === 0 && brokenCount === 0;

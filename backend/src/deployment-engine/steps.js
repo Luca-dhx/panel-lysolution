@@ -27,10 +27,21 @@ export const CANONICAL_STEPS = [
   { id: 'artifact.upload', label: 'Transfert du projet', critical: true },
   { id: 'dependencies.install', label: 'Installation & configuration', critical: true },
   { id: 'uploads.migrate', label: 'Migration des médias persistants', critical: true },
+  /**
+   * REPRISE puis PUBLICATION — deux actes distincts, dans cet ordre.
+   *
+   * `media.adopt` DÉCRIT, sur la destination, les médias qui n'avaient encore
+   * aucun descripteur : ils n'existaient que comme chemins dans des fiches.
+   * `media.publish` CONSTATE ensuite lesquels sont réellement servis. Publier
+   * ne peut pas précéder décrire : la publication ne voit que ce qui est
+   * décrit, et un parc historique ne l'est pas.
+   */
+  { id: 'media.adopt', label: 'Reprise des médias existants', critical: true },
   { id: 'nginx.configure', label: 'Configuration du routage web', critical: true },
   { id: 'https.configure', label: 'Activation HTTPS', critical: true },
   { id: 'services.start', label: 'Démarrage des services', critical: true },
   { id: 'services.verify', label: 'Vérification des services', critical: true },
+  { id: 'media.publish', label: 'Publication des médias', critical: true },
   /**
    * L'ORDRE DE CETTE LISTE EST CELUI DE L'EXÉCUTION — il pilote l'affichage, le
    * rapport et l'historique.
@@ -67,6 +78,8 @@ export const RAW_TO_CANONICAL = {
   upload: 'artifact.upload',
   dirs: 'dependencies.install',
   uploads_migrate: 'uploads.migrate',
+  project_media_adopt: 'media.adopt',
+  media_publish: 'media.publish',
   nginx: 'nginx.configure',
   certbot: 'https.configure',
   runtime_config: 'runtime.sync',
