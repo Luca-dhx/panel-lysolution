@@ -220,48 +220,79 @@ PM2, PID, socket, Nginx, `siteRoot`, fichiers, uploads, taille.
 
 ---
 
-## 6bis. Configuration développeur : une version globale, une application par instance
+## 6bis. L'entreprise du Panel : enregistrer suffit
 
-**Enregistrer n'est pas diffuser.** Ce sont deux opérations, et elles ne se
-rattrapent pas l'une l'autre.
+> **`PanelCompany` est la source de vérité de l'identité entreprise du Panel.
+> Enregistrer une modification suffit. La distribution aux projets est
+> automatique via le Bridge. Les versions sont un mécanisme interne de
+> convergence et d'idempotence, pas un workflow de publication utilisateur.**
+
+### Le chemin complet, et il n'a qu'un geste humain
 
 ```
-Enregistrer  →  écrit la fiche        → saved: true
-             →  crée une version SI la charge utile a changé
-             →  diffuse cette version
-
-Rediffuser   →  renvoie la version EN VIGUEUR aux instances en retard
-             →  n'écrit rien, ne crée aucun numéro
+Panel · Mon entreprise · [ Enregistrer ]
+   │
+   ├─ PanelCompany                 la vérité écrite
+   ├─ PanelCompanyVersion (N)      un instantané immuable, daté, avec son diff
+   └─ emitChange(DEV_COMPANY)      déposé dans le journal de synchronisation
+        │
+        ↓  le PROJET tire, à son rythme
+   syncPull  →  applyCompanyProfile  →  PanelCompanyConfiguration
+        │
+        ↓
+   SB Auto · Aide  →  logo, nom, coordonnées, équipe
 ```
 
-> **Un enregistrement crée au maximum une nouvelle version.
-> Une nouvelle tentative de diffusion n'en crée jamais.**
+L'utilisateur clique **une fois**. Rien d'autre ne lui est demandé, et rien ne
+lui est présenté comme restant à faire.
 
-### « Rien de nouveau à versionner » est un succès
+### Ce qui a été RETIRÉ du produit, et pourquoi
 
-Si la charge utile publiée est identique à la dernière version, il n'y a rien
-à versionner — **parce que tout est déjà publié**. Ce cas rendait autrefois
-`published: false`, et l'écran en déduisait « la dernière diffusion n'a pas
-abouti, enregistrez de nouveau ». Réenregistrer reproduisait le même état.
+Trois bandeaux se sont succédé sur cet écran, chacun corrigeant le précédent :
+« il reste des modifications non publiées », puis « la dernière diffusion n'a
+pas abouti — enregistrez de nouveau », puis « certaines instances n'ont pas
+encore reçu la configuration » avec un bouton *Réessayer la diffusion*.
 
-Le cas est fréquent : un média de marque n'est publié que s'il est **servi par
-une destination active**. Sur un Panel de développement ou jamais déployé, tous
-les logos valent `null` dans la charge utile — deux logos différents y
-produisent donc une charge utile identique.
+Tous les trois posaient la même question à la mauvaise personne. Celui qui
+corrige un numéro de téléphone n'arbitre pas une stratégie de distribution, et
+n'a aucun moyen d'agir sur un projet qui ne répond pas. Lui montrer un travail
+en attente qu'il ne peut pas faire aboutir, c'est lui demander de surveiller le
+pont à sa place.
 
-### L'état ne se déduit jamais de deux horloges
+N'existent donc plus **pour l'utilisateur** : publier, version à publier,
+rediffuser, réessayer, « les projets utilisent encore la version N »,
+« dernière diffusion ».
 
-`updatedAt > publishedAt` compare une date de **sauvegarde locale** à une date
-de **publication**. Leur écart ne dit rien de ce que les projets ont reçu. La
-seule question qui compte — la fiche diffère-t-elle de la dernière version
-publiée ? — se répond en comparant les **charges utiles**
-(`describeCompanyPublication`).
+### Ce que les versions restent
 
-### L'application est suivie PAR INSTANCE
+Un mécanisme de protocole, et rien de plus :
 
-Une fiche du registre est **une instance**. La recette et la production d'un
-même projet en sont deux, avec deux jetons et deux runtimes : elles ont chacune
-leur état.
+| Sert à | Comment |
+|---|---|
+| ordonner | un numéro monotone par entreprise |
+| idempotence | rejouer une version déjà appliquée est un non-événement |
+| anti-régression | une version **antérieure** à celle déjà appliquée est ignorée |
+| convergence | un projet absent rattrape la **dernière** vérité |
+| diagnostic | savoir ce qu'une instance donnée a réellement appliqué |
+
+### Convergence : le projet finit à la DERNIÈRE vérité
+
+Si le Panel passe v10 → v11 → v12 pendant qu'un projet est absent, celui-ci ne
+rejoue aucune expérience utilisateur : il tire ce qu'il a manqué et la garde
+de version écarte tout ce qui est plus ancien que ce qu'il a déjà appliqué. Il
+finit en **v12**, jamais bloqué sur v11 parce qu'une diffusion intermédiaire
+n'aurait pas abouti.
+
+> Aucun clic « rediffuser » n'est nécessaire. Le journal conserve la vérité ;
+> le projet vient la chercher.
+
+### Le diagnostic reste, replié et sans bouton
+
+L'état par instance demeure consultable — *Synchronisation des projets*, dans
+un repli de l'écran. Il **informe**, il ne demande rien.
+
+Une fiche du registre est **une instance** : la recette et la production d'un
+même projet en sont deux, avec deux jetons et deux runtimes.
 
 | Champ | Où | Sens |
 |---|---|---|
@@ -280,18 +311,27 @@ de tentative.
 | `UNKNOWN` | reliée, mais n'a jamais déclaré de version |
 | `NOT_PAIRED` | aucun lien — **ce n'est pas une erreur, c'est une absence** |
 
-Verdict global : `UP_TO_DATE` · `PARTIAL` · `NOT_DISTRIBUTED` ·
-`NO_CONNECTED_PROJECT` · `NEVER_PUBLISHED`. **Une instance non appairée n'y
-pèse pas** — un projet sans production déclarée est un projet normal.
+`POST /api/company/republish` subsiste comme **outil de diagnostic** : il
+renvoie la version en vigueur aux seules instances qui ne l'ont pas confirmée,
+sans rien écrire ni créer aucun numéro. Aucun écran ne l'offre.
 
-### La rediffusion vise, elle n'arrose pas
+### L'isolation TEST / PROD n'a pas d'exception
 
-Seules les instances qui n'ont pas confirmé la version courante la reçoivent,
-par une écriture nominative (`audience: projectId`). Rien à faire → aucun envoi,
-et on le dit (`ALREADY_APPLIED_EVERYWHERE`) plutôt que de simuler.
+```
+Panel TEST  ↔  Projets TEST
+Panel PROD  ↔  Projets PROD
+```
+
+Deux gardes indépendantes, et jamais une déduction par nom d'hôte :
+
+1. **à l'appairage** — un projet qui se déclare en `PROD` sur un Panel qui sert
+   `TEST` est refusé (`BRIDGE_ENVIRONMENT_MISMATCH`) ;
+2. **à l'application** — un projet refuse une configuration dont
+   l'`environment` n'est pas le sien (`ENVIRONMENT_MISMATCH`).
 
 → `backend/src/services/company/company.service.js`
-→ `tests/developer-branding-instance-ack-e2e.test.js`
+→ `tests/panel-company-save-to-help-e2e.test.js` (un save → la page Aide)
+→ `tests/real-panel-sbauto-branding-ack-e2e.test.js` (l'accusé, par instance)
 
 ---
 

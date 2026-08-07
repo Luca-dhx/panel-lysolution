@@ -207,6 +207,38 @@ const COMMANDS = {
   },
 
   /**
+   * CE QUE LA PAGE « AIDE » AFFICHE — par son vrai contrôleur.
+   *
+   * Pas une relecture du modèle : le handler HTTP réel, celui que le Manager
+   * appelle. Ce qui sort d'ici est, mot pour mot, ce que le client voit.
+   */
+  async help() {
+    const ctrl = await import(SB('src/controllers/panelBridge.controller.js'));
+    let charge = null;
+    const res = { json(body) { charge = body; return this; }, status() { return this; } };
+    await ctrl.company({}, res, () => {});
+    return charge?.data ?? charge;
+  },
+
+  /**
+   * ISOLATION TEST/PROD — éprouvée sur le VRAI applicateur.
+   *
+   * Une configuration d'un autre monde doit être refusée par le projet
+   * lui-même, et pas seulement filtrée en amont : mentions légales, domaines
+   * et contacts réels s'afficheraient sur un site de recette.
+   */
+  async applyForeign({ environment }) {
+    const courante = await panelConfiguration.getCompanyConfiguration();
+    return panelConfiguration.applyCompanyProfile({
+      companyId: courante?.companyId ?? '00000000-0000-4000-8000-000000000000',
+      slug: 'monde-etranger',
+      environment,
+      version: 9999,
+      identity: { name: 'Entreprise d’un autre monde' },
+    }, 'SYNC');
+  },
+
+  /**
    * PANNE D'ÉCRITURE RÉELLE — la base est coupée.
    *
    * Aucun applicateur n'est remplacé, aucun handler n'est enveloppé : c'est le

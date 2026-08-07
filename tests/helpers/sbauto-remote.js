@@ -86,6 +86,9 @@ export async function startSbAutoInstance({ mongoUri, dbName, env, projectName, 
     state() { return send('state'); },
     raw() { return send('raw'); },
     identity() { return send('identity'); },
+    /** Ce que la page « Aide » affichera — via son vrai contrôleur. */
+    help() { return send('help'); },
+    applyForeign(args) { return send('applyForeign', args); },
     severDatabase() { return send('severDatabase'); },
     restoreDatabase() { return send('restoreDatabase'); },
     async stop() {

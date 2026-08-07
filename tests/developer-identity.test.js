@@ -211,8 +211,28 @@ section('6. Le brouillon accepte des blocs entiers, pas seulement des champs');
   check('…qui publie du même geste', !/api\.publish\(/.test(page));
   check('plus aucune raison de publication demandée',
     !/Raison de cette publication/.test(page) && !/setReason/.test(page));
-  check('enregistrer sans changement est un succès, pas une erreur',
-    /if \(!r\.published\) return 'Aucune modification à diffuser\.'/.test(page));
+  /**
+   * ── L'ÉCRAN NE PARLE PLUS DE DIFFUSION DU TOUT ───────────────────────────
+   *
+   * Il annonçait « Version 12 diffusée à 3 projet(s) », ou « Aucune
+   * modification à diffuser ». Deux phrases exactes, et deux invitations à se
+   * demander ce qu'il faut faire du reste. L'utilisateur enregistre son
+   * entreprise ; la convergence appartient au pont.
+   */
+  check('l’enregistrement se confirme d’une seule phrase',
+    /return 'Entreprise enregistrée\.'/.test(page));
+  check('…qui ne parle ni de version, ni de destinataires, ni de diffusion',
+    !/diffusée à/.test(page) && !/à diffuser/.test(page) && !/rediffus/i.test(page));
+  // Sur le CODE, pas sur les commentaires : cet écran raconte ce qu'il a
+  // supprimé, et une assertion ne doit pas se valider — ni échouer — sur une
+  // explication.
+  const codePage = page.replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  check('aucun bouton ne propose de réessayer une diffusion',
+    !/Réessayer la diffusion/.test(codePage) && !/api\.republish\(/.test(codePage)
+    && !/rediffuser\(\)/.test(codePage));
+  check('l’état par instance reste consultable, mais replié et sans action',
+    /Synchronisation des projets/.test(page) && /Disclosure/.test(page));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

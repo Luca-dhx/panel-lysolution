@@ -90,8 +90,6 @@ export function CompanyPage() {
   // La fiche n'existe pas encore, mais on la remplit déjà : l'enregistrement
   // final la créera. Aucun état intermédiaire n'est persisté côté serveur.
   const [creating, setCreating] = useState(false);
-  /** Rediffusion en cours — distincte de l'enregistrement, comme l'action. */
-  const [rediffusion, setRediffusion] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -103,26 +101,6 @@ export function CompanyPage() {
       setError(errorMessage(err, 'Entreprise indisponible.'));
     }
   }, []);
-
-  /**
-   * REDIFFUSER — renvoie la version en vigueur, sans rien enregistrer.
-   *
-   * Elle n'appelle PAS l'enregistrement : la fiche est deja correcte, seul le
-   * transport avait manque. Rejouee, elle renvoie la meme version.
-   */
-  const rediffuser = async () => {
-    setRediffusion(true);
-    setError(null);
-    try {
-      const r = await api.republish();
-      setNotice(`Version ${r.version} rediffusee vers ${r.recipients} projet(s).`);
-      await load();
-    } catch (err) {
-      setError(errorMessage(err, 'Rediffusion impossible.'));
-    } finally {
-      setRediffusion(false);
-    }
-  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -172,10 +150,13 @@ export function CompanyPage() {
   }
 
   /**
-   * LES INSTANCES EN RETARD — appairees, et pas encore a jour.
-   * Le backend les nomme ; l'ecran ne les recalcule pas.
+   * L'ÉTAT DE SYNCHRONISATION — une INFORMATION, jamais une tâche.
+   *
+   * Le backend nomme chaque instance et son état ; l'écran ne recalcule rien
+   * et ne propose aucune action. Un projet en retard se rattrape tout seul :
+   * il tire la dernière vérité à son prochain passage.
    */
-  const enRetard = state.distribution?.pendingProjectIds ?? [];
+  const instances = (state.distribution?.instances ?? []).filter((i) => i.paired);
 
   const existe = Boolean(state.company);
   const c = state.company ?? EMPTY_COMPANY;
@@ -265,99 +246,65 @@ export function CompanyPage() {
 
   const modifie = Object.keys(draft).length > 0;
 
-  /** Le bouton unique : créer la première fois, enregistrer ensuite. */
+  /**
+   * LE BOUTON UNIQUE — et il ne parle plus de diffusion.
+   *
+   * ══ CE QUI A ÉTÉ RETIRÉ DU PRODUIT, ET POURQUOI ═════════════════════════
+   *
+   * L'écran racontait un workflow éditorial : une version à publier, un
+   * nombre de destinataires, une diffusion à réessayer. Or l'utilisateur ne
+   * décide rien de tout cela. Il corrige un numéro de téléphone et veut que
+   * ce soit fait.
+   *
+   * Chaque phrase de ce vocabulaire était une occasion de croire qu'un second
+   * geste manquait — et le bandeau « enregistrez de nouveau » en était la
+   * conséquence directe. La convergence appartient au pont : il livre la
+   * dernière vérité, et un projet absent la reçoit à son retour.
+   *
+   * Les numéros de version continuent d'exister, en dessous : ils ordonnent,
+   * dédupliquent et empêchent une régression. Ce sont des détails de
+   * protocole, pas un état métier à faire lire.
+   */
   const enregistrer = () => run(async () => {
     if (!existe) {
-      const r = await api.create(patch());
+      await api.create(patch());
       setCreating(false);
-      return `Entreprise créée et diffusée à ${r.recipients} projet(s).`;
+      return 'Entreprise enregistrée.';
     }
-    const r = await api.update(patch());
-    // Enregistrer sans rien avoir changé est un geste anodin : on le dit,
-    // on ne le punit pas.
-    if (!r.published) return 'Aucune modification à diffuser.';
-    return `Version ${r.version} diffusée à ${r.recipients} projet(s).`;
+    await api.update(patch());
+    return 'Entreprise enregistrée.';
   });
 
   return (
     <div className="page">
       <header className="page-head">
         <h1>Mon entreprise{c.identity.name ? ` — ${c.identity.name}` : ''}</h1>
-        <p className="muted">
-          Votre identité, partagée avec les projets que vous opérez. Chaque
-          enregistrement est diffusé immédiatement.
+<p className="muted">
+          Votre identité, telle que la voient les projets que vous opérez.
+          Enregistrez : ils l’appliquent d’eux-mêmes.
         </p>
-        {existe ? (
-          <div className="execution-head">
-            {c.publishedVersion === null ? (
-              <span className="badge badge-warn">Jamais diffusée</span>
-            ) : (
-              <span className="badge badge-ok">Version {c.publishedVersion} en vigueur</span>
-            )}
-          </div>
-        ) : null}
       </header>
 
       {/*
-        Ce bandeau ne devrait jamais apparaître : enregistrer publie. Il subsiste
-        pour le seul cas où la diffusion a échoué après l'écriture — sans lui,
-        l'écran montrerait une fiche que les projets n'ont pas.
+        ══ IL N'Y A PLUS DE BANDEAU DE DIFFUSION ICI, ET C'EST LE CORRECTIF ══
+
+        Trois bandeaux se sont succédé à cet endroit, chacun corrigeant le
+        précédent : « il reste des modifications non publiées », puis « la
+        dernière diffusion n'a pas abouti — enregistrez de nouveau », puis
+        « certaines instances n'ont pas encore reçu la configuration » avec un
+        bouton « Réessayer la diffusion ».
+
+        Tous les trois posaient la même question à la mauvaise personne.
+        L'utilisateur corrige un numéro de téléphone ; il n'arbitre pas une
+        stratégie de distribution, et n'a aucun moyen d'agir sur un projet qui
+        ne répond pas. Lui montrer un travail en attente qu'il ne peut pas
+        faire aboutir, c'est lui demander de surveiller le pont à sa place.
+
+        La convergence appartient au protocole : le journal conserve la
+        dernière vérité, et un projet absent la tire à son retour. L'état par
+        instance reste consultable — plus bas, dans le repli « Diagnostic »,
+        sans bouton et sans alarme.
       */}
-      {/*
-        ══ CE BANDEAU NE DEMANDE PLUS DE RÉENREGISTRER ═══════════════════════
-
-        Il disait « la dernière diffusion n'a pas abouti — enregistrez de
-        nouveau », sur la foi de `updatedAt > publishedAt` : une date de
-        SAUVEGARDE confrontée à une date de PUBLICATION. Toute écriture
-        technique l'allumait, et réenregistrer reproduisait exactement le même
-        état — le seul geste proposé était le seul qui ne pouvait pas aider.
-
-        L'état vient désormais du backend, qui compare les charges utiles. Et
-        quand il reste réellement quelque chose à diffuser, l'action offerte
-        est la rediffusion : elle renvoie la version en vigueur sans toucher à
-        la fiche ni créer de numéro suivant.
-      */}
-      {/*
-        ══ L'ÉTAT SE LIT PAR INSTANCE, PAS PAR BOOLÉEN ═══════════════════════
-
-        Une fiche du registre est UNE instance : la recette et la production
-        d'un même projet en sont deux, avec deux jetons et deux runtimes. Un
-        seul « diffusé oui/non » pour les deux ne peut être qu'à moitié vrai,
-        et ne dit jamais LAQUELLE est en retard — c'est-à-dire exactement ce
-        qu'il faut savoir pour agir.
-
-        Une instance non appairée n'est pas un échec : c'est une absence.
-      */}
-      {enRetard.length > 0 ? (
-        <div className="mode-notice mode-execution">
-          <p>
-            Modifications enregistrées.
-            <strong> Certaines instances n’ont pas encore reçu la dernière configuration.</strong>
-          </p>
-          <ul className="distribution-list">
-            {(state.distribution?.instances ?? [])
-              .filter((i) => i.paired)
-              .map((i) => (
-                <li key={i.projectId}>
-                  <span className="distribution-project">{i.projectName}</span>
-                  <span className="distribution-env">{i.environment ?? '—'}</span>
-                  <span className={`distribution-state distribution-${i.state.toLowerCase()}`}>
-                    {ETAT_DIFFUSION[i.state]}
-                  </span>
-                </li>
-              ))}
-          </ul>
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            disabled={rediffusion}
-            onClick={() => void rediffuser()}
-          >
-            {rediffusion ? 'Diffusion…' : 'Réessayer la diffusion'}
-          </button>
-        </div>
-      ) : null}
-
       {error ? <div className="alert alert-error">{error}</div> : null}
       {notice ? <div className="alert alert-success">{notice}</div> : null}
 
@@ -480,6 +427,43 @@ export function CompanyPage() {
           </button>
         ) : null}
       </div>
+
+      {/*
+        DIAGNOSTIC — ce que les projets ont appliqué, pour qui veut le savoir.
+
+        ══ POURQUOI C'EST REPLIÉ, ET SANS AUCUN BOUTON ═══════════════════════
+
+        Parce que ce n'est pas une tâche. L'utilisateur enregistre ; les
+        projets appliquent d'eux-mêmes. Mettre cet état en évidence, avec un
+        bouton pour « réessayer », transformait un détail de protocole en
+        travail à surveiller — et laissait croire qu'un enregistrement pouvait
+        rester à moitié fait.
+
+        Il reste consultable parce qu'un développeur en a parfois besoin :
+        « la recette a-t-elle bien pris ma correction ? » se répond ici, sans
+        ouvrir la fiche de chaque projet. Une instance en attente se rattrape
+        seule à son prochain passage.
+      */}
+      {instances.length > 0 ? (
+        <Disclosure title={`Synchronisation des projets (${instances.length})`}>
+          <ul className="distribution-list">
+            {instances.map((i) => (
+              <li key={i.projectId}>
+                <span className="distribution-project">{i.projectName}</span>
+                <span className="distribution-env">{i.environment ?? '—'}</span>
+                <span className={`distribution-state distribution-${i.state.toLowerCase()}`}>
+                  {ETAT_DIFFUSION[i.state]}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="muted read-only-note">
+            Information seulement. Un projet momentanément absent récupère la
+            dernière version de lui-même à son retour — il n’y a rien à
+            relancer.
+          </p>
+        </Disclosure>
+      ) : null}
 
       {/* HISTORIQUE — le versionnement reste entier, sans rien exiger de
           l'utilisateur au moment d'enregistrer. */}

@@ -33,6 +33,8 @@ const TESTS = [
   'developer-branding-instance-ack-e2e.test.js',
   // Cross-dépôt : un vrai SB Auto, dans son processus, tire et applique.
   'real-panel-sbauto-branding-ack-e2e.test.js',
+  // Un enregistrement, et la page « Aide » du projet suit — sans second geste.
+  'panel-company-save-to-help-e2e.test.js',
   'instance-generation-freshness.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',
