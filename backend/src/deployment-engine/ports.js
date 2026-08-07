@@ -293,6 +293,20 @@ export const UNSTABLE_RESTART_THRESHOLD = 3;
 export const MIN_STABLE_UPTIME_MS = 3000;
 
 /**
+ * Délai accordé à un service pour LIER son port après avoir été lancé.
+ *
+ * « online » chez PM2 dit que le processus est forké, pas qu'il écoute. Entre
+ * les deux, une application fait son démarrage : connexion à la base, index,
+ * migrations. Soixante secondes couvrent largement ce travail, y compris sur un
+ * cluster distant lent, sans jamais faire patienter un service sain — la
+ * vérification sort dès que la preuve est acquise.
+ */
+export const PORT_BIND_TIMEOUT_MS = 60_000;
+
+/** Intervalle entre deux observations pendant cette attente. */
+export const PORT_BIND_POLL_MS = 1500;
+
+/**
  * SANTÉ RÉELLE d'un service PM2 — bien au-delà de `pm_exec_path`.
  *
  * ── CE QUI MANQUAIT ─────────────────────────────────────────────────────────
@@ -318,9 +332,46 @@ export const MIN_STABLE_UPTIME_MS = 3000;
 export async function verifyServiceHealth(transport, {
   name, port, expectedExecPath = null, expectedCwd = null,
   baselineRestarts = null, settleMs = MIN_STABLE_UPTIME_MS, wait = defaultWait,
+  bindTimeoutMs = PORT_BIND_TIMEOUT_MS, bindPollMs = PORT_BIND_POLL_MS,
 }) {
-  const echec = (code, message, details) => {
-    throw new DeploymentError(code, message, { step: 'services.start', details: { name, port, ...details } });
+  /**
+   * LES DERNIÈRES LIGNES DU SERVICE — sans elles, on constate sans comprendre.
+   *
+   * « en ligne mais n'écoute pas » ne dit pas SI le module manque, si la base
+   * est injoignable, si le `.env` est refusé ou si une exception tombe au
+   * démarrage. La réponse est dans la sortie du process, et il faut aller la
+   * chercher au moment de l'échec — après, PM2 l'aura noyée.
+   *
+   * Bornée (30 lignes) et SANITIZÉE : ces journaux contiennent des URI de base
+   * et des jetons. Un diagnostic ne doit jamais devenir une fuite.
+   */
+  const journauxDuService = async () => {
+    try {
+      const res = await transport.exec(`pm2 logs ${name} --lines 30 --nostream 2>/dev/null || true`,
+        { timeoutMs: 15_000 });
+      const brut = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+      if (!brut.trim()) return null;
+      return brut
+        .split(/\r?\n/)
+        .slice(-30)
+        .map((l) => l
+          .replace(/mongodb(\+srv)?:\/\/[^\s"']+/gi, 'mongodb://***')
+          .replace(/(Bearer|token|secret|password|key)[=:\s"']+\S+/gi, '$1=***')
+          .replace(/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '***'))
+        .join('\n')
+        .slice(0, 4000);
+    } catch {
+      // Un diagnostic qui échoue ne doit pas remplacer l'erreur qu'il éclaire.
+      return null;
+    }
+  };
+
+  const echec = async (code, message, details) => {
+    const logs = await journauxDuService();
+    throw new DeploymentError(code, message, {
+      step: 'services.start',
+      details: { name, port, ...details, ...(logs ? { serviceLogTail: logs } : {}) },
+    });
   };
 
   /**
@@ -340,16 +391,16 @@ export async function verifyServiceHealth(transport, {
   const premier = await readPm2Processes(transport);
   const proc = premier.processes.find((p) => p.name === name);
   if (!proc) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » n'est pas déclaré à PM2 après démarrage.`, { declared: premier.processes.map((p) => p.name) });
   }
   if (proc.status !== 'online') {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » est ${proc.status ?? 'dans un état inconnu'} au lieu d'être en ligne.`,
       { status: proc.status, restarts: proc.restarts });
   }
   if (proc.pid === null || proc.pid === undefined || proc.pid === 0) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » est annoncé en ligne sans PID : il n'a pas de processus vivant.`,
       { status: proc.status });
   }
@@ -359,7 +410,7 @@ export async function verifyServiceHealth(transport, {
   // qu'il AUGMENTE pendant qu'on regarde.
   const depuisOperation = baselineRestarts === null ? null : proc.restarts - baselineRestarts;
   if (depuisOperation !== null && depuisOperation > UNSTABLE_RESTART_THRESHOLD) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » a redémarré ${depuisOperation} fois depuis le début de l'opération : il boucle.`,
       { restarts: proc.restarts, baselineRestarts, since: depuisOperation });
   }
@@ -368,16 +419,16 @@ export async function verifyServiceHealth(transport, {
   const second = await readPm2Processes(transport);
   const apres = second.processes.find((p) => p.name === name);
   if (!apres) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » a disparu de PM2 pendant la vérification.`, {});
   }
   if (apres.restarts > proc.restarts) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » redémarre en boucle (${proc.restarts} → ${apres.restarts} pendant la vérification).`,
       { restarts: apres.restarts, previous: proc.restarts });
   }
   if (apres.pid !== proc.pid) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+    await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
       `Le service « ${name} » a changé de processus pendant la vérification (pid ${proc.pid} → ${apres.pid}).`,
       { pid: apres.pid, previous: proc.pid });
   }
@@ -390,42 +441,117 @@ export async function verifyServiceHealth(transport, {
     return norm(valeur) === norm(attendu);
   };
   if (expectedExecPath && !memeChemin(apres.execPath, expectedExecPath)) {
-    echec('PM2_STALE_PATH',
+    await echec('PM2_STALE_PATH',
       `PM2 exécute ${apres.execPath ?? 'un fichier inconnu'} au lieu de ${expectedExecPath}.`,
       { execPath: apres.execPath, expected: expectedExecPath });
   }
   if (expectedCwd && !memeChemin(apres.cwd, expectedCwd)) {
-    echec('PM2_STALE_PATH',
+    await echec('PM2_STALE_PATH',
       `PM2 travaille dans ${apres.cwd ?? 'un dossier inconnu'} au lieu de ${expectedCwd}.`,
       { cwd: apres.cwd, expected: expectedCwd });
   }
 
-  // LE PORT EST-IL ÉCOUTÉ, ET PAR NOTRE PID ?
-  const { sockets, readable } = await readListeningSockets(transport);
-  const socket = sockets.find((s) => s.port === port);
-  if (readable && !socket) {
-    echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
-      `Le service « ${name} » est en ligne mais n'écoute pas sur le port ${port}.`,
-      { pid: apres.pid, listening: sockets.map((s) => s.port) });
-  }
-  if (readable && socket && socket.pid !== null && socket.pid !== apres.pid) {
-    echec(PORT_ERRORS.PM2_PORT_NOT_OWNED,
-      `Le port ${port} est écouté par le pid ${socket.pid} (${socket.process ?? 'inconnu'}) `
-      + `et non par le service « ${name} » (pid ${apres.pid}). Le trafic n'arrive pas au code déployé.`,
-      { pid: apres.pid, socketPid: socket.pid, socketProcess: socket.process });
+  /**
+   * LE PORT EST-IL ÉCOUTÉ, ET PAR NOTRE PID ?
+   *
+   * ══ LE DÉFAUT CORRIGÉ ═══════════════════════════════════════════════════════
+   *
+   * Cette lecture était UNIQUE : absence de socket au premier regard valait
+   * échec. Or « online » chez PM2 signifie « le processus est forké », pas
+   * « il écoute ». Entre les deux, l'application fait son démarrage — connexion
+   * à la base, migrations, index — et ne lie son port qu'ensuite.
+   *
+   * Le déploiement SB Auto du 07/08 00:34 l'a montré : PM2 rend `online` avec
+   * un PID stable, le bon `pm_exec_path`, le bon `pm_cwd`, aucun redémarrage —
+   * et pourtant rien sur 5002 après 7,5 s. Le budget d'attente valait 3 000 ms
+   * puis 1 500 ms, quand le backend enchaîne huit étapes de démarrage avant son
+   * `listen()`, dont une connexion à un cluster distant. Le port n'avait pas
+   * disparu : il n'était pas encore revenu.
+   *
+   * On n'allonge pas une pause à l'aveugle — on OBSERVE, avec une échéance.
+   * La boucle sort dès que la preuve est acquise, et échoue immédiatement, sans
+   * attendre l'échéance, si le processus se dégrade. Un service sain est donc
+   * validé aussi vite qu'avant ; seul un service lent obtient le temps qu'il
+   * lui faut réellement.
+   */
+  let sockets = [];
+  let readable = true;
+  let socket = null;
+  let dernierProc = apres;
+  const echeance = Date.now() + bindTimeoutMs;
+
+  for (;;) {
+    ({ sockets, readable } = await readListeningSockets(transport));
+    socket = sockets.find((s) => s.port === port) ?? null;
+
+    // Le port est à nous : la preuve est faite, on ne perd pas une seconde.
+    if (!readable) break;
+    if (socket && (socket.pid === null || socket.pid === dernierProc.pid)) break;
+
+    /**
+     * LE PORT EST PRIS PAR UN AUTRE — inutile d'attendre.
+     *
+     * Personne ne va le lui reprendre. C'est un conflit, pas un délai, et le
+     * faire passer pour de la lenteur retarderait le seul diagnostic utile.
+     */
+    if (socket && socket.pid !== null && socket.pid !== dernierProc.pid) {
+      await echec(PORT_ERRORS.PM2_PORT_NOT_OWNED,
+        `Le port ${port} est écouté par le pid ${socket.pid} (${socket.process ?? 'inconnu'}) `
+        + `et non par le service « ${name} » (pid ${dernierProc.pid}). Le trafic n'arrive pas au code déployé.`,
+        { pid: dernierProc.pid, socketPid: socket.pid, socketProcess: socket.process });
+    }
+
+    // Rien n'écoute encore : le processus est-il seulement toujours sain ?
+    const encore = await readPm2Processes(transport);
+    const vu = encore.processes.find((p) => p.name === name) ?? null;
+    if (!vu) {
+      await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+        `Le service « ${name} » a disparu de PM2 avant d'écouter sur le port ${port}.`,
+        { pid: dernierProc.pid, waitedMs: bindTimeoutMs - Math.max(0, echeance - Date.now()) });
+    }
+    if (vu.status !== 'online') {
+      await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+        `Le service « ${name} » est passé à « ${vu.status} » avant d'écouter sur le port ${port}.`,
+        { status: vu.status, restarts: vu.restarts, pid: vu.pid });
+    }
+    if (vu.restarts > dernierProc.restarts) {
+      await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+        `Le service « ${name} » redémarre au démarrage (${dernierProc.restarts} → ${vu.restarts}) : `
+        + 'il ne parvient pas à se lancer.',
+        { restarts: vu.restarts, previous: dernierProc.restarts, pid: vu.pid });
+    }
+    dernierProc = vu;
+
+    if (Date.now() >= echeance) {
+      await echec(PORT_ERRORS.PM2_PROCESS_UNSTABLE,
+        `Le service « ${name} » est en ligne mais n'écoute toujours pas sur le port ${port} `
+        + `après ${Math.round(bindTimeoutMs / 1000)} s.`,
+        {
+          pid: dernierProc.pid,
+          status: dernierProc.status,
+          restarts: dernierProc.restarts,
+          execPath: dernierProc.execPath,
+          cwd: dernierProc.cwd,
+          listening: sockets.map((s) => s.port),
+          waitedMs: bindTimeoutMs,
+        });
+    }
+    await pause(bindPollMs);
   }
 
   return {
     name,
     port,
-    pid: apres.pid,
-    status: apres.status,
-    restarts: apres.restarts,
+    // `dernierProc` est la dernière lecture PM2 réellement observée : c'est elle
+    // qui fait foi, pas celle d'avant l'attente.
+    pid: dernierProc.pid,
+    status: dernierProc.status,
+    restarts: dernierProc.restarts,
     restartsSinceOperation: depuisOperation,
-    execPath: apres.execPath,
-    cwd: apres.cwd,
+    execPath: dernierProc.execPath,
+    cwd: dernierProc.cwd,
     portListened: Boolean(socket),
-    portOwnedByService: Boolean(socket) && (socket.pid === null || socket.pid === apres.pid),
+    portOwnedByService: Boolean(socket) && (socket.pid === null || socket.pid === dernierProc.pid),
     socketsReadable: readable,
     healthy: true,
   };
@@ -438,6 +564,8 @@ function defaultWait(ms) {
 
 export default {
   PORT_ERRORS,
+  PORT_BIND_TIMEOUT_MS,
+  PORT_BIND_POLL_MS,
   PORT_RANGE,
   NEVER_ALLOCATE,
   UNSTABLE_RESTART_THRESHOLD,
