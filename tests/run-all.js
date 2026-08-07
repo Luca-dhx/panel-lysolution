@@ -30,6 +30,7 @@ const TESTS = [
   'panel-instance-environment.test.js',
   'panel-branding.test.js',
   'developer-branding-propagation.test.js',
+  'developer-branding-instance-ack-e2e.test.js',
   'instance-generation-freshness.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',

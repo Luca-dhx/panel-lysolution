@@ -57,7 +57,8 @@
     "test:connections": "node ../tests/project-connections.test.js",
     "test:instance-env": "node ../tests/panel-instance-environment.test.js",
     "test:branding": "node ../tests/panel-branding.test.js",
-    "test:branding-propagation": "node ../tests/developer-branding-propagation.test.js"
+    "test:branding-propagation": "node ../tests/developer-branding-propagation.test.js",
+    "test:branding-ack": "node ../tests/developer-branding-instance-ack-e2e.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

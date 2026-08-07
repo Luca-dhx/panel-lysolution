@@ -14,6 +14,7 @@ import {
   createCompany,
   describeCompany,
   describeCompanyPublication,
+  describeCompanyDistribution,
   republishCurrentConfiguration,
   companyMediaResolution,
   getActiveCompany,
@@ -80,6 +81,14 @@ export async function current(_req, res) {
     },
     /** L'état de diffusion, nommé : NEVER_PUBLISHED · PENDING · PUBLISHED. */
     publication: diffusion,
+    /**
+     * L'APPLICATION, INSTANCE PAR INSTANCE — sur preuve déclarée.
+     *
+     * Un booléen global ne dit jamais LAQUELLE est en retard, alors que c'est
+     * exactement ce qu'il faut savoir pour agir. La recette et la production
+     * d'un même projet sont deux fiches : elles ont chacune leur état.
+     */
+    distribution: await describeCompanyDistribution(company),
     // Les adresses d'affichage des médias — dérivées à la lecture, jamais
     // stockées. Voir `companyMediaResolution`.
     media: await companyMediaResolution(company),

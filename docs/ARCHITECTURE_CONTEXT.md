@@ -220,6 +220,81 @@ PM2, PID, socket, Nginx, `siteRoot`, fichiers, uploads, taille.
 
 ---
 
+## 6bis. Configuration développeur : une version globale, une application par instance
+
+**Enregistrer n'est pas diffuser.** Ce sont deux opérations, et elles ne se
+rattrapent pas l'une l'autre.
+
+```
+Enregistrer  →  écrit la fiche        → saved: true
+             →  crée une version SI la charge utile a changé
+             →  diffuse cette version
+
+Rediffuser   →  renvoie la version EN VIGUEUR aux instances en retard
+             →  n'écrit rien, ne crée aucun numéro
+```
+
+> **Un enregistrement crée au maximum une nouvelle version.
+> Une nouvelle tentative de diffusion n'en crée jamais.**
+
+### « Rien de nouveau à versionner » est un succès
+
+Si la charge utile publiée est identique à la dernière version, il n'y a rien
+à versionner — **parce que tout est déjà publié**. Ce cas rendait autrefois
+`published: false`, et l'écran en déduisait « la dernière diffusion n'a pas
+abouti, enregistrez de nouveau ». Réenregistrer reproduisait le même état.
+
+Le cas est fréquent : un média de marque n'est publié que s'il est **servi par
+une destination active**. Sur un Panel de développement ou jamais déployé, tous
+les logos valent `null` dans la charge utile — deux logos différents y
+produisent donc une charge utile identique.
+
+### L'état ne se déduit jamais de deux horloges
+
+`updatedAt > publishedAt` compare une date de **sauvegarde locale** à une date
+de **publication**. Leur écart ne dit rien de ce que les projets ont reçu. La
+seule question qui compte — la fiche diffère-t-elle de la dernière version
+publiée ? — se répond en comparant les **charges utiles**
+(`describeCompanyPublication`).
+
+### L'application est suivie PAR INSTANCE
+
+Une fiche du registre est **une instance**. La recette et la production d'un
+même projet en sont deux, avec deux jetons et deux runtimes : elles ont chacune
+leur état.
+
+| Champ | Où | Sens |
+|---|---|---|
+| `expectedVersion` | `PanelCompany.publishedVersion` | la version en vigueur |
+| `appliedVersion` | `PanelProject.appliedConfiguration.companyVersion` | ce que **l'instance déclare** avoir appliqué |
+
+**Seule une déclaration fait preuve.** Ne comptent pas comme accusé : une
+écriture partie, un 200 de transport, un battement sans numéro, un horodatage
+de tentative.
+
+| État d'instance | Signification |
+|---|---|
+| `APPLIED` | l'instance a confirmé la version attendue |
+| `PENDING` | reliée et vivante, mais pas encore à jour |
+| `OFFLINE` | reliée, en retard, plus aucun signe de vie |
+| `UNKNOWN` | reliée, mais n'a jamais déclaré de version |
+| `NOT_PAIRED` | aucun lien — **ce n'est pas une erreur, c'est une absence** |
+
+Verdict global : `UP_TO_DATE` · `PARTIAL` · `NOT_DISTRIBUTED` ·
+`NO_CONNECTED_PROJECT` · `NEVER_PUBLISHED`. **Une instance non appairée n'y
+pèse pas** — un projet sans production déclarée est un projet normal.
+
+### La rediffusion vise, elle n'arrose pas
+
+Seules les instances qui n'ont pas confirmé la version courante la reçoivent,
+par une écriture nominative (`audience: projectId`). Rien à faire → aucun envoi,
+et on le dit (`ALREADY_APPLIED_EVERYWHERE`) plutôt que de simuler.
+
+→ `backend/src/services/company/company.service.js`
+→ `tests/developer-branding-instance-ack-e2e.test.js`
+
+---
+
 ## 7. Médias : l'autorité voyage avec le descripteur
 
 ```

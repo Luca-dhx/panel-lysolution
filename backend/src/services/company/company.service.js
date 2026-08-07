@@ -367,6 +367,96 @@ export async function publishConfiguration(companyId, { reason } = {}, actor = {
 }
 
 /**
+ * L'ÉTAT DE DIFFUSION, INSTANCE PAR INSTANCE.
+ *
+ * ══ POURQUOI PAS UN BOOLÉEN GLOBAL ══════════════════════════════════════════
+ *
+ * Une fiche du registre est UNE INSTANCE : la recette et la production d'un
+ * même projet sont deux fiches, deux jetons, deux runtimes. Un seul « diffusé
+ * oui/non » pour les deux ne peut être qu'à moitié vrai, et ne dit jamais
+ * LAQUELLE est en retard — c'est-à-dire précisément ce qu'on a besoin de
+ * savoir pour agir.
+ *
+ * ══ CE QUI FAIT PREUVE ══════════════════════════════════════════════════════
+ *
+ * `appliedConfiguration.companyVersion` : le numéro que le PROJET déclare
+ * avoir appliqué, transporté par son identité (contrat >= 1.3.0) et relevé par
+ * `recordAppliedConfiguration`. C'est la seule information du registre que le
+ * Panel ne peut pas déduire — il sait ce qu'il a ÉMIS, pas ce qui a PRIS EFFET.
+ *
+ * On ne tient JAMAIS pour un accusé : une requête partie, un 200 de transport,
+ * un battement sans numéro, ou un horodatage de tentative.
+ *
+ * ══ LES CINQ ÉTATS ══════════════════════════════════════════════════════════
+ *
+ *   NOT_PAIRED — aucun lien : ce n'est pas une erreur, c'est une absence ;
+ *   APPLIED    — l'instance a confirmé la version attendue ;
+ *   PENDING    — reliée, vivante, mais pas encore à jour ;
+ *   OFFLINE    — reliée, pas à jour, et plus aucun signe de vie ;
+ *   UNKNOWN    — reliée mais n'a jamais déclaré de version appliquée.
+ */
+export async function describeCompanyDistribution(company) {
+  const { listProjects, deriveLiveness, declaredEnvironmentOf } = await import(
+    '../registry/projectRegistry.service.js'
+  );
+  const expectedVersion = company.publishedVersion;
+  const projets = await listProjects();
+  const maintenant = Date.now();
+
+  const instances = projets.map((p) => {
+    // LA PREUVE : le numéro que le projet déclare avoir appliqué.
+    const appliedVersion = p.appliedConfiguration?.companyVersion ?? null;
+    const paired = p.pairing?.status === 'PAIRED';
+    const liveness = deriveLiveness(p, maintenant);
+
+    let state;
+    if (!paired) state = 'NOT_PAIRED';
+    else if (appliedVersion === null) state = 'UNKNOWN';
+    else if (expectedVersion !== null && appliedVersion >= expectedVersion) state = 'APPLIED';
+    else if (liveness === 'ONLINE' || liveness === 'STALE') state = 'PENDING';
+    else state = 'OFFLINE';
+
+    return {
+      projectId: p.projectId,
+      projectName: p.projectName,
+      logicalProjectKey: p.logicalProjectKey ?? null,
+      environment: declaredEnvironmentOf(p),
+      paired,
+      liveness,
+      expectedVersion,
+      appliedVersion,
+      appliedAt: p.appliedConfiguration?.companyAppliedAt ?? null,
+      observedAt: p.appliedConfiguration?.observedAt ?? null,
+      state,
+    };
+  });
+
+  /**
+   * LE VERDICT GLOBAL — et une instance non appairée n'y pèse pas.
+   *
+   * Un projet sans production déclarée est un projet normal. Le compter comme
+   * un échec ferait clignoter la moitié du parc pour une absence voulue.
+   */
+  const concernees = instances.filter((i) => i.paired);
+  const enRetard = concernees.filter((i) => i.state !== 'APPLIED');
+
+  let global;
+  if (expectedVersion === null) global = 'NEVER_PUBLISHED';
+  else if (concernees.length === 0) global = 'NO_CONNECTED_PROJECT';
+  else if (enRetard.length === 0) global = 'UP_TO_DATE';
+  else if (enRetard.length === concernees.length) global = 'NOT_DISTRIBUTED';
+  else global = 'PARTIAL';
+
+  return {
+    expectedVersion,
+    global,
+    instances,
+    /** Celles qu'une rediffusion doit viser — et elles seules. */
+    pendingProjectIds: enRetard.map((i) => i.projectId),
+  };
+}
+
+/**
  * REDIFFUSE LA VERSION COURANTE — sans rien créer, sans rien modifier.
  *
  * ══ POURQUOI CETTE FONCTION EXISTE ══════════════════════════════════════════
@@ -397,9 +487,45 @@ export async function republishCurrentConfiguration(companyId) {
 
   // On renvoie la charge utile TELLE QU'ELLE A ÉTÉ PUBLIÉE. La recalculer
   // ferait diffuser autre chose que la version annoncée.
-  const recipients = await broadcastCompany(companyId, publiee.payload, nowIso());
+  /**
+   * ── LA REDIFFUSION VISE, ELLE N'ARROSE PAS ────────────────────────────────
+   *
+   * Seules les instances qui n'ont pas confirmé la version courante la
+   * reçoivent. Renvoyer à tout le parc ferait retraverser le pont à des
+   * projets déjà à jour — du bruit, et une occasion de plus de se tromper.
+   *
+   * Aucune instance en retard : il n'y a rien à faire, et on le DIT plutôt que
+   * de simuler un envoi.
+   */
+  const diffusion = await describeCompanyDistribution(company);
+  const cibles = diffusion.pendingProjectIds;
 
-  return { version: company.publishedVersion, recipients, republished: true };
+  if (cibles.length === 0) {
+    return {
+      version: company.publishedVersion, recipients: 0, republished: false,
+      reason: 'ALREADY_APPLIED_EVERYWHERE',
+    };
+  }
+
+  // Une écriture PAR destinataire : c'est ce qui rend le ciblage réel, et non
+  // une simple intention. Le journal de synchronisation sait déjà router sur
+  // `audience`.
+  for (const projectId of cibles) {
+    await emitChange({
+      entityType: COMPANY_ENTITY,
+      entityId: companyId,
+      payload: publiee.payload,
+      modifiedAt: nowIso(),
+      audience: projectId,
+    });
+  }
+
+  return {
+    version: company.publishedVersion,
+    recipients: cibles.length,
+    republished: true,
+    targeted: cibles,
+  };
 }
 
 /**

@@ -71,6 +71,15 @@ const EMPTY_COMPANY = {
   hasUnpublishedChanges: false,
 } as unknown as NonNullable<CompanyState['company']>;
 
+/** Un etat de diffusion, dit en francais. « Non appairee » n'est pas une erreur. */
+const ETAT_DIFFUSION: Record<string, string> = {
+  APPLIED: 'A jour',
+  PENDING: 'En attente',
+  OFFLINE: 'Hors ligne',
+  UNKNOWN: 'Version inconnue',
+  NOT_PAIRED: 'Non appairee',
+};
+
 export function CompanyPage() {
   const [state, setState] = useState<CompanyState | null>(null);
   const [versions, setVersions] = useState<VersionRow[]>([]);
@@ -161,6 +170,12 @@ export function CompanyPage() {
       </div>
     );
   }
+
+  /**
+   * LES INSTANCES EN RETARD — appairees, et pas encore a jour.
+   * Le backend les nomme ; l'ecran ne les recalcule pas.
+   */
+  const enRetard = state.distribution?.pendingProjectIds ?? [];
 
   const existe = Boolean(state.company);
   const c = state.company ?? EMPTY_COMPANY;
@@ -302,15 +317,36 @@ export function CompanyPage() {
         est la rediffusion : elle renvoie la version en vigueur sans toucher à
         la fiche ni créer de numéro suivant.
       */}
-      {c.hasUnpublishedChanges ? (
+      {/*
+        ══ L'ÉTAT SE LIT PAR INSTANCE, PAS PAR BOOLÉEN ═══════════════════════
+
+        Une fiche du registre est UNE instance : la recette et la production
+        d'un même projet en sont deux, avec deux jetons et deux runtimes. Un
+        seul « diffusé oui/non » pour les deux ne peut être qu'à moitié vrai,
+        et ne dit jamais LAQUELLE est en retard — c'est-à-dire exactement ce
+        qu'il faut savoir pour agir.
+
+        Une instance non appairée n'est pas un échec : c'est une absence.
+      */}
+      {enRetard.length > 0 ? (
         <div className="mode-notice mode-execution">
           <p>
             Modifications enregistrées.
-            <strong> La diffusion vers les projets n’a pas encore abouti.</strong>
-            {c.publishedVersion !== null
-              ? ` Ils appliquent la version ${c.publishedVersion}.`
-              : ''}
+            <strong> Certaines instances n’ont pas encore reçu la dernière configuration.</strong>
           </p>
+          <ul className="distribution-list">
+            {(state.distribution?.instances ?? [])
+              .filter((i) => i.paired)
+              .map((i) => (
+                <li key={i.projectId}>
+                  <span className="distribution-project">{i.projectName}</span>
+                  <span className="distribution-env">{i.environment ?? '—'}</span>
+                  <span className={`distribution-state distribution-${i.state.toLowerCase()}`}>
+                    {ETAT_DIFFUSION[i.state]}
+                  </span>
+                </li>
+              ))}
+          </ul>
           <button
             type="button"
             className="btn btn-secondary btn-small"

@@ -202,10 +202,31 @@ export interface ResolvedMedia {
 /** Indexé par le chemin du descripteur : `branding.logo`, `team.0.photo`. */
 export type MediaResolution = Record<string, ResolvedMedia>;
 
+/** L'application de la configuration, INSTANCE par instance. */
+export interface CompanyDistributionInstance {
+  projectId: string;
+  projectName: string;
+  environment: 'TEST' | 'PROD' | null;
+  paired: boolean;
+  expectedVersion: number | null;
+  appliedVersion: number | null;
+  appliedAt: string | null;
+  state: 'NOT_PAIRED' | 'UNKNOWN' | 'PENDING' | 'OFFLINE' | 'APPLIED';
+}
+
+export interface CompanyDistribution {
+  expectedVersion: number | null;
+  global: 'NEVER_PUBLISHED' | 'NO_CONNECTED_PROJECT' | 'UP_TO_DATE' | 'PARTIAL' | 'NOT_DISTRIBUTED';
+  instances: CompanyDistributionInstance[];
+  pendingProjectIds: string[];
+}
+
 export interface CompanyState {
   company: Company | null;
   media?: MediaResolution;
   published: { version: number; publishedAt: string; reason: string } | null;
+  /** L'application de la configuration, instance par instance. */
+  distribution?: CompanyDistribution;
 }
 
 export interface VersionRow {
