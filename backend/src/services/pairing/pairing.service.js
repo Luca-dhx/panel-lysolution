@@ -199,6 +199,42 @@ export async function bootstrap(dto) {
   // intacte, donc le code réutilisable. On mémorise le hash validé pour que
   // l'écriture finale puisse exiger qu'il soit TOUJOURS en place — sans quoi
   // deux bootstraps simultanés porteurs du même code réussiraient tous les deux.
+  /**
+   * ══ L'ENVIRONNEMENT DOIT CONCORDER — et le refus est SEC ═══════════════════
+   *
+   * ── CE QUE LE DOMAINE PROUVE, ET CE QU'IL NE PROUVE PAS ───────────────────
+   * Un projet choisit SON instance de Panel par l'URL qu'il appelle :
+   * `panel-test.exemple.com` ou `panel.exemple.com`. C'est le bon mécanisme —
+   * deux instances, deux domaines, deux bases. Mais une URL est une chaîne
+   * saisie dans un `.env` : elle prouve QUELLE MACHINE répond, jamais à quel
+   * monde elle appartient.
+   *
+   * Une adresse recopiée d'un projet à l'autre, une variable oubliée lors d'une
+   * promotion TEST → PROD, et la production d'un client se relie au Panel de
+   * recette. Le pont fonctionnerait parfaitement : jetons valides, battements
+   * reçus, projections appliquées. Le Panel de recette afficherait simplement,
+   * et durablement, les contrats et l'équipe d'un site en production.
+   *
+   * ── POURQUOI ON NE DEVINE JAMAIS ─────────────────────────────────────────
+   * On ne lit pas `hostname.includes('test')` : un domaine n'est pas une
+   * déclaration, et « panel.garage-test.fr » n'est pas une recette. Les deux
+   * côtés DISENT leur environnement, et on compare ce qui est dit.
+   *
+   * ── FAIL CLOSED ──────────────────────────────────────────────────────────
+   * Aucune correction automatique, dans aucun sens. Rapprocher TEST de PROD
+   * « pour que ça marche » serait précisément produire l'accident qu'on
+   * empêche. On refuse, on nomme les deux valeurs, et l'opérateur corrige son
+   * `.env`.
+   */
+  if (dto.environment !== config.env) {
+    throw new BridgeError(
+      BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH,
+      `Ce projet se declare en ${dto.environment} alors que cette instance du Panel sert `
+      + `${config.env}. Verifiez l'adresse du Panel configuree dans le projet : chaque `
+      + 'environnement a la sienne.',
+    );
+  }
+
   const consumedHash = record.pairing.pairingCodeHash;
   record.pairing.pairingCodeHash = null;
   record.pairing.pairingCodeExpiresAt = null;

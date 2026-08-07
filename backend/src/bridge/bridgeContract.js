@@ -64,6 +64,12 @@ export const BRIDGE_ERROR_CODES = Object.freeze({
   ALREADY_PAIRED: 'BRIDGE_ALREADY_PAIRED',
   NOT_PAIRED: 'BRIDGE_NOT_PAIRED',
   CONTRACT_VERSION_UNSUPPORTED: 'BRIDGE_CONTRACT_VERSION_UNSUPPORTED',
+  /**
+   * L'environnement du PROJET ne correspond pas à celui de CETTE instance de
+   * Panel. Le domaine choisit l'instance physique ; l'environnement déclaré
+   * prouve qu'on parle du même monde. Voir `assertEnvironmentMatches`.
+   */
+  ENVIRONMENT_MISMATCH: 'BRIDGE_ENVIRONMENT_MISMATCH',
   INVALID_PAYLOAD: 'BRIDGE_INVALID_PAYLOAD',
   ENTITY_TYPE_UNSUPPORTED: 'BRIDGE_ENTITY_TYPE_UNSUPPORTED',
   OPERATION_UNKNOWN: 'BRIDGE_OPERATION_UNKNOWN',
@@ -77,6 +83,7 @@ export const BRIDGE_ERROR_CODES = Object.freeze({
 // comme code d'accusé REJECTED ; le sens Projet l'inclut).
 export const PANEL_BRIDGE_ERROR_ENUM = Object.freeze([
   'BRIDGE_UNAUTHORIZED',
+  'BRIDGE_ENVIRONMENT_MISMATCH',
   'BRIDGE_PAIRING_CODE_INVALID',
   'BRIDGE_ALREADY_PAIRED',
   'BRIDGE_NOT_PAIRED',
@@ -88,11 +95,23 @@ export const PANEL_BRIDGE_ERROR_ENUM = Object.freeze([
   'BRIDGE_INTERNAL',
 ]);
 
-export const PROJECT_BRIDGE_ERROR_ENUM = Object.freeze([
-  ...PANEL_BRIDGE_ERROR_ENUM.slice(0, 6),
-  'BRIDGE_ENTITY_TYPE_UNSUPPORTED',
-  ...PANEL_BRIDGE_ERROR_ENUM.slice(6),
-]);
+/**
+ * Le sens PROJET ajoute `ENTITY_TYPE_UNSUPPORTED`, juste APRÈS `INVALID_PAYLOAD`.
+ *
+ * ── POURQUOI PLUS PAR INDICE ────────────────────────────────────────────────
+ * L'insertion se faisait par position (`slice(0, 6)`). Ajouter un code au
+ * catalogue parent déplaçait donc le point d'insertion sans que rien ne le
+ * signale, et les deux énumérations cessaient de correspondre à leurs specs —
+ * ce qui s'est produit au premier ajout. On insère désormais par NOM : le
+ * catalogue peut grandir sans casser le dérivé.
+ */
+export const PROJECT_BRIDGE_ERROR_ENUM = Object.freeze(
+  PANEL_BRIDGE_ERROR_ENUM.flatMap((code) => (
+    code === BRIDGE_ERROR_CODES.INVALID_PAYLOAD
+      ? [code, BRIDGE_ERROR_CODES.ENTITY_TYPE_UNSUPPORTED]
+      : [code]
+  )),
+);
 
 // Codes d'erreur locaux (jamais sur le réseau) : états constatés par le
 // client sortant du Panel.
@@ -106,6 +125,8 @@ const STATUS_BY_CODE = Object.freeze({
   [BRIDGE_ERROR_CODES.ALREADY_PAIRED]: 409,
   [BRIDGE_ERROR_CODES.NOT_PAIRED]: 503,
   [BRIDGE_ERROR_CODES.CONTRACT_VERSION_UNSUPPORTED]: 409,
+  // Conflit : les deux cotes sont sains, mais ils ne parlent pas du meme monde.
+  [BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH]: 409,
   [BRIDGE_ERROR_CODES.INVALID_PAYLOAD]: 400,
   [BRIDGE_ERROR_CODES.ENTITY_TYPE_UNSUPPORTED]: 422,
   [BRIDGE_ERROR_CODES.OPERATION_UNKNOWN]: 404,

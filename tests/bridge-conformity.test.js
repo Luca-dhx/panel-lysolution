@@ -67,12 +67,25 @@ section('Catalogues d’erreurs BRIDGE_*');
   const mirrorCodes = Object.values(contract.BRIDGE_ERROR_CODES);
   check('chaque code du miroir existe dans les specs', mirrorCodes.every((code) => specCodes.has(code)));
   check('chaque code des specs existe dans le miroir', [...specCodes].every((code) => mirrorCodes.includes(code)));
-  check('enum PanelBridge : 10 codes, sans ENTITY_TYPE_UNSUPPORTED',
-    contract.PANEL_BRIDGE_ERROR_ENUM.length === 10
-    && !contract.PANEL_BRIDGE_ERROR_ENUM.includes('BRIDGE_ENTITY_TYPE_UNSUPPORTED'));
-  check('enum ProjectBridge : 11 codes, avec ENTITY_TYPE_UNSUPPORTED',
-    contract.PROJECT_BRIDGE_ERROR_ENUM.length === 11
-    && contract.PROJECT_BRIDGE_ERROR_ENUM.includes('BRIDGE_ENTITY_TYPE_UNSUPPORTED'));
+  /**
+   * ── CE QUI COMPTE EST LA RELATION, PAS UN NOMBRE ──────────────────────────
+   * Ces contrôles comptaient 10 et 11. Un code ajouté au contrat les faisait
+   * tomber tous les deux sans rien dire d'utile : le nombre n'est pas
+   * l'invariant. Ce qui l'est : le sens PROJET porte exactement les codes du
+   * sens PANEL, plus `ENTITY_TYPE_UNSUPPORTED`, et dans le même ordre.
+   */
+  check('le sens PANEL ne porte PAS ENTITY_TYPE_UNSUPPORTED',
+    !contract.PANEL_BRIDGE_ERROR_ENUM.includes('BRIDGE_ENTITY_TYPE_UNSUPPORTED'));
+  check('le sens PROJET le porte, lui',
+    contract.PROJECT_BRIDGE_ERROR_ENUM.includes('BRIDGE_ENTITY_TYPE_UNSUPPORTED'));
+  check('…et c’est la SEULE différence entre les deux',
+    contract.PROJECT_BRIDGE_ERROR_ENUM.length === contract.PANEL_BRIDGE_ERROR_ENUM.length + 1
+    && contract.PROJECT_BRIDGE_ERROR_ENUM
+      .filter((c) => c !== 'BRIDGE_ENTITY_TYPE_UNSUPPORTED')
+      .join() === contract.PANEL_BRIDGE_ERROR_ENUM.join());
+  check('…placée juste après INVALID_PAYLOAD, comme dans les specs',
+    contract.PROJECT_BRIDGE_ERROR_ENUM.indexOf('BRIDGE_ENTITY_TYPE_UNSUPPORTED')
+      === contract.PROJECT_BRIDGE_ERROR_ENUM.indexOf('BRIDGE_INVALID_PAYLOAD') + 1);
 }
 
 section('Types d’entités synchronisées');

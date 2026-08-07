@@ -426,6 +426,7 @@ components:
           type: string
           enum:
             - BRIDGE_UNAUTHORIZED
+            - BRIDGE_ENVIRONMENT_MISMATCH
             - BRIDGE_PAIRING_CODE_INVALID
             - BRIDGE_ALREADY_PAIRED
             - BRIDGE_NOT_PAIRED

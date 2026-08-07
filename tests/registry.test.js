@@ -28,7 +28,9 @@ function conformManifest(overrides = {}) {
     project: {
       key: 'garage-exemple',
       name: 'Garage Exemple',
-      environment: 'PROD',
+      // Le Panel de test sert TEST : un projet PROD serait refusé au bootstrap
+      // (BRIDGE_ENVIRONMENT_MISMATCH), ce qu'un test dédié vérifie séparément.
+      environment: 'TEST',
       softwareVersion: 'abc1234',
       ...(overrides.project ?? {}),
     },
@@ -49,7 +51,7 @@ function bootstrapDto(pairingCode, overrides = {}) {
     contractVersion: CONTRACT_VERSION,
     publicBackendUrl: 'https://garage-exemple.test',
     projectName: 'Garage Exemple',
-    environment: 'PROD',
+    environment: 'TEST',
     softwareVersion: '1.4.2',
     publicBackendUrl: 'https://api.garage-exemple.fr',
     pairingCode,
@@ -185,7 +187,7 @@ section('Vivacité (dérivée, jamais stockée)');
   await registry.recordHeartbeat(record, {
     sentAt: new Date().toISOString(),
     softwareVersion: '1.4.3',
-    environment: 'PROD',
+    environment: 'TEST',
     health: { status: 'OK', details: null },
     bridgeStats: { outboxSize: 0 },
   });
