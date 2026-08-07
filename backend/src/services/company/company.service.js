@@ -216,22 +216,82 @@ export async function saveCompany(companyId, patch, actor = {}) {
     return {
       company: describeCompany(frais),
       media: await companyMediaResolution(frais),
+      /** La fiche est écrite. C'est ce que le bouton « Enregistrer » promet. */
+      saved: true,
       published: true,
       ...result,
     };
   } catch (err) {
     if (err?.code === RIEN_A_PUBLIER) {
+      /**
+       * ══ « RIEN DE NOUVEAU À VERSIONNER » N'EST PAS UN ÉCHEC ══════════════
+       *
+       * Ce cas rendait `published: false`, et l'écran en déduisait « la
+       * dernière diffusion n'a pas abouti — enregistrez de nouveau ». Or il
+       * signifie l'inverse : la configuration publiée est DÉJÀ celle de la
+       * fiche. Il n'y a rien à diffuser parce que tout l'est.
+       *
+       * Le cas était loin d'être théorique. Un média de marque n'est publié
+       * que s'il est SERVI par une destination active ; sur un Panel de
+       * développement, ou jamais déployé, tous les logos valent `null` dans
+       * la charge utile. Deux logos DIFFÉRENTS y produisent donc une charge
+       * utile IDENTIQUE — diff vide, publication refusée, et une bannière que
+       * seul un déploiement du Panel pouvait éteindre.
+       *
+       * On distingue donc « la fiche est enregistrée » de « une nouvelle
+       * version a été créée ». La première est vraie ici ; la seconde, non.
+       */
+      const frais = await getCompanyOrThrow(companyId);
       return {
-        company: describeCompany(company),
-        media: await companyMediaResolution(company),
+        company: describeCompany(frais),
+        media: await companyMediaResolution(frais),
+        saved: true,
+        /** Aucune version nouvelle — la courante reste en vigueur. */
         published: false,
-        version: company.publishedVersion,
+        nothingNewToVersion: true,
+        version: frais.publishedVersion,
         changes: [],
         recipients: 0,
       };
     }
     throw err;
   }
+}
+
+/**
+ * L'ÉTAT DE DIFFUSION D'UNE FICHE — répondu par comparaison, pas par horloge.
+ *
+ * ── LES TROIS ÉTATS, ET ILS NE SE CONFONDENT PAS ────────────────────────────
+ *   · `NEVER_PUBLISHED` — aucune version n'existe encore ;
+ *   · `PENDING`         — la fiche enregistrée diffère de la dernière version
+ *                          publiée : il reste quelque chose à diffuser ;
+ *   · `PUBLISHED`       — la version en vigueur est bien celle de la fiche.
+ *
+ * C'est la SEULE fonction autorisée à conclure « il reste des modifications
+ * non diffusées », parce qu'elle est la seule à relire la charge utile
+ * publiée. Le reste du code ne fait que l'afficher.
+ */
+export async function describeCompanyPublication(company) {
+  if (company.publishedVersion === null) {
+    return { state: 'NEVER_PUBLISHED', version: null, pendingChanges: [] };
+  }
+
+  const publiee = await PanelCompanyVersion.findOne({
+    companyId: company.companyId, version: company.publishedVersion,
+  }).lean();
+  if (!publiee) {
+    // La version est annoncée mais introuvable : on ne prétend pas savoir.
+    return { state: 'PENDING', version: company.publishedVersion, pendingChanges: [] };
+  }
+
+  const courante = await companyPublishedProfile(company);
+  const ecarts = diffPayloads(publiee.payload ?? null, courante);
+
+  return {
+    state: ecarts.length === 0 ? 'PUBLISHED' : 'PENDING',
+    version: company.publishedVersion,
+    pendingChanges: ecarts,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -304,6 +364,42 @@ export async function publishConfiguration(companyId, { reason } = {}, actor = {
   });
 
   return { version, publishedAt: at, changes, recipients };
+}
+
+/**
+ * REDIFFUSE LA VERSION COURANTE — sans rien créer, sans rien modifier.
+ *
+ * ══ POURQUOI CETTE FONCTION EXISTE ══════════════════════════════════════════
+ *
+ * Quand une diffusion échoue, l'écran demandait de « enregistrer de nouveau ».
+ * C'était le mauvais geste : enregistrer touche la fiche, recalcule une charge
+ * utile et peut créer une version — trois effets dont aucun n'est souhaité
+ * quand la seule chose qui a manqué est le transport.
+ *
+ * Rediffuser ne fait qu'une chose : reprendre la version EN VIGUEUR et la
+ * renvoyer. Aucune écriture métier, aucun numéro qui avance, aucun média
+ * recréé. Rejouée dix fois, elle renvoie dix fois la même version.
+ */
+export async function republishCurrentConfiguration(companyId) {
+  const company = await getCompanyOrThrow(companyId);
+  if (company.publishedVersion === null) {
+    throw ApiError.conflict('PANEL_COMPANY_NEVER_PUBLISHED',
+      'Cette configuration n’a jamais été publiée : il n’y a rien à rediffuser.');
+  }
+
+  const publiee = await PanelCompanyVersion.findOne({
+    companyId, version: company.publishedVersion,
+  }).lean();
+  if (!publiee) {
+    throw ApiError.conflict('PANEL_COMPANY_VERSION_MISSING',
+      `La version ${company.publishedVersion} est introuvable : rediffusion impossible.`);
+  }
+
+  // On renvoie la charge utile TELLE QU'ELLE A ÉTÉ PUBLIÉE. La recalculer
+  // ferait diffuser autre chose que la version annoncée.
+  const recipients = await broadcastCompany(companyId, publiee.payload, nowIso());
+
+  return { version: company.publishedVersion, recipients, republished: true };
 }
 
 /**
@@ -568,10 +664,27 @@ export function describeCompany(company) {
     active: company.active,
     publishedVersion: company.publishedVersion,
     publishedAt: company.publishedAt,
-    // Un brouillon modifié après la dernière publication : l'écran doit le
-    // dire, sinon l'opérateur croit avoir diffusé ce qu'il vient de saisir.
-    hasUnpublishedChanges: company.publishedAt !== null
-      && company.updatedAt > company.publishedAt,
+    /**
+     * ══ CE CHAMP NE COMPARE PLUS DEUX DATES DE NATURES DIFFÉRENTES ═════════
+     *
+     * Il valait `updatedAt > publishedAt` : une date de SAUVEGARDE LOCALE
+     * confrontée à une date de PUBLICATION. Leur écart ne dit rien de ce que
+     * les projets ont reçu — seulement qu'une écriture a eu lieu après la
+     * dernière version. Toute écriture technique suffisait à l'allumer.
+     *
+     * C'est ce qui produisait « la dernière diffusion n'a pas abouti,
+     * enregistrez de nouveau » sur une fiche parfaitement à jour, et qu'aucun
+     * second enregistrement ne pouvait éteindre.
+     *
+     * La seule question qui compte est : la configuration ENREGISTRÉE
+     * diffère-t-elle de la DERNIÈRE PUBLIÉE ? Elle se répond en comparant les
+     * charges utiles, pas les horloges — et c'est `describeCompanyPublication`
+     * qui le fait, parce qu'elle seule peut relire la version publiée.
+     *
+     * Ici, on ne dispose que du document : on ne CONCLUT donc pas. « Jamais
+     * publiée » reste le seul état déductible sans lecture supplémentaire.
+     */
+    hasUnpublishedChanges: company.publishedAt === null,
     createdAt: company.createdAt,
     updatedAt: company.updatedAt,
     updatedBy: company.updatedBy,

@@ -16,6 +16,7 @@ import {
   grant,
   projectGrants,
   publish,
+  republish,
   putCredentials,
   removeIntegratedApi,
   restore,
@@ -43,6 +44,8 @@ router.use(requirePanelDev);
 router.post('/', asyncHandler(create));
 router.patch('/', asyncHandler(update));
 router.post('/publish', asyncHandler(publish));
+// Rediffusion de la version courante : aucune ecriture metier, rejouable.
+router.post('/republish', asyncHandler(republish));
 router.post('/versions/:version/restore', asyncHandler(restore));
 
 router.post('/integrated-apis', asyncHandler(createIntegratedApi));

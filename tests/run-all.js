@@ -29,6 +29,7 @@ const TESTS = [
   'project-connections.test.js',
   'panel-instance-environment.test.js',
   'panel-branding.test.js',
+  'developer-branding-propagation.test.js',
   'instance-generation-freshness.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',

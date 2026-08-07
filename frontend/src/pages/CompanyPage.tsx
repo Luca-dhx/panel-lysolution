@@ -81,6 +81,8 @@ export function CompanyPage() {
   // La fiche n'existe pas encore, mais on la remplit déjà : l'enregistrement
   // final la créera. Aucun état intermédiaire n'est persisté côté serveur.
   const [creating, setCreating] = useState(false);
+  /** Rediffusion en cours — distincte de l'enregistrement, comme l'action. */
+  const [rediffusion, setRediffusion] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -92,6 +94,26 @@ export function CompanyPage() {
       setError(errorMessage(err, 'Entreprise indisponible.'));
     }
   }, []);
+
+  /**
+   * REDIFFUSER — renvoie la version en vigueur, sans rien enregistrer.
+   *
+   * Elle n'appelle PAS l'enregistrement : la fiche est deja correcte, seul le
+   * transport avait manque. Rejouee, elle renvoie la meme version.
+   */
+  const rediffuser = async () => {
+    setRediffusion(true);
+    setError(null);
+    try {
+      const r = await api.republish();
+      setNotice(`Version ${r.version} rediffusee vers ${r.recipients} projet(s).`);
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, 'Rediffusion impossible.'));
+    } finally {
+      setRediffusion(false);
+    }
+  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -266,12 +288,38 @@ export function CompanyPage() {
         pour le seul cas où la diffusion a échoué après l'écriture — sans lui,
         l'écran montrerait une fiche que les projets n'ont pas.
       */}
+      {/*
+        ══ CE BANDEAU NE DEMANDE PLUS DE RÉENREGISTRER ═══════════════════════
+
+        Il disait « la dernière diffusion n'a pas abouti — enregistrez de
+        nouveau », sur la foi de `updatedAt > publishedAt` : une date de
+        SAUVEGARDE confrontée à une date de PUBLICATION. Toute écriture
+        technique l'allumait, et réenregistrer reproduisait exactement le même
+        état — le seul geste proposé était le seul qui ne pouvait pas aider.
+
+        L'état vient désormais du backend, qui compare les charges utiles. Et
+        quand il reste réellement quelque chose à diffuser, l'action offerte
+        est la rediffusion : elle renvoie la version en vigueur sans toucher à
+        la fiche ni créer de numéro suivant.
+      */}
       {c.hasUnpublishedChanges ? (
-        <p className="mode-notice mode-execution">
-          La dernière diffusion n’a pas abouti.
-          <strong> Les projets appliquent encore la version {c.publishedVersion}.</strong>
-          {' '}Enregistrez de nouveau pour les mettre à jour.
-        </p>
+        <div className="mode-notice mode-execution">
+          <p>
+            Modifications enregistrées.
+            <strong> La diffusion vers les projets n’a pas encore abouti.</strong>
+            {c.publishedVersion !== null
+              ? ` Ils appliquent la version ${c.publishedVersion}.`
+              : ''}
+          </p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-small"
+            disabled={rediffusion}
+            onClick={() => void rediffuser()}
+          >
+            {rediffusion ? 'Diffusion…' : 'Réessayer la diffusion'}
+          </button>
+        </div>
       ) : null}
 
       {error ? <div className="alert alert-error">{error}</div> : null}

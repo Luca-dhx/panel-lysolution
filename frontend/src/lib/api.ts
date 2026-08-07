@@ -571,6 +571,16 @@ export const company = {
   update: (body: Record<string, unknown>) =>
     request<SaveResult>('/api/company', { method: 'PATCH', body }),
 
+  /**
+   * REDIFFUSER la version en vigueur — sans rien enregistrer.
+   *
+   * L'ecran proposait « Enregistrez de nouveau » quand une diffusion n'avait
+   * pas abouti. Enregistrer touche la fiche et peut creer une version, alors
+   * que seul le transport avait manque. Cette action ne fait qu'une chose.
+   */
+  republish: () =>
+    request<{ version: number; recipients: number }>('/api/company/republish', { method: 'POST' }),
+
   versions: () =>
     request<{ currentVersion: number | null; items: VersionRow[] }>('/api/company/versions'),
 

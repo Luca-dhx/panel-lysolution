@@ -13,6 +13,8 @@ import ApiError from '../utils/ApiError.js';
 import {
   createCompany,
   describeCompany,
+  describeCompanyPublication,
+  republishCurrentConfiguration,
   companyMediaResolution,
   getActiveCompany,
   getCompanyOrThrow,
@@ -63,8 +65,21 @@ export async function current(_req, res) {
   const company = await getActiveCompany();
   if (!company) return ok(res, { company: null, published: null });
   const published = await getPublishedConfiguration(company.companyId);
+  /**
+   * L'ÉTAT DE DIFFUSION EST CALCULÉ, PAS DÉDUIT D'UNE HORLOGE.
+   *
+   * L'écran affichait « la dernière diffusion n'a pas abouti » sur la foi de
+   * `updatedAt > publishedAt` — deux dates de natures différentes. Il lit
+   * désormais un verdict obtenu en comparant la fiche à la version publiée.
+   */
+  const diffusion = await describeCompanyPublication(company);
   return ok(res, {
-    company: describeCompany(company),
+    company: {
+      ...describeCompany(company),
+      hasUnpublishedChanges: diffusion.state === 'PENDING',
+    },
+    /** L'état de diffusion, nommé : NEVER_PUBLISHED · PENDING · PUBLISHED. */
+    publication: diffusion,
     // Les adresses d'affichage des médias — dérivées à la lecture, jamais
     // stockées. Voir `companyMediaResolution`.
     media: await companyMediaResolution(company),
@@ -106,6 +121,19 @@ export async function update(req, res) {
 export async function publish(req, res) {
   const company = await targetCompany(req);
   return created(res, await publishConfiguration(company.companyId, { reason: req.body?.reason }, actorOf(req)));
+}
+
+/**
+ * REDIFFUSE la version en vigueur — sans rien enregistrer.
+ *
+ * L'écran proposait « Enregistrez de nouveau » quand une diffusion n'avait pas
+ * abouti. C'était le mauvais geste : enregistrer touche la fiche et peut créer
+ * une version, alors que seul le transport avait manqué. Cette action ne fait
+ * qu'une chose, et elle est rejouable sans effet de bord.
+ */
+export async function republish(req, res) {
+  const company = await targetCompany(req);
+  return ok(res, await republishCurrentConfiguration(company.companyId));
 }
 
 export async function versions(req, res) {
