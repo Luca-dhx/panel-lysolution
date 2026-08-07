@@ -123,7 +123,16 @@ export async function deleteDestinationHandler(req, res) {
  * pas encore déployé reste déclarable, sa clé sera réconciliée à l'appairage.
  */
 export async function declare(req, res) {
-  const { url = null, projectName = null, manifest = null } = req.body ?? {};
+  const {
+    url = null, projectName = null, manifest = null,
+    /**
+     * L'ENVIRONNEMENT VISÉ — la seule chose que l'appelant ajoute, et il ne
+     * l'invente pas : l'écran l'a déjà, puisqu'on déclare « la production de
+     * ce projet » depuis la fiche de sa recette. `null` reste accepté et
+     * reproduit exactement le comportement d'avant.
+     */
+    environment = null,
+  } = req.body ?? {};
 
   let bridgeIdentity = null;
   const probed = await probeProjectUrl(url).catch(() => null);
@@ -134,6 +143,7 @@ export async function declare(req, res) {
     projectName,
     bridgeIdentity,
     manifest,
+    environment,
   });
   return created(res, {
     project: toPublicProject(record),

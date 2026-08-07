@@ -15,8 +15,8 @@
  * cadre vide se lirait comme « ce client n'a pas de facture », ce qui serait
  * faux.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { Disclosure } from '@/components/supervision';
 import { ContractCard } from '@/components/ContractCard';
@@ -31,10 +31,12 @@ import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Li
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
 import { formatDateTime } from '@/lib/format';
-import { useProject } from '@/lib/useProjects';
+import { useProject, useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import { getProjectDataFreshness } from '@/lib/projectFreshness';
+import { groupProjectsByLogicalProject } from '@/lib/projectConnections';
+import { EnvironmentConnectionRow } from '@/components/connections';
 import type {
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
 } from '@/types';
@@ -69,7 +71,30 @@ export function ProjectDetailPage() {
    * survivent, puisque le composant n'est jamais démonté entre deux réponses.
    */
   const { project, isInitialLoading, isRefreshing, error } = useProject(projectId);
-  const [tab, setTab] = useState<Tab>('overview');
+  /**
+   * L'ONGLET VIT DANS L'URL — et pas dans un état de composant.
+   *
+   * ── POURQUOI ─────────────────────────────────────────────────────────────
+   * Un lien « gérer la connexion PROD de ce projet » doit ouvrir exactement
+   * cela : la bonne fiche, le bon onglet, le bon environnement. Un état de
+   * navigation ne survit ni au rafraîchissement, ni au collage d'une URL dans
+   * une conversation — c'est-à-dire précisément aux deux usages qu'on veut.
+   *
+   * `replace` : changer d'onglet n'empile pas une entrée d'historique. Le
+   * bouton Retour ramène à la page précédente, pas à l'onglet précédent.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab = tabParam === 'dev' || tabParam === 'events' ? tabParam : 'overview';
+  const setTab = (t: Tab) => {
+    const next = new URLSearchParams(searchParams);
+    if (t === 'overview') next.delete('tab');
+    else next.set('tab', t);
+    setSearchParams(next, { replace: true });
+  };
+  /** L'environnement mis en avant par le lien profond, s'il y en a un. */
+  const envParam = searchParams.get('env');
+  const focusEnvironment = envParam === 'TEST' || envParam === 'PROD' ? envParam : null;
   const showRefreshHint = useSustained(isRefreshing, 500);
 
   if (isInitialLoading) return <div className="page"><p className="muted">Chargement du projet…</p></div>;
@@ -183,7 +208,7 @@ export function ProjectDetailPage() {
         <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
-      {tab === 'dev' && isDev ? <DeveloperTab project={project} /> : null}
+      {tab === 'dev' && isDev ? <DeveloperTab project={project} focusEnvironment={focusEnvironment} fraicheur={fraicheur} /> : null}
     </div>
   );
 }
@@ -350,7 +375,75 @@ function OverviewTab({
  * ONGLET DÉVELOPPEUR — tout le technique, regroupé et nommé sans détour.
  * Les développeurs gardent leur vocabulaire : c'est lui qui sert au diagnostic.
  */
-function DeveloperTab({ project }: { project: PublicProject }) {
+/**
+ * LES CONNEXIONS DU PROJET — la première chose que l'onglet doit montrer.
+ *
+ * ── CE QU'IL MONTRAIT ─────────────────────────────────────────────────────
+ * Un cadre « Connexion au Panel » listant `pairing.status`, `liveness`,
+ * « Curseur de synchronisation », « Outbox » — des noms de champs, au singulier,
+ * pour un projet qui a deux environnements. Rien ne disait où était la
+ * production, ni comment l'appairer.
+ *
+ * ── CE QU'IL MONTRE ───────────────────────────────────────────────────────
+ * Les deux environnements, leur état, leur domaine, leurs deux horodatages
+ * distincts, et l'action qui manque. Le détail technique n'est pas supprimé :
+ * il descend d'un cran, dans un repli.
+ */
+function ConnectionsSection({
+  project,
+  focusEnvironment,
+}: {
+  project: PublicProject;
+  focusEnvironment: 'TEST' | 'PROD' | null;
+}) {
+  // Le parc entier est déjà en cache : les sœurs s'y lisent sans requête.
+  const { projects } = useProjects();
+  const groupe = useMemo(() => {
+    const groupes = groupProjectsByLogicalProject(projects.length ? projects : [project]);
+    return (
+      groupes.find((g) => g.projects.some((p) => p.projectId === project.projectId))
+      ?? groupProjectsByLogicalProject([project])[0]
+    );
+  }, [projects, project]);
+
+  return (
+    <Card title="Connexions">
+      <p className="muted read-only-note">
+        Une fiche du registre décrit UNE instance appairée. Les instances d’un
+        même projet sont regroupées par l’identité que le projet annonce
+        lui-même — jamais par ressemblance de nom ou de domaine.
+      </p>
+      <div className="conn-detail-list">
+        {groupe.connections.map((c) => (
+          <div
+            key={c.environment}
+            className={
+              focusEnvironment === c.environment ? 'conn-focus' : undefined
+            }
+            /* Le lien profond met en avant l'environnement demandé : on arrive
+               SUR la bonne connexion, pas sur une page où il faut la chercher. */
+            aria-current={focusEnvironment === c.environment ? 'true' : undefined}
+          >
+            <EnvironmentConnectionRow connection={c} group={groupe} />
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function DeveloperTab({
+  project,
+  focusEnvironment,
+  fraicheur,
+}: {
+  project: PublicProject;
+  focusEnvironment: 'TEST' | 'PROD' | null;
+  /* La fraîcheur est calculée UNE fois, par la fiche, et descend telle quelle.
+     La recalculer ici rouvrirait la porte à deux règles divergentes — le
+     défaut même que cette règle unique a fermé. */
+  fraicheur: ReturnType<typeof getProjectDataFreshness>;
+}) {
   const [rawOpen, setRawOpen] = useState(false);
   const d = project.descriptor;
   // Les trois adresses sont montrées SÉPARÉMENT : seule celle du site a sa
@@ -359,33 +452,72 @@ function DeveloperTab({ project }: { project: PublicProject }) {
 
   return (
     <>
-      <Card title="Connexion au Panel">
-        <dl className="detail-list">
-          <div><dt>Appairage</dt><dd>{project.pairing.status}</dd></div>
-          <div><dt>Appairé le</dt><dd>{formatDateTime(project.pairing.pairedAt)}</dd></div>
-          <div><dt>Révoqué le</dt><dd>{formatDateTime(project.pairing.revokedAt)}</dd></div>
-          <div><dt>Liveness</dt><dd>{project.liveness}</dd></div>
-          <div>
-            <dt>Dernier heartbeat</dt>
-            <dd>
-              {formatDateTime(project.runtime.lastHeartbeatAt)}
-              {project.secondsSinceLastHeartbeat !== null
-                ? ` (${project.secondsSinceLastHeartbeat} s)`
-                : ''}
-            </dd>
-          </div>
-          <div>
-            <dt>Curseur de synchronisation</dt>
-            <dd>{project.runtime.bridgeStats?.lastSyncAt ?? '—'}</dd>
-          </div>
-          <div>
-            <dt>Outbox</dt>
-            <dd>{project.runtime.bridgeStats?.outboxSize ?? '—'}</dd>
-          </div>
-        </dl>
-      </Card>
+      <ConnectionsSection project={project} focusEnvironment={focusEnvironment} />
 
-      <DestinationsCard projectId={project.projectId} />
+      {/*
+        ── LES QUATRE HORODATAGES NE FUSIONNENT JAMAIS ───────────────────────
+        Ils décrivent quatre faits différents, et les confondre a déjà coûté un
+        écran entier. Chacun dit lequel il est, et de qui il tient son
+        information — le Panel, ou le projet.
+      */}
+      <Disclosure title="Informations techniques" hint="Identifiants, horodatages, générations et destinations.">
+        <Card title="Cette instance">
+          <dl className="detail-list">
+            <div><dt>Environnement</dt><dd>{project.environment ?? '—'}</dd></div>
+            <div><dt>Identité logique</dt><dd>
+              {project.logicalProjectKey
+                ? <code className="inline-code">{project.logicalProjectKey}</code>
+                : <span className="muted">aucune — fiche seule de son groupe</span>}
+            </dd></div>
+            <div><dt>Clé technique de la fiche</dt><dd><code className="inline-code">{project.projectKey}</code></dd></div>
+            <div><dt>Appairage</dt><dd>{project.pairing.status}</dd></div>
+            <div><dt>Appairé le</dt><dd>{formatDateTime(project.pairing.pairedAt)}</dd></div>
+            <div><dt>Révoqué le</dt><dd>{formatDateTime(project.pairing.revokedAt)}</dd></div>
+            <div><dt>Vivacité</dt><dd>{project.liveness}</dd></div>
+          </dl>
+        </Card>
+
+        <Card title="Horodatages — quatre faits distincts">
+          <dl className="detail-list">
+            <div>
+              <dt>Dernier contact <span className="dt-source">observé par le Panel</span></dt>
+              <dd>
+                {formatDateTime(project.runtime.lastHeartbeatAt)}
+                {project.secondsSinceLastHeartbeat !== null
+                  ? ` (${project.secondsSinceLastHeartbeat} s)`
+                  : ''}
+              </dd>
+            </div>
+            <div>
+              <dt>Dernière photographie reçue <span className="dt-source">appliquée par le Panel</span></dt>
+              <dd>{fraicheur.lastFullSyncAt ? formatDateTime(fraicheur.lastFullSyncAt) : '—'}</dd>
+            </div>
+            <div>
+              <dt>Synchronisation déclarée <span className="dt-source">affirmée par le projet</span></dt>
+              <dd>{project.runtime.bridgeStats?.lastSyncAt ?? '—'}</dd>
+            </div>
+            <div>
+              <dt>File d’attente du projet</dt>
+              <dd>{project.runtime.bridgeStats?.outboxSize ?? '—'}</dd>
+            </div>
+          </dl>
+        </Card>
+
+        <Card title="Génération et fraîcheur">
+          <dl className="detail-list">
+            <div><dt>Environnement de la photographie</dt><dd>{fraicheur.projectionEnvironment ?? '—'}</dd></div>
+            <div><dt>Environnement déclaré aujourd’hui</dt><dd>{fraicheur.runtimeEnvironment ?? '—'}</dd></div>
+            <div><dt>Génération de la photographie</dt><dd><code className="inline-code">{project.business?.freshness?.projectionGeneration ?? '—'}</code></dd></div>
+            <div><dt>Génération courante</dt><dd><code className="inline-code">{project.business?.freshness?.runtimeGeneration ?? '—'}</code></dd></div>
+            <div><dt>Rupture de génération</dt><dd>{fraicheur.isGenerationMismatch ? 'oui' : 'non'}</dd></div>
+            <div><dt>Rupture d’environnement</dt><dd>{fraicheur.isEnvironmentMismatch ? 'oui' : 'non'}</dd></div>
+            <div><dt>Destination connue du calcul</dt><dd>
+              {project.business?.freshness?.destinationKnown === false ? 'non' : 'oui'}
+            </dd></div>
+          </dl>
+        </Card>
+
+        <DestinationsCard projectId={project.projectId} />
 
       <Card title="Fiche technique du projet">
         <dl className="detail-list">
@@ -445,6 +577,7 @@ function DeveloperTab({ project }: { project: PublicProject }) {
           <EmptyState title="Jamais constatée" hint="Aucune découverte n’a encore relevé ce que le projet applique." />
         )}
       </Card>
+      </Disclosure>
 
       <Card title="Actions techniques">
         <div className="row-actions">

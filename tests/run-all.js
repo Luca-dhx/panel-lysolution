@@ -26,6 +26,7 @@ const TESTS = [
   'panel-meetings-ui.test.js',
   'panel-timeline-ui.test.js',
   'generation-change.test.js',
+  'project-connections.test.js',
   'instance-generation-freshness.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',

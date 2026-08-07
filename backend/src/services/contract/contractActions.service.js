@@ -29,6 +29,7 @@ const nowIso = () => new Date().toISOString();
 export const CONTRACT_OPERATIONS = Object.freeze({
   CANCEL_AT_PERIOD_END: 'contract.cancel_at_period_end',
   CANCEL_NOW: 'contract.cancel_now',
+  SET_PROTECTION: 'contract.set_protection',
 });
 
 /** Un projet non appairé n'a pas de pont : la demande n'a nulle part où aller. */

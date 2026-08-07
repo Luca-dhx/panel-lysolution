@@ -56,6 +56,56 @@ const panelProjectSchema = new mongoose.Schema(
       enum: ['BRIDGE_KEY', 'BRIDGE_NAME', 'NAME', 'URL', 'RECONCILED', null],
       default: null,
     },
+    /**
+     * IDENTITÉ LOGIQUE — « ces deux fiches sont le même projet client ».
+     *
+     * ══ CE QUE CE CHAMP FERME ═══════════════════════════════════════════════
+     *
+     * Une fiche du registre est UNE INSTANCE appairée : un appairage, un jeton,
+     * un environnement. C'est volontaire et ce champ n'y touche pas. Mais un
+     * même projet client vit en TEST *et* en PROD — deux bases, deux jetons,
+     * donc deux fiches — et RIEN ne disait qu'elles se rapportaient au même
+     * client. L'écran ne pouvait qu'aligner des appairages techniques
+     * indépendants, et l'opérateur devait faire le rapprochement de tête.
+     *
+     * ══ D'OÙ ELLE VIENT, ET POURQUOI PAS D'UNE RESSEMBLANCE ═════════════════
+     *
+     * De la CLÉ QUE LE PROJET ANNONCE lui-même au pont (`bridgeIdentity
+     * .projectKey`, contrat >= 1.4.0) — la même source que le Panel tient déjà
+     * pour la plus autoritaire (`projectKeySource: 'BRIDGE_KEY'`). Deux
+     * instances d'un même projet la produisent identique par construction : le
+     * déploiement embarque le `.env` du projet VERBATIM et ne réécrit que ce
+     * qui est propre à l'hôte (ENV, PORT, CORS, PUBLIC_URL).
+     *
+     * Ce n'est donc ni une saisie, ni une similarité de nom ou de domaine :
+     * c'est une égalité exacte entre deux valeurs déclarées.
+     *
+     * ══ CE QU'ELLE N'EST PAS ════════════════════════════════════════════════
+     *
+     * Ni une identité d'appairage, ni une clé technique de fiche
+     * (`projectKey` reste unique et propre à l'instance), ni une donnée que le
+     * Panel transmet. Elle n'entre dans AUCUN calcul de génération, de
+     * fraîcheur, de heartbeat ni de snapshot.
+     *
+     * `null` est une valeur normale : les fiches antérieures — et celles dont
+     * le projet ne déclare aucune clé — n'en ont pas, et se comportent
+     * exactement comme avant, chacune seule de son groupe.
+     */
+    logicalProjectKey: { type: String, default: null },
+    /**
+     * L'ENVIRONNEMENT QUE CETTE FICHE EST CENSÉE SERVIR — l'intention.
+     *
+     * `runtime.environment` est le CONSTAT : ce que le projet affirme à chaque
+     * battement, et la seule valeur qui entre dans la génération. Elle n'existe
+     * qu'après le premier contact. Il fallait pourtant pouvoir dire, dès la
+     * déclaration, « celle-ci sera la production » — sinon deux fiches d'un
+     * même projet ne peuvent pas être distinguées avant leur premier battement.
+     *
+     * Les deux ne fusionnent jamais : le Panel ne décide pas de
+     * l'environnement d'un projet, il enregistre une intention que le projet
+     * confirmera.
+     */
+    declaredEnvironment: { type: String, enum: ['TEST', 'PROD', null], default: null },
     projectName: { type: String, required: true },
     createdAt: { type: String, required: true },
     updatedAt: { type: String, required: true },
@@ -77,5 +127,16 @@ const panelProjectSchema = new mongoose.Schema(
   },
   { minimize: false, versionKey: false },
 );
+
+/**
+ * Le regroupement se lit, il ne se cherche pas. Index NON unique : plusieurs
+ * fiches partagent volontairement la même identité logique — c'est tout
+ * l'objet du champ. L'unicité qui compte (une fiche par environnement dans un
+ * groupe) est un invariant MÉTIER, vérifié à la déclaration : l'imposer par un
+ * index partiel sur deux champs dont l'un est renseigné après coup (le
+ * `runtime.environment` vient du premier battement) ferait échouer des
+ * écritures parfaitement légitimes.
+ */
+panelProjectSchema.index({ logicalProjectKey: 1 });
 
 export default mongoose.model('PanelProject', panelProjectSchema);

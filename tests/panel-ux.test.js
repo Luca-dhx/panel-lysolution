@@ -313,8 +313,24 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
     /key=\{project\.projectId\}/.test(projects));
   check('aucune clé instable ne remonte les cartes',
     !/key=\{JSON\.stringify/.test(projects) && !/key=\{JSON\.stringify/.test(detail));
-  check('la fiche garde son onglet actif dans un état local',
-    /useState<Tab>\('overview'\)/.test(detail));
+  /**
+   * L'ONGLET A QUITTÉ L'ÉTAT LOCAL POUR L'URL — et c'est plus fort, pas moins.
+   *
+   * Un état local survit au rafraîchissement SILENCIEUX de la fiche (le
+   * composant n'est pas démonté), ce que ce contrôle vérifiait. Il ne survit
+   * en revanche ni à un F5, ni à un lien collé — or c'est exactement ce qu'un
+   * lien « gérer la connexion PROD » doit rouvrir. L'invariant est donc
+   * renforcé : l'onglet actif est une donnée d'ADRESSE.
+   */
+  check('l’onglet actif vit dans l’URL', /useSearchParams\(\)/.test(detail));
+  check('…et se relit au montage, donc survit à un rafraîchissement',
+    /searchParams\.get\('tab'\)/.test(detail));
+  check('…sans empiler d’entrée d’historique à chaque changement',
+    /setSearchParams\(next, \{ replace: true \}\)/.test(detail));
+  check('l’environnement ciblé par un lien profond est lu de l’URL',
+    /searchParams\.get\('env'\)/.test(detail));
+  check('…et une valeur inattendue ne devient jamais un onglet',
+    /tabParam === 'dev' \|\| tabParam === 'events'/.test(detail));
   check('la fiche n’affiche plus de chargement après le premier',
     /isInitialLoading\) return/.test(detail));
 

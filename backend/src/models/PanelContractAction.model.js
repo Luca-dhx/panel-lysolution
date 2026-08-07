@@ -42,6 +42,21 @@ const contractActionSchema = new mongoose.Schema(
       endsAt: { type: String, default: null },
     },
 
+    /**
+     * PROTECTION CONTRACTUELLE — renseigné pour la seule opération de réglage.
+     *
+     * Additif : les actions de résiliation le laissent à `null`, et les lignes
+     * antérieures à ce champ restent lisibles telles quelles. `requested` est
+     * l'intention, `applied` ce que le projet a CONSTATÉ après réconciliation —
+     * les confondre laisserait croire qu'une demande vaut un effet.
+     */
+    protection: {
+      requested: { type: Boolean, default: null },
+      applied: { type: Boolean, default: null },
+      siteStatus: { type: String, default: null },
+      suspensionSource: { type: String, default: null },
+    },
+
     outcome: {
       type: String,
       enum: ['REQUESTED', 'SUCCEEDED', 'FAILED'],

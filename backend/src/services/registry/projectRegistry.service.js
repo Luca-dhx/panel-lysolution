@@ -16,6 +16,7 @@ import {
   generateProjectKey,
   normalizeBackendUrl,
   resolveProjectName,
+  slugify,
 } from './projectIdentity.js';
 
 // La vivacité et la santé vivent dans les services de supervision : le
@@ -41,6 +42,36 @@ function assertValidManifestOrThrow(manifestInput) {
  * entre deux requêtes simultanées : ce sont cinq chemins vers la même
  * situation. Cinq messages différents feraient croire à cinq problèmes.
  */
+/** `TEST` / `PROD`, ou `null` — jamais une valeur d'ambiance. */
+export function normalizeEnvironment(valeur) {
+  const brut = String(valeur ?? '').trim().toUpperCase();
+  return brut === 'TEST' || brut === 'PROD' ? brut : null;
+}
+
+/**
+ * L'ENVIRONNEMENT D'UNE FICHE — le CONSTAT d'abord, l'intention à défaut.
+ *
+ * Le projet est l'autorité de son propre environnement : ce qu'il annonce au
+ * battement prime toujours. `declaredEnvironment` ne sert qu'avant le premier
+ * contact — sans quoi une fiche tout juste déclarée n'aurait aucun
+ * environnement, et deux instances d'un même projet seraient indiscernables
+ * jusqu'à leur premier battement.
+ */
+export function declaredEnvironmentOf(record) {
+  return normalizeEnvironment(record?.runtime?.environment)
+    ?? normalizeEnvironment(record?.declaredEnvironment);
+}
+
+/** Les autres instances du MÊME projet logique — jamais la fiche elle-même. */
+export async function listSiblings(logicalProjectKey, exceptProjectId = null) {
+  const cle = String(logicalProjectKey ?? '').trim();
+  if (!cle) return [];
+  const toutes = await registryStore.list();
+  return toutes.filter(
+    (r) => r.logicalProjectKey === cle && r.projectId !== exceptProjectId,
+  );
+}
+
 function dejaDeclare(existant) {
   return ApiError.conflict(
     'PANEL_PROJECT_ALREADY_DECLARED',
@@ -67,6 +98,24 @@ export async function declareProject({
   projectName = null,
   bridgeIdentity = null,
   manifest = null,
+  /**
+   * ENVIRONNEMENT VISÉ par cette instance — `TEST` ou `PROD`.
+   *
+   * ── POURQUOI IL FAUT LE DIRE À LA DÉCLARATION ─────────────────────────────
+   * Une fiche est une INSTANCE. Deux instances d'un même projet client — sa
+   * recette et sa production — sont deux fiches, et rien ne permettait de les
+   * déclarer toutes les deux : la seconde annonçant la même clé de pont était
+   * refusée comme doublon. Le Panel ne pouvait donc PAS enregistrer un projet
+   * en TEST et en PROD, et l'écran n'avait rien à regrouper.
+   *
+   * `runtime.environment` ne peut pas servir ici : il n'est renseigné qu'au
+   * PREMIER BATTEMENT, c'est-à-dire longtemps après. On déclare donc
+   * l'intention ; le battement la confirmera ou la corrigera.
+   *
+   * `null` reste le comportement d'avant : une fiche sans environnement
+   * déclaré, seule de son groupe.
+   */
+  environment = null,
 } = {}) {
   const normalizedUrl = normalizeBackendUrl(publicBackendUrl);
   if (!normalizedUrl) {
@@ -93,18 +142,85 @@ export async function declareProject({
     throw ApiError.badRequest('PANEL_PROJECT_NAME_REQUIRED', 'projectName est requis.');
   }
 
-  // ── ANTI-DOUBLONS ────────────────────────────────────────────────────────
-  // Un même projet ne peut entrer qu'une fois, par quelque porte qu'on tente :
-  // même adresse, même clé dérivée, ou même identité annoncée par le pont.
-  // Le message est le même dans les trois cas — c'est le même fait.
-  const already =
-    (await registryStore.getByBackendUrl(normalizedUrl))
-    ?? (await registryStore.getByKey(generated.projectKey))
-    ?? (bridgeIdentity?.projectKey
-      ? await registryStore.getByKey(bridgeIdentity.projectKey)
-      : null);
+  /**
+   * L'IDENTITÉ LOGIQUE — la clé que le PROJET annonce, telle quelle.
+   *
+   * Elle n'est ni saisie, ni devinée : c'est la valeur que le pont transporte
+   * (>= 1.4.0), la même que le Panel tient déjà pour la plus autoritaire. Deux
+   * instances d'un même projet la produisent identique, puisque le déploiement
+   * embarque le `.env` du projet verbatim. Sans annonce, pas d'identité
+   * logique — et la fiche reste seule de son groupe, comme avant.
+   */
+  const logicalProjectKey = slugify(bridgeIdentity?.projectKey) || null;
+  const env = normalizeEnvironment(environment);
 
-  if (already) throw dejaDeclare(already);
+  /**
+   * ── ANTI-DOUBLONS, DÉSORMAIS PAR INSTANCE ────────────────────────────────
+   *
+   * Une même ADRESSE ne peut entrer qu'une fois : deux fiches pointant le même
+   * backend décriraient la même instance deux fois. Cela ne change pas.
+   *
+   * En revanche, la même IDENTITÉ LOGIQUE dans un AUTRE environnement n'est
+   * pas un doublon : c'est la recette et la production du même projet. Les
+   * refuser — ce que faisait la comparaison de clé annoncée — rendait
+   * simplement impossible d'enregistrer un projet en TEST et en PROD.
+   *
+   * Ce qui reste interdit, et le sera explicitement : DEUX fiches du même
+   * projet logique dans le MÊME environnement. Un projet n'a qu'une recette.
+   */
+  const surLaMemeAdresse = await registryStore.getByBackendUrl(normalizedUrl);
+  if (surLaMemeAdresse) throw dejaDeclare(surLaMemeAdresse);
+
+  /**
+   * UN PROJET N'A QU'UNE RECETTE ET QU'UNE PRODUCTION.
+   *
+   * C'est l'invariant métier que remplace l'ancien refus « même clé annoncée ».
+   * Le message nomme l'instance fautive : « déjà déclaré » sans dire laquelle
+   * obligeait à parcourir le parc pour comprendre.
+   */
+  const soeurs = logicalProjectKey ? await listSiblings(logicalProjectKey) : [];
+  const collision = logicalProjectKey
+    ? soeurs.find((s) => declaredEnvironmentOf(s) === env)
+    : null;
+  if (collision) {
+    /**
+     * SANS ENVIRONNEMENT DÉCLARÉ, RIEN N'A CHANGÉ.
+     *
+     * Deux fiches du même projet dont aucune ne dit à quoi elle sert restent
+     * ce qu'elles ont toujours été : un doublon. Le message et le code le
+     * disent comme avant — la nouveauté ne s'applique qu'à qui déclare son
+     * environnement, c'est-à-dire à qui sait ce qu'il fait.
+     */
+    if (!env) throw dejaDeclare(collision);
+
+    throw ApiError.conflict(
+      'PANEL_PROJECT_ENVIRONMENT_ALREADY_DECLARED',
+      `Ce projet a déjà une instance ${env} dans le Panel.`,
+      {
+        projectId: collision.projectId,
+        projectName: collision.projectName,
+        environment: env,
+        logicalProjectKey,
+      },
+    );
+  }
+
+  /**
+   * LA CLÉ TECHNIQUE RESTE UNIQUE PAR FICHE — et le reste sans arbitrage.
+   *
+   * Deux instances d'un même projet annoncent la MÊME clé : c'est justement ce
+   * qui les regroupe. Mais `projectKey` identifie une FICHE et son index est
+   * unique. On la qualifie donc par l'environnement — `sb-auto-06-prod` — ce
+   * qui reste déterministe : mêmes entrées, même clé, un double clic reste
+   * inoffensif. L'identité logique, elle, demeure identique de part et d'autre.
+   */
+  let projectKey = generated.projectKey;
+  if (await registryStore.getByKey(projectKey)) {
+    const qualifiee = env ? `${projectKey}-${env.toLowerCase()}` : null;
+    const libre = qualifiee && !(await registryStore.getByKey(qualifiee));
+    if (!libre) throw dejaDeclare(await registryStore.getByKey(projectKey));
+    projectKey = qualifiee;
+  }
 
   let validatedManifest = null;
   if (manifest !== null && manifest !== undefined) {
@@ -115,9 +231,20 @@ export async function declareProject({
   const manifestSource = validatedManifest ? 'MANUAL' : null;
   const record = {
     projectId: newBridgeId(),
-    projectKey: generated.projectKey,
+    projectKey,
     projectKeySource: generated.source,
+    logicalProjectKey,
     projectName: resolvedName,
+    /**
+     * L'ENVIRONNEMENT DÉCLARÉ — l'intention, distincte du constat.
+     *
+     * `runtime.environment` reste ce que le projet AFFIRME à chaque battement,
+     * et lui seul entre dans la génération. Celui-ci dit ce que la fiche est
+     * censée être, avant le premier contact. Les confondre reviendrait à
+     * décider de l'environnement d'un projet depuis le Panel, ce qu'il ne fait
+     * pas.
+     */
+    declaredEnvironment: env,
     createdAt: now,
     updatedAt: now,
     pairing: {
@@ -344,6 +471,13 @@ export function toPublicProject(record, now = Date.now(), projections = {}, dest
   return {
     projectId: record.projectId,
     projectKey: record.projectKey,
+    /**
+     * L'identité LOGIQUE et l'environnement de cette instance — de quoi
+     * regrouper les fiches d'un même projet client SANS que l'écran ait à
+     * deviner quoi que ce soit. `null` = fiche seule de son groupe.
+     */
+    logicalProjectKey: record.logicalProjectKey ?? null,
+    environment: declaredEnvironmentOf(record),
     projectName: record.projectName,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,

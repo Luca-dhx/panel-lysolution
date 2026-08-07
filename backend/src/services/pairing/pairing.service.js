@@ -102,19 +102,72 @@ export async function bootstrap(dto) {
   // Rien à adopter si le projet n'annonce pas de clé : on garde la nôtre
   // plutôt que d'écraser une valeur connue par une absence.
   const announcedKey = typeof dto.projectKey === 'string' ? dto.projectKey.trim() : '';
+
+  /**
+   * L'IDENTITÉ LOGIQUE SE POSE ICI, à chaque appairage.
+   *
+   * ── POURQUOI À L'APPAIRAGE, ET AUTOMATIQUEMENT ────────────────────────────
+   * C'est le seul instant où le projet PARLE de lui-même avec certitude. La
+   * clé qu'il annonce est la même pour toutes ses instances — le déploiement
+   * embarque son `.env` verbatim — donc la recette et la production d'un même
+   * projet la produisent identique, sans que personne ne saisisse rien et sans
+   * qu'aucune ressemblance de nom ou de domaine n'entre en jeu.
+   *
+   * Les fiches antérieures l'acquièrent au prochain appairage. Tant qu'elles ne
+   * l'ont pas, elles restent seules de leur groupe — ce qui est exactement leur
+   * comportement d'aujourd'hui.
+   */
+  if (announcedKey.length > 0) record.logicalProjectKey = announcedKey;
+
   if (announcedKey.length > 0 && announcedKey !== record.projectKey) {
     const collision = await registryStore.getByKey(announcedKey);
-    if (collision && collision.projectId !== record.projectId) {
+    /**
+     * ── UNE SŒUR N'EST PAS UNE COLLISION ────────────────────────────────────
+     *
+     * Deux instances d'un même projet annoncent la MÊME clé : c'est le fait
+     * qui permet de les regrouper. Refuser le second appairage pour cette
+     * raison rendait tout simplement impossible d'avoir une recette et une
+     * production dans le Panel.
+     *
+     * La clé TECHNIQUE reste propre à chaque fiche — elle est unique en base,
+     * et deux fiches ne peuvent pas la partager. On renonce donc à l'adopter
+     * quand une sœur la détient déjà, et on garde la nôtre : ce n'est qu'un
+     * identifiant de fiche, tandis que l'identité logique, elle, est posée.
+     */
+    /**
+     * UNE SŒUR SERT UN AUTRE ENVIRONNEMENT — sinon ce n'est pas une sœur.
+     *
+     * Partager l'identité logique ne suffit pas : deux fiches du MÊME
+     * environnement resteraient deux vérités concurrentes, et l'exemption
+     * laisserait passer l'adoption d'une clé qui appartient réellement à
+     * quelqu'un d'autre. La condition porte donc sur les deux à la fois.
+     */
+    const monEnv = record.runtime?.environment ?? dto.environment ?? null;
+    const sonEnv = collision?.runtime?.environment ?? collision?.declaredEnvironment ?? null;
+    const memeProjetLogique = collision
+      && collision.projectId !== record.projectId
+      && collision.logicalProjectKey === announcedKey
+      && monEnv !== null && sonEnv !== null && monEnv !== sonEnv;
+
+    if (collision && collision.projectId !== record.projectId && !memeProjetLogique) {
       throw new BridgeError(
         BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
         'Un autre projet du registre porte déjà cette clé technique.',
       );
     }
-    logger.info(
-      `Clé réconciliée à l’appairage : « ${record.projectKey} » -> « ${announcedKey} » (le projet fait foi).`,
-    );
-    record.projectKey = announcedKey;
-    record.projectKeySource = 'RECONCILED';
+
+    if (memeProjetLogique) {
+      logger.info(
+        `Clé technique « ${record.projectKey} » conservée : « ${announcedKey} » appartient déjà à `
+        + `l’instance ${collision.runtime?.environment ?? 'sœur'} du même projet.`,
+      );
+    } else {
+      logger.info(
+        `Clé réconciliée à l’appairage : « ${record.projectKey} » -> « ${announcedKey} » (le projet fait foi).`,
+      );
+      record.projectKey = announcedKey;
+      record.projectKeySource = 'RECONCILED';
+    }
   }
 
   // Contrat ≥ 1.1.0 : Manifest joint au bootstrap. Canal OFFICIEL — validé

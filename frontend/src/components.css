@@ -1866,3 +1866,251 @@ body {
     width: 100%;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CONNEXIONS D'UN PROJET — page Appairages et onglet Développeur.
+
+   ── LE PARTI PRIS ────────────────────────────────────────────────────────
+   Peu de bordures, beaucoup de blanc, une seule couleur par état. La table
+   d'appairages empilait des colonnes techniques et deux boutons rouges
+   concurrents ; ici, un projet est un bloc, ses environnements sont deux
+   lignes, et l'action se lit sans être criée.
+
+   ── RESPONSIVE PAR CONSTRUCTION ──────────────────────────────────────────
+   Aucune largeur minimale fixe supérieure à 260px, aucune grille qui force
+   un débordement sous 320px, et les domaines longs sont tronqués par
+   `min-width: 0` + `text-overflow` — jamais par un défilement horizontal de
+   la page.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Un texte réservé aux lecteurs d'écran : le statut n'est jamais porté par la
+   seule couleur, ni une action par le seul contexte visuel. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Barre d'outils ────────────────────────────────────────────────────── */
+.conn-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--p-space-5);
+}
+
+.conn-search { flex: 1 1 16rem; min-width: 0; }
+.conn-search .input { width: 100%; }
+
+.conn-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}
+
+.conn-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  /* 40px de haut : une cible tactile confortable, y compris sur mobile. */
+  min-height: 2.5rem;
+  padding: 0 var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-full);
+  background: transparent;
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  cursor: pointer;
+}
+
+.conn-filter:hover { border-color: var(--p-border-strong); color: var(--p-text); }
+.conn-filter:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 2px; }
+
+.conn-filter-active {
+  border-color: transparent;
+  background: var(--p-primary-soft);
+  color: var(--p-text);
+}
+
+.conn-filter-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--p-text-faint);
+  font-size: var(--p-text-xs);
+}
+.conn-filter-active .conn-filter-count { color: var(--p-text-muted); }
+
+/* ── Grille de cartes ──────────────────────────────────────────────────── */
+.conn-grid {
+  display: grid;
+  gap: var(--p-space-4);
+  /* `minmax(0, 1fr)` et non `min-content` : c'est ce qui autorise les enfants
+     à rétrécir, donc les longs domaines à se tronquer au lieu de pousser la
+     page hors du viewport. */
+  grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr));
+}
+
+/* ── Carte projet ──────────────────────────────────────────────────────── */
+.conn-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+  padding: var(--p-space-5);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+  background: var(--p-surface);
+  min-width: 0;
+}
+
+.conn-card-head {
+  display: flex;
+  gap: var(--p-space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.conn-card-identity { min-width: 0; }
+
+.conn-card-name {
+  margin: 0;
+  font-size: var(--p-text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.conn-card-tagline {
+  margin: var(--p-space-1) 0 0;
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.conn-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-1);
+  flex: none;
+  padding: 0.15rem var(--p-space-2);
+  border-radius: var(--p-radius-full);
+  background: var(--p-warn-soft);
+  color: var(--p-warn);
+  font-size: var(--p-text-xs);
+  white-space: nowrap;
+}
+
+.conn-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+}
+
+/* ── Ligne d'environnement ─────────────────────────────────────────────── */
+.conn-row {
+  display: grid;
+  gap: var(--p-space-2);
+  padding: var(--p-space-3) 0 0;
+  border-top: 1px solid var(--p-border);
+  min-width: 0;
+}
+.conn-card-body > .conn-row:first-child { border-top: 0; padding-top: 0; }
+
+/* Un environnement non appairé s'efface — il n'est pas en défaut. */
+.conn-row-absent .conn-env,
+.conn-row-absent .conn-host { color: var(--p-text-faint); }
+
+.conn-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2) var(--p-space-3);
+  align-items: baseline;
+}
+
+.conn-env {
+  font-size: var(--p-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--p-text-muted);
+}
+
+.conn-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+.conn-dot { font-size: 0.7rem; line-height: 1; }
+.conn-dot-ok { color: var(--p-ok); }
+.conn-dot-warn { color: var(--p-warn); }
+.conn-dot-error { color: var(--p-danger); }
+.conn-dot-neutral { color: var(--p-text-faint); }
+
+.conn-state-label { font-size: var(--p-text-sm); font-weight: 500; }
+.conn-state-ok { color: var(--p-text); }
+.conn-state-warn { color: var(--p-warn); }
+.conn-state-error { color: var(--p-danger); }
+.conn-state-neutral { color: var(--p-text-faint); }
+
+/* Un domaine long se tronque ; il ne fait jamais défiler la page. */
+.conn-host {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+}
+a.conn-host:hover { color: var(--p-text); }
+.conn-host-empty { margin: 0; color: var(--p-text-faint); }
+
+.conn-meta { margin: 0; font-size: var(--p-text-xs); color: var(--p-text-faint); }
+
+.conn-facts {
+  display: grid;
+  gap: var(--p-space-2) var(--p-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
+  margin: var(--p-space-1) 0 0;
+}
+.conn-facts dt { font-size: var(--p-text-xs); color: var(--p-text-faint); }
+.conn-facts dd { margin: 0; font-size: var(--p-text-sm); overflow-wrap: anywhere; }
+
+.conn-actions { display: flex; flex-wrap: wrap; gap: var(--p-space-2); }
+.conn-actions .btn { min-height: 2.25rem; }
+
+/* ── Onglet Développeur ────────────────────────────────────────────────── */
+.conn-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+}
+
+/* L'environnement visé par un lien profond : on ARRIVE dessus, on ne le
+   cherche pas. Un liseré, pas un aplat — le contenu reste roi. */
+.conn-focus {
+  padding-left: var(--p-space-3);
+  border-left: 3px solid var(--p-primary);
+}
+
+.dt-source {
+  display: block;
+  font-size: var(--p-text-xs);
+  font-weight: 400;
+  color: var(--p-text-faint);
+}
+
+/* ── Sous 400px : la ligne d'environnement passe en pile ────────────────── */
+@media (max-width: 25rem) {
+  .conn-card { padding: var(--p-space-4); }
+  .conn-toolbar { flex-direction: column; align-items: stretch; }
+  .conn-filters { justify-content: flex-start; }
+  .conn-actions .btn { width: 100%; justify-content: center; }
+}

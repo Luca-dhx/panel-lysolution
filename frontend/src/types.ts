@@ -23,6 +23,20 @@ export type HealthStatus = 'OK' | 'DEGRADED';
 export interface PublicProject {
   projectId: string;
   projectKey: string;
+  /**
+   * IDENTITÉ LOGIQUE — « cette fiche et celle-là sont le même projet client ».
+   *
+   * Posée par le backend depuis la clé que le PROJET annonce au pont, la même
+   * pour toutes ses instances. C'est elle, et rien d'autre, qui regroupe une
+   * recette et une production sous une seule carte. `null` = fiche seule de son
+   * groupe (comportement des fiches antérieures).
+   */
+  logicalProjectKey: string | null;
+  /**
+   * L'environnement de CETTE instance, tel que le backend le tranche : le
+   * constat du battement d'abord, l'intention déclarée à défaut.
+   */
+  environment: 'TEST' | 'PROD' | null;
   projectName: string;
   createdAt: string;
   updatedAt: string;

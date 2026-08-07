@@ -53,7 +53,8 @@
     "test:forensics": "node ../tests/deployment-forensics.test.js",
     "test:ssh-restart": "node ../tests/deployment-ssh-restart.test.js",
     "test:duplication-e2e": "node ../tests/duplication-e2e.test.js",
-    "test:instance-freshness": "node ../tests/instance-generation-freshness.test.js"
+    "test:instance-freshness": "node ../tests/instance-generation-freshness.test.js",
+    "test:connections": "node ../tests/project-connections.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
