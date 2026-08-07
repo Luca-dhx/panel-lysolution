@@ -152,17 +152,8 @@ try {
     await stepQueue;
     await runs.finalizeRun(runId, outcome);
 
-    /**
-     * L'INVARIANT DU SUCCÈS — vérifié, jamais déduit.
-     *
-     * Un pipeline vert ne suffit pas : on RELIT la destination et la
-     * réservation de port. C'est en déduisant le succès sans relire l'état
-     * persisté qu'un écran de succès a pu coexister avec une destination
-     * figée en « Publication… ».
-     */
-    if (outcome?.status === 'ok') {
-      await verifyFinalization(runId, targetId).catch(() => null);
-    }
+    // C'est CET appel qui fait passer la destination de « Publication… » à
+    // « En ligne ». Il doit donc précéder toute vérification de cet état.
     await targets.recordDeployment(targetId, {
       operationType,
       ok: outcome.status === 'ok',
@@ -173,6 +164,27 @@ try {
       error: outcome.error,
       steps: outcome.steps ?? [],
     });
+
+    /**
+     * L'INVARIANT DU SUCCÈS — vérifié, jamais déduit, et vérifié APRÈS coup.
+     *
+     * Un pipeline vert ne suffit pas : on RELIT la destination et la
+     * réservation de port. C'est en déduisant le succès sans relire l'état
+     * persisté qu'un écran de succès a pu coexister avec une destination
+     * figée en « Publication… ».
+     *
+     * ── L'ORDRE, ET POURQUOI IL EST LE DÉFAUT CORRIGÉ ─────────────────────
+     * Cette relecture précédait `recordDeployment` — c'est-à-dire l'écriture
+     * même qu'elle était censée constater. Elle trouvait donc immanquablement
+     * `state=DEPLOYING` et « verrou encore posé », et classait en
+     * `finalization_failed` un déploiement parfaitement réussi. Le run
+     * `88022404` du 06/08 en est l'exemple : toutes les étapes vertes,
+     * version 62241f6 en ligne, et un rapport annonçant une finalisation non
+     * vérifiée. Vérifier avant d'écrire ne prouve rien : cela invente un échec.
+     */
+    if (outcome?.status === 'ok') {
+      await verifyFinalization(runId, targetId).catch(() => null);
+    }
   } catch {
     // La conclusion n'a pas pu être écrite : le run sera vu comme orphelin
     // au prochain démarrage, ce qui est le comportement correct.
