@@ -37,7 +37,13 @@ const iso = (offsetMs = 0) => new Date(Date.now() + offsetMs).toISOString();
 function manifestFor(key, extra = {}) {
   return {
     manifestVersion: '1.0.0',
-    project: { key, name: key, environment: 'PROD', softwareVersion: 'abc1234' },
+    /**
+     * CE PANEL SERT LA RECETTE — et un projet ne s'y appaire qu'en s'y
+     * déclarant. Le contrôle de concordance d'environnement (§9 de
+     * 05_PAIRING) refuse un projet qui se dit en PROD sur une instance TEST :
+     * cette fixture s'y conforme au lieu de décrire un parc impossible.
+     */
+    project: { key, name: key, environment: 'TEST', softwareVersion: 'abc1234' },
     bridge: { contractVersion: CONTRACT_VERSION, projectBridgeBasePath: '/api/project-bridge/v1' },
     contracts: { panelBridge: CONTRACT_VERSION, projectBridge: CONTRACT_VERSION },
     sync: { supportedEntityTypes: ['DIAGNOSTIC'], operations: [] },
@@ -146,7 +152,7 @@ section('Découverte : le Manifest du bootstrap fait autorité');
     contractVersion: CONTRACT_VERSION,
     projectKey: 'garage-nord',
     projectName: 'Garage Nord',
-    environment: 'PROD',
+    environment: 'TEST',
     softwareVersion: 'def5678',
     publicBackendUrl: 'https://api.garage-nord.exemple.com',
     pairingCode: code.code,
@@ -172,7 +178,7 @@ section('Heartbeats : archivage, champs 1.2.0, statistiques');
     const hb = {
       sentAt: iso(-i * 1000),
       softwareVersion: version,
-      environment: 'PROD',
+      environment: 'TEST',
       health: { status: 'OK', details: null },
       runtime: { uptimeSeconds: 100 + i * 50, load: { memoryUsedMb: 120 + i } },
       engines: { deployment: '1.1.0', duplication: '1.1.0' },
@@ -327,7 +333,7 @@ section('Tableau de bord : des nombres, jamais la liste complète');
   check('total de projets', dashboard.totals.projects === 2);
   check('compteur en ligne', dashboard.totals.online === 1);
   check('compteur non appairé', dashboard.totals.notPaired === 1);
-  check('répartition TEST/PROD', dashboard.totals.prod === 1);
+  check('répartition TEST/PROD', dashboard.totals.test === 1 && dashboard.totals.prod === 0);
   check('compteurs de santé présents',
     ['ok', 'warning', 'error', 'unknown'].every((k) => typeof dashboard.health[k] === 'number'));
   check('répartition des versions de contrat',
@@ -351,7 +357,7 @@ section('Recherche : par nom, slug, domaine, type, version, état, module');
   check('par slug', (await fleet.searchFleet({ slug: 'garage-nord' })).total === 1);
   check('par domaine', (await fleet.searchFleet({ domain: 'exemple.com' })).total === 1);
   check('par type', (await fleet.searchFleet({ type: 'vitrine' })).total === 1);
-  check('par environnement', (await fleet.searchFleet({ environment: 'PROD' })).total === 1);
+  check('par environnement', (await fleet.searchFleet({ environment: 'TEST' })).total === 1);
   check('par vivacité', (await fleet.searchFleet({ liveness: 'ONLINE' })).total === 1);
   check('par version de contrat',
     (await fleet.searchFleet({ contractVersion: CONTRACT_VERSION })).total === 1);
@@ -362,7 +368,7 @@ section('Recherche : par nom, slug, domaine, type, version, état, module');
   check('critère sans correspondance → vide', (await fleet.searchFleet({ type: 'inexistant' })).total === 0);
   check('sans critère → tout le parc', (await fleet.searchFleet({})).total === 2);
   check('critères combinés (ET logique)',
-    (await fleet.searchFleet({ type: 'vitrine', environment: 'TEST' })).total === 0);
+    (await fleet.searchFleet({ type: 'vitrine', environment: 'PROD' })).total === 0);
 
   const facets = await fleet.searchFacets();
   check('facettes : types réellement présents', facets.types.includes('vitrine'));
@@ -394,7 +400,7 @@ section('Surface /api/supervision : strictement en lecture');
   const dash = await call('GET', '/api/supervision/dashboard', { headers: auth });
   check('GET /dashboard → 200', dash.status === 200 && dash.json.data.totals.projects === 2);
 
-  const fleetRes = await call('GET', '/api/supervision/fleet?environment=PROD', { headers: auth });
+  const fleetRes = await call('GET', '/api/supervision/fleet?environment=TEST', { headers: auth });
   check('GET /fleet filtré → 200', fleetRes.status === 200 && fleetRes.json.data.total === 1);
 
   const facetsRes = await call('GET', '/api/supervision/facets', { headers: auth });

@@ -138,16 +138,37 @@ section('Aucune dépendance vers le dépôt voisin');
   );
   check('aucun import ne sort du dépôt', escaping.length === 0);
 
-  // Le contrôle de dérive des specs est le SEUL fichier autorisé à ACCÉDER
-  // au dépôt voisin (chemin de système de fichiers) — outil d'atelier,
-  // jamais du runtime. Citer « SB Auto 06 » dans une fixture ou une règle
-  // d'interdiction ne crée aucune dépendance.
+  /**
+   * ACCÉDER AU DÉPÔT VOISIN — outils d'atelier, et eux seuls.
+   *
+   * ── CE QUE LA RÈGLE PROTÈGE, ET CE QU'ELLE NE PROTÈGE PAS ────────────────
+   * L'invariant est qu'AUCUN code applicatif — backend, frontend, déploiement
+   * — ne dépende du dépôt voisin : c'est ce que vérifie l'assertion suivante,
+   * et elle ne souffre aucune exception.
+   *
+   * Les OUTILS D'ATELIER, eux, doivent parfois le lire : comparer deux
+   * contrats, ou faire tourner un vrai projet en face du Panel pour prouver
+   * qu'une configuration traverse réellement le pont. Les interdire ne
+   * supprimerait pas le besoin — il ferait seulement disparaître la preuve.
+   *
+   * La liste est donc FERMÉE et nommée. Un outil de plus se déclare ici, ce
+   * qui oblige à dire pourquoi ; il ne se glisse jamais en silence.
+   */
   const PATH_TO_NEIGHBOUR = /['"`][^'"`]*\.\.[\\/]+SB Auto|panelXvitrine[\\/]/i;
+  const ATELIER = [
+    // Dérive des specs de pont entre les deux dépôts.
+    'spec-drift.check.mjs',
+    // Transactionnalité du déploiement, vérifiée contre le projet modèle.
+    path.join('tests', 'deployment-transactionality.test.js'),
+    // Harnais cross-dépôt : démarre un VRAI SB Auto, dans son processus.
+    path.join('tests', 'helpers', 'sbauto-remote.js'),
+  ];
   const workspaceAware = [...testFiles, ...backendFiles, ...frontendFiles, ...deployFiles]
     .filter((file) => !file.endsWith('architecture.test.js')) // le contrôleur ne s'audite pas lui-même
     .filter((file) => PATH_TO_NEIGHBOUR.test(read(file)));
-  check(`seul le contrôle de dérive accède au dépôt voisin${workspaceAware.length > 1 ? ` — ${workspaceAware.map(rel)}` : ''}`,
-    workspaceAware.length === 1 && workspaceAware[0].endsWith('spec-drift.check.mjs'));
+  const intrus = workspaceAware.filter((file) => !ATELIER.some((outil) => file.endsWith(outil)));
+  check(`seuls les outils d’atelier déclarés accèdent au dépôt voisin${intrus.length ? ` — ${intrus.map(rel)}` : ''}`,
+    intrus.length === 0);
   check('aucun fichier applicatif n’accède au dépôt voisin',
     ![...backendFiles, ...frontendFiles].some((file) => PATH_TO_NEIGHBOUR.test(read(file))));
   check('…et il se retire proprement si le voisin est absent',

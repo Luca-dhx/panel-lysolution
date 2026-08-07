@@ -117,9 +117,18 @@ const companyPayload = {
 
 const created = await http('POST', `${PANEL_URL}/api/company`, { headers: AUTH, body: companyPayload });
 check('POST /api/company → 201', created.status === 201);
-check('…l’entreprise n’est PAS encore publiée', created.json?.data?.publishedVersion === null);
+/**
+ * CRÉER, C'EST DÉCLARER QUI L'ON EST — donc le dire aux projets.
+ *
+ * Une entreprise créée puis laissée « non publiée » n'existait pour personne :
+ * elle n'était visible que dans le Panel, derrière un bandeau réclamant un
+ * second geste. Il n'y a rien à retenir entre les deux.
+ */
+check('…et l’entreprise est publiée du même geste, en version 1',
+  created.json?.data?.published === true && created.json?.data?.version === 1);
 check('…les paramètres reçoivent leurs défauts',
-  created.json?.data?.settings?.locale === 'fr-FR' && created.json.data.settings.currency === 'EUR');
+  created.json?.data?.company?.settings?.locale === 'fr-FR'
+  && created.json.data.company.settings.currency === 'EUR');
 
 const refused = await http('POST', `${PANEL_URL}/api/company`, {
   headers: AUTH,
@@ -131,17 +140,27 @@ check('une entreprise invalide est refusée en nommant le champ',
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('LOT 3 — Publication versionnée');
 
-const publishNothing = await http('POST', `${PANEL_URL}/api/company/publish`, {
+/**
+ * LA JUSTIFICATION N'EST PLUS DEMANDÉE — et la version reste entière.
+ *
+ * Publier exigeait une phrase saisie à la main. En pratique elle valait
+ * « maj », « correction », « test » : un péage sans information, franchi
+ * machinalement. Le versionnement, lui, n'a pas bougé — chaque publication
+ * fige un instantané daté, attribué, avec le DIFF exact des champs modifiés.
+ */
+const sansRaison = await http('POST', `${PANEL_URL}/api/company/publish`, {
   headers: AUTH, body: {},
 });
-check('publier sans raison est refusé en l’expliquant',
-  publishNothing.status === 400 && /raison/.test(publishNothing.json?.message ?? ''));
+check('publier ne réclame plus de justification', sansRaison.status !== 400);
+check('…mais republier un état identique reste refusé',
+  sansRaison.status === 409 && sansRaison.json?.code === 'PANEL_COMPANY_NOTHING_TO_PUBLISH');
 
-const published = await http('POST', `${PANEL_URL}/api/company/publish`, {
-  headers: AUTH, body: { reason: 'Première publication de l’identité de l’entreprise.' },
-});
-check('POST /publish → 201', published.status === 201);
-check('…version 1', published.json?.data?.version === 1);
+const versions = await http('GET', `${PANEL_URL}/api/company/versions`, { headers: AUTH });
+check('la version 1 existe et fait foi',
+  versions.status === 200 && versions.json.data.currentVersion === 1);
+check('…avec un motif LISIBLE déduit du différentiel, jamais vide',
+  typeof versions.json.data.items[0].reason === 'string'
+  && versions.json.data.items[0].reason.length > 0);
 
 const again = await http('POST', `${PANEL_URL}/api/company/publish`, {
   headers: AUTH, body: { reason: 'Rien changé.' },
@@ -280,8 +299,14 @@ const fleet = await http('GET', `${PANEL_URL}/api/supervision/fleet`, { headers:
 const row = fleet.json?.data?.items?.find((p) => p.projectId === projectId);
 check('le projet apparaît au parc', Boolean(row));
 check('…EN LIGNE, sur la foi d’un heartbeat réel', row?.liveness === 'ONLINE');
-check('…avec ses versions de moteurs publiées',
-  afterPairing.json.data.project.manifest?.engines?.deployment === '1.1.0');
+/**
+ * Les numéros de moteur viennent du PROJET, et ils avancent. Les figer ici
+ * ferait échouer ce test à chaque livraison du moteur — ce qui ne dit rien
+ * du protocole. Ce qui compte est qu'ils soient PUBLIÉS et lisibles.
+ */
+check('…avec ses versions de moteurs publiées, telles que le projet les déclare',
+  /^\d+\.\d+\.\d+$/.test(afterPairing.json.data.project.manifest?.engines?.deployment ?? '')
+  && /^\d+\.\d+\.\d+$/.test(afterPairing.json.data.project.manifest?.engines?.duplication ?? ''));
 
 const dashboard = await http('GET', `${PANEL_URL}/api/supervision/dashboard`, { headers: AUTH });
 check('le tableau de bord compte 1 projet en ligne',
@@ -341,22 +366,41 @@ const updated = await http('PATCH', `${PANEL_URL}/api/company`, {
   headers: AUTH,
   body: { branding: { primaryColor: '#c0392b' }, identity: { tagline: 'Nouvelle signature' } },
 });
-check('modification du brouillon acceptée', updated.status === 200);
-check('…et signalée comme NON publiée', updated.json?.data?.hasUnpublishedChanges === true);
+/**
+ * ── ENREGISTRER, C'EST DIFFUSER — il n'y a plus de brouillon ───────────────
+ *
+ * Ce bloc décrivait l'ancien produit : on saisissait, puis on publiait dans un
+ * second geste, et la fiche se déclarait « non publiée » entre les deux. Ce
+ * second geste a été supprimé (voir `company.controller.js`) parce qu'il ne
+ * portait aucune décision : personne n'a jamais enregistré une identité
+ * d'entreprise en souhaitant qu'elle reste invisible.
+ *
+ * L'enregistrement fige donc la version et l'adresse au parc du même
+ * mouvement. Ce que le test vérifie ne change pas : le différentiel exact, la
+ * propagation réelle, et la convergence CONSTATÉE.
+ */
+check('modification acceptée', updated.status === 200);
+check('…elle publie la version 2 du même geste',
+  updated.json?.data?.published === true && updated.json?.data?.version === 2);
+check('…avec le différentiel calculé', updated.json.data.changes.length === 2);
+check('…qui nomme les chemins modifiés',
+  updated.json.data.changes.some((c) => c.path === 'branding.primaryColor' && c.to === '#c0392b'));
+check('…et la fiche ne réclame PAS un second enregistrement',
+  updated.json.data.company.hasUnpublishedChanges === false);
 
 const statusBefore = await http('GET', `${projectProc.baseUrl}/api/panel-connection/status`, {
   headers: projectProc.auth,
 });
-check('le projet n’a PAS bougé : saisir n’est pas publier',
+check('le projet ne bouge qu’au rattrapage : publier ne le force pas',
   statusBefore.json.data.company.branding.primaryColor === '#1b4dff');
 
-const v2 = await http('POST', `${PANEL_URL}/api/company/publish`, {
-  headers: AUTH, body: { reason: 'Changement de couleur primaire et de signature.' },
+// Republier sans rien changer est REFUSÉ : une version n'a de sens que si
+// elle décrit un état différent du précédent.
+const republication = await http('POST', `${PANEL_URL}/api/company/publish`, {
+  headers: AUTH, body: { reason: 'Tentative sans changement.' },
 });
-check('publication de la version 2', v2.status === 201 && v2.json.data.version === 2);
-check('…avec le différentiel calculé', v2.json.data.changes.length === 2);
-check('…qui nomme les chemins modifiés',
-  v2.json.data.changes.some((c) => c.path === 'branding.primaryColor' && c.to === '#c0392b'));
+check('publier de nouveau sans changement est refusé',
+  republication.status === 409 && republication.json.code === 'PANEL_COMPANY_NOTHING_TO_PUBLISH');
 
 await http('POST', `${projectProc.baseUrl}/api/panel-connection/sync-now`, {
   headers: projectProc.auth, body: {},
