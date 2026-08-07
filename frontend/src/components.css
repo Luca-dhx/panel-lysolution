@@ -2393,13 +2393,39 @@ a.conn-host:hover { color: var(--p-text); }
 }
 
 /* ── Marque du Panel dans la barre latérale ────────────────────────────── */
+/**
+ * LE LOGO DE LA MARQUE — contenu, jamais déformé, et JAMAIS étriqué.
+ *
+ * ── POURQUOI IL ÉTAIT MINUSCULE ────────────────────────────────────────────
+ * Les deux bornes s'appliquent ensemble, et c'est la plus SÉVÈRE qui gagne.
+ * Avec `max-height: 2.25rem`, un logo large — la forme habituelle d'un logo
+ * d'agence — était plafonné par sa hauteur bien avant d'avoir utilisé la
+ * largeur disponible : un 5:1 se rendait à 180 px de large dans une barre qui
+ * en offre 218, soit un tiers de l'espace perdu pour rien.
+ *
+ * La hauteur est donc desserrée jusqu'à ce que ce soit la LARGEUR qui borne.
+ * Un logo large occupe alors toute la barre ; un logo carré reste plafonné par
+ * la hauteur, sans envahir l'en-tête. Aucune déformation dans les deux cas :
+ * une seule dimension est imposée à la fois.
+ */
 .sidebar-logo,
 .topbar-logo {
   display: block;
-  /* Contenu, jamais déformé : la hauteur borne, la largeur suit. */
-  max-height: 2.25rem;
-  max-width: 100%;
   width: auto;
+  height: auto;
+  max-width: 100%;
   object-fit: contain;
 }
-.topbar-logo { max-height: 1.75rem; }
+
+.sidebar-logo {
+  /* Assez haut pour qu'un logo large soit borné par la largeur de la barre ;
+     assez bas pour qu'un logo carré ne pousse pas la navigation vers le bas. */
+  max-height: 4.5rem;
+}
+
+/* La barre supérieure a une hauteur fixe : le logo s'y inscrit sans la faire
+   grandir, et laisse respirer le bouton de menu à côté. */
+.topbar-logo {
+  max-height: calc(var(--p-header-height) - var(--p-space-4));
+  max-width: 12rem;
+}
