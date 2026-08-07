@@ -439,7 +439,16 @@ export function companyPublicProfile(company) {
  */
 export async function companyPublishedProfile(company) {
   const profil = companyPublicProfile(company);
-  const branding = profil.branding || {};
+  /**
+   * Le « logo sombre » est écarté ICI, au seuil de la publication.
+   *
+   * Une fiche enregistrée avant son retrait le porte encore en base — on ne
+   * migre pas la donnée pour supprimer un champ. Mais le laisser passer par le
+   * spread ci-dessous le ferait voyager sur le pont, contrôler et résoudre chez
+   * chaque projet, pour une image que rien n'affiche. Il sort du flux produit
+   * sans que rien ne soit effacé.
+   */
+  const { logoDark: _logoDark, logoDarkUrl: _logoDarkUrl, ...branding } = profil.branding || {};
   const { publishableDescriptor } = await import('../upload/mediaDescriptor.service.js');
 
   /**
@@ -472,9 +481,18 @@ export async function companyPublishedProfile(company) {
    * `http://localhost` encore moins. Le projet garde alors sa projection
    * précédente — ce qui vaut mieux qu'une image cassée.
    */
-  const [logo, logoDark, favicon] = await Promise.all([
+  /**
+   * DEUX MÉDIAS DE MARQUE, et deux seulement.
+   *
+   * Le « logo sombre » a été retiré du produit : aucun projet ne le lisait, et
+   * il n'existait aucun écran, aucun e-mail, aucun document qui bascule sur
+   * fond sombre. Le publier revenait à faire voyager, contrôler et résoudre une
+   * image que personne n'affichait. La propriété reste en base sur les fiches
+   * qui la portent (aucune migration destructive) — elle n'est simplement plus
+   * lue, plus validée, ni plus publiée.
+   */
+  const [logo, favicon] = await Promise.all([
     publishableDescriptor(branding.logo?.objectKey ?? branding.logoUrl, { role: 'logo' }),
-    publishableDescriptor(branding.logoDark?.objectKey ?? branding.logoDarkUrl, { role: 'logo-dark' }),
     publishableDescriptor(branding.favicon?.objectKey ?? branding.faviconUrl, { role: 'favicon' }),
   ]);
 
@@ -492,11 +510,9 @@ export async function companyPublishedProfile(company) {
        * précédente plutôt que d'afficher un lien mort.
        */
       logoUrl: logo?.url ?? null,
-      logoDarkUrl: logoDark?.url ?? null,
       faviconUrl: favicon?.url ?? null,
       // ADDITIF : le descripteur complet, à côté de l'URL historique.
       logo,
-      logoDark,
       favicon,
     },
     // Les portraits suivent exactement la règle du logo.
@@ -527,7 +543,7 @@ export async function companyMediaResolution(company) {
   const environment = company.environment;
   const cibles = [
     ['branding.logo', company.branding?.logo],
-    ['branding.logoDark', company.branding?.logoDark],
+    // « branding.logoDark » a quitté le produit : plus d'aperçu à résoudre.
     ['branding.favicon', company.branding?.favicon],
     ...(company.team || []).map((m, i) => [`team.${i}.photo`, m.photo]),
   ].filter(([, d]) => d?.objectKey);

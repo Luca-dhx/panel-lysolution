@@ -61,14 +61,19 @@ export interface StoredMediaDescriptor {
   version?: number | null;
 }
 
+/**
+ * Deux médias de marque : le logo et le favicon.
+ *
+ * Le « logo sombre » a été retiré du produit — plus d'écran, plus de
+ * validation, plus de publication. Le type ne le déclare donc plus : le
+ * conserver ici laisserait croire qu'un écran peut encore le poser.
+ */
 export interface CompanyBranding {
   /** Chemin de stockage (`/uploads/…`) — repli historique, plus l'autorité. */
   logoUrl: string | null;
-  logoDarkUrl: string | null;
   faviconUrl: string | null;
   /** LA SOURCE DE VÉRITÉ du média. */
   logo?: StoredMediaDescriptor | null;
-  logoDark?: StoredMediaDescriptor | null;
   favicon?: StoredMediaDescriptor | null;
   primaryColor: string | null;
   secondaryColor: string | null;

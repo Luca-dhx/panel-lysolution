@@ -81,12 +81,26 @@ const brandingSchema = new mongoose.Schema(
      * publiée aux projets est recomposée à chaque publication.
      */
     logoUrl: { type: String, default: null },
-    logoDarkUrl: { type: String, default: null },
     faviconUrl: { type: String, default: null },
     /** LA SOURCE DE VÉRITÉ — le média, indépendamment de toute adresse. */
     logo: { type: mediaDescriptorSchema, default: null },
-    logoDark: { type: mediaDescriptorSchema, default: null },
     favicon: { type: mediaDescriptorSchema, default: null },
+
+    /**
+     * ── LOGO SOMBRE — RETIRÉ DU PRODUIT, CONSERVÉ EN BASE ──────────────────
+     *
+     * `logoDark` / `logoDarkUrl` ne sont plus ni saisis, ni validés, ni
+     * publiés, ni résolus : le champ demandait un travail d'import pour une
+     * image qu'aucun écran, aucun e-mail et aucun document n'affichait jamais.
+     *
+     * Les champs restent DÉCLARÉS pour que les fiches qui les portent déjà
+     * restent lisibles et enregistrables sans perte. Les supprimer du schéma
+     * ferait effacer la valeur au premier enregistrement d'une fiche
+     * existante — une migration destructive déguisée en nettoyage, pour un
+     * gain nul. Ils ne sont volontairement plus référencés ailleurs.
+     */
+    logoDarkUrl: { type: String, default: null },
+    logoDark: { type: mediaDescriptorSchema, default: null },
     primaryColor: { type: String, default: null },
     secondaryColor: { type: String, default: null },
     accentColor: { type: String, default: null },

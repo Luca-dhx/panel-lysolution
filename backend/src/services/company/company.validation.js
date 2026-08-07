@@ -125,12 +125,18 @@ const identitySchema = z.object({
   description: nullableString(2000),
 });
 
+/**
+ * Deux médias de marque : le logo et le favicon.
+ *
+ * Le « logo sombre » a été retiré du produit. Le schéma ne le déclare plus, et
+ * comme il n'est pas `passthrough`, une charge utile qui le porterait encore le
+ * verrait simplement ignoré — pas rejeté : un client resté sur une version
+ * antérieure de l'écran ne doit pas voir son enregistrement échouer.
+ */
 const brandingSchema = z.object({
   logoUrl: mediaRef('branding.logoUrl'),
-  logoDarkUrl: mediaRef('branding.logoDarkUrl'),
   faviconUrl: mediaRef('branding.faviconUrl'),
   logo: mediaDescriptor('branding.logo'),
-  logoDark: mediaDescriptor('branding.logoDark'),
   favicon: mediaDescriptor('branding.favicon'),
   primaryColor: color('branding.primaryColor'),
   secondaryColor: color('branding.secondaryColor'),

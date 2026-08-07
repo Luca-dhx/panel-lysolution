@@ -23,6 +23,7 @@ import { ProjectsPage } from '@/pages/ProjectsPage';
 import { AgendaPage } from '@/pages/AgendaPage';
 import { ThemePage } from '@/pages/ThemePage';
 import { useThemeLoader } from '@/lib/useTheme';
+import { useFaviconLoader } from '@/lib/useFavicon';
 import { VersionsPage } from '@/pages/VersionsPage';
 
 /** Enveloppe DEV — une seule barrière, jamais dupliquée dans les pages. */
@@ -32,6 +33,9 @@ export default function App() {
   // Le thème enregistré est appliqué dès l'ouverture : sans cela, l'écran
   // afficherait une seconde les couleurs par défaut avant de se repeindre.
   useThemeLoader();
+  // Même geste pour l'onglet : le favicon configuré dans « Mon entreprise »
+  // était téléversé et publié, mais aucun écran ne le posait.
+  useFaviconLoader();
 
   return (
     <Routes>

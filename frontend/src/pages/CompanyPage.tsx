@@ -49,7 +49,7 @@ const EMPTY_COMPANY = {
   environment: '',
   identity: { name: '', legalName: null, tagline: null, description: null },
   branding: {
-    logoUrl: null, logoDarkUrl: null, faviconUrl: null,
+    logoUrl: null, faviconUrl: null,
     primaryColor: null, secondaryColor: null, accentColor: null, fontFamily: null,
   },
   domains: { primaryDomain: null, websiteUrl: null, wildcardBases: [] },
@@ -203,7 +203,7 @@ export function CompanyPage() {
     Object.entries(state.media ?? {}).map(([chemin, m]) => [chemin, m.url]),
   );
   /** Les trois médias de marque suivent EXACTEMENT le même chemin. */
-  const mediaMarque = (cle: 'logo' | 'logoDark' | 'favicon', champUrl: string) => ({
+  const mediaMarque = (cle: 'logo' | 'favicon', champUrl: string) => ({
     value: (draft[champUrl] as string)
       ?? (c.branding as unknown as Record<string, string | null>)[champUrl.split('.')[1]]
       ?? '',
@@ -305,24 +305,20 @@ export function CompanyPage() {
       />
 
       {/*
-        LOGO SOMBRE ET FAVICON — importés, comme le logo.
-        Ils se saisissaient en collant une adresse, dans « Configuration
-        technique ». Deux images hors de tout pipeline : sans empreinte, sans
-        environnement, sans état de publication, et invalides le jour d'un
-        changement de domaine. Trois médias, un seul chemin.
-      */}
-      <LogoField
-        {...mediaMarque('logoDark', 'branding.logoDarkUrl')}
-        title="Logo sombre"
-        description="Variante utilisée par les projets sur fond sombre. Facultative."
-        role="logo-dark"
-        label="le logo sombre"
-      />
+        FAVICON — importé, comme le logo.
+        Il se saisissait en collant une adresse, dans « Configuration
+        technique » : une image hors de tout pipeline, sans empreinte, sans
+        environnement, sans état de publication, invalide le jour d'un
+        changement de domaine. Deux médias, un seul chemin.
 
+        Le « logo sombre » a été retiré : aucun écran, aucun e-mail, aucun
+        document ne basculait sur fond sombre — le champ demandait un travail
+        d'import pour une image que personne n'affichait.
+      */}
       <LogoField
         {...mediaMarque('favicon', 'branding.faviconUrl')}
         title="Favicon"
-        description="Icône d’onglet transmise aux projets. Carrée, redimensionnée automatiquement."
+        description="Icône d’onglet de votre Panel, et transmise aux projets. Carrée, redimensionnée automatiquement."
         role="favicon"
         label="le favicon"
       />
