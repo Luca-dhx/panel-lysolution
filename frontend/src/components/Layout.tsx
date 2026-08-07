@@ -15,10 +15,18 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { SECTION_LABELS, SECTION_ORDER, navItemsFor } from '@/config/nav';
 import { usePanelVersion } from '@/lib/usePanelVersion';
+import { panelTitleFor, usePanelBranding } from '@/lib/usePanelBranding';
 
 export function Layout() {
   const { user, logout } = useAuth();
   const { version } = usePanelVersion();
+  /**
+   * LA MARQUE VIENT DE LA FICHE ENTREPRISE — plus d'une chaîne écrite en dur.
+   * Trois cas, dans cet ordre : le logo s'il est exploitable, sinon
+   * « Panel <entreprise> », sinon « Panel ».
+   */
+  const branding = usePanelBranding();
+  const titrePanel = panelTitleFor(branding.companyName);
   const navigate = useNavigate();
   const location = useLocation();
   const [tiroir, setTiroir] = useState(false);
@@ -56,7 +64,11 @@ export function Layout() {
         >
           <span aria-hidden="true">{tiroir ? '✕' : '☰'}</span>
         </button>
-        <span className="topbar-title">Panel L.Y Solution</span>
+        {branding.logoUrl ? (
+          <img className="topbar-logo" src={branding.logoUrl} alt={titrePanel} />
+        ) : (
+          <span className="topbar-title">{titrePanel}</span>
+        )}
       </header>
 
       {/* Voile : ferme le tiroir et empêche de cliquer au travers. */}
@@ -64,7 +76,20 @@ export function Layout() {
 
       <aside className="sidebar" id="navigation-principale">
         <div className="sidebar-header">
-          <h1 className="sidebar-title">Panel L.Y Solution</h1>
+          {/*
+            LE LOGO REMPLACE LE TITRE, il ne s'y ajoute pas : afficher les deux
+            ferait dire deux fois la même chose à un endroit où la place est
+            comptée. Le titre reste porté par `alt` — un lecteur d'écran
+            l'entend, et une image qui ne charge pas laisse un texte lisible.
+            Le `<h1>` demeure dans les deux cas : la page garde son titre.
+          */}
+          <h1 className="sidebar-title">
+            {branding.logoUrl ? (
+              <img className="sidebar-logo" src={branding.logoUrl} alt={titrePanel} />
+            ) : (
+              titrePanel
+            )}
+          </h1>
           <p className="sidebar-subtitle">Administration du parc</p>
         </div>
 

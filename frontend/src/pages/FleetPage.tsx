@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { HealthBadge, LivenessBadge, formatDuration, orUnknown } from '@/components/supervision';
+import { SearchField } from '@/components/SearchField';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { errorMessage, supervision } from '@/lib/api';
 import type { FleetResult, SearchFacets } from '@/types.supervision';
@@ -74,12 +75,13 @@ export function FleetPage() {
       </header>
 
       <Card>
-        <input
-          type="search"
-          className="search-input"
+        {/* Même primitive que la page Appairages : une seule apparence de
+            recherche dans tout le Panel. */}
+        <SearchField
+          label="Rechercher dans le parc"
           placeholder="Rechercher : nom, slug, domaine, type, version…"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={setQuery}
         />
         <div className="filter-row">
           {FILTERS.map(({ key, label, facet }) => {

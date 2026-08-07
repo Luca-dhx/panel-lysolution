@@ -159,7 +159,7 @@ export function ProjectConnectionsCard({
   onChanged?: () => Promise<void> | void;
 }) {
   return (
-    <article className="conn-card" aria-labelledby={`conn-${group.key}`}>
+    <article className="conn-item" aria-labelledby={`conn-${group.key}`}>
       <header className="conn-card-head">
         <div className="conn-card-identity">
           <h2 className="conn-card-name" id={`conn-${group.key}`}>{group.name}</h2>

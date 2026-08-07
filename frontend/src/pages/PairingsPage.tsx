@@ -30,6 +30,7 @@
  */
 import { useMemo, useState } from 'react';
 import { EmptyState } from '@/components/ui';
+import { SearchField } from '@/components/SearchField';
 import { ProjectConnectionsCard } from '@/components/connections';
 import { useProjects } from '@/lib/useProjects';
 import {
@@ -81,16 +82,12 @@ export function PairingsPage() {
         <>
           <div className="conn-toolbar">
             <div className="conn-search">
-              <label className="sr-only" htmlFor="conn-search">
-                Rechercher un projet ou un domaine
-              </label>
-              <input
+              <SearchField
                 id="conn-search"
-                type="search"
-                className="input"
-                placeholder="Rechercher un projet, domaine…"
+                label="Rechercher un projet ou un domaine"
+                placeholder="Rechercher un projet, un domaine…"
                 value={recherche}
-                onChange={(e) => setRecherche(e.target.value)}
+                onChange={setRecherche}
               />
             </div>
 
@@ -118,7 +115,7 @@ export function PairingsPage() {
               hint="Modifiez la recherche ou revenez au filtre « Tous »."
             />
           ) : (
-            <div className="conn-grid">
+            <div className="conn-list">
               {visibles.map((g) => (
                 <ProjectConnectionsCard key={g.key} group={g} onChanged={reload} />
               ))}

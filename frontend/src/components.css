@@ -2255,3 +2255,151 @@ a.conn-host:hover { color: var(--p-text); }
   .conn-menu-list { left: 0; right: 0; min-width: 0; }
   .modal-actions .btn { flex: 1 1 100%; justify-content: center; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CHAMP DE RECHERCHE — une seule apparence dans tout le Panel.
+
+   Les recherches étaient des `<input type="search">` bruts : croix native de
+   WebKit (non thémable, absente ailleurs), pas d'icône, hauteur incohérente
+   avec les autres contrôles. La primitive règle les trois à un seul endroit.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.search-field-icon {
+  position: absolute;
+  left: var(--p-space-3);
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--p-text-faint);
+  pointer-events: none;
+}
+
+.search-field-input {
+  width: 100%;
+  min-width: 0;
+  /* Même hauteur que les boutons et les filtres : rien ne dépasse d'une ligne. */
+  min-height: 2.5rem;
+  padding: 0 2.5rem 0 2.25rem;
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+  color: var(--p-text);
+  font-size: var(--p-text-sm);
+  appearance: none;
+}
+
+.search-field-input::placeholder { color: var(--p-text-faint); }
+.search-field-input:hover { border-color: var(--p-border-strong); }
+.search-field-input:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+/* La croix NATIVE de WebKit disparaît : la nôtre est thémable, accessible et
+   présente sur tous les navigateurs. En laisser deux serait pire que zéro. */
+.search-field-input::-webkit-search-cancel-button,
+.search-field-input::-webkit-search-decoration { appearance: none; display: none; }
+
+.search-field-clear {
+  position: absolute;
+  right: var(--p-space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Cible tactile : 2rem visibles, mais la zone cliquable reste confortable. */
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 0;
+  border-radius: var(--p-radius-full);
+  background: transparent;
+  color: var(--p-text-faint);
+  font-size: var(--p-text-xs);
+  cursor: pointer;
+}
+.search-field-clear:hover { background: var(--p-surface); color: var(--p-text); }
+.search-field-clear:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 1px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   APPAIRAGES — LISTE VERTICALE D'ITEMS HORIZONTAUX PLEINE LARGEUR.
+
+   La grille de cartes donnait un « dashboard à cartes » : trois colonnes de
+   blocs étroits où le domaine, l'information la plus longue, était la plus
+   comprimée. Un projet occupe désormais toute la largeur, et ses deux
+   environnements se lisent en ligne — c'est la forme d'un tableau, sans en
+   avoir la rigidité sur mobile.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+}
+
+.conn-item {
+  width: 100%;
+  min-width: 0;
+  padding: var(--p-space-4) var(--p-space-5);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+  background: var(--p-surface);
+}
+
+/* Desktop : l'environnement se lit en LIGNE — badge, état, domaine, contact,
+   action — avec des colonnes qui ne s'effondrent pas. */
+@media (min-width: 60rem) {
+  .conn-item .conn-row {
+    display: grid;
+    align-items: center;
+    gap: var(--p-space-4);
+    /* `minmax(0, …)` partout : c'est ce qui autorise le domaine à se tronquer
+       au lieu d'élargir la ligne au-delà du conteneur. */
+    grid-template-columns:
+      4.5rem                    /* TEST / PROD          */
+      minmax(0, 11rem)          /* état                 */
+      minmax(0, 1fr)            /* domaine              */
+      minmax(0, 12rem)          /* dernier contact      */
+      auto;                     /* actions              */
+    padding: var(--p-space-3) 0;
+  }
+  .conn-item .conn-row-head { display: contents; }
+  .conn-item .conn-host { margin: 0; }
+  .conn-item .conn-meta { margin: 0; text-align: right; }
+  .conn-item .conn-actions { justify-content: flex-end; }
+}
+
+/* Tablette : deux colonnes utiles, l'action passe dessous sans se coincer. */
+@media (min-width: 48rem) and (max-width: 59.99rem) {
+  .conn-item .conn-row {
+    display: grid;
+    gap: var(--p-space-2) var(--p-space-4);
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .conn-item .conn-actions { grid-column: 2; }
+}
+
+.conn-item .conn-card-head {
+  padding-bottom: var(--p-space-3);
+  border-bottom: 1px solid var(--p-border);
+  margin-bottom: var(--p-space-2);
+}
+
+/* ── Marque du Panel dans la barre latérale ────────────────────────────── */
+.sidebar-logo,
+.topbar-logo {
+  display: block;
+  /* Contenu, jamais déformé : la hauteur borne, la largeur suit. */
+  max-height: 2.25rem;
+  max-width: 100%;
+  width: auto;
+  object-fit: contain;
+}
+.topbar-logo { max-height: 1.75rem; }
