@@ -57,7 +57,7 @@ export const OPERATIONS = Object.freeze({
  */
 export async function executeOperation({
   operationType, target, sshPassword, releaseId = null, user = null, runId = null,
-  options = {},
+  options = {}, apiPid = null,
   onStep = () => {}, onLog = () => {}, engine: injectedEngine = null,
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
@@ -117,7 +117,7 @@ export async function executeOperation({
       case OPERATIONS.SIMULATION:
         return await simulation({ engine, target, sessionId, step, log });
       case OPERATIONS.DEPLOYMENT:
-        return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId });
+        return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId, apiPid });
       case OPERATIONS.ROLLBACK:
         return await rollback({ engine, target, sessionId, releaseId, step, log });
       case OPERATIONS.DEPROVISION:
@@ -265,7 +265,7 @@ async function simulation({ engine, target, sessionId, step, log }) {
  * les prérequis ne sont plus des actions de l'opérateur, ce sont des étapes
  * de CETTE opération.
  */
-async function deployWithFullReport({ engine, target, sessionId, step, log, user, runId = null }) {
+async function deployWithFullReport({ engine, target, sessionId, step, log, user, runId = null, apiPid = null }) {
   const parsedTarget = engine.parseUrl(target.url);
   const ports = await import('./portRegistry.service.js');
 
@@ -391,6 +391,10 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
         await ecrireMarqueurReprise({
           runId, targetId: target.targetId, operation: 'DEPLOYMENT',
           nextExpectedStep: 'health', expectedProcessName: pm2Name, expectedPort: target.backendPort,
+          // Deux identités distinctes : celle qui doit mourir, celle qui doit
+          // survivre. Les confondre faisait conclure au redémarrage à tort.
+          apiPid,
+          workerPid: process.pid,
         }).catch(() => null);
 
         // L'interface doit savoir AVANT la coupure, sinon elle l'interprète

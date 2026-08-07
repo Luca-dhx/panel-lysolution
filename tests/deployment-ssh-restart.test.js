@@ -223,53 +223,237 @@ section('PM2 — un service qui n’est pas « online » est signalé instable')
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('REDÉMARRAGE ATTENDU — ce n’est pas un plantage');
+section('LE MARQUEUR NOMME DEUX IDENTITÉS DISTINCTES');
 {
-  const maintenant = new Date().toISOString();
-  const cible = await DeploymentTarget.create({
-    targetId: randomUUID(), name: 'Demo', url: 'https://demo.exemple.com',
-    host: 'demo.exemple.com', type: 'subdomain',
-    environment: 'TEST', backendPort: 4500, lifecycleStatus: 'ACTIVE', state: 'DEPLOYING',
-    createdAt: maintenant, updatedAt: maintenant,
-  });
-  const run = await nouveauRun({ targetId: cible.targetId });
-  await etapes.recordStep(run.runId, { stepId: 'pm2', label: 'Service', status: 'running' });
+  /**
+   * Le marqueur est ÉCRIT par le worker et RELU par l'API. Un champ unique
+   * « le PID d'avant » opposait donc deux processus différents par
+   * construction : la comparaison concluait au redémarrage à chaque démarrage.
+   *
+   * Deux questions, deux champs :
+   *   · `apiPidBeforeRestart` — qui doit MOURIR pour prouver le redémarrage ;
+   *   · `workerPid`           — qui doit SURVIVRE pour que le run continue.
+   */
+  const pidLibre = (depart) => {
+    let p = depart;
+    for (; p < depart + 200; p += 1) {
+      try { process.kill(p, 0); } catch { return p; }
+    }
+    return p;
+  };
 
-  const ecrit = await marqueur.ecrireMarqueurReprise({
-    runId: run.runId, targetId: cible.targetId, operation: 'DEPLOYMENT',
-    nextExpectedStep: 'health', expectedProcessName: 'panel-demo', expectedPort: 4500,
-  });
-  check('le marqueur est écrit AVANT le redémarrage', ecrit === true);
+  await marqueur.effacerMarqueurReprise();
+  const r = await nouveauRun();
+  const apiMorte = pidLibre(970_000);
 
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', expectedProcessName: 'panel-x', expectedPort: 4800,
+    apiPid: apiMorte, workerPid: process.pid,
+  });
   const relu = await marqueur.lireMarqueurReprise();
-  check('…il porte le run', String(relu.run ?? relu.runId) === String(run.runId));
-  check('…l’étape attendue ensuite', relu.nextExpectedStep === 'health');
-  check('…le service et le port attendus',
-    relu.expectedProcessName === 'panel-demo' && relu.expectedPort === 4500);
-  check('…et le PID qui s’attendait à mourir', relu.pidBefore === process.pid);
+  check('le PID de l’API est enregistré à part', relu.apiPidBeforeRestart === apiMorte);
+  check('…et celui du worker aussi', relu.workerPid === process.pid);
+  check('l’ancien champ ambigu a disparu', relu.pidBefore === undefined);
+}
 
-  // Même process : le redémarrage n'a PAS eu lieu. On ne conclut rien.
-  const memeProcess = await marqueur.consommerMarqueurReprise();
-  check('un process inchangé ne consomme pas le marqueur', memeProcess.consumed === false);
-  check('…et le DIT, au lieu de supposer', memeProcess.reason === 'PROCESS_INCHANGE');
-  check('…le marqueur est CONSERVÉ, pas effacé', (await marqueur.lireMarqueurReprise()) !== null);
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('CAS A — API redémarrée, worker survivant : le run se poursuit');
+{
+  const pidLibre = (d) => { let p = d; for (; p < d + 200; p += 1) { try { process.kill(p, 0); } catch { return p; } } return p; };
+  await marqueur.effacerMarqueurReprise();
+  const r = await nouveauRun();
+  await etapes.recordStep(r.runId, { stepId: 'services.start', label: 'Démarrage', status: 'running' });
+  await runs.attachWorker(r.runId, process.pid);
+  await runs.heartbeat(r.runId);
 
-  // Nouveau process : on le simule en vieillissant le PID enregistré.
-  /* Le registre Mongoose se prend par un modèle déjà chargé : `mongoose` lui-même
-     n'est pas résoluble depuis `tests/`, ses modules vivant sous `backend/`. */
-  await DeploymentRun.base.models.PanelDeploymentRestartMarker
-    .updateOne({ key: 'SINGLETON' }, { $set: { pidBefore: process.pid - 1 } });
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', expectedProcessName: 'panel-a', expectedPort: 4801,
+    apiPid: pidLibre(971_000), workerPid: process.pid,
+  });
 
-  const consomme = await marqueur.consommerMarqueurReprise();
-  check('un nouveau process consomme le marqueur', consomme.consumed === true);
-  check('…et connaît l’étape à reprendre', consomme.nextExpectedStep === 'health');
-  check('le marqueur est effacé APRÈS constat', (await marqueur.lireMarqueurReprise()) === null);
+  const verdict = await marqueur.consommerMarqueurReprise();
+  check('le redémarrage de l’API est constaté', verdict.consumed === true && verdict.apiRestarted === true);
+  check('…et la survie du worker est PROUVÉE, pas supposée', verdict.workerAlive === true);
 
-  const fin = (await journalDe(run.runId)).find((e) => e.eventCode === 'APPLICATION_RESTART_COMPLETED');
-  check('le retour du service est journalisé', Boolean(fin));
-  check('…avec l’ancien et le nouveau PID',
-    fin.details.pidBefore === process.pid - 1 && fin.details.pidAfter === process.pid);
-  check('…et la durée d’indisponibilité', typeof fin.details.downtimeMs === 'number');
+  const bilan = await etapes.recoverOrphanRuns({ reason: 'process_restart', runRepris: verdict.runId });
+  const codes = (await journalDe(r.runId)).map((e) => e.eventCode);
+  check('APPLICATION_RESTART_COMPLETED est émis', codes.includes('APPLICATION_RESTART_COMPLETED'));
+  check('…suivi de RUN_RESUMED_AFTER_EXPECTED_RESTART',
+    codes.indexOf('RUN_RESUMED_AFTER_EXPECTED_RESTART') > codes.indexOf('APPLICATION_RESTART_COMPLETED'));
+  check('le run n’est pas interrompu', !bilan.runs.some((x) => x.runId === r.runId));
+  check('…et le marqueur est effacé après constat', (await marqueur.lireMarqueurReprise()) === null);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('CAS B — API NON redémarrée : aucun faux constat');
+{
+  await marqueur.effacerMarqueurReprise();
+  const r = await nouveauRun();
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', expectedProcessName: 'panel-b', expectedPort: 4802,
+    // C'est NOTRE pid : l'API n'a donc pas changé.
+    apiPid: process.pid, workerPid: process.pid,
+  });
+
+  const verdict = await marqueur.consommerMarqueurReprise();
+  check('rien n’est consommé', verdict.consumed === false);
+  check('…et la raison est nommée', verdict.reason === 'PROCESS_INCHANGE');
+  check('…aucun redémarrage n’est prétendu', verdict.apiRestarted === false);
+  check('le marqueur est CONSERVÉ pour le vrai redémarrage',
+    (await marqueur.lireMarqueurReprise()) !== null);
+  check('aucun APPLICATION_RESTART_COMPLETED n’est écrit',
+    !(await journalDe(r.runId)).some((e) => e.eventCode === 'APPLICATION_RESTART_COMPLETED'));
+  await marqueur.effacerMarqueurReprise();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('CAS C — API redémarrée mais worker MORT : pas de fausse reprise');
+{
+  const pidLibre = (d) => { let p = d; for (; p < d + 200; p += 1) { try { process.kill(p, 0); } catch { return p; } } return p; };
+  await marqueur.effacerMarqueurReprise();
+  const r = await nouveauRun();
+  await etapes.recordStep(r.runId, { stepId: 'services.start', label: 'Démarrage', status: 'running' });
+  // Battement ancien : le worker ne bat plus.
+  await DeploymentRun.updateOne({ runId: r.runId }, {
+    $set: { workerPid: pidLibre(972_500), workerHeartbeatAt: new Date(Date.now() - 10 * 60_000).toISOString() },
+  });
+
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', expectedProcessName: 'panel-c', expectedPort: 4803,
+    apiPid: pidLibre(972_000), workerPid: pidLibre(972_500),
+  });
+
+  const verdict = await marqueur.consommerMarqueurReprise();
+  check('le redémarrage de l’API est bien constaté', verdict.apiRestarted === true);
+  check('…mais la mort du worker aussi', verdict.workerAlive === false);
+
+  const bilan = await etapes.recoverOrphanRuns({
+    reason: 'process_restart',
+    runRepris: verdict.consumed && verdict.workerAlive ? verdict.runId : null,
+  });
+  const codes = (await journalDe(r.runId)).map((e) => e.eventCode);
+  check('APPLICATION_RESTART_COMPLETED reste émis : le fait est réel',
+    codes.includes('APPLICATION_RESTART_COMPLETED'));
+  check('AUCUNE reprise n’est annoncée', !codes.includes('RUN_RESUMED_AFTER_EXPECTED_RESTART'));
+  check('le run est récupéré comme interrompu', bilan.runs.some((x) => x.runId === r.runId));
+  check('…et son étape courante cesse de tourner',
+    (await DeploymentRun.findOne({ runId: r.runId }).lean())
+      .steps.find((s) => s.id === 'services.start').status === 'interrupted');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('CAS D — marqueur orphelin ou périmé : aucune reprise inventée');
+{
+  const pidLibre = (d) => { let p = d; for (; p < d + 200; p += 1) { try { process.kill(p, 0); } catch { return p; } } return p; };
+
+  // D1 — marqueur d'une version antérieure : l'identité de l'API manque.
+  await marqueur.effacerMarqueurReprise();
+  const r1 = await nouveauRun();
+  await marqueur.ecrireMarqueurReprise({
+    runId: r1.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', apiPid: null, workerPid: process.pid,
+  });
+  const v1 = await marqueur.consommerMarqueurReprise();
+  check('un marqueur sans identité d’API ne prouve rien', v1.consumed === false);
+  check('…et le dit explicitement', v1.reason === 'MARQUEUR_INCOMPLET');
+  check('…aucun redémarrage n’est journalisé',
+    !(await journalDe(r1.runId)).some((e) => e.eventCode === 'APPLICATION_RESTART_COMPLETED'));
+  check('…et il est retiré, pour ne pas boucler à chaque démarrage',
+    (await marqueur.lireMarqueurReprise()) === null);
+
+  // D2 — marqueur trop ancien : les PID se recyclent, on refuse de conclure.
+  const r2 = await nouveauRun();
+  await marqueur.ecrireMarqueurReprise({
+    runId: r2.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', apiPid: pidLibre(973_000), workerPid: process.pid,
+  });
+  await DeploymentRun.base.models.PanelDeploymentRestartMarker.updateOne(
+    { key: 'SINGLETON' },
+    { $set: { writtenAt: new Date(Date.now() - 7 * 60 * 60 * 1000) } },
+  );
+  const v2 = await marqueur.consommerMarqueurReprise();
+  check('un marqueur vieux de 7 h ne prouve plus rien', v2.consumed === false);
+  check('…parce que les PID sont réutilisés', v2.reason === 'MARQUEUR_PERIME');
+  check('…aucun faux redémarrage n’est écrit',
+    !(await journalDe(r2.runId)).some((e) => e.eventCode === 'APPLICATION_RESTART_COMPLETED'));
+  check('…et il ne subsiste pas indéfiniment', (await marqueur.lireMarqueurReprise()) === null);
+
+  // D3 — l'ancienne API tourne encore : ce démarrage n'est pas son successeur.
+  const r3 = await nouveauRun();
+  await marqueur.ecrireMarqueurReprise({
+    runId: r3.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', apiPid: process.ppid || process.pid, workerPid: process.pid,
+  });
+  const v3 = await marqueur.consommerMarqueurReprise();
+  check('une API annoncée morte mais toujours vivante ne vaut pas redémarrage',
+    v3.consumed === false);
+  check('…et la raison est nommée',
+    v3.reason === 'API_TOUJOURS_VIVANTE' || v3.reason === 'PROCESS_INCHANGE');
+  await marqueur.effacerMarqueurReprise();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('CAS E — run déjà terminal : consommation idempotente, aucune résurrection');
+{
+  const pidLibre = (d) => { let p = d; for (; p < d + 200; p += 1) { try { process.kill(p, 0); } catch { return p; } } return p; };
+  await marqueur.effacerMarqueurReprise();
+  const r = await nouveauRun();
+  await runs.finalizeRun(r.runId, { status: 'ok', summary: 'Terminé.' });
+
+  await marqueur.ecrireMarqueurReprise({
+    runId: r.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
+    nextExpectedStep: 'health', apiPid: pidLibre(974_000), workerPid: process.pid,
+  });
+
+  const v = await marqueur.consommerMarqueurReprise();
+  check('un run déjà conclu n’est pas repris', v.consumed === false);
+  check('…et la raison est nommée', v.reason === 'RUN_DEJA_CLOS');
+
+  const relu = await DeploymentRun.findOne({ runId: r.runId }).lean();
+  check('le run reste terminal', relu.status === 'ok');
+  check('…aucune reprise n’est journalisée',
+    !(relu.journal ?? []).some((e) => e.eventCode === 'RUN_RESUMED_AFTER_EXPECTED_RESTART'));
+  check('le marqueur est nettoyé', (await marqueur.lireMarqueurReprise()) === null);
+
+  // Deuxième appel : rien de neuf, rien de cassé.
+  const encore = await marqueur.consommerMarqueurReprise();
+  check('un second appel est sans effet', encore.consumed === false && encore.reason === 'AUCUN_MARQUEUR');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LE RELEVÉ PM2 IMMÉDIAT NE SE PRÉSENTE PLUS COMME UN CONSTAT');
+{
+  const r = await nouveauRun();
+  const avant = await pm2t.journalPm2Before(r.runId, transportFactice({
+    sockets: ligneSocket(4900, 800, 'node'),
+    pm2: [procPm2('panel-t', 800, 4900)],
+  }), { processName: 'panel-t', port: 4900 });
+
+  // PM2 remplace son process : pendant quelques secondes, il ne voit rien.
+  await pm2t.journalPm2After(r.runId, transportFactice({ sockets: '', pm2: [] }),
+    { processName: 'panel-t', port: 4900, avant });
+
+  const e = (await journalDe(r.runId)).find((x) => x.eventCode === 'PM2_STATE_AFTER');
+  check('le relevé transitoire est identifié comme tel', e.details.releveTransitoire === true);
+  check('…le message ne conclut pas à une absence', /transitoire/.test(e.message));
+  check('…et annonce d’où viendra la preuve', e.details.preuveDifferee === 'public.healthcheck');
+  check('…sans être classé en erreur', e.level === 'info');
+  check('aucune instabilité n’est déclarée sur une absence transitoire',
+    !(await journalDe(r.runId)).some((x) => x.eventCode === 'PM2_PROCESS_UNSTABLE'));
+
+  // Un service RÉELLEMENT en erreur reste, lui, signalé.
+  const r2 = await nouveauRun();
+  await pm2t.journalPm2After(r2.runId, transportFactice({
+    sockets: '', pm2: [procPm2('panel-t', 801, 4900, { status: 'errored' })],
+  }), { processName: 'panel-t', port: 4900, avant });
+  const e2 = (await journalDe(r2.runId)).find((x) => x.eventCode === 'PM2_STATE_AFTER');
+  check('un état « errored » n’est PAS traité comme transitoire', e2.details.releveTransitoire === false);
+  check('…et l’instabilité est bien signalée',
+    (await journalDe(r2.runId)).some((x) => x.eventCode === 'PM2_PROCESS_UNSTABLE'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -398,13 +582,20 @@ section('LE RUN RÉEL add86c82 — un redémarrage attendu ne clôt plus le dép
   await runs.attachWorker(r.runId, 36740);
   await runs.heartbeat(r.runId);
 
+  /**
+   * PM2 redémarre l'API (pid 224082), pas le worker (pid 36740). Les deux
+   * identités sont donc enregistrées séparément : l'une doit disparaître,
+   * l'autre doit survivre.
+   */
+  let apiMorte = 975_000;
+  for (; apiMorte < 975_200; apiMorte += 1) {
+    try { process.kill(apiMorte, 0); } catch { break; }
+  }
   await marqueur.ecrireMarqueurReprise({
     runId: r.runId, targetId: cible.targetId, operation: 'DEPLOYMENT',
     nextExpectedStep: 'services.verify', expectedProcessName: 'panel-test', expectedPort: 4600,
+    apiPid: apiMorte, workerPid: process.pid,
   });
-  // PM2 redémarre l'API : le marqueur a été écrit par un AUTRE pid que celui-ci.
-  await DeploymentRun.base.models.PanelDeploymentRestartMarker
-    .updateOne({ key: 'SINGLETON' }, { $set: { pidBefore: 224082 } });
 
   /* — LE NOUVEAU BACKEND DÉMARRE : c'est ici que tout se jouait — */
   const reprise = await marqueur.consommerMarqueurReprise();
@@ -491,6 +682,8 @@ section('SCÉNARIOS NÉGATIFS — la reprise ne doit rien inventer');
   await marqueur.ecrireMarqueurReprise({
     runId: attente.runId, targetId: randomUUID(), operation: 'DEPLOYMENT',
     nextExpectedStep: 'services.verify', expectedProcessName: 'panel-x', expectedPort: 4700,
+    // L'API annoncée est CELLE-CI : elle n'a donc pas redémarré.
+    apiPid: process.pid, workerPid: process.pid,
   });
   const memeProcess = await marqueur.consommerMarqueurReprise();
   check('tant que le process n’a pas changé, rien n’est conclu', memeProcess.consumed === false);

@@ -60,10 +60,13 @@ async function start() {
    * attendu — celui que le Panel provoque en se déployant lui-même.
    */
   const reprise = await consommerMarqueurReprise().catch(() => null);
-  if (reprise?.consumed) {
-    logger.info(`Redémarrage attendu constaté : run ${reprise.runId} repris (étape suivante ${reprise.nextExpectedStep ?? 'inconnue'}).`);
-  } else if (reprise?.reason === 'PROCESS_INCHANGE') {
-    logger.warn(`Marqueur de reprise présent mais le process n'a pas changé : run ${reprise.runId} laissé en l'état.`);
+  if (reprise?.consumed && reprise.workerAlive) {
+    logger.info(`Redémarrage attendu constaté : run ${reprise.runId} se poursuit (étape suivante ${reprise.nextExpectedStep ?? 'inconnue'}).`);
+  } else if (reprise?.consumed) {
+    logger.warn(`Redémarrage attendu constaté, mais le worker du run ${reprise.runId} n'a pas survécu : le déploiement s'est arrêté.`);
+  } else if (reprise?.reason) {
+    logger.warn(`Marqueur de reprise non consommé (${reprise.reason})`
+      + `${reprise.runId ? ` — run ${reprise.runId} laissé en l'état.` : '.'}`);
   }
 
   /**
@@ -78,7 +81,13 @@ async function start() {
    */
   const repris = await recoverOrphanRuns({
     reason: 'process_restart',
-    runRepris: reprise?.consumed ? reprise.runId : null,
+    /**
+     * Le run n'est protégé que si son worker a PROUVÉ sa survie. Un
+     * redémarrage constaté ne suffit pas : si le worker est mort avec l'API,
+     * le déploiement s'est bel et bien arrêté, et le dire est la seule
+     * réponse honnête.
+     */
+    runRepris: reprise?.consumed && reprise.workerAlive ? reprise.runId : null,
   }).catch(() => null);
   if (repris?.recovered) {
     logger.warn(`${repris.recovered} déploiement(s) interrompu(s) : étapes closes et journalisées.`);

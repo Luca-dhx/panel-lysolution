@@ -72,6 +72,15 @@ export function startDeploymentWorker({
     PANEL_DEPLOY_RUN_ID: runId,
     PANEL_DEPLOY_TARGET_ID: targetId,
     PANEL_DEPLOY_OPERATION: operationType,
+    /**
+     * LE PID DE L'API QUI LANCE — le worker ne peut pas le deviner.
+     *
+     * C'est ce processus-là qui doit mourir pour qu'un redémarrage attendu soit
+     * avéré. Le laisser déduire du PID du worker revenait à comparer deux
+     * processus différents par construction, donc à conclure au redémarrage à
+     * chaque démarrage.
+     */
+    PANEL_DEPLOY_API_PID: String(process.pid),
     // Le secret voyage ici, et nulle part ailleurs. `argv` serait lisible par
     // `ps aux` pour tout utilisateur de la machine ; l'environnement d'un
     // processus ne l'est que par son propriétaire et root.

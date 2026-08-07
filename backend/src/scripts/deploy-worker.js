@@ -129,6 +129,11 @@ try {
     releaseId,
     runId,
     options: operationOptions,
+    // Le PID de l'API qui nous a lancés : c'est LUI qui doit mourir pour qu'un
+    // redémarrage attendu soit avéré. Le worker le transmet plutôt que de
+    // laisser l'exécuteur lire l'environnement — lecture réservée aux points
+    // d'entrée.
+    apiPid: Number(process.env.PANEL_DEPLOY_API_PID) || null,
     user: process.env.PANEL_DEPLOY_USER || null,
     onStep: (step) => enqueueStep(step),
     onLog: (message, level) => runs.appendLog(runId, message, level),

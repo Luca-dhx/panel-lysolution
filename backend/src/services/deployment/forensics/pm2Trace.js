@@ -94,6 +94,23 @@ export async function journalPm2After(runId, transport, { processName, port, ava
     && apres.restartTime > avant.restartTime;
   const pidChange = avant && avant.pid !== null && apres.pid !== null && avant.pid !== apres.pid;
 
+  /**
+   * « ABSENT » N'EST PAS « DISPARU » — c'est peut-être « pas encore revenu ».
+   *
+   * ── L'OBSERVATION QUI INDUISAIT EN ERREUR ──────────────────────────────────
+   * Ce relevé suit immédiatement un redémarrage demandé. PM2 remplace alors son
+   * processus : pendant quelques secondes, l'ancien est parti et le nouveau
+   * n'est pas encore enregistré. Le relevé rendait donc « absent » — présenté
+   * comme un constat définitif, alors que le contrôle de santé qui suivait
+   * prouvait le contraire. Un rapport technique qui annonce une anomalie là où
+   * il n'y a qu'un instant transitoire coûte plus qu'il ne rapporte : on
+   * cherche une panne inexistante, et on doute des relevés qui, eux, comptent.
+   *
+   * On ne maquille rien : le fait relevé reste « absent ». On dit seulement ce
+   * qu'on ne sait PAS encore — et que la preuve viendra du contrôle de santé.
+   */
+  const transitoire = avant !== null && apres.status === null && apres.pid === null;
+
   await journal(runId, {
     source: SOURCES.PM2,
     level: LEVELS.INFO,
@@ -102,11 +119,23 @@ export async function journalPm2After(runId, transport, { processName, port, ava
     processName,
     port,
     pid: apres.pid ?? null,
-    message: `Après redémarrage : ${apres.status ?? 'absent'}`
-      + `${apres.pid ? `, pid ${apres.pid}` : ''}`
-      + `${redemarre ? ' — redémarrage confirmé' : ''}`
-      + `${pidChange ? ` (pid ${avant.pid} → ${apres.pid})` : ''}.`,
-    details: { avant, apres, redemarre, pidChange },
+    message: transitoire
+      ? `Service « ${processName} » non visible lors du relevé immédiat : état encore `
+        + 'transitoire après un redémarrage attendu. Ce n’est pas une absence constatée — '
+        + 'le contrôle de santé et le propriétaire du port trancheront.'
+      : `Après redémarrage : ${apres.status ?? 'absent'}`
+        + `${apres.pid ? `, pid ${apres.pid}` : ''}`
+        + `${redemarre ? ' — redémarrage confirmé' : ''}`
+        + `${pidChange ? ` (pid ${avant.pid} → ${apres.pid})` : ''}.`,
+    details: {
+      avant,
+      apres,
+      redemarre,
+      pidChange,
+      /* Fait observé, et ce qu'il permet — ou non — de conclure. */
+      releveTransitoire: transitoire,
+      preuveDifferee: transitoire ? 'public.healthcheck' : null,
+    },
   });
 
   // Un service qui n'est pas « online » après un démarrage n'est pas démarré.
