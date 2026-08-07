@@ -162,3 +162,45 @@ redémarrage — c'est vérifié par un test de redémarrage simulé.
    UNCONFIGURED/STANDALONE est un état normal, pas une erreur.
 5. La duplication d'un projet ne copie jamais un appairage : chaque projet
    fait son propre bootstrap avec son propre code.
+6. **L'environnement du projet doit concorder avec celui de l'instance de
+   Panel.** Voir §9.
+
+## 9. Concordance d'environnement — le domaine choisit, l'`ENV` valide
+
+Un projet choisit son instance de Panel par l'URL qu'il appelle :
+
+```
+projet TEST  →  PANEL_URL = https://panel-test.exemple.com
+projet PROD  →  PANEL_URL = https://panel.exemple.com
+```
+
+C'est le bon mécanisme : deux instances déployées, deux domaines, deux bases.
+**Mais une URL ne prouve pas un environnement.** C'est une chaîne saisie dans
+un `.env` : elle dit quelle machine répond, jamais à quel monde elle
+appartient. Une adresse recopiée d'un projet à l'autre, une variable oubliée
+lors d'une promotion TEST → PROD, et la production d'un client s'appaire au
+Panel de recette. Rien n'échouerait : jetons valides, battements reçus,
+projections appliquées — et le Panel de recette afficherait durablement les
+contrats et l'équipe d'un site en production.
+
+Le bootstrap compare donc les deux valeurs **déclarées** :
+
+| Projet | Instance de Panel | Résultat |
+|---|---|---|
+| TEST | Panel TEST | ✅ appairé |
+| PROD | Panel PROD | ✅ appairé |
+| TEST | Panel PROD | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
+| PROD | Panel TEST | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
+
+Règles :
+
+- **fail closed, dans les deux sens.** Aucune correction automatique :
+  rapprocher TEST de PROD « pour que ça marche » produirait exactement
+  l'accident qu'on empêche ;
+- **le code n'est pas consommé** par ce refus. L'opérateur corrige l'adresse
+  du Panel dans son `.env` et rejoue le même code ;
+- **on ne devine jamais depuis un nom de domaine.**
+  `hostname.includes('test')` classerait la production de « Garage Test SARL »
+  en recette. Les deux côtés le déclarent, et on compare ce qui est dit.
+
+Vérifié par `tests/panel-instance-environment.test.js`.
