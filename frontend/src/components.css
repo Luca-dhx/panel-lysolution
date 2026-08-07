@@ -2418,9 +2418,16 @@ a.conn-host:hover { color: var(--p-text); }
 }
 
 .sidebar-logo {
-  /* Assez haut pour qu'un logo large soit borné par la largeur de la barre ;
-     assez bas pour qu'un logo carré ne pousse pas la navigation vers le bas. */
-  max-height: 4.5rem;
+  /**
+   * 3 rem — le point d'équilibre entre les deux défauts rencontrés.
+   *
+   * À 2,25 rem, la hauteur bornait avant la largeur : un logo large restait
+   * étriqué au tiers de la barre. À 4,5 rem, elle ne bornait plus rien et un
+   * logo carré occupait tout l'en-tête. À 3 rem, un logo large atteint encore
+   * la largeur disponible, et un logo carré reste à la mesure du titre qu'il
+   * remplace.
+   */
+  max-height: 3rem;
 }
 
 /* La barre supérieure a une hauteur fixe : le logo s'y inscrit sans la faire
