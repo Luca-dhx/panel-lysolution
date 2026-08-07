@@ -23,6 +23,7 @@ import {
   listContractActions,
   listContractOperations,
   requestContractAction,
+  requestContractProtection,
 } from '../services/contract/contractActions.service.js';
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
@@ -242,6 +243,28 @@ export async function cancelContract(req, res) {
     },
   });
   return ok(res, { action });
+}
+
+/**
+ * POST /:projectId/contract/protection — RÈGLE la protection contractuelle.
+ *
+ * Le Panel ne conserve aucune copie de ce réglage : il le demande au projet,
+ * qui l'applique et rend l'état constaté après réconciliation. La valeur
+ * affichée est ensuite relue au projet — c'est ce qui garantit que le Panel et
+ * le Manager ne peuvent pas afficher deux valeurs différentes.
+ */
+export async function setContractProtectionHandler(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const { enabled } = req.body ?? {};
+  const { action, contractProtection } = await requestContractProtection(record, {
+    enabled,
+    actor: {
+      userId: req.panelUser?.userId ?? null,
+      email: req.panelUser?.email ?? null,
+      role: req.panelUser?.role ?? null,
+    },
+  });
+  return ok(res, { action, contractProtection });
 }
 
 /**

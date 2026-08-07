@@ -167,6 +167,21 @@ export interface ContractOperation {
   effect?: string;
 }
 
+/**
+ * PROTECTION CONTRACTUELLE telle que le PROJET la rend.
+ *
+ * Le Panel n'en détient aucune copie : cette valeur est relue à chaque
+ * ouverture de la fiche. C'est ce qui garantit qu'elle ne peut pas diverger de
+ * celle qu'affiche le Manager du site.
+ */
+export interface ContractProtection {
+  enabled: boolean;
+  siteStatus: string;
+  suspensionSource: string;
+  /** Le site est-il suspendu POUR CETTE CAUSE ? (calculé par le projet.) */
+  suspendedByProtection: boolean;
+}
+
 export interface ContractAction {
   operationId: string;
   outcome: 'REQUESTED' | 'SUCCEEDED' | 'FAILED';

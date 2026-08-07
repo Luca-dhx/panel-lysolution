@@ -62,10 +62,23 @@ function clientFor(record) {
 export async function listContractOperations(record) {
   try {
     const data = await clientFor(record).listOperations();
-    return { operations: data?.operations ?? [], reachable: true };
+    return {
+      operations: data?.operations ?? [],
+      reachable: true,
+      /**
+       * L'état de la protection voyage avec le catalogue — voir la note du
+       * projet : la projection CONTRACT s'efface quand il n'y a aucun contrat,
+       * or c'est justement là que ce réglage décide de l'accès. `null` quand le
+       * projet ne le publie pas (version antérieure) : l'écran dira « inconnu »
+       * plutôt que d'inventer « désactivé ».
+       */
+      contractProtection: data?.contractProtection ?? null,
+    };
   } catch (err) {
     logger.warn(`Catalogue d’opérations indisponible pour ${record.projectKey} : ${err.message}`);
-    return { operations: [], reachable: false, reason: err.code || err.message };
+    return {
+      operations: [], reachable: false, contractProtection: null, reason: err.code || err.message,
+    };
   }
 }
 
@@ -76,7 +89,20 @@ export async function listContractOperations(record) {
  * @param {object} demande  { operationId, reason, actor }
  */
 export async function requestContractAction(record, { operationId, reason = null, actor = {} }) {
-  if (!Object.values(CONTRACT_OPERATIONS).includes(operationId)) {
+  /**
+   * Cette voie ne transporte que les RÉSILIATIONS.
+   *
+   * Le réglage de la protection a la sienne (`requestContractProtection`), et
+   * ce n'est pas de la cosmétique : cette fonction exige un contrat, journalise
+   * des transitions de statut et applique la garde de production. Y faire
+   * passer un réglage produirait une ligne de journal qui décrit une
+   * résiliation qui n'a pas eu lieu.
+   */
+  const CANCELLATIONS = [
+    CONTRACT_OPERATIONS.CANCEL_AT_PERIOD_END,
+    CONTRACT_OPERATIONS.CANCEL_NOW,
+  ];
+  if (!CANCELLATIONS.includes(operationId)) {
     throw ApiError.badRequest(
       'PANEL_CONTRACT_OPERATION_UNKNOWN',
       'Action contractuelle inconnue.',
@@ -152,9 +178,103 @@ export async function requestContractAction(record, { operationId, reason = null
   }
 }
 
+/**
+ * RÉGLAGE DE LA PROTECTION CONTRACTUELLE — même doctrine que la résiliation :
+ * le Panel DEMANDE, le projet applique et rend l'état constaté.
+ *
+ * ── AUCUNE COPIE LOCALE ─────────────────────────────────────────────────────
+ * Rien n'est écrit dans une projection. La valeur affichée par le Panel est
+ * relue au projet à chaque ouverture de la fiche (catalogue d'opérations) : il
+ * ne peut donc pas exister un « Panel dit ON, Manager dit OFF ». Ce qu'on
+ * garde ici est l'INTENTION et la RÉPONSE, dans le journal d'actions — pas la
+ * valeur elle-même.
+ *
+ * ── PERMISSION ──────────────────────────────────────────────────────────────
+ * Le projet authentifie le pont, pas l'humain : il accorde sa confiance au
+ * jeton du Panel. C'est donc au Panel de porter la règle d'accès, et la route
+ * qui appelle cette fonction est réservée aux comptes DEV.
+ *
+ * @param {object} record   fiche projet du registre
+ * @param {{enabled: boolean, actor?: object}} demande
+ */
+export async function requestContractProtection(record, { enabled, actor = {} }) {
+  if (typeof enabled !== 'boolean') {
+    throw ApiError.badRequest(
+      'PANEL_CONTRACT_PROTECTION_INVALID',
+      'Le champ « enabled » (booléen) est requis.',
+    );
+  }
+
+  const environment = record.runtime?.environment ?? null;
+  const projection = await PanelProjectContract.findOne({ projectId: record.projectId }).lean();
+  const invocationId = randomUUID();
+
+  // Consigné AVANT l'appel : une demande partie dont la réponse se perd doit
+  // laisser une trace, comme pour les résiliations.
+  const journal = await PanelContractAction.create({
+    projectId: record.projectId,
+    projectName: record.projectName ?? null,
+    environment,
+    operationId: CONTRACT_OPERATIONS.SET_PROTECTION,
+    invocationId,
+    actor: {
+      userId: actor.userId ?? null,
+      email: actor.email ?? null,
+      role: actor.role ?? null,
+    },
+    contract: {
+      sourceContractId: projection?.sourceContractId ?? null,
+      reference: projection?.reference ?? null,
+      previousStatus: projection?.status ?? null,
+      newStatus: null,
+      endsAt: null,
+    },
+    protection: { requested: enabled, applied: null, siteStatus: null, suspensionSource: null },
+    outcome: 'REQUESTED',
+    requestedAt: nowIso(),
+  });
+
+  try {
+    const result = await clientFor(record).invokeOperation(CONTRACT_OPERATIONS.SET_PROTECTION, {
+      invocationId,
+      params: { enabled },
+    });
+
+    const applique = result?.contractProtection ?? null;
+    journal.protection.applied = typeof applique?.enabled === 'boolean' ? applique.enabled : null;
+    journal.protection.siteStatus = applique?.siteStatus ?? null;
+    journal.protection.suspensionSource = applique?.suspensionSource ?? null;
+    journal.outcome = 'SUCCEEDED';
+    journal.completedAt = nowIso();
+    await journal.save();
+
+    logger.info(
+      `Protection contractuelle ${enabled ? 'activée' : 'désactivée'} sur ${record.projectKey} : `
+      + `site ${applique?.siteStatus ?? '?'} (source ${applique?.suspensionSource ?? '?'}).`,
+    );
+    return { action: journal.toObject(), contractProtection: applique };
+  } catch (err) {
+    journal.outcome = 'FAILED';
+    journal.errorCode = err.code || err.details?.code || null;
+    journal.errorMessage = err.message || null;
+    journal.completedAt = nowIso();
+    await journal.save();
+
+    throw ApiError.conflict(
+      'PANEL_CONTRACT_PROTECTION_FAILED',
+      `Le projet a refusé le réglage : ${err.message}`,
+    );
+  }
+}
+
 /** Historique des actions d'un projet, de la plus récente à la plus ancienne. */
 export async function listContractActions(projectId, limit = 20) {
   return PanelContractAction.find({ projectId }).sort({ requestedAt: -1 }).limit(limit).lean();
 }
 
-export default { listContractOperations, requestContractAction, listContractActions };
+export default {
+  listContractOperations,
+  requestContractAction,
+  requestContractProtection,
+  listContractActions,
+};

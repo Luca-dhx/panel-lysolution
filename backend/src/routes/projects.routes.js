@@ -17,6 +17,7 @@ import {
   regeneratePairingCode,
   remove,
   revokePairing,
+  setContractProtectionHandler,
 } from '../controllers/projects.controller.js';
 
 const router = Router();
@@ -31,6 +32,20 @@ router.get('/:projectId', asyncHandler(detail));
 router.get('/:projectId/contract/operations', asyncHandler(contractOperations));
 router.get('/:projectId/contract/document', asyncHandler(contractDocument));
 router.post('/:projectId/contract/cancel', asyncHandler(cancelContract));
+
+/**
+ * PROTECTION CONTRACTUELLE — réservée aux comptes DEV.
+ *
+ * Elle décide si un site est servi ou suspendu : c'est un cran au-dessus d'une
+ * demande de résiliation, qui ne fait que transmettre une intention sur un
+ * contrat déjà connu. Le projet, lui, authentifie le PONT et non l'humain — la
+ * règle d'accès ne peut donc être portée qu'ici, jamais par un bouton masqué.
+ */
+router.post(
+  '/:projectId/contract/protection',
+  requirePanelDev,
+  asyncHandler(setContractProtectionHandler),
+);
 
 // Sonde d'URL — POST par commodité de corps, mais AUCUNE écriture : elle
 // interroge une adresse et rend un constat.

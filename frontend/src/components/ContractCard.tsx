@@ -25,10 +25,108 @@ import {
 import { getContractDocumentPresentation } from '@/lib/contractDocument';
 import type { ContractDocumentPresentation } from '@/lib/contractDocument';
 import type {
-  BusinessContract, ContractOperation, PreviousContract, PublicProject,
+  BusinessContract, ContractOperation, ContractProtection, PreviousContract, PublicProject,
 } from '@/types';
 
 const CANCEL_NOW = 'contract.cancel_now';
+
+/**
+ * PROTECTION CONTRACTUELLE — un réglage, pas une alarme.
+ *
+ * ── POURQUOI ELLE EST HORS DE LA CARTE « CONTRAT » ──────────────────────────
+ * La carte du contrat s'efface de trois façons : aucune projection reçue,
+ * aucun contrat courant, ou le cas nominal. Or ce réglage compte SURTOUT dans
+ * les deux premiers cas — c'est là qu'il décide si le site est servi. Le loger
+ * dans une carte qui disparaît l'aurait rendu introuvable précisément quand on
+ * en a besoin. Il vit donc dans sa propre carte, toujours rendue.
+ *
+ * ── AUCUNE MISE À JOUR OPTIMISTE ────────────────────────────────────────────
+ * L'interrupteur ne bouge QUE sur l'état rendu par le projet après
+ * réconciliation. En cas d'échec, il revient exactement où il était : un
+ * interrupteur qui affiche « activé » alors que le projet a refusé serait pire
+ * qu'un message d'erreur.
+ */
+function ContractProtectionCard({
+  project,
+  protection,
+  reachable,
+  onChanged,
+}: {
+  project: PublicProject;
+  protection: ContractProtection | null;
+  reachable: boolean;
+  onChanged: (next: ContractProtection | null) => void;
+}) {
+  const [enCours, setEnCours] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+
+  const relie = project.pairing.status === 'PAIRED';
+
+  const basculer = async (next: boolean) => {
+    setErreur(null);
+    setEnCours(true);
+    try {
+      const r = await api.setContractProtection(project.projectId, next);
+      // On adopte ce que le PROJET a constaté, jamais ce qu'on a demandé.
+      onChanged(r.contractProtection);
+    } catch (err) {
+      setErreur(errorMessage(err, 'Le projet a refusé le réglage.'));
+    } finally {
+      setEnCours(false);
+    }
+  };
+
+  return (
+    <Card title="Protection contractuelle">
+      {!relie ? (
+        <p className="muted">
+          Ce projet n’est pas relié : son réglage de protection ne peut pas être lu.
+        </p>
+      ) : !reachable || !protection ? (
+        <p className="muted">
+          Projet injoignable : l’état de la protection contractuelle est inconnu pour l’instant.
+        </p>
+      ) : (
+        <>
+          <label className="field-inline">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={protection.enabled}
+              disabled={enCours}
+              onChange={(e) => void basculer(e.target.checked)}
+            />
+            <span>{protection.enabled ? 'Activée' : 'Désactivée'}</span>
+          </label>
+
+          {/* Le texte d'aide DIT la règle, il ne l'alarme pas. */}
+          <p className="muted">
+            {protection.enabled
+              ? 'Suspend automatiquement le site lorsqu’aucun contrat actif n’est présent.'
+              : 'L’état du contrat n’affecte pas l’accès au site.'}
+          </p>
+
+          {/*
+            La conséquence CONSTATÉE, et seulement quand elle a lieu. On ne
+            déduit pas « suspendu » de « protection activée » : le projet peut
+            avoir un contrat honoré, ou être suspendu pour une autre cause.
+          */}
+          {protection.suspendedByProtection ? (
+            <p className="badge badge-warn">Site suspendu par la protection contractuelle</p>
+          ) : protection.suspensionSource && protection.suspensionSource !== 'NONE' ? (
+            <p className="muted">
+              Site suspendu pour une autre cause ({protection.suspensionSource.toLowerCase()}) :
+              ce réglage ne la lève pas.
+            </p>
+          ) : null}
+
+          {enCours ? <p className="muted">Transmission au projet…</p> : null}
+          {erreur ? <div className="alert alert-error">{erreur}</div> : null}
+        </>
+      )}
+    </Card>
+  );
+}
 
 /**
  * POURQUOI les actions contractuelles sont indisponibles — la vraie raison.
@@ -134,6 +232,7 @@ export function ContractCard({
   const [operations, setOperations] = useState<ContractOperation[]>([]);
   const [reachable, setReachable] = useState(true);
   const [environment, setEnvironment] = useState<string | null>(null);
+  const [protection, setProtection] = useState<ContractProtection | null>(null);
   const [demande, setDemande] = useState<ContractOperation | null>(null);
   const [motif, setMotif] = useState('');
   const [confirme, setConfirme] = useState(false);
@@ -142,27 +241,49 @@ export function ContractCard({
   const [message, setMessage] = useState<string | null>(null);
   const [telechargement, setTelechargement] = useState(false);
 
+  /**
+   * Le catalogue est interrogé MÊME SANS CONTRAT.
+   *
+   * Il ne portait que des résiliations, d'où le court-circuit historique. Il
+   * porte désormais aussi l'état de la protection contractuelle — un réglage
+   * qui existe indépendamment de tout contrat, et dont l'absence de contrat est
+   * précisément le cas d'usage. Continuer à sauter l'appel aurait laissé la
+   * carte vide là où elle compte le plus.
+   */
   useEffect(() => {
     let annule = false;
-    if (!contract) return undefined;
     api.getContractOperations(project.projectId)
       .then((data) => {
         if (annule) return;
         setOperations(data.operations);
         setReachable(data.reachable);
         setEnvironment(data.environment);
+        setProtection(data.contractProtection);
       })
       .catch(() => { if (!annule) setReachable(false); });
     return () => { annule = true; };
   }, [project.projectId, contract?.sourceContractId]);
 
+  /** Rendue dans les TROIS branches ci-dessous — jamais escamotée. */
+  const carteProtection = (
+    <ContractProtectionCard
+      project={project}
+      protection={protection}
+      reachable={reachable}
+      onChanged={setProtection}
+    />
+  );
+
   const historique = contract?.previousContracts ?? [];
 
   if (!contract) {
     return (
-      <Card title="Contrat">
-        <p className="muted">Aucun contrat synchronisé.</p>
-      </Card>
+      <>
+        <Card title="Contrat">
+          <p className="muted">Aucun contrat synchronisé.</p>
+        </Card>
+        {carteProtection}
+      </>
     );
   }
 
@@ -189,6 +310,7 @@ export function ContractCard({
             <p className="muted">Ce projet n’a jamais eu de contrat.</p>
           )}
         </Card>
+        {carteProtection}
         <ContractHistory contracts={historique} project={project} fraicheur={fraicheur} />
       </>
     );
@@ -400,6 +522,7 @@ export function ContractCard({
         </div>
       ) : null}
       </Card>
+      {carteProtection}
       <ContractHistory contracts={historique} project={project} fraicheur={fraicheur} />
     </>
   );

@@ -1,6 +1,7 @@
 import type {
   ContractAction,
   ContractOperation,
+  ContractProtection,
   PanelUser,
   PanelVersion,
   PublicProject,
@@ -254,7 +255,22 @@ export const api = {
       reachable: boolean;
       environment: string | null;
       history: ContractAction[];
+      /**
+       * État LU sur le projet, jamais une copie du Panel — `null` si le projet
+       * ne répond pas ou ne connaît pas encore ce réglage.
+       */
+      contractProtection: ContractProtection | null;
     }>(`/api/projects/${projectId}/contract/operations`),
+
+  /**
+   * Règle la protection contractuelle. Rend l'état CONSTATÉ par le projet
+   * après réconciliation — pas la valeur demandée.
+   */
+  setContractProtection: (projectId: string, enabled: boolean) =>
+    request<{ action: ContractAction; contractProtection: ContractProtection | null }>(
+      `/api/projects/${projectId}/contract/protection`,
+      { method: 'POST', body: { enabled } },
+    ),
 
   cancelContract: (projectId: string, operationId: string, reason?: string) =>
     request<{ action: ContractAction }>(`/api/projects/${projectId}/contract/cancel`, {
