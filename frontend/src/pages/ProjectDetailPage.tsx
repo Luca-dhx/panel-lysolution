@@ -204,7 +204,21 @@ function OverviewTab({
   fraicheur: ReturnType<typeof getProjectDataFreshness>;
 }) {
   const site = siteState(project);
-  const lastSync = project.runtime.bridgeStats?.lastSyncAt ?? null;
+  /**
+   * TROIS DATES, TROIS FAITS DIFFÉRENTS — et elles se lisaient comme une seule.
+   *
+   *   · `lastContactAt`  — le dernier battement de cœur REÇU par le Panel ;
+   *   · `declareParLeProjet` — la date que le PROJET dit être sa dernière
+   *     synchronisation. C'est sa parole, transportée par le battement ;
+   *   · `lastFullSyncAt` — l'instant où le Panel a réellement APPLIQUÉ une
+   *     photographie. C'est le seul des trois qu'il a constaté lui-même.
+   *
+   * L'écran affichait le deuxième sous le libellé « Dernière mise à jour des
+   * informations », juste à côté d'un bandeau qui parlait de « dernière
+   * synchronisation complète » — le troisième. Deux nombres différents, deux
+   * libellés presque identiques, aucune façon de savoir lequel faisait foi.
+   */
+  const declareParLeProjet = project.runtime.bridgeStats?.lastSyncAt ?? null;
   const contacts = projectContacts(project);
   const contract = project.business?.contract ?? null;
 
@@ -237,8 +251,20 @@ function OverviewTab({
             <dd>{since ?? <span className="muted">jamais</span>}</dd>
           </div>
           <div>
-            <dt>Dernière mise à jour des informations</dt>
-            <dd>{lastSync ? formatDateTime(lastSync) : <span className="muted">jamais</span>}</dd>
+            <dt>Dernière photographie reçue</dt>
+            <dd>
+              {fraicheur.lastFullSyncAt
+                ? formatDateTime(fraicheur.lastFullSyncAt)
+                : <span className="muted">jamais</span>}
+            </dd>
+          </div>
+          <div>
+            <dt>Dernière synchronisation déclarée par le projet</dt>
+            <dd>
+              {declareParLeProjet
+                ? formatDateTime(declareParLeProjet)
+                : <span className="muted">jamais</span>}
+            </dd>
           </div>
         </dl>
       </Card>

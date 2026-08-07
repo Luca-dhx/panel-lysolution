@@ -27,26 +27,49 @@ import {
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 import {
-  deleteDestination, describeByEnvironment, markDestinationEmpty, outboundBaseUrl,
+  deleteDestination, describeByEnvironment, destinationKey, loadActiveDestinationHosts,
+  markDestinationEmpty, outboundBaseUrl,
 } from '../services/registry/projectDestination.service.js';
+
+/**
+ * Ce que la fiche doit savoir pour dater la génération d'un projet.
+ *
+ * L'hôte de la destination ACTIVE entre dans la clé de génération, et la
+ * projection publique est synchrone : sans ce chargement, elle le devinait —
+ * et le devinait faux, ce qui déclarait périmée toute photographie reçue.
+ */
+async function hotesActifs(records) {
+  return loadActiveDestinationHosts(
+    records.map((r) => ({ projectId: r.projectId, environment: r.runtime?.environment ?? null })),
+  );
+}
+
+const hoteDe = (carte, record) =>
+  carte.get(destinationKey(record.projectId, record.runtime?.environment ?? null)) ?? null;
 
 export async function list(_req, res) {
   const now = Date.now();
   const records = await listProjects();
-  const projections = await loadBusinessProjections(records.map((r) => r.projectId));
+  const [projections, hotes] = await Promise.all([
+    loadBusinessProjections(records.map((r) => r.projectId)),
+    hotesActifs(records),
+  ]);
   return ok(res, {
     projects: records.map((record) =>
-      toPublicProject(record, now, projections.get(record.projectId))),
+      toPublicProject(record, now, projections.get(record.projectId), hoteDe(hotes, record))),
   });
 }
 
 export async function detail(req, res) {
   const record = await getProjectOrThrow(req.params.projectId);
-  const [projections, team] = await Promise.all([
+  const [projections, team, hotes] = await Promise.all([
     loadBusinessProjections([record.projectId]),
     loadProjectTeam(record.projectId),
+    hotesActifs([record]),
   ]);
-  const project = toPublicProject(record, Date.now(), projections.get(record.projectId));
+  const project = toPublicProject(
+    record, Date.now(), projections.get(record.projectId), hoteDe(hotes, record),
+  );
   // L'équipe n'est pas une propriété du registre : elle est jointe ICI, sur la
   // fiche seule, parce que c'est le seul écran qui la montre.
   project.business.team = team.map((m) => ({

@@ -40,7 +40,7 @@ await connectTestDatabase();
 const destinations = await import('../backend/src/services/registry/projectDestination.service.js');
 const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
 const { describeProject } = await import('../backend/src/services/registry/projectRegistry.service.js');
-const { currentGeneration } = await import('../backend/src/services/sync/projectGeneration.js');
+const { currentGeneration, generationsDiverge } = await import('../backend/src/services/sync/projectGeneration.js');
 const PanelProject = (await import('../backend/src/models/PanelProject.model.js')).default;
 const PanelProjectDestination = (await import('../backend/src/models/PanelProjectDestination.model.js')).default;
 const { PanelProjectPresentation } = await import('../backend/src/models/PanelProjectProjection.model.js');
@@ -272,8 +272,31 @@ section('GÉNÉRATION — un déménagement rend les anciennes projections péri
   check('…l’environnement et l’appairage n’y suffisaient pas',
     avant.startsWith('TEST|2026-08-04T17:37:22.545Z')
     && apres.startsWith('TEST|2026-08-04T17:37:22.545Z'));
-  check('une génération sans destination reste stable',
-    currentGeneration(record).generation === currentGeneration(record, null).generation);
+  /**
+   * ── L'ASSERTION QUI GARANTISSAIT LE DÉFAUT ────────────────────────────────
+   *
+   * Ce contrôle exigeait que « ne rien passer » vaille « il n'y en a aucune ».
+   * C'est précisément cette équivalence qui a cassé la fiche : l'ÉCRITURE
+   * passait l'hôte actif, la LECTURE ne passait rien, et les deux clés
+   * divergeaient pour tout projet déployé. Une photographie reçue à 12:56
+   * était présentée comme venant de l'instance précédente.
+   *
+   * « Aucune destination » est un FAIT ; « je ne sais pas » est une IGNORANCE.
+   * Les deux se disent, et seule la première tranche.
+   */
+  const aucune = currentGeneration(record, null);
+  const ignorante = currentGeneration(record);
+
+  check('« aucune destination » reste stable et se compare',
+    aucune.generation === currentGeneration(record, null).generation
+    && aucune.destinationKnown === true);
+  check('« je ne sais pas » se distingue de « aucune »',
+    ignorante.generation !== aucune.generation && ignorante.destinationKnown === false);
+  check('…et ne périme aucune génération',
+    generationsDiverge(avant, ignorante.generation) === false
+    && generationsDiverge(ignorante.generation, apres) === false);
+  check('tandis qu’un déménagement RÉEL reste une rupture',
+    generationsDiverge(avant, apres) === true);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

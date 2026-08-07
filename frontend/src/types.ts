@@ -117,6 +117,15 @@ export interface BusinessFreshness {
   runtimeGeneration: string | null;
   projectionEnvironment: string | null;
   projectionGeneration: string | null;
+  /**
+   * LES VERDICTS, rendus par le backend. Les deux clés de génération restent
+   * publiées — elles servent au diagnostic — mais l'écran ne les compare plus
+   * lui-même : il ignorait qu'une case peut valoir « je ne sais pas ».
+   */
+  generationMismatch?: boolean;
+  environmentMismatch?: boolean;
+  /** Le backend a-t-il pu se prononcer sur la destination active ? */
+  destinationKnown?: boolean;
   lastSyncAt: string | null;
 }
 

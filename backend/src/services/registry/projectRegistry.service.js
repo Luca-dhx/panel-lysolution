@@ -11,7 +11,7 @@ import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
-import { currentGeneration } from '../sync/projectGeneration.js';
+import { currentGeneration, generationsDiverge } from '../sync/projectGeneration.js';
 import {
   generateProjectKey,
   normalizeBackendUrl,
@@ -322,8 +322,24 @@ export async function recordHeartbeat(record, heartbeat) {
 }
 
 
-// Projection publique d'une fiche : jamais un hash, jamais un secret chiffré.
-export function toPublicProject(record, now = Date.now(), projections = {}) {
+/**
+ * Projection publique d'une fiche : jamais un hash, jamais un secret chiffré.
+ *
+ * ── `destinationHost`, ET POURQUOI IL N'A PAS DE DÉFAUT ─────────────────────
+ * L'hôte de la destination ACTIVE entre dans la génération du projet. Cette
+ * fonction est SYNCHRONE — elle ne peut pas aller le chercher — et le déduire
+ * d'un champ de la fiche a produit exactement le défaut qu'on ferme ici : un
+ * hôte inventé, une génération qui ne coïncidait avec aucune projection, et
+ * tout un parc déclaré périmé.
+ *
+ * L'appelant le charge donc en lot (`loadActiveDestinationHosts`) et le passe.
+ * S'il ne le passe pas, la génération le DIT (`DESTINATION-INCONNUE`) et la
+ * comparaison s'abstient — une ignorance ne périme rien.
+ *
+ * @param {string|null|undefined} destinationHost hôte actif, `null` si l'on
+ *        sait qu'il n'y en a aucun, omis si l'on ne sait pas.
+ */
+export function toPublicProject(record, now = Date.now(), projections = {}, destinationHost) {
   const capabilities = interpretCapabilities(record.manifest);
   return {
     projectId: record.projectId,
@@ -368,7 +384,7 @@ export function toPublicProject(record, now = Date.now(), projections = {}) {
        * décrivent plus rien. L'écran doit pouvoir le dire, et pour cela il
        * lui faut la génération de la source à côté de la génération courante.
        */
-      freshness: describeFreshness(record, projections),
+      freshness: describeFreshness(record, projections, destinationHost),
     },
   };
 }
@@ -378,8 +394,8 @@ export function toPublicProject(record, now = Date.now(), projections = {}) {
  * photographie comme l'état actuel. Aucune décision d'affichage ici : on
  * fournit les faits, l'écran les met en forme (voir `getProjectDataFreshness`).
  */
-function describeFreshness(record, projections) {
-  const { environment, generation } = currentGeneration(record);
+function describeFreshness(record, projections, destinationHost) {
+  const { environment, generation, destinationKnown } = currentGeneration(record, destinationHost);
   // La photographie la plus récemment reçue, quelle que soit l'entité : c'est
   // elle qui date la dernière synchronisation complète du projet.
   const recues = [projections.presentation, projections.contract]
@@ -388,11 +404,32 @@ function describeFreshness(record, projections) {
     .filter(Boolean)
     .sort();
   const source = projections.contract ?? projections.presentation ?? null;
+  const projectionEnvironment = source?.sourceEnvironment ?? null;
+  const projectionGeneration = source?.sourceGeneration ?? null;
+
   return {
     runtimeEnvironment: environment,
     runtimeGeneration: generation,
-    projectionEnvironment: source?.sourceEnvironment ?? null,
-    projectionGeneration: source?.sourceGeneration ?? null,
+    projectionEnvironment,
+    projectionGeneration,
+    /**
+     * LE VERDICT EST RENDU ICI, où le modèle est connu.
+     *
+     * L'écran comparait les deux clés par inégalité de chaînes. Il ne pouvait
+     * pas savoir qu'une case peut valoir « je ne sais pas », et concluait au
+     * désaccord. La règle appartient au backend ; l'écran la met en forme.
+     */
+    generationMismatch: generationsDiverge(projectionGeneration, generation),
+    /**
+     * Deux instances SUCCESSIVES du même environnement ne sont pas deux
+     * environnements. L'écran doit pouvoir dire laquelle des deux ruptures il
+     * décrit, sans la déduire d'une comparaison qu'il referait à sa façon.
+     */
+    environmentMismatch: Boolean(
+      projectionEnvironment && environment && projectionEnvironment !== environment,
+    ),
+    /** L'appelant a-t-il pu se prononcer sur la destination active ? */
+    destinationKnown,
     lastSyncAt: recues.length > 0 ? recues[recues.length - 1] : null,
   };
 }

@@ -60,15 +60,19 @@ export function getProjectDataFreshness(project: PublicProject): ProjectDataFres
   const projectionEnvironment = f?.projectionEnvironment ?? null;
   const runtimeEnvironment = f?.runtimeEnvironment ?? null;
 
-  // On ne crie « incohérence » que sur des faits : deux environnements CONNUS
-  // et différents. Un environnement inconnu est une ignorance, pas un conflit.
-  const isEnvironmentMismatch = Boolean(
-    projectionEnvironment && runtimeEnvironment && projectionEnvironment !== runtimeEnvironment,
-  );
-  const isGenerationMismatch = Boolean(
-    f?.projectionGeneration && f?.runtimeGeneration
-    && f.projectionGeneration !== f.runtimeGeneration,
-  );
+  /**
+   * LES DEUX VERDICTS SONT RENDUS PAR LE BACKEND — l'écran ne les recalcule pas.
+   *
+   * ── CE QUE CET ÉCRAN A COÛTÉ ──────────────────────────────────────────────
+   * Il comparait `projectionGeneration !== runtimeGeneration`, deux chaînes
+   * dont il ignorait la structure. Or l'une des cases de cette clé peut valoir
+   * « je ne sais pas » : l'écran lisait alors une ignorance comme un désaccord,
+   * et déclarait périmée une photographie reçue trois minutes plus tôt.
+   *
+   * La règle appartient au modèle. Ici, on met en forme.
+   */
+  const isEnvironmentMismatch = f?.environmentMismatch === true;
+  const isGenerationMismatch = f?.generationMismatch === true;
 
   return {
     connection,

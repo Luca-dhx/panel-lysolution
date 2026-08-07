@@ -42,22 +42,55 @@
  * de `demo-sbauto.lycarz.com` à `demo-sbauto06.ly-solution.com`.
  *
  * La DESTINATION entre donc dans la clé. Elle est lue sur la destination
- * ACTIVE — la seule autorité — et vaut `SANS-DESTINATION` tant qu'aucune n'est
- * connue : une valeur stable, qui ne fabrique pas de fausse rupture.
+ * ACTIVE — la seule autorité.
+ *
+ * ══ « PAS DE DESTINATION » ET « JE NE SAIS PAS » NE SONT PAS LA MÊME CHOSE ══
+ *
+ * Cette distinction a coûté un écran entier. L'ÉCRITURE passait l'hôte de la
+ * destination active ; la LECTURE, elle, ne passait rien et retombait sur
+ * `record.activeDestinationHost` — un champ que RIEN, nulle part, n'écrit. Les
+ * deux côtés calculaient donc deux clés qui ne pouvaient pas coïncider :
+ *
+ *   estampillée à l'écriture : TEST|<appairage>|demo-sbauto06.ly-solution.com
+ *   recalculée à la lecture  : TEST|<appairage>|SANS-DESTINATION
+ *
+ * Conséquence : TOUT projet doté d'une destination active était déclaré d'une
+ * autre génération que ses propres projections. La photographie avait bien été
+ * reçue, acceptée et persistée — l'écran affirmait pourtant qu'elle venait de
+ * l'instance précédente, définitivement, et le contrat restait « en attente de
+ * synchronisation ».
+ *
+ * Le paramètre n'a donc plus de valeur par défaut : ne rien passer se DIT
+ * (`DESTINATION-INCONNUE`) au lieu de se faire passer pour « aucune ». Un
+ * appelant qui ne peut pas savoir produit désormais une ignorance — que la
+ * comparaison ci-dessous refuse de traiter comme un désaccord.
  *
  * @param {object} record
- * @param {string|null} [destinationHost]  hôte de la destination ACTIVE.
+ * @param {string|null|undefined} destinationHost  hôte de la destination ACTIVE,
+ *        `null` si l'on SAIT qu'il n'y en a aucune, omis si l'on ne sait pas.
  */
-export function currentGeneration(record, destinationHost = null) {
+
+/** Aucune destination active — un fait, et il est stable. */
+export const SANS_DESTINATION = 'SANS-DESTINATION';
+/** L'appelant n'a pas pu se prononcer — une ignorance, jamais un désaccord. */
+export const DESTINATION_INCONNUE = 'DESTINATION-INCONNUE';
+
+export function currentGeneration(record, destinationHost) {
   const environment = record?.runtime?.environment ?? null;
   // À défaut d'appairage — fiche déclarée, jamais reliée — la création fait
   // office de repère : elle ne bougera plus.
   const paired = record?.pairing?.pairedAt ?? record?.createdAt ?? null;
-  const destination = destinationHost ?? record?.activeDestinationHost ?? null;
+
+  const connue = destinationHost !== undefined;
+  const destination = connue ? (destinationHost ?? null) : null;
+  const marqueur = connue ? (destination ?? SANS_DESTINATION) : DESTINATION_INCONNUE;
+
   return {
     environment,
     destination,
-    generation: `${environment ?? 'INCONNU'}|${paired ?? 'JAMAIS'}|${destination ?? 'SANS-DESTINATION'}`,
+    /** L'appelant s'est-il prononcé sur la destination ? */
+    destinationKnown: connue,
+    generation: `${environment ?? 'INCONNU'}|${paired ?? 'JAMAIS'}|${marqueur}`,
     softwareVersion: record?.runtime?.softwareVersion ?? null,
   };
 }
@@ -69,7 +102,7 @@ export function currentGeneration(record, destinationHost = null) {
  * qui permettra, plus tard, de dire « cette information a été synchronisée
  * depuis PROD » sans avoir à le deviner.
  */
-export function stampOf(record, receivedAt, destinationHost = null) {
+export function stampOf(record, receivedAt, destinationHost) {
   const { environment, generation, softwareVersion } = currentGeneration(record, destinationHost);
   return {
     sourceEnvironment: environment,
@@ -89,7 +122,42 @@ export function stampOf(record, receivedAt, destinationHost = null) {
  */
 export function sameGeneration(stocke, courante) {
   if (!stocke) return true;
-  return stocke === courante;
+  return !generationsDiverge(stocke, courante);
 }
 
-export default { currentGeneration, stampOf, sameGeneration };
+/**
+ * DEUX GÉNÉRATIONS SE CONTREDISENT-ELLES ?
+ *
+ * ── POURQUOI PAS UNE SIMPLE INÉGALITÉ DE CHAÎNES ────────────────────────────
+ * Parce qu'une clé peut contenir une case VIDE. Comparer les chaînes
+ * entières fait alors passer une ignorance pour un désaccord : c'est
+ * exactement ce qui a déclaré périmée, sur tout le parc, une photographie
+ * parfaitement à jour.
+ *
+ * On compare donc case par case, et une case dont l'un des deux côtés dit
+ * « je ne sais pas » ne tranche rien. Le reste continue de trancher : un
+ * environnement différent, un réappairage ou un changement de domaine
+ * restent des ruptures, et doivent le rester — c'est ce qui protège contre
+ * l'affichage de données d'une instance disparue.
+ *
+ * Deux clés dont on ne connaît pas la forme retombent sur l'égalité stricte :
+ * mieux vaut un doute signalé qu'une comparaison qu'on ne sait pas faire.
+ */
+export function generationsDiverge(stocke, courante) {
+  if (!stocke || !courante) return false;
+
+  const a = String(stocke).split('|');
+  const b = String(courante).split('|');
+  if (a.length !== b.length) return stocke !== courante;
+
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] === DESTINATION_INCONNUE || b[i] === DESTINATION_INCONNUE) continue;
+    if (a[i] !== b[i]) return true;
+  }
+  return false;
+}
+
+export default {
+  currentGeneration, stampOf, sameGeneration, generationsDiverge,
+  SANS_DESTINATION, DESTINATION_INCONNUE,
+};

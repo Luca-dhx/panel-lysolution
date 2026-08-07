@@ -16,6 +16,7 @@ import { heartbeatHistory, heartbeatStats } from '../services/supervision/heartb
 import { projectTimeline, parkTimeline } from '../services/supervision/timeline.service.js';
 import { interpretCapabilities } from '../services/manifest/capabilities.service.js';
 import { getActiveCompany } from '../services/company/company.service.js';
+import { activeDestination } from '../services/registry/projectDestination.service.js';
 
 /** Niveau 0 — tableau de bord du parc. */
 export async function dashboard(_req, res) {
@@ -129,8 +130,12 @@ export async function projectTechnical(req, res) {
     manifestUpdatedAt: record.manifestUpdatedAt ?? null,
     heartbeatStats: await heartbeatStats(record.projectId),
     // La projection publique reste la référence : jamais un hash, jamais un
-    // secret chiffré.
-    project: toPublicProject(record),
+    // secret chiffré. L'hôte actif est chargé : sans lui, la génération du
+    // projet serait comparée à une valeur que personne n'a écrite.
+    project: toPublicProject(
+      record, Date.now(), {},
+      (await activeDestination(record.projectId, record.runtime?.environment ?? null))?.host ?? null,
+    ),
   });
 }
 

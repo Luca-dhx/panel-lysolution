@@ -115,8 +115,15 @@ section('1. Génération PROD — la photographie initiale');
   const c = await PanelProjectContract.findOne({ projectId: PROJECT_ID }).lean();
   check('le contrat PROD est projeté', c.status === 'ACTIVE');
   check('…et porte SA génération', c.sourceEnvironment === 'PROD');
-  check('…nommée par environnement et appairage',
-    c.sourceGeneration === currentGeneration(fiche('PROD', '2026-02-01T10:00:00.000Z')).generation);
+  /**
+   * La clé est nommée par environnement, appairage ET destination. Ce projet
+   * n'a aucune destination active : le comparant doit donc le DIRE (`null`),
+   * pas omettre l'argument — omettre veut désormais dire « je ne sais pas »,
+   * ce qui n'est pas la même chose et ne se compare pas pareil.
+   */
+  check('…nommée par environnement, appairage et destination',
+    c.sourceGeneration
+      === currentGeneration(fiche('PROD', '2026-02-01T10:00:00.000Z'), null).generation);
   check('l’équipe PROD compte deux membres',
     (await PanelProjectMember.countDocuments({ projectId: PROJECT_ID })) === 2);
 }
@@ -244,6 +251,14 @@ section('8. La règle de fraîcheur — une seule, exécutée');
   const { getProjectDataFreshness, actionsDistantesPossibles } = await import(
     '@/lib/projectFreshness'
   );
+  /**
+   * LES VERDICTS VIENNENT DU BACKEND — l'écran ne compare plus les clés.
+   *
+   * Il le faisait, par inégalité de chaînes, sans savoir qu'une case de la clé
+   * peut valoir « je ne sais pas » : il lisait alors une ignorance comme un
+   * désaccord et périmait des données fraîches. Ces doubles portent donc la
+   * charge utile RÉELLE de `describeFreshness`, verdicts compris.
+   */
   const projet = (liveness, projectionEnv, runtimeEnv, generations = ['g1', 'g1']) => ({
     liveness,
     runtime: { lastHeartbeatAt: '2026-08-04T09:00:00.000Z' },
@@ -253,6 +268,11 @@ section('8. La règle de fraîcheur — une seule, exécutée');
         runtimeEnvironment: runtimeEnv,
         projectionGeneration: generations[0],
         runtimeGeneration: generations[1],
+        generationMismatch: generations[0] !== generations[1],
+        environmentMismatch: Boolean(
+          projectionEnv && runtimeEnv && projectionEnv !== runtimeEnv,
+        ),
+        destinationKnown: true,
         lastSyncAt: '2026-06-01T12:00:00.000Z',
       },
     },
@@ -314,12 +334,23 @@ section('9. Les écrans obéissent à cette règle, et à elle seule');
     bandeau.includes('Projet actuellement injoignable'));
   check('…prévient que les données peuvent être obsolètes',
     bandeau.includes('Les informations affichées ci-dessous peuvent être obsolètes.'));
-  check('…nomme l’environnement précédent',
-    bandeau.includes('Données de l’environnement précédent'));
+  /**
+   * DEUX RUPTURES, DEUX TITRES — et ils ne se confondent plus.
+   *
+   * Le bandeau annonçait « Données de l'environnement précédent » sur un
+   * changement d'INSTANCE, puis listait deux environnements identiques. Le
+   * lecteur cherchait un changement qui n'avait pas eu lieu.
+   */
+  check('…nomme un désaccord d’ENVIRONNEMENT pour ce qu’il est',
+    bandeau.includes('Données d’un autre environnement'));
+  check('…et un changement d’INSTANCE pour ce qu’il est',
+    bandeau.includes('Données de l’instance précédente'));
+  check('…sans jamais reparler d’environnement précédent quand il n’a pas changé',
+    !bandeau.includes('Données de l’environnement précédent'));
   check('…et donne les quatre repères',
     bandeau.includes('Dernier contact')
-    && bandeau.includes('Dernière synchronisation complète')
-    && bandeau.includes('Environnement de la dernière synchronisation')
+    && bandeau.includes('Dernière photographie reçue')
+    && bandeau.includes('Environnement de la dernière photographie')
     && bandeau.includes('Environnement actuellement déclaré'));
   check('il porte une icône d’avertissement', /<Icon name="plug"/.test(bandeau));
   check('…et un style d’alerte forte, pas un texte perdu',

@@ -20,10 +20,28 @@ const quand = (iso: string | null) => (iso ? formatDateTime(iso) : 'jamais');
 export function FreshnessBanner({ fraicheur }: { fraicheur: ProjectDataFreshness }) {
   if (fraicheur.isBusinessDataFresh) return null;
 
-  // Deux situations, deux messages. Le désaccord d'environnement est le plus
-  // grave : les données ne sont pas seulement vieilles, elles décrivent un
-  // autre monde.
-  const conflit = fraicheur.isEnvironmentMismatch || fraicheur.isGenerationMismatch;
+  /**
+   * TROIS SITUATIONS, ET ELLES NE SE DISENT PAS PAREIL.
+   *
+   * ── LE MOT QUI MENTAIT ────────────────────────────────────────────────────
+   * Un changement de GÉNÉRATION affichait « Données de l'environnement
+   * précédent », puis listait deux environnements identiques — TEST et TEST.
+   * Le lecteur cherchait un changement d'environnement qui n'avait pas eu lieu.
+   *
+   * Une génération, ce sont trois choses : l'environnement, l'appairage, et le
+   * domaine. Deux instances SUCCESSIVES du même environnement changent les deux
+   * dernières sans toucher la première — c'est le cas d'un redéploiement ou
+   * d'un déménagement de domaine. On le nomme pour ce qu'il est.
+   */
+  const conflitEnv = fraicheur.isEnvironmentMismatch;
+  const conflitInstance = !conflitEnv && fraicheur.isGenerationMismatch;
+  const conflit = conflitEnv || conflitInstance;
+
+  const titre = conflitEnv
+    ? 'Données d’un autre environnement'
+    : conflitInstance
+      ? 'Données de l’instance précédente'
+      : 'Projet actuellement injoignable';
 
   return (
     <div className={conflit ? 'freshness-banner freshness-banner-danger' : 'freshness-banner'}>
@@ -31,17 +49,23 @@ export function FreshnessBanner({ fraicheur }: { fraicheur: ProjectDataFreshness
         <Icon name="plug" size={22} label="Avertissement" />
       </span>
       <div className="freshness-banner-body">
-        <p className="freshness-banner-title">
-          {conflit ? 'Données de l’environnement précédent' : 'Projet actuellement injoignable'}
-        </p>
+        <p className="freshness-banner-title">{titre}</p>
         <p>
-          {conflit ? (
+          {conflitEnv ? (
             <>
               Ces informations ont été synchronisées depuis{' '}
-              <strong>{fraicheur.projectionEnvironment ?? 'un autre environnement'}</strong>.
-              La nouvelle instance{' '}
-              <strong>{fraicheur.runtimeEnvironment ?? 'actuelle'}</strong> n’a pas encore envoyé
-              sa photographie complète.
+              <strong>{fraicheur.projectionEnvironment ?? 'un autre environnement'}</strong>, alors
+              que ce projet déclare aujourd’hui{' '}
+              <strong>{fraicheur.runtimeEnvironment ?? 'un environnement inconnu'}</strong>. Elles
+              ne décrivent plus ce qui est en ligne.
+            </>
+          ) : conflitInstance ? (
+            <>
+              Le déploiement{' '}
+              <strong>{fraicheur.runtimeEnvironment ?? 'actuel'}</strong> est connecté, mais il n’a
+              pas encore transmis sa photographie complète. Certaines informations affichées
+              proviennent encore de l’instance{' '}
+              {fraicheur.projectionEnvironment ?? ''} précédente.
             </>
           ) : (
             'Les informations affichées ci-dessous peuvent être obsolètes.'
@@ -53,11 +77,11 @@ export function FreshnessBanner({ fraicheur }: { fraicheur: ProjectDataFreshness
             <dd>{quand(fraicheur.lastContactAt)}</dd>
           </div>
           <div>
-            <dt>Dernière synchronisation complète</dt>
+            <dt>Dernière photographie reçue</dt>
             <dd>{quand(fraicheur.lastFullSyncAt)}</dd>
           </div>
           <div>
-            <dt>Environnement de la dernière synchronisation</dt>
+            <dt>Environnement de la dernière photographie</dt>
             <dd>{fraicheur.projectionEnvironment ?? 'inconnu'}</dd>
           </div>
           <div>
@@ -94,7 +118,12 @@ export function DernierEtatConnu({
       ) : null}
       <span className="stale-value-label">
         Dernier état connu
-        {conflit && fraicheur.projectionEnvironment ? ` en ${fraicheur.projectionEnvironment}` : ''}
+        {/* « en TEST » n'a de sens que si l'ENVIRONNEMENT diffère. Sur un
+            changement d'instance, les deux valent TEST : le préciser laissait
+            croire à un désaccord d'environnement inexistant. */}
+        {fraicheur.isEnvironmentMismatch && fraicheur.projectionEnvironment
+          ? ` en ${fraicheur.projectionEnvironment}`
+          : ''}
         {' : '}
       </span>
       {children}

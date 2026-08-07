@@ -131,6 +131,47 @@ export async function activeDestination(projectId, environment) {
   }).lean();
 }
 
+/** La clé de lecture du lot : un projet a une destination active PAR environnement. */
+export const destinationKey = (projectId, environment) => `${projectId}|${environment}`;
+
+/**
+ * LES HÔTES ACTIFS D'UN LOT DE PROJETS — une requête, pas N.
+ *
+ * ══ POURQUOI CETTE FONCTION EXISTE ══════════════════════════════════════════
+ *
+ * La génération d'un projet inclut l'hôte de sa destination active. L'écriture
+ * d'une projection le lisait ; la LECTURE de la fiche, elle, ne pouvait pas :
+ * `toPublicProject` est synchrone, et se contentait donc d'un champ inexistant.
+ * Les deux côtés produisaient deux clés différentes, et toute photographie
+ * fraîchement reçue était présentée comme venant de l'instance précédente.
+ *
+ * Charger la destination projet par projet aurait fait N+1 sur la liste du
+ * parc. On charge donc le lot ICI, et `toPublicProject` reste synchrone et pur.
+ *
+ * @param {Array<{projectId:string, environment:string|null}>} projets
+ * @returns {Promise<Map<string, string|null>>} `projectId|environment` → hôte
+ */
+export async function loadActiveDestinationHosts(projets = []) {
+  const carte = new Map();
+  const cibles = projets.filter((p) => p?.projectId && p?.environment);
+  if (cibles.length === 0) return carte;
+
+  // Une absence est une RÉPONSE : « ce projet n'a pas de destination active ».
+  // Sans elle, l'appelant ne saurait pas distinguer ce fait d'une ignorance.
+  for (const p of cibles) carte.set(destinationKey(p.projectId, p.environment), null);
+
+  const docs = await PanelProjectDestination.find({
+    projectId: { $in: [...new Set(cibles.map((p) => p.projectId))] },
+    status: DESTINATION_STATUS.ACTIVE,
+  }).select('projectId environment host').lean();
+
+  for (const d of docs) {
+    const cle = destinationKey(d.projectId, d.environment);
+    if (carte.has(cle)) carte.set(cle, d.host ?? null);
+  }
+  return carte;
+}
+
 /**
  * LE RÉSOLVEUR — la seule fonction autorisée à répondre « où vit ce projet ».
  *
@@ -309,7 +350,10 @@ export async function announceDestination({ record, urls, source = null, actor =
   if (!host) return { applied: false, reason: 'AUCUNE_URL_ABSOLUE' };
 
   const at = nowIso();
-  const { generation } = currentGeneration(record);
+  // La génération D'UNE DESTINATION inclut son hôte — c'est-à-dire celui qu'on
+  // est en train d'annoncer. L'omettre estampillait toutes les destinations
+  // « sans destination », ce qui ne veut rien dire de la part d'une destination.
+  const { generation } = currentGeneration(record, host);
   const manque = missingKeys(propres);
 
   const active = await activeDestination(projectId, environment);
