@@ -147,11 +147,24 @@ export function ProjectWizard({
   projects,
   onCreated,
   onClose,
+  environment = null,
+  contextProjectName = null,
 }: {
   projects: PublicProject[];
   /** Rafraîchit la liste EN PLACE : elle n'est jamais démontée. */
   onCreated: () => Promise<void> | void;
   onClose: () => void;
+  /**
+   * L'ENVIRONNEMENT IMPOSÉ PAR LE RACCOURCI — jamais deviné.
+   *
+   * Quand on arrive par « Appairer la production » d'une carte, l'écran sait
+   * déjà ce qu'il crée. On l'AFFICHE — l'utilisateur doit voir qu'il va créer
+   * une connexion de production, ce n'est pas anodin — mais on ne le lui fait
+   * pas resélectionner. `null` = ouverture normale, choix libre.
+   */
+  environment?: 'TEST' | 'PROD' | null;
+  /** Le projet dont on complète les connexions, pour le dire à l'écran. */
+  contextProjectName?: string | null;
 }) {
   const [etape, setEtape] = useState<Etape>('ADRESSE');
   const [url, setUrl] = useState('');
@@ -259,6 +272,9 @@ export function ProjectWizard({
       const res = await api.createProject({
         url: normalisee,
         ...(nom.trim() ? { projectName: nom.trim() } : {}),
+        // Fixé par le raccourci quand il existe ; absent sinon, et le backend
+        // se comporte alors exactement comme avant.
+        ...(environment ? { environment } : {}),
       });
       setCree({
         projectId: res.project.projectId,
@@ -310,7 +326,26 @@ export function ProjectWizard({
         onClick={(e) => e.stopPropagation()}
       >
         <header className="wizard-head">
-          <h2 id="wizard-titre">Créer un projet</h2>
+          <div className="wizard-head-main">
+            <h2 id="wizard-titre">
+              {environment ? 'Ajouter une connexion' : 'Créer un projet'}
+            </h2>
+            {/*
+              LE CONTEXTE EST MONTRÉ, PAS CACHÉ.
+              Créer une connexion de PRODUCTION n'est pas anodin : l'utilisateur
+              doit le voir avant de saisir quoi que ce soit. On le lui affirme,
+              on ne le lui refait pas choisir.
+            */}
+            {environment ? (
+              <p className="wizard-context">
+                Connexion à créer :{' '}
+                <span className={`env-badge env-badge-${environment.toLowerCase()}`}>
+                  {environment === 'PROD' ? 'PRODUCTION' : 'RECETTE (TEST)'}
+                </span>
+                {contextProjectName ? <> pour <strong>{contextProjectName}</strong></> : null}
+              </p>
+            ) : null}
+          </div>
           <button
             type="button"
             className="btn btn-secondary btn-small"

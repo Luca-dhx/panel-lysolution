@@ -21,7 +21,7 @@
  * qu'un bouton ; le reste se déroule dans l'assistant, étape par étape.
  */
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { ProjectWizard } from '@/components/ProjectWizard';
 import { LinkChip, sansProtocole } from '@/components/Links';
@@ -46,9 +46,44 @@ export function ProjectsPage() {
   const isDev = useIsDev();
   const showRefreshHint = useSustained(isRefreshing, 500);
 
+  /**
+   * LE RACCOURCI D'APPAIRAGE ARRIVE PAR L'ADRESSE.
+   *
+   * ── POURQUOI ─────────────────────────────────────────────────────────────
+   * « Appairer la production » depuis une carte de la page Appairages sait
+   * déjà tout : le projet, et l'environnement à créer. Renvoyer l'utilisateur
+   * vers le bouton de création puis lui faire re-sélectionner ce qu'on tenait
+   * déjà, c'est lui demander de ressaisir un contexte connu.
+   *
+   * ── FAIL SAFE ────────────────────────────────────────────────────────────
+   * Un `env` absent ou fantaisiste n'invente RIEN — surtout pas PROD. On
+   * retombe sur le parcours normal, choix libre : se tromper d'environnement
+   * de production sur la foi d'un paramètre d'URL mal formé serait la pire
+   * façon d'échouer.
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const envParam = searchParams.get('env');
+  const envRaccourci = envParam === 'TEST' || envParam === 'PROD' ? envParam : null;
+  const nomRaccourci = searchParams.get('name');
+  const ouvertParRaccourci = searchParams.get('declare') === '1';
+
   // L'assistant vit DANS cette page : la liste n'est jamais démontée, donc
   // jamais rechargée depuis zéro, et son défilement ne bouge pas.
-  const [assistant, setAssistant] = useState(false);
+  const [assistantManuel, setAssistantManuel] = useState(false);
+  const assistant = assistantManuel || ouvertParRaccourci;
+
+  /**
+   * Fermer l'assistant NETTOIE l'adresse : sans cela, un rafraîchissement ou
+   * un retour arrière le rouvrirait indéfiniment.
+   */
+  const fermerAssistant = () => {
+    setAssistantManuel(false);
+    if (ouvertParRaccourci) {
+      const next = new URLSearchParams(searchParams);
+      for (const cle of ['declare', 'env', 'name', 'logical']) next.delete(cle);
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   return (
     <div className="page">
@@ -67,7 +102,7 @@ export function ProjectsPage() {
       {/* ── UN SEUL POINT D'ENTRÉE — réservé aux comptes DEV ───────────────── */}
       {isDev ? (
         <div className="contract-actions">
-          <button type="button" className="btn btn-primary" onClick={() => setAssistant(true)}>
+          <button type="button" className="btn btn-primary" onClick={() => setAssistantManuel(true)}>
             Créer un projet
           </button>
         </div>
@@ -77,7 +112,9 @@ export function ProjectsPage() {
         <ProjectWizard
           projects={projects}
           onCreated={reload}
-          onClose={() => setAssistant(false)}
+          onClose={fermerAssistant}
+          environment={ouvertParRaccourci ? envRaccourci : null}
+          contextProjectName={ouvertParRaccourci ? nomRaccourci : null}
         />
       ) : null}
 

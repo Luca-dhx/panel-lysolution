@@ -397,7 +397,7 @@ function ConnectionsSection({
   focusEnvironment: 'TEST' | 'PROD' | null;
 }) {
   // Le parc entier est déjà en cache : les sœurs s'y lisent sans requête.
-  const { projects } = useProjects();
+  const { projects, reload } = useProjects();
   const groupe = useMemo(() => {
     const groupes = groupProjectsByLogicalProject(projects.length ? projects : [project]);
     return (
@@ -424,7 +424,7 @@ function ConnectionsSection({
                SUR la bonne connexion, pas sur une page où il faut la chercher. */
             aria-current={focusEnvironment === c.environment ? 'true' : undefined}
           >
-            <EnvironmentConnectionRow connection={c} group={groupe} />
+            <EnvironmentConnectionRow connection={c} group={groupe} onChanged={reload} />
           </div>
         ))}
       </div>
@@ -460,6 +460,38 @@ function DeveloperTab({
         écran entier. Chacun dit lequel il est, et de qui il tient son
         information — le Panel, ou le projet.
       */}
+      <Card title="Santé de synchronisation">
+        {/*
+          QUATRE FAITS, QUATRE OUI/NON — et pas une chaîne de génération.
+          Le diagnostic détaillé vit un cran plus bas ; ici on répond à « est-ce
+          que ça va ? » sans obliger à lire une clé composite.
+        */}
+        <ul className="sync-health">
+          <li className={fraicheur.connection === 'ONLINE' ? 'sync-ok' : 'sync-ko'}>
+            <span aria-hidden="true">{fraicheur.connection === 'ONLINE' ? '●' : '○'}</span>
+            {fraicheur.connection === 'ONLINE' ? 'Connecté' : 'Pas de contact récent'}
+          </li>
+          <li className={fraicheur.lastFullSyncAt ? 'sync-ok' : 'sync-ko'}>
+            <span aria-hidden="true">{fraicheur.lastFullSyncAt ? '●' : '○'}</span>
+            {fraicheur.lastFullSyncAt ? 'Photographie reçue' : 'Aucune photographie reçue'}
+          </li>
+          <li className={fraicheur.isGenerationMismatch ? 'sync-ko' : 'sync-ok'}>
+            <span aria-hidden="true">{fraicheur.isGenerationMismatch ? '○' : '●'}</span>
+            {fraicheur.isGenerationMismatch
+              ? 'Photographie d’une autre instance'
+              : 'Génération cohérente'}
+          </li>
+          <li className={project.business?.freshness?.destinationKnown === false ? 'sync-ko' : 'sync-ok'}>
+            <span aria-hidden="true">
+              {project.business?.freshness?.destinationKnown === false ? '○' : '●'}
+            </span>
+            {project.business?.freshness?.destinationKnown === false
+              ? 'Destination inconnue du calcul'
+              : 'Destination connue'}
+          </li>
+        </ul>
+      </Card>
+
       <Disclosure title="Informations techniques" hint="Identifiants, horodatages, générations et destinations.">
         <Card title="Cette instance">
           <dl className="detail-list">

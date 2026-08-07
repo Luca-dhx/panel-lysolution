@@ -14,6 +14,7 @@
 import { Link } from 'react-router-dom';
 import { Icon } from '@/components/Icon';
 import { formatDateTime } from '@/lib/format';
+import { ConnectionActions } from '@/components/ConnectionActions';
 import {
   connectionLink, pairEnvironmentLink,
   type EnvironmentConnection, type ProjectGroup,
@@ -46,11 +47,18 @@ export function EnvironmentConnectionRow({
   connection,
   group,
   compact = false,
+  onChanged,
 }: {
   connection: EnvironmentConnection;
   group: ProjectGroup;
   /** La page Appairages resserre ; la fiche projet respire. */
   compact?: boolean;
+  /**
+   * Les actions secondaires (code, révocation) ne sont proposées QUE si
+   * l'écran sait se rafraîchir ensuite. Une action dont on ne voit pas l'effet
+   * pousse à la rejouer — et révoquer deux fois n'est pas anodin.
+   */
+  onChanged?: () => Promise<void> | void;
 }) {
   const { environment, state, project } = connection;
   const absent = state.status === 'ABSENT';
@@ -102,13 +110,22 @@ export function EnvironmentConnectionRow({
 
       <div className="conn-actions">
         {project ? (
-          <Link
-            className="btn btn-secondary btn-small"
-            to={connectionLink(project.projectId, environment)}
-          >
-            Gérer
-            <span className="sr-only"> la connexion {environment} de {group.name}</span>
-          </Link>
+          <>
+            <Link
+              className="btn btn-secondary btn-small"
+              to={connectionLink(project.projectId, environment)}
+            >
+              Gérer
+              <span className="sr-only"> la connexion {environment} de {group.name}</span>
+            </Link>
+            {onChanged ? (
+              <ConnectionActions
+                connection={connection}
+                projectName={group.name}
+                onDone={onChanged}
+              />
+            ) : null}
+          </>
         ) : (
           <Link
             className="btn btn-secondary btn-small"
@@ -134,7 +151,13 @@ export function EnvironmentConnectionRow({
  * client y apparaissaient comme deux projets sans rapport. Ici le projet est
  * l'objet, et ses environnements sont ses connexions.
  */
-export function ProjectConnectionsCard({ group }: { group: ProjectGroup }) {
+export function ProjectConnectionsCard({
+  group,
+  onChanged,
+}: {
+  group: ProjectGroup;
+  onChanged?: () => Promise<void> | void;
+}) {
   return (
     <article className="conn-card" aria-labelledby={`conn-${group.key}`}>
       <header className="conn-card-head">
@@ -152,7 +175,13 @@ export function ProjectConnectionsCard({ group }: { group: ProjectGroup }) {
 
       <div className="conn-card-body">
         {group.connections.map((c) => (
-          <EnvironmentConnectionRow key={c.environment} connection={c} group={group} compact />
+          <EnvironmentConnectionRow
+            key={c.environment}
+            connection={c}
+            group={group}
+            compact
+            onChanged={onChanged}
+          />
         ))}
       </div>
     </article>

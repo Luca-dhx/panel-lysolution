@@ -35,6 +35,7 @@ await connectTestDatabase();
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
 const PanelProject = (await import('../backend/src/models/PanelProject.model.js')).default;
+const { encryptSecret: chiffrer } = await import('../backend/src/utils/panelCrypto.js');
 const {
   groupProjectsByLogicalProject, connectionStateOf, environmentOf, groupKeyOf,
   connectionLink, pairEnvironmentLink, matchesSearch, matchesFilter, filterCounts,
@@ -380,9 +381,11 @@ section('Recherche et filtres');
 
   const compte = filterCounts(groupes);
   check('compteur « tous »', compte.all === 2);
-  check('compteur « connectés »', compte.online === 1);
-  check('compteur « à configurer »', compte.todo === 2);
-  check('filtre connectés', groupes.filter((g) => matchesFilter(g, 'online')).length === 1);
+  check('compteur « TEST »', compte.test === 1);
+  check('compteur « PROD »', compte.prod === 1);
+  check('compteur « à connecter »', compte.todo === 2);
+  check('filtre TEST', groupes.filter((g) => matchesFilter(g, 'test')).length === 1);
+  check('filtre PROD', groupes.filter((g) => matchesFilter(g, 'prod')).length === 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -404,6 +407,227 @@ section('Liens profonds — de vraies URL, qui survivent au rafraîchissement');
   check('…et le projet', p2.get('logical') === CLE_LOGIQUE && p2.get('name') === 'SB Auto 06');
   check('l’utilisateur n’a donc rien à re-sélectionner',
     creation.includes('declare=1'));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  PASSE DE CLÔTURE — rattachement, actions rendues, isolation stricte      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+section('Cas 10. Fiche historique sans identité logique — rattachée, jamais réappairée');
+{
+  await registryStore.clear();
+
+  /**
+   * L'ÉTAT RÉEL D'AVANT : une fiche appairée, dont la clé technique vaut la
+   * clé annoncée par le projet (adoptée à son appairage), et dont l'identité
+   * logique n'existait pas encore.
+   */
+  const at = new Date().toISOString();
+  await registryStore.insert({
+    projectId: 'ancienne-test',
+    projectKey: CLE_LOGIQUE,
+    projectKeySource: 'BRIDGE_KEY',
+    logicalProjectKey: null,
+    declaredEnvironment: null,
+    projectName: 'SB Auto 06',
+    createdAt: at, updatedAt: at,
+    pairing: {
+      status: 'PAIRED', pairingCodeHash: null, pairingCodeExpiresAt: null,
+      bridgeTokenHash: 'jeton-test', bridgeTokenEncrypted: 'chiffre-test',
+      pairedAt: '2026-08-04T17:37:22.545Z', revokedAt: null,
+    },
+    runtime: {
+      environment: 'TEST', softwareVersion: '1.0.0', contractVersion: '1.4.0',
+      publicBackendUrl: 'https://api.demo-sbauto06.ly-solution.com',
+      lastHeartbeatAt: '2026-08-07T11:00:00.000Z', lastHealth: null, bridgeStats: null,
+    },
+    manifest: null, manifestSource: null,
+  });
+
+  const avant = await registryStore.getById('ancienne-test');
+
+  // On déclare la PRODUCTION, qui annonce la même clé de pont.
+  const prod = await declarer({
+    url: 'https://api.sbauto06.ly-solution.com', name: 'SB Auto 06', environment: 'PROD',
+  });
+
+  const apres = await registryStore.getById('ancienne-test');
+  check('la fiche historique est rattachée au projet logique',
+    apres.logicalProjectKey === CLE_LOGIQUE);
+  check('…et la production porte la MÊME identité',
+    prod.record.logicalProjectKey === apres.logicalProjectKey);
+
+  // ── CE QUI NE DOIT PAS AVOIR BOUGÉ ──────────────────────────────────────
+  check('TEST n’a PAS été réappairé', apres.pairing.pairedAt === avant.pairing.pairedAt);
+  check('…son jeton est intact', apres.pairing.bridgeTokenHash === avant.pairing.bridgeTokenHash);
+  check('…son statut d’appairage aussi', apres.pairing.status === 'PAIRED');
+  check('…son environnement n’a pas changé', apres.runtime.environment === 'TEST');
+  check('…ni son dernier battement',
+    apres.runtime.lastHeartbeatAt === avant.runtime.lastHeartbeatAt);
+  check('…ni sa clé technique', apres.projectKey === avant.projectKey);
+  check('la production a bien SA propre clé technique',
+    prod.record.projectKey !== apres.projectKey);
+  check('…et son propre identifiant', prod.record.projectId !== apres.projectId);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Cas 11. Identité non fiable — aucun regroupement, jamais');
+{
+  const at = new Date().toISOString();
+  // Une clé issue d'une DÉRIVATION locale (nom ou URL) n'est pas une identité :
+  // deux projets voisins peuvent produire la même, et les rapprocher
+  // fusionnerait deux clients.
+  for (const source of ['NAME', 'URL']) {
+    await registryStore.clear();
+    await registryStore.insert({
+      projectId: 'derive-' + source,
+      projectKey: CLE_LOGIQUE,
+      projectKeySource: source,
+      logicalProjectKey: null,
+      declaredEnvironment: null,
+      projectName: 'Homonyme',
+      createdAt: at, updatedAt: at,
+      pairing: {
+        status: 'PAIRED', pairingCodeHash: null, pairingCodeExpiresAt: null,
+        bridgeTokenHash: 'x', bridgeTokenEncrypted: 'y',
+        pairedAt: at, revokedAt: null,
+      },
+      runtime: {
+        environment: 'TEST', softwareVersion: '1.0.0', contractVersion: '1.4.0',
+        publicBackendUrl: 'https://api.homonyme.fr',
+        lastHeartbeatAt: at, lastHealth: null, bridgeStats: null,
+      },
+      manifest: null, manifestSource: null,
+    });
+
+    await declarer({
+      url: 'https://api.autre-' + source + '.fr', name: 'SB Auto 06', environment: 'PROD',
+    });
+
+    const restee = await registryStore.getById('derive-' + source);
+    check('clé de provenance ' + source + ' → AUCUN rattachement',
+      restee.logicalProjectKey === null);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Cas 6/7/8. Isolation stricte entre les deux instances');
+{
+  await registryStore.clear();
+  const test = await declarer({
+    url: 'https://api.test.example', name: 'Isolation', environment: 'TEST',
+    bridge: { projectKey: 'isolation', projectName: 'Isolation' },
+  });
+  const prod = await declarer({
+    url: 'https://api.prod.example', name: 'Isolation', environment: 'PROD',
+    bridge: { projectKey: 'isolation', projectName: 'Isolation' },
+  });
+
+  check('deux fiches distinctes', test.record.projectId !== prod.record.projectId);
+  check('deux codes d’appairage distincts', test.pairingCode !== prod.pairingCode);
+  check('…et deux empreintes de code distinctes',
+    test.record.pairing.pairingCodeHash !== prod.record.pairing.pairingCodeHash);
+
+  // Cas 8 — un battement TEST ne touche AUCUN horodatage PROD.
+  const prodAvant = JSON.stringify((await registryStore.getById(prod.record.projectId)).runtime);
+  await registre.recordHeartbeat(await registryStore.getById(test.record.projectId), {
+    sentAt: new Date().toISOString(), softwareVersion: '1.0.0', environment: 'TEST',
+    health: { status: 'OK' }, bridgeStats: { outboxSize: 0, lastSyncAt: new Date().toISOString() },
+  });
+  const prodApres = JSON.stringify((await registryStore.getById(prod.record.projectId)).runtime);
+  check('Cas 8 : un battement TEST laisse PROD strictement inchangé', prodAvant === prodApres);
+  check('…alors que TEST, lui, a bien bougé',
+    (await registryStore.getById(test.record.projectId)).runtime.lastHeartbeatAt !== null);
+
+  // Cas 7 — régénérer le code PROD ne touche pas TEST.
+  const pairing = await import('../backend/src/services/pairing/pairing.service.js');
+  const testAvant = JSON.stringify((await registryStore.getById(test.record.projectId)).pairing);
+  await pairing.issuePairingCode(await registryStore.getById(prod.record.projectId));
+  const testApres = JSON.stringify((await registryStore.getById(test.record.projectId)).pairing);
+  check('Cas 7 : régénérer le code PROD laisse l’appairage TEST intact', testAvant === testApres);
+
+  // Cas 6 — révoquer TEST ne touche pas PROD.
+  const testFiche = await registryStore.getById(test.record.projectId);
+  testFiche.pairing.status = 'PAIRED';
+  testFiche.pairing.bridgeTokenHash = 'h';
+  testFiche.pairing.bridgeTokenEncrypted = chiffrer('jeton-test-en-clair');
+  await registryStore.save(testFiche);
+
+  const prodAvantRevoc = JSON.stringify(await registryStore.getById(prod.record.projectId));
+  await pairing.revokeFromPanel(await registryStore.getById(test.record.projectId));
+  const testRevoque = await registryStore.getById(test.record.projectId);
+  const prodApresRevoc = JSON.stringify(await registryStore.getById(prod.record.projectId));
+
+  check('Cas 6 : TEST est révoqué', testRevoque.pairing.status === 'REVOKED');
+  check('…son jeton est effacé', testRevoque.pairing.bridgeTokenHash === null);
+  check('…et PROD est strictement identique', prodAvantRevoc === prodApresRevoc);
+  check('…la fiche PROD existe toujours',
+    (await registryStore.getById(prod.record.projectId)) !== null);
+  check('…et son identité logique est conservée',
+    (await registryStore.getById(prod.record.projectId)).logicalProjectKey === 'isolation');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Cas 4/5. Photographies et destinations distinctes, lues chacune chez soi');
+{
+  const T = fiche({
+    id: 'iso-t', env: 'TEST', logical: 'isolation',
+    host: 'https://test.example', snapshot: '2026-08-07T10:00:00.000Z',
+  });
+  const P = fiche({
+    id: 'iso-p', env: 'PROD', logical: 'isolation',
+    host: 'https://prod.example', snapshot: '2026-06-01T09:00:00.000Z',
+  });
+  const [g] = groupProjectsByLogicalProject([T, P]);
+  const t = g.connections.find((c) => c.environment === 'TEST');
+  const p = g.connections.find((c) => c.environment === 'PROD');
+
+  check('Cas 4 : chaque environnement lit SA photographie',
+    t.lastSnapshotAt === '2026-08-07T10:00:00.000Z'
+    && p.lastSnapshotAt === '2026-06-01T09:00:00.000Z');
+  check('Cas 5 : chaque environnement lit SA destination',
+    t.host === 'https://test.example' && p.host === 'https://prod.example');
+  check('…et aucune adresse ne traverse', !t.host.includes('prod') && !p.host.includes('test'));
+  check('les deux fiches restent séparées dans le groupe',
+    g.projects.length === 2 && g.projects[0].projectId !== g.projects[1].projectId);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Cas 2. Le raccourci porte tout le contexte, et rien de faux');
+{
+  const lien = pairEnvironmentLink('PROD', 'isolation', 'Isolation');
+  const params = new URLSearchParams(lien.split('?')[1]);
+  check('l’assistant s’ouvrira', params.get('declare') === '1');
+  check('…en PRODUCTION', params.get('env') === 'PROD');
+  check('…pour le bon projet logique', params.get('logical') === 'isolation');
+  check('…et connaît son nom', params.get('name') === 'Isolation');
+
+  // FAIL SAFE : la lecture d'un paramètre douteux ne doit JAMAIS donner PROD.
+  const lire = (brut) => (brut === 'TEST' || brut === 'PROD' ? brut : null);
+  for (const brut of ['prod', 'PRODUCTION', 'production', '', 'TEST ', 'x', null]) {
+    check('« ' + (brut || '(vide)') + ' » n’est pas interprété comme un environnement',
+      lire(brut) === null);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('Filtres TEST / PROD / à connecter / problème');
+{
+  const groupes = groupProjectsByLogicalProject([
+    fiche({ id: 'g1', env: 'TEST', logical: 'un', name: 'Un' }),
+    fiche({ id: 'g2', env: 'PROD', logical: 'deux', name: 'Deux', liveness: 'OFFLINE' }),
+    fiche({ id: 'g3', env: 'TEST', logical: 'trois', name: 'Trois' }),
+    fiche({ id: 'g4', env: 'PROD', logical: 'trois', name: 'Trois' }),
+  ]);
+  const c = filterCounts(groupes);
+  check('« TEST » ne compte que les projets AYANT une instance TEST', c.test === 2);
+  check('« PROD » de même', c.prod === 2);
+  check('« à connecter » compte les groupes incomplets', c.todo === 2);
+  check('un environnement absent n’est jamais un « problème »',
+    groupes.filter((g) => matchesFilter(g, 'attention')).length === 1);
+  const complet = groupes.find((g) => g.name === 'Trois');
+  check('le groupe complet n’est ni à connecter…', !matchesFilter(complet, 'todo'));
+  check('…ni en problème', !matchesFilter(complet, 'attention'));
 }
 
 await stopMemoryMongo();

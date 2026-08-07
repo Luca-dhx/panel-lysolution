@@ -2114,3 +2114,144 @@ a.conn-host:hover { color: var(--p-text); }
   .conn-filters { justify-content: flex-start; }
   .conn-actions .btn { width: 100%; justify-content: center; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ACTIONS D'UNE CONNEXION — menu secondaire et modales.
+
+   Les deux actions (code, révocation) étaient devenues injoignables après le
+   retrait de la table d'appairages. Elles reviennent sur la connexion qu'elles
+   concernent, derrière un menu discret : ce ne sont pas des gestes courants,
+   ils ne doivent pas concurrencer « Gérer ».
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.conn-menu { position: relative; display: inline-flex; }
+
+.conn-menu-trigger {
+  /* Cible tactile confortable, y compris pour trois points. */
+  min-width: 2.5rem;
+  min-height: 2.25rem;
+  letter-spacing: 0.1em;
+}
+
+/* Un voile transparent capte le clic extérieur sans piéger le focus. */
+.conn-menu-veil { position: fixed; inset: 0; z-index: 20; }
+
+.conn-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--p-space-1));
+  z-index: 21;
+  min-width: 14rem;
+  padding: var(--p-space-1);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-raised);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 35%);
+}
+
+.conn-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0 var(--p-space-3);
+  border: 0;
+  border-radius: var(--p-radius-sm);
+  background: transparent;
+  color: var(--p-text);
+  font-size: var(--p-text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.conn-menu-item:hover:not(:disabled) { background: var(--p-surface-sunken); }
+.conn-menu-item:focus-visible { outline: 2px solid var(--p-primary); outline-offset: -2px; }
+.conn-menu-item:disabled { color: var(--p-text-faint); cursor: not-allowed; }
+.conn-menu-item-danger:hover:not(:disabled) { color: var(--p-danger); }
+
+/* ── Modale ────────────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Marge garantie : sur 320px la boîte ne touche jamais les bords. */
+  padding: var(--p-space-4);
+  background: rgb(0 0 0 / 55%);
+}
+
+.modal-box {
+  width: min(34rem, 100%);
+  max-height: calc(100vh - 2 * var(--p-space-4));
+  overflow-y: auto;
+  padding: var(--p-space-5);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+  background: var(--p-surface);
+}
+.modal-box:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 2px; }
+
+.modal-title { margin: 0 0 var(--p-space-3); font-size: var(--p-text-lg); }
+.modal-text { margin: 0 0 var(--p-space-3); color: var(--p-text-muted); }
+
+.modal-list {
+  margin: 0 0 var(--p-space-4);
+  padding-left: var(--p-space-5);
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+}
+.modal-list li { margin-bottom: var(--p-space-1); }
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  justify-content: flex-end;
+  margin-top: var(--p-space-4);
+}
+
+/* ── Badge d'environnement — utilisé par l'assistant contextualisé ─────── */
+.env-badge {
+  display: inline-block;
+  padding: 0.1rem var(--p-space-2);
+  border-radius: var(--p-radius-full);
+  font-size: var(--p-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+.env-badge-test { background: var(--p-primary-soft); color: var(--p-text); }
+/* La production se voit : c'est le seul rouge assumé de cette refonte. */
+.env-badge-prod { background: var(--p-danger-soft); color: var(--p-danger); }
+
+.wizard-head-main { min-width: 0; }
+.wizard-context { margin: var(--p-space-1) 0 0; font-size: var(--p-text-sm); color: var(--p-text-muted); }
+
+/* ── Santé de synchronisation — quatre oui/non ─────────────────────────── */
+.sync-health {
+  display: grid;
+  gap: var(--p-space-2) var(--p-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sync-health li {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  font-size: var(--p-text-sm);
+}
+.sync-health .sync-ok,
+.sync-health li.sync-ok { color: var(--p-text); }
+.sync-health li.sync-ok span { color: var(--p-ok); }
+.sync-health li.sync-ko { color: var(--p-warn); }
+.sync-health li.sync-ko span { color: var(--p-warn); }
+
+/* ── Sous 430px : tout passe en pile, rien ne déborde ──────────────────── */
+@media (max-width: 26.875rem) {
+  .conn-grid { grid-template-columns: 1fr; }
+  .conn-menu { width: 100%; }
+  .conn-menu-trigger { width: 100%; }
+  .conn-menu-list { left: 0; right: 0; min-width: 0; }
+  .modal-actions .btn { flex: 1 1 100%; justify-content: center; }
+}

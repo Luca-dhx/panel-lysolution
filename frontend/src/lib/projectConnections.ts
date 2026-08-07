@@ -269,13 +269,18 @@ export function groupProjectsByLogicalProject(projects: PublicProject[]): Projec
 /*  RECHERCHE ET FILTRES                                                      */
 /* -------------------------------------------------------------------------- */
 
-export type ConnectionFilter = 'all' | 'online' | 'todo' | 'attention';
+export type ConnectionFilter = 'all' | 'test' | 'prod' | 'todo' | 'attention';
+
+/** Une connexion RÉELLE dans cet environnement — pas une case vide. */
+const aUneInstance = (group: ProjectGroup, env: Environment): boolean =>
+  group.connections.some((c) => c.environment === env && c.state.status !== 'ABSENT');
 
 /** Les compteurs des filtres — calculés une fois, affichés partout. */
 export function filterCounts(groups: ProjectGroup[]): Record<ConnectionFilter, number> {
   return {
     all: groups.length,
-    online: groups.filter((g) => g.hasOnline).length,
+    test: groups.filter((g) => aUneInstance(g, 'TEST')).length,
+    prod: groups.filter((g) => aUneInstance(g, 'PROD')).length,
     todo: groups.filter((g) => g.hasMissing).length,
     attention: groups.filter((g) => g.needsAttention).length,
   };
@@ -283,7 +288,8 @@ export function filterCounts(groups: ProjectGroup[]): Record<ConnectionFilter, n
 
 export function matchesFilter(group: ProjectGroup, filter: ConnectionFilter): boolean {
   switch (filter) {
-    case 'online': return group.hasOnline;
+    case 'test': return aUneInstance(group, 'TEST');
+    case 'prod': return aUneInstance(group, 'PROD');
     case 'todo': return group.hasMissing;
     case 'attention': return group.needsAttention;
     default: return true;

@@ -39,13 +39,14 @@ import {
 
 const FILTRES: { id: ConnectionFilter; label: string }[] = [
   { id: 'all', label: 'Tous' },
-  { id: 'online', label: 'Connectés' },
-  { id: 'todo', label: 'À configurer' },
-  { id: 'attention', label: 'À vérifier' },
+  { id: 'test', label: 'TEST' },
+  { id: 'prod', label: 'PROD' },
+  { id: 'todo', label: 'À connecter' },
+  { id: 'attention', label: 'Problème' },
 ];
 
 export function PairingsPage() {
-  const { projects, isInitialLoading, error } = useProjects();
+  const { projects, isInitialLoading, error, reload } = useProjects();
   const [recherche, setRecherche] = useState('');
   const [filtre, setFiltre] = useState<ConnectionFilter>('all');
 
@@ -87,7 +88,7 @@ export function PairingsPage() {
                 id="conn-search"
                 type="search"
                 className="input"
-                placeholder="Rechercher un projet ou un domaine…"
+                placeholder="Rechercher un projet, domaine…"
                 value={recherche}
                 onChange={(e) => setRecherche(e.target.value)}
               />
@@ -119,7 +120,7 @@ export function PairingsPage() {
           ) : (
             <div className="conn-grid">
               {visibles.map((g) => (
-                <ProjectConnectionsCard key={g.key} group={g} />
+                <ProjectConnectionsCard key={g.key} group={g} onChanged={reload} />
               ))}
             </div>
           )}

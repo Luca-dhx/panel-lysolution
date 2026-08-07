@@ -67,7 +67,18 @@ section('1. La liste redevient le contenu principal');
   check('…et il est réservé aux comptes DEV',
     /isDev \? \([\s\S]{0,300}Créer un projet/.test(page));
   check('…il ouvre l’assistant, il ne déclare rien lui-même',
-    /onClick=\{\(\) => setAssistant\(true\)\}/.test(page) && !page.includes('api.createProject'));
+    /onClick=\{\(\) => setAssistantManuel\(true\)\}/.test(page) && !page.includes('api.createProject'));
+  /**
+   * L'ASSISTANT S'OUVRE AUSSI PAR L'ADRESSE — le raccourci « appairer la
+   * production » d'une carte. Un second point d'entrée, mais pas un second
+   * bouton : c'est le même assistant, contextualisé.
+   */
+  check('…ou par un raccourci d’URL, qui ne remplace pas le bouton',
+    /searchParams\.get\('declare'\) === '1'/.test(page));
+  check('un environnement d’URL fantaisiste ne devient JAMAIS la production',
+    /envParam === 'TEST' \|\| envParam === 'PROD' \? envParam : null/.test(page));
+  check('fermer l’assistant nettoie l’adresse, sinon il se rouvrirait',
+    /next\.delete\(cle\)/.test(page));
 
   check('la liste des projets est toujours là', page.includes('grid-cards'));
   check('les cartes projet n’ont pas bougé',

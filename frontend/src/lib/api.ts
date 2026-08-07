@@ -220,7 +220,18 @@ export const api = {
    * l'identifiant technique est généré par le serveur, à partir de l'identité
    * que le projet annonce lui-même. Le client ne le choisit jamais.
    */
-  createProject: (body: { url: string; projectName?: string }) =>
+  createProject: (body: {
+    url: string;
+    projectName?: string;
+    /**
+     * L'ENVIRONNEMENT VISÉ — transmis quand l'écran le connaît déjà.
+     *
+     * Un raccourci « appairer la production » sait ce qu'il crée : le
+     * redemander à l'utilisateur serait lui faire ressaisir une information
+     * qu'on tient. Omis, le comportement reste celui d'avant.
+     */
+    environment?: 'TEST' | 'PROD';
+  }) =>
     request<{ project: PublicProject; pairingCode: string; pairingCodeExpiresAt: string }>(
       '/api/projects',
       { method: 'POST', body },

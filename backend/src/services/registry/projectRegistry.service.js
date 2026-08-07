@@ -6,6 +6,7 @@ import { deriveLiveness, LIVENESS, secondsSinceLastHeartbeat } from '../supervis
 import { buildProjectHealth } from '../supervision/health.service.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
+import logger from '../../utils/logger.js';
 import registryStore from './registryStore.js';
 import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
@@ -178,7 +179,53 @@ export async function declareProject({
    * Le message nomme l'instance fautive : « déjà déclaré » sans dire laquelle
    * obligeait à parcourir le parc pour comprendre.
    */
-  const soeurs = logicalProjectKey ? await listSiblings(logicalProjectKey) : [];
+  /**
+   * RATTACHEMENT DES FICHES ANTÉRIEURES — sans les toucher autrement.
+   *
+   * ══ LE CAS RÉEL ══════════════════════════════════════════════════════════
+   * SB Auto TEST existe depuis avant l'identité logique : son champ vaut
+   * `null`. On déclare sa production, qui annonce la clé `K`. Sans ce
+   * rattachement, la recette resterait éternellement seule de sa carte, et il
+   * faudrait la RÉAPPAIRER pour la rejoindre — c'est-à-dire lui faire perdre
+   * son jeton pour un problème d'affichage.
+   *
+   * ══ CE QUI PERMET DE RATTACHER, ET RIEN D'AUTRE ══════════════════════════
+   * La clé TECHNIQUE de la fiche antérieure vaut `K`. Ce n'est pas une
+   * ressemblance : c'est la valeur que le projet lui-même a annoncée à son
+   * appairage et que le Panel a adoptée (`projectKeySource` BRIDGE_KEY ou
+   * RECONCILED). Deux instances d'un même projet annoncent la même.
+   *
+   * Toute autre provenance — un nom, un domaine, un slug dérivé — est écartée :
+   * `NAME` et `URL` sont des dérivations locales, et deux projets voisins
+   * peuvent les produire identiques. Fail closed : deux cartes séparées valent
+   * mieux qu'un faux regroupement.
+   *
+   * ══ CE QUE CE RATTACHEMENT NE FAIT PAS ═══════════════════════════════════
+   * Il écrit UN champ. Ni jeton, ni appairage, ni environnement, ni
+   * destination, ni projection, ni génération. La fiche rattachée continue
+   * exactement sa vie.
+   */
+  let soeurs = logicalProjectKey ? await listSiblings(logicalProjectKey) : [];
+
+  if (logicalProjectKey) {
+    const PROVENANCES_FIABLES = new Set(['BRIDGE_KEY', 'RECONCILED']);
+    const aRattacher = (await registryStore.list()).filter(
+      (r) => !r.logicalProjectKey
+        && r.projectKey === logicalProjectKey
+        && PROVENANCES_FIABLES.has(r.projectKeySource),
+    );
+    for (const ancienne of aRattacher) {
+      ancienne.logicalProjectKey = logicalProjectKey;
+      ancienne.updatedAt = nowIso();
+      await registryStore.save(ancienne);
+      logger.info(
+        `Fiche « ${ancienne.projectKey} » rattachée au projet logique « ${logicalProjectKey} » : `
+        + 'son appairage, ses projections et ses destinations sont inchangés.',
+      );
+      soeurs = [...soeurs, ancienne];
+    }
+  }
+
   const collision = logicalProjectKey
     ? soeurs.find((s) => declaredEnvironmentOf(s) === env)
     : null;
