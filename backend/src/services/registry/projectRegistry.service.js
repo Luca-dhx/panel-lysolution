@@ -702,9 +702,27 @@ export function describeProject(record) {
         || manifest?.project?.name) ? 'MANIFEST' : 'REGISTRY',
     /** Quand le PROJET a produit cette photographie. */
     presentationModifiedAt: presentation?.modifiedAt ?? null,
+    /**
+     * `type` ET `layout` N'ONT PAS DE PROJECTION — le manifeste est leur seule
+     * source, et c'est légitime : ils décrivent la COMPOSITION du projet, qui
+     * ne change qu'entre deux versions du logiciel. On le dit quand même
+     * (`descriptorSource`), pour qu'aucun écran n'ait à le supposer.
+     */
     type: manifest?.descriptor?.type ?? null,
-    description: manifest?.descriptor?.description ?? null,
     layout: manifest?.descriptor?.layout ?? null,
+    /**
+     * ── LA DESCRIPTION, ELLE, EST POUSSÉE ─────────────────────────────────
+     *
+     * Le projet la publie dans sa présentation (`project.description`), et le
+     * Panel la persiste. Elle se lisait pourtant dans le manifeste — même
+     * défaut que le nom, un champ plus loin : une valeur figée à l'appairage
+     * affichée comme si elle était courante.
+     */
+    description: presentation?.description
+      ?? manifest?.descriptor?.description
+      ?? null,
+    descriptorSource: presentation?.description ? 'PROJECTION'
+      : manifest?.descriptor?.description ? 'MANIFEST' : 'NONE',
     environment: runtime.environment ?? manifest?.project?.environment ?? null,
     /**
      * ── LES URLs VIENNENT DE LA DESTINATION ACTIVE, ET DE NULLE PART AILLEURS ──

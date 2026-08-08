@@ -270,5 +270,38 @@ section('UNE DONNÉE PUREMENT LOCALE NE DÉCLENCHE AUCUNE PROPAGATION');
     (await fiche('sb-test')).name === 'sbauto07');
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LA DESCRIPTION AUSSI VIENT DE LA PROJECTION');
+{
+  await resetSyncCore();
+  await registryStore.clear();
+  await PanelProjectPresentation.deleteMany({});
+  await instance({ id: 'sb-test', environment: 'TEST', projectName: 'x', manifestName: 'x' });
+
+  // Le manifeste porte une description figée à l’appairage.
+  const brut = await registryStore.getById('sb-test');
+  brut.manifest.descriptor = { description: 'description d’appairage' };
+  await registryStore.save(brut);
+  check('sans projection, la description vient du manifeste',
+    (await fiche('sb-test')).description === 'description d’appairage');
+  check('…et la source est nommée', (await fiche('sb-test')).descriptorSource === 'MANIFEST');
+
+  // Le projet pousse la sienne.
+  await pousserPresentation('sb-test', 'Entreprise', {
+    project: { name: 'Entreprise', description: 'description vivante' },
+  });
+  const apres = await fiche('sb-test');
+  check('LA PROJECTION PREND LA MAIN', apres.description === 'description vivante');
+  check('…et le dit', apres.descriptorSource === 'PROJECTION');
+
+  /**
+   *  et  n’ont AUCUNE projection : le manifeste reste leur seule
+   * source, et c’est légitime — ils décrivent la composition du logiciel, qui
+   * ne change qu’entre deux versions. On vérifie qu’on ne les a pas cassés.
+   */
+  check('type et layout restent lisibles depuis le manifeste',
+    apres.type === null && apres.layout === null);
+}
+
 await stopMemoryMongo();
 finish();

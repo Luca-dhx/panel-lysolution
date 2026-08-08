@@ -35,7 +35,7 @@ import { useProject, useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import { getProjectDataFreshness } from '@/lib/projectFreshness';
-import { groupProjectsByLogicalProject } from '@/lib/projectConnections';
+import { groupProjectsByLogicalProject, pairEnvironmentLink } from '@/lib/projectConnections';
 import { EnvironmentConnectionRow } from '@/components/connections';
 import type {
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
@@ -173,6 +173,20 @@ export function ProjectDetailPage() {
         </div>
       </header>
 
+      {/*
+        LE CHOIX DE L'INSTANCE VIENT AVANT TOUT LE RESTE.
+
+        Une fiche décrit UNE instance : sa route est son `projectId`, et tout
+        ce qui suit — nom, contrat, protection, destination, fraîcheur — lui
+        appartient. Changer d'environnement n'est donc pas un filtre : c'est
+        changer de fiche.
+
+        Le lien vers la sœur existait, mais enterré dans la carte « Connexions »
+        du bas de page, et il forçait l'onglet Développeur. Il remonte ici, où
+        l'on comprend en un regard ce qu'on est en train de regarder.
+      */}
+      <InstanceSelector project={project} tab={tab} />
+
       {/* AVANT toute donnée métier : ce qui suit est-il encore vrai ? */}
       <FreshnessBanner fraicheur={fraicheur} />
 
@@ -214,6 +228,101 @@ export function ProjectDetailPage() {
 }
 
 /* -------------------------------------------------------------------------- */
+
+/**
+ * SÉLECTEUR D'INSTANCE — TEST / PROD, et rien d'autre.
+ *
+ * ══ CE QU'IL EST, ET CE QU'IL N'EST PAS ═════════════════════════════════════
+ *
+ * Il ne filtre rien et ne charge rien : il NAVIGUE. Chaque instance a son
+ * `projectId`, donc sa route, donc sa fiche. C'est ce qui rend impossible
+ * qu'une valeur de PROD s'affiche sur la fiche TEST — même une fraction de
+ * seconde : ce n'est pas la même page, et `useLiveQuery` change de clé.
+ *
+ * ══ CE QU'IL AFFICHE QUAND UNE INSTANCE MANQUE ══════════════════════════════
+ *
+ * Pas une fausse fiche vide. Un segment inerte, dit « non appairée », et
+ * l'action qui la crée — au bon environnement, avec le bon rattachement.
+ *
+ * ══ L'ONGLET SURVIT AU CHANGEMENT ═══════════════════════════════════════════
+ *
+ * Passer de TEST à PROD depuis l'onglet Événements ouvre l'onglet Événements
+ * de PROD. Renvoyer systématiquement vers « Développeur » — ce que faisait le
+ * lien d'origine — obligeait à revenir en arrière à chaque comparaison.
+ */
+function InstanceSelector({
+  project,
+  tab,
+}: {
+  project: PublicProject;
+  tab: string;
+}) {
+  // Le parc est déjà en cache : les sœurs s'y lisent sans requête.
+  const { projects } = useProjects();
+  const groupe = useMemo(() => {
+    const source = projects.length ? projects : [project];
+    const groupes = groupProjectsByLogicalProject(source);
+    return (
+      groupes.find((g) => g.projects.some((p) => p.projectId === project.projectId))
+      ?? groupProjectsByLogicalProject([project])[0]
+    );
+  }, [projects, project]);
+
+  /**
+   * Une instance SEULE n'a rien à choisir. Afficher un sélecteur à un seul
+   * segment laisserait croire qu'il en manque un — alors qu'un projet sans
+   * production déclarée est un projet normal.
+   */
+  const environnements = groupe.connections;
+  if (environnements.length === 0) return null;
+  // Une instance SEULE et sans sœur possible n'a rien à choisir.
+  if (environnements.length === 1 && environnements[0].project?.projectId === project.projectId) {
+    return null;
+  }
+
+  return (
+    <div className="instance-selector" role="group" aria-label="Instance affichée">
+      {environnements.map((c) => {
+        const courante = c.project?.projectId === project.projectId;
+        const absente = c.project === null;
+        // Le libellé vient du backend, transporté tel quel : « Connecté »,
+        // « Hors ligne », « Non appairé »… L'écran ne le recalcule pas.
+        const libelle = c.state.label;
+
+        if (absente) {
+          return (
+            <Link
+              key={c.environment}
+              className="instance-segment instance-absent"
+              to={pairEnvironmentLink(
+                c.environment as 'TEST' | 'PROD',
+                project.logicalProjectKey,
+                project.projectName,
+              )}
+            >
+              <span className="instance-env">{c.environment}</span>
+              {/* Le mot compte autant que la couleur : un daltonien doit lire
+                  l'état, pas le deviner. */}
+              <span className="instance-state">{c.state.symbol} {libelle}</span>
+            </Link>
+          );
+        }
+
+        return (
+          <Link
+            key={c.environment}
+            className={courante ? 'instance-segment instance-current' : 'instance-segment'}
+            aria-current={courante ? 'page' : undefined}
+            to={`/projects/${c.project?.projectId}?tab=${tab}&env=${c.environment}`}
+          >
+            <span className="instance-env">{c.environment}</span>
+            <span className="instance-state">{c.state.symbol} {libelle}</span>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
 
 function OverviewTab({
   project,

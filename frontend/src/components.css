@@ -2487,3 +2487,67 @@ a.conn-host:hover { color: var(--p-text); }
   .distribution-list li { grid-template-columns: minmax(0, 1fr) auto; }
   .distribution-env { grid-row: 2; grid-column: 1; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SÉLECTEUR D'INSTANCE — TEST / PROD, en haut de la fiche projet.
+
+   Il ne filtre pas : il NAVIGUE. Chaque instance a son `projectId`, donc sa
+   route, donc sa fiche — c'est ce qui rend impossible qu'une valeur de PROD
+   apparaisse sur la fiche TEST, même une fraction de seconde.
+
+   L'état ne se lit jamais à la seule couleur : chaque segment porte son
+   symbole (● ◐ ○) et son mot.
+   ══════════════════════════════════════════════════════════════════════════ */
+.instance-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 16px;
+  padding: 4px;
+  border: 1px solid var(--p-border);
+  border-radius: 12px;
+  background: var(--p-surface-sunken);
+}
+
+.instance-segment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Cible tactile confortable : 40 px minimum, même à 320 px de large. */
+  min-height: 40px;
+  flex: 1 1 96px;
+  padding: 6px 12px;
+  border-radius: 9px;
+  text-decoration: none;
+  color: var(--p-text-muted);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.instance-segment:hover { background: var(--p-surface); }
+
+.instance-segment:focus-visible {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 1px;
+}
+
+.instance-current {
+  background: var(--p-surface-raised);
+  color: var(--p-text);
+}
+
+/* Une instance absente reste lisible, et mène à sa création. */
+.instance-absent { opacity: 0.72; }
+
+.instance-env {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.instance-state {
+  font-size: 11px;
+  /* Un nom long ou un libellé traduit ne doit jamais élargir la page. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

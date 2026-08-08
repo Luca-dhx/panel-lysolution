@@ -74,7 +74,10 @@ function presentationOf(projection) {
     logoUrl: projection.logoUrl ?? null,
     logo: projection.logo ?? null,
     contacts: projection.contacts ?? null,
-    project: projection.project ?? null,
+    faviconUrl: projection.faviconUrl ?? null,
+    /** Le projet tel qu’il se nomme et se décrit — mis à plat par le projecteur. */
+    projectName: projection.projectName ?? null,
+    description: projection.description ?? null,
     network: projection.network ?? null,
     /**
      * QUAND LE PROJET A PRODUIT CETTE PHOTOGRAPHIE — jamais quand on l'a reçue.
