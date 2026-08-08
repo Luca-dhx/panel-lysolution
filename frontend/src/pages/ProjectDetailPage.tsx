@@ -35,7 +35,7 @@ import { useProject, useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import { getProjectDataFreshness } from '@/lib/projectFreshness';
-import { groupProjectsByLogicalProject, pairEnvironmentLink } from '@/lib/projectConnections';
+import { groupProjectsByLogicalProject } from '@/lib/projectConnections';
 import { EnvironmentConnectionRow } from '@/components/connections';
 import type {
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
@@ -174,18 +174,18 @@ export function ProjectDetailPage() {
       </header>
 
       {/*
-        LE CHOIX DE L'INSTANCE VIENT AVANT TOUT LE RESTE.
+        UNE FICHE NE CHANGE PAS D'IDENTITÉ.
 
-        Une fiche décrit UNE instance : sa route est son `projectId`, et tout
-        ce qui suit — nom, contrat, protection, destination, fraîcheur — lui
-        appartient. Changer d'environnement n'est donc pas un filtre : c'est
-        changer de fiche.
+        Un contrôle segmenté `[TEST][PROD]` avait été posé ici. Il naviguait
+        correctement — mais il donnait à lire l'inverse de ce que le modèle
+        dit : une fiche décrit UNE instance, un environnement, une destination,
+        un appairage, un état métier. On ne « bascule » pas une fiche d'un monde
+        à l'autre ; on ouvre celle de l'autre monde.
 
-        Le lien vers la sœur existait, mais enterré dans la carte « Connexions »
-        du bas de page, et il forçait l'onglet Développeur. Il remonte ici, où
-        l'on comprend en un regard ce qu'on est en train de regarder.
+        Reste donc un LIEN, discret, qui dit qu'une sœur existe et y mène. La
+        fiche courante, elle, ne bouge pas d'un octet.
       */}
-      <InstanceSelector project={project} tab={tab} />
+      <SisterInstanceLink project={project} />
 
       {/* AVANT toute donnée métier : ce qui suit est-il encore vrai ? */}
       <FreshnessBanner fraicheur={fraicheur} />
@@ -230,33 +230,26 @@ export function ProjectDetailPage() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * SÉLECTEUR D'INSTANCE — TEST / PROD, et rien d'autre.
+ * L'AUTRE INSTANCE DU MÊME PRODUIT — un lien, jamais une bascule.
  *
  * ══ CE QU'IL EST, ET CE QU'IL N'EST PAS ═════════════════════════════════════
  *
- * Il ne filtre rien et ne charge rien : il NAVIGUE. Chaque instance a son
- * `projectId`, donc sa route, donc sa fiche. C'est ce qui rend impossible
- * qu'une valeur de PROD s'affiche sur la fiche TEST — même une fraction de
- * seconde : ce n'est pas la même page, et `useLiveQuery` change de clé.
+ * `logicalProjectKey` dit que deux fiches décrivent le même produit. Il ne dit
+ * RIEN de leurs données : ni le nom, ni le contrat, ni la destination, ni la
+ * protection. Ce lien est donc de la NAVIGATION, et rien d'autre — il mène au
+ * `projectId` de la sœur, dont la fiche se chargera seule.
  *
- * ══ CE QU'IL AFFICHE QUAND UNE INSTANCE MANQUE ══════════════════════════════
+ * C'est ce qui rend structurellement impossible qu'une valeur de PROD
+ * apparaisse sur la fiche TEST : ce n'est pas la même page, et `useLiveQuery`
+ * change de clé avec le `projectId`.
  *
- * Pas une fausse fiche vide. Un segment inerte, dit « non appairée », et
- * l'action qui la crée — au bon environnement, avec le bon rattachement.
+ * ══ QUAND LA SŒUR N'EXISTE PAS ══════════════════════════════════════════════
  *
- * ══ L'ONGLET SURVIT AU CHANGEMENT ═══════════════════════════════════════════
- *
- * Passer de TEST à PROD depuis l'onglet Événements ouvre l'onglet Événements
- * de PROD. Renvoyer systématiquement vers « Développeur » — ce que faisait le
- * lien d'origine — obligeait à revenir en arrière à chaque comparaison.
+ * On ne montre rien. Un projet sans production déclarée est un projet normal,
+ * pas un projet incomplet — et l'appairage se propose depuis la page qui sert
+ * à cela.
  */
-function InstanceSelector({
-  project,
-  tab,
-}: {
-  project: PublicProject;
-  tab: string;
-}) {
+function SisterInstanceLink({ project }: { project: PublicProject }) {
   // Le parc est déjà en cache : les sœurs s'y lisent sans requête.
   const { projects } = useProjects();
   const groupe = useMemo(() => {
@@ -268,59 +261,26 @@ function InstanceSelector({
     );
   }, [projects, project]);
 
-  /**
-   * Une instance SEULE n'a rien à choisir. Afficher un sélecteur à un seul
-   * segment laisserait croire qu'il en manque un — alors qu'un projet sans
-   * production déclarée est un projet normal.
-   */
-  const environnements = groupe.connections;
-  if (environnements.length === 0) return null;
-  // Une instance SEULE et sans sœur possible n'a rien à choisir.
-  if (environnements.length === 1 && environnements[0].project?.projectId === project.projectId) {
-    return null;
-  }
+  /** Les sœurs RÉELLES : une autre fiche, un autre environnement. */
+  const soeurs = groupe.connections.filter(
+    (c) => c.project !== null && c.project.projectId !== project.projectId,
+  );
+  if (soeurs.length === 0) return null;
 
   return (
-    <div className="instance-selector" role="group" aria-label="Instance affichée">
-      {environnements.map((c) => {
-        const courante = c.project?.projectId === project.projectId;
-        const absente = c.project === null;
-        // Le libellé vient du backend, transporté tel quel : « Connecté »,
-        // « Hors ligne », « Non appairé »… L'écran ne le recalcule pas.
-        const libelle = c.state.label;
-
-        if (absente) {
-          return (
-            <Link
-              key={c.environment}
-              className="instance-segment instance-absent"
-              to={pairEnvironmentLink(
-                c.environment as 'TEST' | 'PROD',
-                project.logicalProjectKey,
-                project.projectName,
-              )}
-            >
-              <span className="instance-env">{c.environment}</span>
-              {/* Le mot compte autant que la couleur : un daltonien doit lire
-                  l'état, pas le deviner. */}
-              <span className="instance-state">{c.state.symbol} {libelle}</span>
-            </Link>
-          );
-        }
-
-        return (
-          <Link
-            key={c.environment}
-            className={courante ? 'instance-segment instance-current' : 'instance-segment'}
-            aria-current={courante ? 'page' : undefined}
-            to={`/projects/${c.project?.projectId}?tab=${tab}&env=${c.environment}`}
-          >
-            <span className="instance-env">{c.environment}</span>
-            <span className="instance-state">{c.state.symbol} {libelle}</span>
-          </Link>
-        );
-      })}
-    </div>
+    <p className="sister-instances">
+      <span className="sister-label">
+        {soeurs.length > 1 ? 'Autres instances de ce produit' : 'Autre instance de ce produit'}
+      </span>
+      {soeurs.map((c) => (
+        <Link key={c.environment} className="sister-link" to={`/projects/${c.project?.projectId}`}>
+          {/* Le symbole accompagne le mot : l'état ne se lit jamais à la
+              seule couleur. */}
+          <span className="sister-env">{c.environment}</span>
+          <span className="sister-state">{c.state.symbol} {c.state.label}</span>
+        </Link>
+      ))}
+    </p>
   );
 }
 

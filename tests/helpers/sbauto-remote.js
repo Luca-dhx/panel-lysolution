@@ -89,6 +89,11 @@ export async function startSbAutoInstance({ mongoUri, dbName, env, projectName, 
     /** Ce que la page « Aide » affichera — via son vrai contrôleur. */
     help() { return send('help'); },
     applyForeign(args) { return send('applyForeign', args); },
+    /** Renomme l’entreprise par le VRAI chemin métier — Company.save(). */
+    renameCompany(args) { return send('renameCompany', args); },
+    /** Un cycle de synchronisation réel : vidange d’outbox puis rattrapage. */
+    syncNow() { return send('syncNow'); },
+    outboxPending() { return send('outboxPending'); },
     severDatabase() { return send('severDatabase'); },
     restoreDatabase() { return send('restoreDatabase'); },
     async stop() {

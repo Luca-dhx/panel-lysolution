@@ -2489,64 +2489,52 @@ a.conn-host:hover { color: var(--p-text); }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SÉLECTEUR D'INSTANCE — TEST / PROD, en haut de la fiche projet.
+   L'AUTRE INSTANCE DU MÊME PRODUIT — un lien, jamais une bascule.
 
-   Il ne filtre pas : il NAVIGUE. Chaque instance a son `projectId`, donc sa
-   route, donc sa fiche — c'est ce qui rend impossible qu'une valeur de PROD
-   apparaisse sur la fiche TEST, même une fraction de seconde.
+   Une fiche décrit UNE instance. `logicalProjectKey` dit seulement que deux
+   fiches parlent du même produit ; il ne porte aucune donnée métier. Ce lien
+   est donc de la navigation pure — la fiche courante ne bouge pas.
 
-   L'état ne se lit jamais à la seule couleur : chaque segment porte son
-   symbole (● ◐ ○) et son mot.
+   L'état ne se lit jamais à la seule couleur : chaque lien porte son symbole
+   (● ◐ ○) et son mot.
    ══════════════════════════════════════════════════════════════════════════ */
-.instance-selector {
+.sister-instances {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
   margin: 0 0 16px;
-  padding: 4px;
-  border: 1px solid var(--p-border);
-  border-radius: 12px;
-  background: var(--p-surface-sunken);
+  font-size: 12px;
 }
 
-.instance-segment {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* Cible tactile confortable : 40 px minimum, même à 320 px de large. */
+.sister-label { color: var(--p-text-muted); }
+
+.sister-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Cible tactile confortable, même à 320 px. */
   min-height: 40px;
-  flex: 1 1 96px;
-  padding: 6px 12px;
-  border-radius: 9px;
+  /* Un nom long ne doit jamais élargir la page. */
+  min-width: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--p-border);
+  border-radius: 999px;
   text-decoration: none;
-  color: var(--p-text-muted);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  color: var(--p-text);
 }
 
-.instance-segment:hover { background: var(--p-surface); }
+.sister-link:hover { background: var(--p-surface); }
 
-.instance-segment:focus-visible {
+.sister-link:focus-visible {
   outline: 2px solid var(--p-primary);
   outline-offset: 1px;
 }
 
-.instance-current {
-  background: var(--p-surface-raised);
-  color: var(--p-text);
-}
+.sister-env { font-weight: 600; letter-spacing: 0.04em; }
 
-/* Une instance absente reste lisible, et mène à sa création. */
-.instance-absent { opacity: 0.72; }
-
-.instance-env {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.instance-state {
-  font-size: 11px;
-  /* Un nom long ou un libellé traduit ne doit jamais élargir la page. */
+.sister-state {
+  color: var(--p-text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

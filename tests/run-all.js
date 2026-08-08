@@ -38,6 +38,8 @@ const TESTS = [
   'instance-generation-freshness.test.js',
   // L'état métier d'un projet est vivant, pas figé à l'appairage.
   'project-live-business-sync.test.js',
+  // Du vrai Company.save() jusqu'à la fiche du Panel, deux backends réels.
+  'project-company-live-e2e.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',
   'panel-ux.test.js',

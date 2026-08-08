@@ -100,13 +100,71 @@ let port = null;
       projet TIRE) sont branchés sur les MÊMES applicateurs : sinon le
       résultat dépendrait de la façon dont la donnée est arrivée.
    ══════════════════════════════════════════════════════════════════════════ */
-function wire() {
+async function wire() {
+  /**
+   * LA CHAÎNE DE PROJECTION — celle qui manquait, et sans laquelle un
+   * `Company.save()` ne produit rien.
+   *
+   * `installSyncTriggers` abonne les modèles : un `post(save)` annonce ses
+   * chemins modifiés, le déclencheur décide si une projection part, l'outbox
+   * DURABLE la met en file. Sans ce câblage, `isSyncWired()` est faux et tout
+   * le mécanisme se tait — silencieusement, ce qui est exactement ce qu'on
+   * cherche à ne plus jamais laisser passer.
+   *
+   * La génération est INJECTÉE : deux mondes qui partagent la même graine
+   * dériveraient les mêmes `writeId` pour des données différentes.
+   */
+  const { createMongoOutboxAdapter } = await import(
+    SB('src/services/panelBridge/persistence/mongoOutboxAdapter.js'),
+  );
+  const outboxAdapter = createMongoOutboxAdapter({ generation: config.env });
+  bridgeRuntime.configureOutboxAdapter(outboxAdapter);
+
+  const projectSync = await import(SB('src/services/projectBridge/projectSync.service.js'));
+  const teamSync = await import(SB('src/services/projectBridge/teamSync.service.js'));
+  const { installSyncTriggers } = await import(SB('src/services/projectBridge/syncTriggers.js'));
+  const { runSyncCycle } = await import(SB('src/services/panelBridge/bridgeScheduler.js'));
+  /** Vidange de la file, sans rattrapage — voir le commentaire de `flush`. */
+  const pousserOutbox = async () => {
+    const instance = bridgeRuntime.getPanelBridge();
+    if (instance) await instance.flushOutbox();
+  };
+
+  projectSync.configureProjectSync({
+    enqueueProjection: (change) => outboxAdapter.enqueue(change),
+    /**
+     * TENTATIVE IMMÉDIATE, jamais attendue par l'appelant : la sauvegarde
+     * métier a déjà répondu à l'utilisateur.
+     *
+     * On POUSSE seulement — là où le bootstrap fait un cycle complet. La
+     * différence est délibérée : le RATTRAPAGE (pull) reste commandé par le
+     * test, sinon une instance appliquerait des écritures du Panel entre deux
+     * assertions et l'on ne saurait plus ce qui a déclenché quoi.
+     */
+    flush: () => { void pousserOutbox(); },
+  });
+  teamSync.configureTeamSync({
+    enqueueProjection: (change) => outboxAdapter.enqueue(change),
+    flush: () => { void pousserOutbox(); },
+  });
+  installSyncTriggers();
+
+  bridgeRuntime.configureInitialProjections(async () => {
+    await projectSync.projectNow('PROJECT_PRESENTATION');
+    await projectSync.projectNow('CONTRACT');
+    const issue = await runSyncCycle();
+    return { delivered: (issue?.pushed?.delivered ?? 0) > 0 };
+  });
+
   projectBridgeService.configureProjectBridge({
     changeAppliers: {
       DEV_COMPANY: panelConfiguration.applyCompanyChange,
       INTEGRATED_API_CONFIG: panelConfiguration.applyIntegratedApiChange,
     },
     appliedConfigurationProvider: panelConfiguration.describeAppliedConfiguration,
+    presentationProvider: (
+      await import(SB('src/services/projectBridge/projectPresentation.service.js'))
+    ).describeProjectPresentation,
   });
 
   bridgeRuntime.configureBridgeRuntime({
@@ -158,7 +216,7 @@ const COMMANDS = {
     mongoose.set('bufferCommands', false);
     await PanelCompanyConfiguration.deleteMany({});
     await PanelProvidedApi.deleteMany({});
-    wire();
+    await wire();
     port = await serve();
     return { port, env: config.env, dbName: config.dbName, projectName: config.projectName };
   },
@@ -218,6 +276,43 @@ const COMMANDS = {
     const res = { json(body) { charge = body; return this; }, status() { return this; } };
     await ctrl.company({}, res, () => {});
     return charge?.data ?? charge;
+  },
+
+  /**
+   * RENOMME L'ENTREPRISE PAR LE VRAI CHEMIN MÉTIER.
+   *
+   * ══ POURQUOI C'EST `Company.save()` ET RIEN D'AUTRE ═══════════════════════
+   *
+   * Les tests précédents livraient une écriture `PROJECT_PRESENTATION` au
+   * noyau de synchronisation du Panel. C'était vrai, mais partiel : le segment
+   * qui MANQUAIT est précisément celui qu'on soupçonnait — le hook du modèle,
+   * le déclencheur, l'outbox, le transport.
+   *
+   * Ici on écrit dans `Company`, comme le Manager. Le `post(save)` annonce les
+   * chemins modifiés, `syncTriggers` décide si la projection part, l'outbox la
+   * met en file. Aucune de ces étapes n'est appelée à la main.
+   */
+  async renameCompany({ name }) {
+    const { getSingleton } = await import(SB('src/utils/singleton.js'));
+    const { Company } = await import(SB('src/models/Company.model.js'));
+    const company = await getSingleton(Company);
+    company.name = name;
+    await company.save();
+    return { name: company.name };
+  },
+
+  /** Un cycle de synchronisation RÉEL — vidange de l'outbox, puis rattrapage. */
+  async syncNow() {
+    const { runSyncCycle } = await import(SB('src/services/panelBridge/bridgeScheduler.js'));
+    return runSyncCycle();
+  },
+
+  /** Ce qu'il reste en file — pour prouver qu'elle s'est réellement vidée. */
+  async outboxPending() {
+    const { createMongoOutboxAdapter } = await import(
+      SB('src/services/panelBridge/persistence/mongoOutboxAdapter.js'),
+    );
+    return createMongoOutboxAdapter().pending();
   },
 
   /**
