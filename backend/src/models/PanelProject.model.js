@@ -27,6 +27,30 @@ const runtimeSchema = new mongoose.Schema(
     contractVersion: { type: String, default: null },
     publicBackendUrl: { type: String, default: null },
     lastHeartbeatAt: { type: String, default: null },
+    /**
+     * QUAND LE PANEL A RÉELLEMENT REÇU ET APPLIQUÉ UN ÉTAT MÉTIER.
+     *
+     * ── POURQUOI CE CHAMP EXISTE, À CÔTÉ DU BATTEMENT DE CŒUR ──────────────
+     * `lastHeartbeatAt` répond à « cette instance répond-elle ? ». Il ne dit
+     * RIEN de ses données : un projet peut battre toutes les trente secondes
+     * pendant des jours sans jamais rien projeter — c'est même le cas normal
+     * d'un projet dont l'entreprise ne change pas. Présenter le battement
+     * comme une preuve de fraîcheur métier était le raccourci qui faisait
+     * afficher « à jour » à une fiche qui n'avait jamais rien reçu.
+     *
+     * ── POURQUOI IL EST PERSISTÉ, ET NON DÉDUIT ───────────────────────────
+     * On savait le déduire : `max(receivedAt)` sur les projections stockées.
+     * Mais cette déduction ment dans trois cas — un tombstone efface la
+     * projection et fait RECULER la date ; un `TEAM_MEMBER` reçu ne compte
+     * pas ; et une réception qui n'a rien changé n'y laisse aucune trace.
+     * Une observation ne se recalcule pas : on l'inscrit à l'instant où elle
+     * a lieu, une seule fois, là où l'application réussit.
+     *
+     * Écrit UNIQUEMENT par le noyau de synchronisation, après application
+     * effective d'une entité métier. Ni le heartbeat, ni une lecture, ni le
+     * manifeste, ni une découverte ne l'avancent.
+     */
+    lastBusinessSyncAt: { type: String, default: null },
     lastHealth: { type: mongoose.Schema.Types.Mixed, default: null },
     bridgeStats: { type: mongoose.Schema.Types.Mixed, default: null },
     // Supervision (contrat >= 1.2.0) — dernier état publié par le projet.

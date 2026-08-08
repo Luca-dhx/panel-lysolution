@@ -295,12 +295,151 @@ section('LA DESCRIPTION AUSSI VIENT DE LA PROJECTION');
   check('…et le dit', apres.descriptorSource === 'PROJECTION');
 
   /**
-   *  et  n’ont AUCUNE projection : le manifeste reste leur seule
+   * `type` et `layout` n’ont AUCUNE projection : le manifeste reste leur seule
    * source, et c’est légitime — ils décrivent la composition du logiciel, qui
    * ne change qu’entre deux versions. On vérifie qu’on ne les a pas cassés.
    */
   check('type et layout restent lisibles depuis le manifeste',
     apres.type === null && apres.layout === null);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LIVENESS ≠ FRAÎCHEUR MÉTIER — deux questions, deux réponses');
+{
+  await resetSyncCore();
+  await registryStore.clear();
+  await PanelProjectPresentation.deleteMany({});
+  await instance({ id: 'sb-test', environment: 'TEST', projectName: 'x', manifestName: 'Nom du manifeste' });
+
+  /**
+   * L'INSTANCE EST APPAIRÉE, ELLE BAT, ET ELLE N'A JAMAIS RIEN PROJETÉ.
+   *
+   * C'est le cas B de la recette, et c'est un état parfaitement normal : un
+   * projet dont l'entreprise ne change pas n'a rien à pousser. Ce que la fiche
+   * ne doit surtout pas faire, c'est présenter cela comme « à jour ».
+   */
+  const jamais = await fiche('sb-test');
+  check('MANIFEST_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS : le manifeste sert le nom…',
+    jamais.name === 'Nom du manifeste' && jamais.presentationSource === 'MANIFEST');
+  check('…et pourtant RIEN n’a jamais été reçu',
+    jamais.dates.lastBusinessSyncAt === null);
+  check('…alors que le battement de cœur, lui, est bien là',
+    typeof jamais.dates.lastHeartbeatAt === 'string');
+
+  /**
+   * HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS — par le VRAI service.
+   *
+   * On n'écrit pas `lastHeartbeatAt` à la main : `recordHeartbeat` est
+   * exactement ce que le middleware du pont appelle quand une instance se
+   * signale. S'il touchait la fraîcheur métier, ce test le dirait.
+   */
+  const battement = {
+    environment: 'TEST', softwareVersion: '1.0.1',
+    health: { status: 'OK', details: null }, bridgeStats: { outboxSize: 0 },
+  };
+  for (let i = 0; i < 3; i += 1) {
+    const r = await registryStore.getById('sb-test');
+    await registre.recordHeartbeat(r, battement);
+    await registryStore.save(r);
+  }
+  const apresBattements = await fiche('sb-test');
+  check('HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS',
+    apresBattements.dates.lastBusinessSyncAt === null);
+  check('…alors que le dernier contact, lui, a bien avancé',
+    apresBattements.dates.lastHeartbeatAt !== jamais.dates.lastHeartbeatAt);
+
+  /**
+   * UNE LECTURE NE PROUVE RIEN NON PLUS. Ouvrir la fiche dix fois ne fait pas
+   * arriver de données — le polling silencieux de l'écran ne doit donc pas
+   * fabriquer une fraîcheur qui n'existe pas.
+   */
+  for (let i = 0; i < 10; i += 1) await fiche('sb-test');
+  check('dix lectures de la fiche n’ont rien avancé',
+    (await fiche('sb-test')).dates.lastBusinessSyncAt === null);
+
+  /* — MAINTENANT, UNE VRAIE PROJECTION MÉTIER — */
+  await pousserPresentation('sb-test', 'Entreprise vivante');
+  const recue = await fiche('sb-test');
+  check('UNE PROJECTION MÉTIER, ELLE, L’AVANCE',
+    typeof recue.dates.lastBusinessSyncAt === 'string');
+  check('…et le nom bascule sur le flux vivant',
+    recue.name === 'Entreprise vivante' && recue.presentationSource === 'PROJECTION');
+  check('MANIFEST_NEVER_OVERRIDES_LIVE_PROJECTION : le manifeste n’a pas bougé',
+    (await registryStore.getById('sb-test')).manifest.presentation.companyName === 'Nom du manifeste');
+
+  /**
+   * DEUX DATES QUI NE DOIVENT JAMAIS FUSIONNER.
+   *
+   *   · ce que le PROJET déclare avoir modifié (`presentationModifiedAt`) ;
+   *   · ce que le PANEL a constaté recevoir (`lastBusinessSyncAt`).
+   *
+   * Les confondre, c'est perdre la seule information qui permet de diagnostiquer
+   * une livraison en retard : « modifié à 14:31:02, reçu à 14:31:04 ».
+   */
+  check('la date déclarée par le projet reste distincte de la réception',
+    typeof recue.presentationModifiedAt === 'string'
+    && recue.presentationModifiedAt !== recue.dates.lastBusinessSyncAt);
+
+  /* — LE BATTEMENT SUIVANT NE LA FAIT PAS AVANCER DAVANTAGE — */
+  const gelee = recue.dates.lastBusinessSyncAt;
+  const r = await registryStore.getById('sb-test');
+  await registre.recordHeartbeat(r, battement);
+  await registryStore.save(r);
+  check('…et un battement postérieur ne la repousse pas',
+    (await fiche('sb-test')).dates.lastBusinessSyncAt === gelee);
+
+  /**
+   * UNE ÉCRITURE REFUSÉE N'EST PAS UNE RÉCEPTION. Un payload non conforme est
+   * rejeté avant toute projection : rien n'a été appliqué, donc rien à dater.
+   */
+  const refus = await applyIncoming('sb-test', [{
+    writeId: uuid(), entityType: 'PROJECT_PRESENTATION', entityId: 'presentation',
+    deleted: false, modifiedAt: at(), emitter: 'PROJECT',
+    payload: { companyName: 42 },
+  }]);
+  check('une écriture REJETÉE ne date rien', refus.results[0].status === 'REJECTED'
+    && (await fiche('sb-test')).dates.lastBusinessSyncAt === gelee);
+
+  /**
+   * UN DIAGNOSTIC N'EST PAS UN ÉTAT MÉTIER. C'est un journal d'échanges, écrit
+   * par les sondes du pont : le laisser dater la fraîcheur ferait paraître
+   * « à jour » une fiche dont on n'a reçu qu'un ping de test.
+   */
+  const ping = await applyIncoming('sb-test', [{
+    writeId: uuid(), entityType: 'DIAGNOSTIC', entityId: uuid(),
+    deleted: false, modifiedAt: at(), emitter: 'PROJECT', payload: { ping: true },
+  }]);
+  check('un DIAGNOSTIC appliqué ne date pas la fraîcheur métier',
+    ping.results[0].status === 'APPLIED'
+    && (await fiche('sb-test')).dates.lastBusinessSyncAt === gelee);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LA FRAÎCHEUR EST SCELLÉE PAR LE projectId — jamais par la parenté');
+{
+  await resetSyncCore();
+  await registryStore.clear();
+  await PanelProjectPresentation.deleteMany({});
+  await instance({ id: 'sb-test', environment: 'TEST', projectName: 'x', manifestName: 'x' });
+  await instance({ id: 'sb-prod', environment: 'PROD', projectName: 'x', manifestName: 'x' });
+
+  // Les deux fiches partagent leur identité logique : c'est exactement la
+  // situation où une contamination serait possible.
+  check('les deux instances sont bien du même produit',
+    (await registryStore.getById('sb-test')).logicalProjectKey
+      === (await registryStore.getById('sb-prod')).logicalProjectKey);
+
+  await pousserPresentation('sb-prod', 'PROD');
+  const prodApres = (await fiche('sb-prod')).dates.lastBusinessSyncAt;
+  check('PROD a reçu', typeof prodApres === 'string');
+  check('TEST_INSTANCE_NEVER_READS_PROD_DATA : TEST n’a toujours rien reçu',
+    (await fiche('sb-test')).dates.lastBusinessSyncAt === null);
+
+  await pousserPresentation('sb-test', 'TEST');
+  check('TEST a reçu à son tour',
+    typeof (await fiche('sb-test')).dates.lastBusinessSyncAt === 'string');
+  check('PROD_INSTANCE_NEVER_READS_TEST_DATA : la date de PROD n’a pas bougé',
+    (await fiche('sb-prod')).dates.lastBusinessSyncAt === prodApres);
 }
 
 await stopMemoryMongo();

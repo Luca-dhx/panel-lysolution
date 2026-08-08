@@ -5,7 +5,9 @@
 // survivent à un redémarrage (une relivraison après reboot répond DUPLICATE,
 // jamais une double application).
 // Seul DIAGNOSTIC est appliqué ; les types réservés répondent REJECTED.
-import { ENTITY_PAYLOAD_INVALID, PROJECTORS, needsRepair } from './projectors.js';
+import {
+  ENTITY_PAYLOAD_INVALID, PROJECTORS, isBusinessEntity, needsRepair,
+} from './projectors.js';
 import { currentGeneration, stampOf } from './projectGeneration.js';
 import {
   activeDestination, announceDestination,
@@ -73,6 +75,8 @@ async function announceFromChanges(record, changes) {
 // jamais un échec global silencieux.
 export async function applyIncoming(projectId, changes) {
   const results = [];
+  /** Ce lot a-t-il livré au moins un état métier ? Voir plus bas. */
+  let metierApplique = false;
 
   /**
    * LA GÉNÉRATION DE LA SOURCE — lue UNE fois pour tout le lot.
@@ -230,7 +234,20 @@ export async function applyIncoming(projectId, changes) {
       );
     }
     results.push({ writeId: change.writeId, status: ACK_STATUS.APPLIED, code: null, message: null });
+    // L'OBSERVATION EST FAITE ICI, ET NULLE PART AILLEURS. Une entité métier
+    // vient d'être appliquée pour CE projet : c'est le seul fait qui autorise
+    // à dire « le Panel a reçu son état métier », et il porte l'heure du
+    // Panel — pas celle que le projet a déclarée.
+    if (isBusinessEntity(change.entityType)) metierApplique = true;
   }
+
+  /**
+   * Une seule écriture pour tout le lot : la date est celle de la réception,
+   * pas de chaque ligne. Elle est posée par champ (`$set` ciblé) et non par
+   * une sauvegarde de la fiche entière — le lot a pu, entre-temps, faire
+   * bouger la destination, et réécrire un instantané lu au début l'annulerait.
+   */
+  if (metierApplique) await registryStore.stampBusinessSync(projectId, nowIso());
 
   return { results };
 }

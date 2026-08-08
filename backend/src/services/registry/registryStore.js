@@ -88,7 +88,12 @@ function presentationOf(projection) {
      * dit si l'on regarde bien son dernier état.
      */
     modifiedAt: projection.sourceModifiedAt ?? null,
-    receivedAt: projection.updatedAt ?? null,
+    /**
+     * QUAND LE PANEL L'A REÇUE. Le champ était lu sous `updatedAt`, que ce
+     * schéma ne porte pas (`timestamps` n'y est pas activé) : la valeur était
+     * donc TOUJOURS nulle. Le projecteur l'écrit sous `receivedAt`.
+     */
+    receivedAt: projection.receivedAt ?? null,
   };
 }
 
@@ -226,6 +231,20 @@ export const registryStore = {
       { $set: forStorage(record) },
     );
     return result.matchedCount === 1;
+  },
+
+  /**
+   * HORODATE LA RÉCEPTION MÉTIER — un champ, et rien d'autre.
+   *
+   * `save()` réécrit la fiche entière depuis un instantané lu plus tôt ; s'en
+   * servir ici écraserait tout ce que le lot vient de faire bouger (la
+   * destination annoncée, notamment). Cette écriture est donc CIBLÉE.
+   */
+  async stampBusinessSync(projectId, at) {
+    await PanelProject.updateOne(
+      { projectId },
+      { $set: { 'runtime.lastBusinessSyncAt': at, updatedAt: at } },
+    );
   },
 
   async remove(projectId) {

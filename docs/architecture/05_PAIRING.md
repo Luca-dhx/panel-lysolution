@@ -164,6 +164,63 @@ redémarrage — c'est vérifié par un test de redémarrage simulé.
    fait son propre bootstrap avec son propre code.
 6. **L'environnement du projet doit concorder avec celui de l'instance de
    Panel.** Voir §9.
+7. **Un appairage = une fiche = une instance.** Voir §10.
+
+## 10. Un appairage, une fiche, une instance
+
+C'est la cardinalité que tout le reste du Panel suppose, et elle se lit mal
+parce que le Manager et le Panel ne comptent pas la même chose.
+
+```
+MANAGER / SB AUTO                    PANEL
+
+Projet SB Auto                       Produit logique « SB Auto »
+├── destination TEST                 ├── PanelProject A — projectId A · TEST
+├── destination PROD                 └── PanelProject B — projectId B · PROD
+└── … d'autres
+                                     (logicalProjectKey commun)
+UN projet, N destinations.           UNE fiche, UNE instance.
+```
+
+```
+1 PanelProject = 1 instance = 1 environnement = 1 appairage
+               = 1 destination = 1 état métier
+```
+
+### Ce que l'appairage établit, et ce qu'il ne touche pas
+
+L'appairage produit le `projectId` — **l'autorité absolue du périmètre
+métier**. Toute projection reçue ensuite est indexée par lui, et par lui seul.
+
+Il **renseigne** aussi `logicalProjectKey`, à partir de la clé que le projet
+annonce (`bridgeIdentity.projectKey`). Cette clé sert exclusivement à :
+
+- **la navigation** — proposer la fiche sœur depuis la fiche courante ;
+- **la déclaration** — rattacher une nouvelle instance au bon produit ;
+- **l'appairage** — détecter une collision (deux instances du même
+  environnement pour un même produit) ;
+- **la détection de sœur** — savoir qu'une autre instance existe.
+
+Elle ne porte **aucune** donnée métier. Deux fiches parentes ont deux noms,
+deux contrats, deux protections, deux destinations et deux fraîcheurs
+distinctes. Aucun repli inter-environnement n'existe : quand une instance n'a
+pas de destination active, on écrit « aucune destination active » — on
+n'emprunte jamais celle de la sœur.
+
+### Ce que le manifeste d'appairage est, et n'est plus
+
+Le manifeste est capturé **au bootstrap** et relu seulement sur action d'un
+opérateur (`REFRESH_MANIFEST`, `DISCOVER_PROJECT`). C'est un **bootstrap**, un
+**repli** et une **compatibilité** — jamais une source live.
+
+`PROJECTION > MANIFEST > REGISTRY` pour tout champ disposant d'une projection
+(nom, présentation, description, contacts, réseau). Un manifeste relu ne doit
+jamais écraser une projection reçue.
+
+→ `docs/ARCHITECTURE_CONTEXT.md` §1, §4bis, §4ter
+→ `tests/project-company-live-e2e.test.js` · `tests/project-live-business-sync.test.js`
+
+---
 
 ## 9. Concordance d'environnement — le domaine choisit, l'`ENV` valide
 

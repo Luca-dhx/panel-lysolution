@@ -111,6 +111,16 @@ section('LE VRAI CHEMIN — Company.save() jusqu’à la fiche du Panel');
 
   const apres = await ficheApi(A.projectId);
   check('LA FICHE DU PANEL AFFICHE LE NOUVEAU NOM', apres.name === 'SB Auto 07');
+  /**
+   * ET LA FRAÎCHEUR MÉTIER A AVANCÉ — parce qu'on a REÇU, pas parce qu'on a
+   * eu des nouvelles. La date est posée par le Panel au moment où l'entité a
+   * été appliquée ; aucune ligne de ce test ne l'écrit.
+   */
+  check('…et la fraîcheur métier a avancé',
+    typeof apres.dates.lastBusinessSyncAt === 'string'
+    && apres.dates.lastBusinessSyncAt > avant.dates.lastBusinessSyncAt);
+  check('…tout en restant DISTINCTE du dernier battement de cœur',
+    apres.dates.lastBusinessSyncAt !== apres.dates.lastHeartbeatAt);
   check('…sans qu’aucune projection n’ait été fabriquée par le test', true);
   check('…l’outbox du projet s’est vidée', (await A.outboxPending()) === 0);
   check('…et la source reste la projection', apres.presentationSource === 'PROJECTION');
@@ -150,6 +160,10 @@ section('DEUX INSTANCES, UN PRODUIT — aucune contamination');
 
   check('A a changé', apresA.name === 'SB Auto 08');
   check('B EST STRICTEMENT INCHANGÉE', apresB.name === 'SB Auto B');
+  check('…y compris sa fraîcheur métier, à la milliseconde',
+    apresB.dates.lastBusinessSyncAt === avantB.dates.lastBusinessSyncAt);
+  check('…tandis que celle de A a bien avancé',
+    apresA.dates.lastBusinessSyncAt > avantA.dates.lastBusinessSyncAt);
   check('…jusqu’à l’octet : sa projection n’a pas été réécrite',
     JSON.stringify(projectionBApres) === JSON.stringify(projectionBAvant));
 
@@ -158,8 +172,11 @@ section('DEUX INSTANCES, UN PRODUIT — aucune contamination');
   await B.renameCompany({ name: 'SB Auto B2' });
   await laisserConverger(B);
 
+  const gelA = apresA.dates.lastBusinessSyncAt;
   check('B a changé', (await ficheApi(B.projectId)).name === 'SB Auto B2');
   check('A EST STRICTEMENT INCHANGÉE', (await ficheApi(A.projectId)).name === 'SB Auto 08');
+  check('…y compris sa fraîcheur métier',
+    (await ficheApi(A.projectId)).dates.lastBusinessSyncAt === gelA);
   check('…jusqu’à l’octet',
     JSON.stringify(await PanelProjectPresentation.findOne({ projectId: A.projectId }).lean())
       === JSON.stringify(projectionAAvant));
@@ -204,6 +221,13 @@ section('OFFLINE A → B → C — la convergence sur la dernière vérité');
 
   const finale = await ficheApi(A.projectId);
   check('LE PANEL FINIT SUR C', finale.name === 'Nom C');
+  /**
+   * LA DATE EST CELLE DE LA RÉCEPTION DE C — pas celle de l'écriture de B, ni
+   * celle du battement de reconnexion. C'est tout l'intérêt d'une observation
+   * posée à l'application : elle ne peut pas dater autre chose.
+   */
+  check('…et la fraîcheur date de la réception de C, pas de l’écriture de B',
+    finale.dates.lastBusinessSyncAt >= finale.presentationModifiedAt);
   check('…jamais bloqué sur B', finale.name !== 'Nom B');
   check('…et jamais revenu à A', finale.name !== 'Nom A');
   check('l’outbox est vide', (await A.outboxPending()) === 0);
@@ -241,6 +265,20 @@ section('CARDINALITÉ — une fiche, une instance, un projectId');
   check('HEARTBEAT_DOES_NOT_IMPLY_BUSINESS_FRESHNESS : deux faits distincts',
     typeof a.runtime.lastHeartbeatAt === 'string'
     && (await ficheApi(A.projectId)).presentationModifiedAt !== a.runtime.lastHeartbeatAt);
+
+  /**
+   * HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS — sur une instance RÉELLE.
+   *
+   * Trois battements de cœur, envoyés par le projet lui-même. Le dernier
+   * contact avance ; la fraîcheur métier ne bouge pas d'une milliseconde.
+   */
+  const avantBattements = await ficheApi(A.projectId);
+  for (let i = 0; i < 3; i += 1) await A.heartbeat();
+  const apresBattements = await ficheApi(A.projectId);
+  check('HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS',
+    apresBattements.dates.lastBusinessSyncAt === avantBattements.dates.lastBusinessSyncAt);
+  check('…alors que le dernier contact, lui, a avancé',
+    apresBattements.dates.lastHeartbeatAt !== avantBattements.dates.lastHeartbeatAt);
 }
 
 for (const inst of instances) await inst.stop();

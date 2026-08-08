@@ -22,6 +22,60 @@ différentes, et aucun n'est synonyme d'un autre.
 | **Instance de projet** | Le projet déployé dans un environnement. « SB Auto TEST ». **1 instance = 1 `PanelProject`.** | ≤ 1 par environnement |
 | **Destination** | L'endroit où une instance est publiée : `demo-sbauto06.ly-solution.com`. | 1 ACTIVE + N historiques |
 
+### La doctrine, en une phrase
+
+> Le Manager possède les destinations. Le Panel observe des instances. Chaque
+> `PanelProject` représente **une seule** instance, et toutes ses données live
+> sont isolées par `projectId`. Le battement de cœur prouve la vivacité ; les
+> projections prouvent l'état métier.
+
+C'est le point que quatre missions successives ont mis à jour, et il se lit
+mal parce que les deux systèmes comptent différemment :
+
+```
+MANAGER / SB AUTO                    PANEL
+
+Projet SB Auto                       Produit logique « SB Auto »
+├── destination TEST                 │   (logicalProjectKey commun)
+├── destination PROD                 │
+└── … d'autres                       ├── PanelProject A
+                                     │   projectId A · TEST
+UN projet, N destinations.           │   1 appairage · 1 destination
+                                     │   1 état métier
+                                     │
+                                     └── PanelProject B
+                                         projectId B · PROD
+                                         … les mêmes, indépendantes
+
+                                     UNE fiche, UNE instance.
+```
+
+**Cardinalité, côté Panel :**
+
+```
+1 PanelProject = 1 instance = 1 environnement = 1 appairage
+               = 1 destination = 1 état métier
+```
+
+Une fiche ne « bascule » donc pas d'un environnement à l'autre : on ouvre
+celle de l'autre environnement, à son propre `projectId`. Un contrôle segmenté
+`[TEST][PROD]` a existé une journée sur la fiche ; il naviguait correctement
+mais donnait à lire l'inverse du modèle, et a été remplacé par un lien.
+
+### Les deux clés, et ce que chacune n'est pas
+
+| Clé | Ce qu'elle établit | Ce qu'elle ne fait **jamais** |
+|---|---|---|
+| `logicalProjectKey` | la **parenté** : ces deux fiches décrivent le même produit. Sert à la navigation, à la déclaration, à l'appairage et à la détection de sœur. | porter la moindre donnée métier. Elle ne détermine ni le nom, ni le contrat, ni la protection, ni la destination, ni la fraîcheur. |
+| `projectId` | l'**autorité absolue du périmètre métier**. Toute projection, toute lecture, tout état est indexé par lui. | regrouper. Deux instances d'un même produit ont deux `projectId`. |
+
+Aucune agrégation métier par `logicalProjectKey` ne doit être réintroduite.
+
+→ `tests/project-company-live-e2e.test.js` — sections « DEUX INSTANCES, UN
+PRODUIT » et « CARDINALITÉ » (`ONE_PANEL_PROJECT_EQUALS_ONE_INSTANCE`,
+`LOGICAL_PROJECT_KEY_DOES_NOT_SCOPE_BUSINESS_DATA`,
+`PROJECT_ID_IS_BUSINESS_DATA_AUTHORITY`)
+
 ```
                          PROJET LOGIQUE
                             SB Auto
@@ -124,16 +178,18 @@ instance PROD**.
 
 ---
 
-## 4. Le pont : quatre notions, quatre horodatages
+## 4. Le pont : cinq notions, cinq horodatages
 
 Aucune ne s'appelle « synchronisation » tout court.
 
-| Notion | Qui l'établit | Ce que c'est |
-|---|---|---|
-| **heartbeat** | le Panel | le dernier battement **reçu**. Preuve de vie. |
-| **synchronisation déclarée** | le projet | la date que le projet **affirme**, transportée par le battement. Sa parole. |
-| **photographie (snapshot)** | le Panel | l'instant où il a **appliqué** une projection métier. Le seul des trois qu'il constate lui-même. |
-| **runtime.sync** | le déploiement | l'étape qui publie les URL réseau canoniques. Sans rapport avec le pont. |
+| Notion | Champ | Qui l'établit | Ce que c'est |
+|---|---|---|---|
+| **heartbeat** | `runtime.lastHeartbeatAt` | le Panel | le dernier battement **reçu**. Preuve de vie, et rien d'autre. |
+| **fraîcheur métier** | `runtime.lastBusinessSyncAt` | le Panel | l'instant où il a **appliqué** une entité métier pour cette instance. **La source canonique.** |
+| **modification annoncée** | `presentationModifiedAt` (= `sourceModifiedAt`) | le projet | la date que le projet **pose sur son écriture**. Sa parole ; c'est elle qui arbitre le dernier-écrit-gagne. |
+| **synchronisation déclarée** | `runtime.bridgeStats.lastSyncAt` | le projet | ce que le projet **affirme**, transporté par le battement. |
+| **âge de la photographie** | `business.freshness.lastSyncAt` | le Panel | `max(receivedAt)` sur les projections **encore stockées**, recalculé à la lecture. Un âge d'affichage, pas une preuve de réception. |
+| **runtime.sync** | — | le déploiement | l'étape qui publie les URL réseau canoniques. Sans rapport avec le pont. |
 
 Les confondre a déjà coûté un écran entier : deux libellés presque identiques
 pour deux nombres différents, sans moyen de savoir lequel faisait foi.
@@ -186,6 +242,38 @@ describeProject().name   ← la projection, PUIS le manifeste en repli
 L'écran ouvert se met à jour sans reload
 ```
 
+### Le pipeline live, de bout en bout
+
+Aucun geste humain entre le premier et le dernier maillon.
+
+```
+SB AUTO                                    PANEL
+Company.name = « SB Auto 07 »
+company.save()
+  └─ post('save')
+     └─ notifyEntitySaved('COMPANY', ['name'])
+        └─ syncTriggers  (COMPANY_PATHS)
+           └─ scheduleProjection            regroupement 500 ms
+              └─ outbox durable  (writeId déterministe)
+                 └─ flushOutbox ──── HTTP Bridge ───►  applyIncoming
+                                                        └─ PROJECTORS
+                                                           PROJECT_PRESENTATION
+                                                           └─ PanelProjectPresentation
+                                                              (indexée par projectId)
+                                                           └─ runtime.lastBusinessSyncAt
+                                                        GET /api/projects/:projectId
+                                                        └─ useLiveQuery (polling silencieux)
+                                                           └─ l'écran ouvert change
+```
+
+Le nom **et** la date de fraîcheur évoluent seuls. Il n'y a **ni** bouton
+« Synchroniser », **ni** bouton « Rafraîchir », **ni** rechargement de page,
+**ni** réappairage, **ni** publication manuelle — et l'écran ne se vide jamais
+pendant le polling.
+
+→ `tests/project-company-live-e2e.test.js` — deux backends réels, un vrai
+`Company.save()`, aucun `applyIncoming` appelé par le test.
+
 ### La priorité du nom, et son origine déclarée
 
 | Rang | Source | `presentationSource` |
@@ -196,7 +284,20 @@ L'écran ouvert se met à jour sans reload
 
 `presentationSource` et `presentationModifiedAt` accompagnent le nom : un
 écran peut donc dire d'où vient ce qu'il montre, et depuis quand — sans
-jamais inventer une fraîcheur.
+jamais inventer une fraîcheur. La même règle vaut pour la description
+(`descriptorSource`).
+
+**`PROJECTION > MANIFEST > REGISTRY`**, pour tout champ qui dispose d'une
+projection. Le manifeste est un **bootstrap**, un **repli** et une
+**compatibilité** — jamais une source live : il est figé à l'appairage et
+n'est relu que sur action d'un opérateur (`REFRESH_MANIFEST`,
+`DISCOVER_PROJECT`). Une projection reçue ne doit **jamais** être écrasée par
+un manifeste relu.
+
+Les champs sans projection assument le manifeste comme seule source, et le
+disent : `type`, `layout`, `manifestFormat`, la validation de clé, et les
+replis derrière `runtime` pour `environment` et `versions.*`. Ils décrivent la
+**composition** du logiciel, qui ne change qu'entre deux versions.
 
 ### Ce qui est calculé, et ne se persiste jamais
 
@@ -220,10 +321,106 @@ réciproquement.
 Chaque instance a SA projection, indexée par `projectId`. Un
 `logicalProjectKey` commun ne mélange rien. Et si le pont a été coupé pendant
 que le projet passait de A à B puis C, la dernière écriture gagne : le Panel
-converge directement sur **C**, sans rejouer B.
+converge directement sur **C**, sans rejouer B — et `lastBusinessSyncAt` date
+la réception de **C**, ni l'écriture de B, ni le battement de reconnexion.
+
+**TEST et PROD ne sont jamais fusionnés.** Même produit logique, donc
+`logicalProjectKey` commun — et strictement rien d'autre en commun :
+
+| Diffèrent toujours | |
+|---|---|
+| `projectId` | projection de présentation |
+| runtime | contrat |
+| battement de cœur | `siteStatus` / protection contractuelle |
+| destination | fraîcheur métier |
+| appairage | `appliedConfiguration` |
+
+**Aucun repli inter-environnement n'existe.** Si l'instance TEST n'a pas de
+destination active, la fiche affiche « aucune destination active » — elle
+n'emprunte jamais celle de sa sœur. Il en va de même pour le nom, le contrat
+et la protection : « inconnu » est une réponse, une valeur empruntée n'en est
+pas une.
 
 → `backend/src/services/registry/registryStore.js`
 → `tests/project-live-business-sync.test.js`
+
+---
+
+## 4ter. Vivacité et fraîcheur métier — deux questions, jamais une seule
+
+```
+● Connecté                    ← « cette instance répond-elle ? »
+  Dernier contact il y a 4 s     runtime.lastHeartbeatAt
+
+✓ Données métier reçues       ← « quand le Panel a-t-il reçu son état ? »
+  Dernière mise à jour il y a 6 s  runtime.lastBusinessSyncAt
+```
+
+### Pourquoi les séparer
+
+Un projet dont l'entreprise ne change pas bat toutes les trente secondes
+pendant des jours **sans rien projeter**. Sa fiche est vivante et n'a jamais
+rien reçu — les deux à la fois, et c'est un état parfaitement normal. Déduire
+la fraîcheur du battement, c'est afficher « à jour » devant une fiche vide.
+
+Le badge **Connecté** reste donc calculé depuis la seule vivacité. Il n'est
+jamais un `ET` entre les deux.
+
+### Ce qui l'avance, et ce qui ne l'avance pas
+
+`lastBusinessSyncAt` est écrit **au seul endroit où une entité métier est
+appliquée** — `syncCore.applyIncoming`, après le projecteur, avec l'heure du
+Panel. Sont métier : `PROJECT_PRESENTATION`, `CONTRACT`, `TEAM_MEMBER`
+(`BUSINESS_ENTITY_TYPES`, dérivé de la table des projecteurs).
+
+| N'avance **pas** la fraîcheur | Pourquoi |
+|---|---|
+| un battement de cœur | il ne transporte aucune donnée métier |
+| une lecture de fiche, un `GET`, le polling de l'écran | lire ne fait rien arriver |
+| le manifeste, relu ou non | photographie d'appairage, jamais un flux |
+| une découverte sans nouvelle donnée | rien n'a été appliqué |
+| une écriture `REJECTED` (payload non conforme) | rien n'a été projeté — il n'y a rien à dater |
+| un `DIAGNOSTIC` | c'est un journal de sondes, pas un état |
+| une écriture destinée à une autre instance | l'écriture est scellée par son `projectId` |
+
+### Pourquoi elle est persistée, et non déduite
+
+On savait la déduire : `max(receivedAt)` sur les projections stockées — c'est
+ce que fait encore `freshness.lastSyncAt`. Mais cette déduction ment dans
+trois cas : un tombstone efface la projection et fait **reculer** la date ; un
+`TEAM_MEMBER` reçu ne compte pas ; une réception qui n'a rien changé n'y laisse
+aucune trace. Une observation ne se recalcule pas — on l'inscrit à l'instant
+où elle a lieu.
+
+### Annoncée ≠ reçue
+
+```
+Projet modifié à      14:31:02   ← presentationModifiedAt (parole du projet)
+Reçu par le Panel à   14:31:04   ← lastBusinessSyncAt   (constat du Panel)
+```
+
+Les fusionner supprimerait la seule information qui permet de diagnostiquer
+une livraison en retard. L'onglet Développeur les affiche côte à côte.
+
+### Ce que l'écran doit dire, cas par cas
+
+| Situation | Vivacité | Données métier |
+|---|---|---|
+| tout fonctionne | ● Connecté — 3 s | ✓ reçues — 5 s |
+| bat, n'a jamais rien projeté | ● Connecté — 2 s | **jamais reçues** (surtout pas « à jour ») |
+| bat, données anciennes | ● Connecté — 3 s | ✓ reçues — il y a 27 min *(une date honnête, pas un diagnostic inventé)* |
+| hors ligne | ○ Hors ligne — 18 min | ✓ reçues — il y a 19 min *(consultables)* |
+| manifeste seul | selon le battement | **jamais reçues** — le nom vient du manifeste (`presentationSource: MANIFEST`) |
+
+Aucun seuil de vieillissement n'est inventé ici : le produit n'en possède pas
+de canonique pour la fraîcheur métier, et une date honnête vaut mieux qu'un
+faux verdict.
+
+→ `backend/src/services/sync/syncCore.service.js` · `sync/projectors.js`
+→ `frontend/src/lib/projectFreshness.ts`
+→ `tests/project-live-business-sync.test.js` — `HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS`,
+  `MANIFEST_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS`, `MANIFEST_NEVER_OVERRIDES_LIVE_PROJECTION`,
+  `TEST_INSTANCE_NEVER_READS_PROD_DATA`, `PROD_INSTANCE_NEVER_READS_TEST_DATA`
 
 ---
 
@@ -298,6 +495,38 @@ PM2, PID, socket, Nginx, `siteRoot`, fichiers, uploads, taille.
 
 → `backend/src/services/deployment/destinationLifecycle.service.js`
 → `SB Auto 06/backend/src/scripts/destination-lifecycle.test.js`
+
+### Trois opérations, et il a fallu les nommer
+
+`DeploymentRun.operationType` distingue ce que trois boutons faisaient
+autrefois sous un seul mot. Le vocabulaire est canonique : y ajouter une
+valeur sans l'inscrire dans l'énumération faisait crasher le run à
+l'enregistrement — c'est arrivé, et l'écran restait bloqué sur une checklist
+qui ne finissait jamais.
+
+| Opération | Ce qu'elle fait | Ce qu'elle **ne** fait **pas** |
+|---|---|---|
+| `DEPLOYMENT` | publie une version sur une destination | — |
+| `DEPROVISION` | **vide physiquement** la destination : PM2, port, vhost Nginx, `siteRoot`, fichiers, uploads. La quarantaine 410 est **conservée**, la fiche reste présente en `EMPTY`. | supprimer la fiche, lever la quarantaine |
+| `DESTINATION_DELETE` | **vérifie** que la destination est vide, **lève** la quarantaine, puis supprime/soft-delete la fiche. | vider quoi que ce soit — c'est le travail du `DEPROVISION` |
+
+L'ordre est donc **retrait puis suppression**, jamais l'inverse. Le cul-de-sac
+qui a précédé cette séparation — une destination `EMPTY` dont la quarantaine
+rendait la suppression impossible — n'existe plus : `releaseQuarantine` est
+appelée par le `DESTINATION_DELETE`, et c'est son seul appelant.
+
+### Ce qui rend ces opérations observables
+
+| Élément | Ce qu'il garantit |
+|---|---|
+| **run persistant** | l'exécution survit à la fermeture de l'onglet ; le `runId` est la seule source de reprise |
+| **checklist streamée** (NDJSON) | chaque étape arrive en direct, protégée par la ceinture `fluxProtege` |
+| **reconnexion par `runId`** | rouvrir la page raccroche au run en cours ; il n'existe **pas** de second système de stream, ni de polling infini, ni de relance |
+| **forensics** | `requestId → runId → étapes → verdict`, plus `DeploymentAttempt` (trace HTTP **avant** le run) et `run.journal` (append-only) |
+
+Une suppression réussie ne doit **jamais** faire crasher l'écran : la fiche
+disparaît, et l'UI lit son instantané de run, pas une ressource qui n'existe
+plus.
 
 ---
 
@@ -416,6 +645,24 @@ Deux gardes indépendantes, et jamais une déduction par nom d'hôte :
 
 ---
 
+## 6ter. La session VPS : une seule, et elle se prouve
+
+Une **seule** session ouverte à la fois, avec un TTL canonique **repoussé à
+chaque utilisation** — travailler garde la session vivante, l'inactivité la
+ferme.
+
+Avant d'affirmer qu'une connexion est établie, une **sonde SSH réelle** est
+exécutée. Sans elle, trois échecs distincts — hôte injoignable,
+authentification refusée, commande en erreur — s'affichaient tous sous
+« Serveur injoignable », et l'opérateur cherchait un problème réseau devant un
+mot de passe erroné.
+
+La case à cocher « Garder la session ouverte » **n'existe plus** : elle
+demandait à l'utilisateur d'arbitrer une durée de vie qu'il n'avait aucun
+moyen d'estimer.
+
+---
+
 ## 7. Médias : l'autorité voyage avec le descripteur
 
 ```
@@ -475,6 +722,33 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 | Ces données sont-elles à jour ? | la génération + la fraîcheur, calculées par le backend | une comparaison de dates seule |
 | Qui détient ce média ? | `authority` dans le descripteur | l'hôte ou la clé d'objet |
 | Le site est-il suspendu ? | le projet | une déduction depuis le contrat côté Panel |
+
+### Sujet par sujet, le champ qui fait foi
+
+| Sujet | Source canonique |
+|---|---|
+| instance du Panel | `PanelProject.projectId` |
+| parenté entre instances | `PanelProject.logicalProjectKey` — **navigation seule** |
+| environnement | `declaredEnvironment` / `runtime.environment` de cette instance |
+| destination | `PanelProjectDestination` `ACTIVE` de cette instance |
+| nom, présentation, description | `PanelProjectPresentation` (projection live) |
+| manifeste | `PanelProject.manifest` — **bootstrap et repli** |
+| vivacité | `runtime.lastHeartbeatAt` → `liveness` |
+| fraîcheur métier | `runtime.lastBusinessSyncAt` — réception **observée** par le Panel |
+| modification annoncée | `sourceModifiedAt` de la projection |
+| contrat | `PanelProjectContract` de cette instance |
+| protection / suspension | `siteStatus` de la projection de cette instance |
+| équipe | `PanelProjectMember` (projectId, entityId) |
+| média du Panel | descripteur `authority: PANEL` |
+| média du projet | descripteur `authority: PROJECT` |
+| déploiement | `DeploymentTarget` + moteur de déploiement |
+| retrait | `DeploymentRun.operationType = DEPROVISION` |
+| suppression de destination | `DeploymentRun.operationType = DESTINATION_DELETE` |
+
+`contract`, `siteStatus` et la protection contractuelle sont
+**instance-scoped**. Deux instances parentes peuvent donc porter des valeurs
+différentes — un contrat résilié en TEST et actif en PROD est un état légal.
+Le Panel ne les fusionne jamais et n'en déduit rien pour la sœur.
 
 ---
 

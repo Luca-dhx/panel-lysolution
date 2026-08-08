@@ -52,6 +52,11 @@ export interface PublicProject {
     contractVersion: string | null;
     publicBackendUrl: string | null;
     lastHeartbeatAt: string | null;
+    /**
+     * QUAND LE PANEL A REÇU ET APPLIQUÉ UN ÉTAT MÉTIER — jamais le battement
+     * de cœur. `null` se lit « jamais reçu », ce qui n'est pas « ancien ».
+     */
+    lastBusinessSyncAt: string | null;
     lastHealth: { status: HealthStatus; details: string | null } | null;
     bridgeStats: { outboxSize?: number; lastSyncAt?: string | null } | null;
   };
@@ -140,7 +145,12 @@ export interface BusinessFreshness {
   environmentMismatch?: boolean;
   /** Le backend a-t-il pu se prononcer sur la destination active ? */
   destinationKnown?: boolean;
+  /** Âge de la photographie la plus récente ENCORE STOCKÉE — recalculé. */
   lastSyncAt: string | null;
+  /** La réception OBSERVÉE et persistée — la source canonique. */
+  lastBusinessSyncAt?: string | null;
+  /** `false` = rien n'a jamais été reçu. Ne jamais afficher « à jour ». */
+  businessDataEverReceived?: boolean;
 }
 
 export interface BusinessDocument {
@@ -237,6 +247,11 @@ export interface ProjectDescriptor {
   name: string;
   /** Identité commerciale publiée par le projet (contrat >= 1.4.x). */
   presentation: ProjectPresentation | null;
+  /** D'où sort ce qui est affiché : flux vivant, manifeste d'appairage, registre. */
+  presentationSource?: 'PROJECTION' | 'MANIFEST' | 'REGISTRY';
+  /** Quand le PROJET déclare avoir modifié — sa parole, pas notre réception. */
+  presentationModifiedAt?: string | null;
+  descriptorSource?: 'PROJECTION' | 'MANIFEST' | 'NONE';
   type: string | null;
   description: string | null;
   layout: string | null;
@@ -262,6 +277,7 @@ export interface ProjectDescriptor {
     createdAt: string;
     pairedAt: string | null;
     lastHeartbeatAt: string | null;
+    lastBusinessSyncAt: string | null;
     lastActivityAt: string;
     manifestUpdatedAt: string | null;
   };

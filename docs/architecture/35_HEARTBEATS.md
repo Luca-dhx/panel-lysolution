@@ -105,4 +105,19 @@ Ce commentaire est dans le code, à l'endroit exact où l'ordre compte.
 2. ❌ modifier le projet émetteur ;
 3. ❌ écraser une donnée connue avec un champ absent — un projet peut publier
    `runtime` par intermittence sans perdre ce qui était déjà su ;
-4. ❌ faire échouer la requête si un champ optionnel manque.
+4. ❌ faire échouer la requête si un champ optionnel manque ;
+5. ❌ **avancer la fraîcheur métier de la fiche.**
+
+Le cinquième point mérite son paragraphe. Un battement prouve qu'une instance
+**répond** ; il ne transporte aucune donnée métier. `lastHeartbeatAt` et
+`runtime.lastBusinessSyncAt` sont donc deux faits distincts, et un projet dont
+l'entreprise ne change pas bat pendant des jours sans rien projeter : sa fiche
+est vivante **et** n'a jamais rien reçu. Le badge « Connecté » se calcule
+depuis la seule vivacité — jamais comme un `ET` entre les deux.
+
+La date que le projet transporte dans `bridgeStats.lastSyncAt` est **sa
+parole**, pas un constat du Panel : elle s'affiche sous « synchronisation
+déclarée », à côté et jamais à la place.
+
+→ `docs/ARCHITECTURE_CONTEXT.md` §4ter · `61_BUSINESS_PROJECTION.md` §4
+→ `tests/project-live-business-sync.test.js` — `HEARTBEAT_DOES_NOT_ADVANCE_BUSINESS_FRESHNESS`

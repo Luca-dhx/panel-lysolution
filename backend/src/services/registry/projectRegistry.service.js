@@ -611,7 +611,23 @@ function describeFreshness(record, projections, destinationHost) {
     ),
     /** L'appelant a-t-il pu se prononcer sur la destination active ? */
     destinationKnown,
+    /**
+     * LA PLUS RÉCENTE DES PHOTOGRAPHIES ENCORE STOCKÉES — c'est un âge de
+     * SNAPSHOT, et il se recalcule à chaque lecture.
+     *
+     * Ne pas le confondre avec `lastBusinessSyncAt` : celui-ci recule quand
+     * une projection est supprimée, ignore les membres d'équipe, et ne dit
+     * rien d'une réception qui n'a rien changé. Il répond à « de quand date
+     * ce que j'affiche », pas à « quand l'ai-je reçu ».
+     */
     lastSyncAt: recues.length > 0 ? recues[recues.length - 1] : null,
+    /**
+     * LA RÉCEPTION OBSERVÉE — la source canonique, persistée par le noyau de
+     * synchronisation à l'instant où une entité métier a été appliquée.
+     */
+    lastBusinessSyncAt: record.runtime?.lastBusinessSyncAt ?? null,
+    /** `false` = jamais rien reçu. À ne jamais afficher comme « à jour ». */
+    businessDataEverReceived: Boolean(record.runtime?.lastBusinessSyncAt),
   };
 }
 
@@ -758,6 +774,17 @@ export function describeProject(record) {
       createdAt: record.createdAt,
       pairedAt: record.pairing?.pairedAt ?? null,
       lastHeartbeatAt: runtime.lastHeartbeatAt ?? null,
+      /**
+       * DEUX FAITS, JAMAIS CONFONDUS.
+       *
+       * `lastHeartbeatAt` : « cette instance répond-elle ? »
+       * `lastBusinessSyncAt` : « quand le Panel a-t-il reçu son état métier ? »
+       *
+       * `null` se lit « jamais reçu » — ce qui n'est pas « ancien », et
+       * surtout pas « à jour ». Un projet peut battre depuis trois jours sans
+       * avoir jamais rien projeté.
+       */
+      lastBusinessSyncAt: runtime.lastBusinessSyncAt ?? null,
       lastActivityAt: runtime.lastHeartbeatAt ?? record.updatedAt,
       manifestUpdatedAt: record.manifestUpdatedAt ?? null,
     },

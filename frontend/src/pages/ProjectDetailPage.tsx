@@ -344,16 +344,40 @@ function OverviewTab({
             <dt>Dernier contact</dt>
             <dd>{since ?? <span className="muted">jamais</span>}</dd>
           </div>
+          {/*
+            DEUX FAITS, ET ILS NE SE DÉDUISENT PAS L'UN DE L'AUTRE.
+
+            Au-dessus : « cette instance répond-elle ? ». Ici : « quand le
+            Panel a-t-il reçu son état métier ? ». Un projet dont l'entreprise
+            ne change jamais bat toutes les trente secondes sans rien projeter
+            — sa fiche est vivante ET n'a jamais rien reçu. Les deux lignes
+            doivent pouvoir le dire ensemble.
+          */}
           <div>
-            <dt>Dernière photographie reçue</dt>
+            <dt>Données métier</dt>
             <dd>
-              {fraicheur.lastFullSyncAt
-                ? formatDateTime(fraicheur.lastFullSyncAt)
-                : <span className="muted">jamais</span>}
+              {fraicheur.businessDataEverReceived ? (
+                <>
+                  {/* Le symbole accompagne le mot : l'état ne se lit jamais à
+                      la seule couleur. */}
+                  <span className="badge-ok">✓ reçues</span>
+                  {' '}
+                  <span className="muted">
+                    {formatDateTime(fraicheur.lastBusinessSyncAt)}
+                  </span>
+                </>
+              ) : (
+                /*
+                  « JAMAIS REÇUES » N'EST PAS « À JOUR », ET PAS DAVANTAGE UNE
+                  PANNE : un projet qui n'a rien à dire n'a rien projeté. On
+                  l'écrit tel quel, sans diagnostic inventé.
+                */
+                <span className="muted">jamais reçues</span>
+              )}
             </dd>
           </div>
           <div>
-            <dt>Dernière synchronisation déclarée par le projet</dt>
+            <dt>Dernière modification annoncée par le projet</dt>
             <dd>
               {declareParLeProjet
                 ? formatDateTime(declareParLeProjet)
@@ -564,8 +588,26 @@ function DeveloperTab({
       <Disclosure title="Informations techniques" hint="Identifiants, horodatages, générations et destinations.">
         <Card title="Cette instance">
           <dl className="detail-list">
+            {/*
+              L'AUTORITÉ MÉTIER EST LE `projectId`, ET ELLE EST ÉCRITE EN PREMIER.
+
+              L'identité logique figure plus bas, présentée pour ce qu'elle est :
+              une PARENTÉ. Elle relie deux fiches du même produit ; elle ne
+              détermine ni le nom, ni le contrat, ni la destination, ni la
+              fraîcheur. Aucune donnée de cette page n'en dépend.
+            */}
+            <div><dt>Instance <span className="dt-source">autorité des données métier</span></dt>
+              <dd><code className="inline-code">{project.projectId}</code></dd></div>
             <div><dt>Environnement</dt><dd>{project.environment ?? '—'}</dd></div>
-            <div><dt>Identité logique</dt><dd>
+            <div><dt>Destination</dt><dd>
+              {project.descriptor?.primaryDomain
+                ? <code className="inline-code">{project.descriptor.primaryDomain}</code>
+                : <span className="muted">aucune destination active</span>}
+            </dd></div>
+            <div><dt>Source de la présentation</dt><dd>
+              <code className="inline-code">{project.descriptor?.presentationSource ?? '—'}</code>
+            </dd></div>
+            <div><dt>Identité logique <span className="dt-source">parenté, jamais un périmètre de données</span></dt><dd>
               {project.logicalProjectKey
                 ? <code className="inline-code">{project.logicalProjectKey}</code>
                 : <span className="muted">aucune — fiche seule de son groupe</span>}
@@ -590,7 +632,23 @@ function DeveloperTab({
               </dd>
             </div>
             <div>
-              <dt>Dernière photographie reçue <span className="dt-source">appliquée par le Panel</span></dt>
+              <dt>Dernière synchronisation métier <span className="dt-source">reçue et appliquée par le Panel</span></dt>
+              <dd>
+                {fraicheur.lastBusinessSyncAt
+                  ? formatDateTime(fraicheur.lastBusinessSyncAt)
+                  : <span className="muted">jamais reçue</span>}
+              </dd>
+            </div>
+            <div>
+              <dt>Dernière modification métier <span className="dt-source">annoncée par le projet</span></dt>
+              <dd>
+                {project.descriptor?.presentationModifiedAt
+                  ? formatDateTime(project.descriptor.presentationModifiedAt)
+                  : '—'}
+              </dd>
+            </div>
+            <div>
+              <dt>Âge de la photographie affichée <span className="dt-source">calculé à la lecture</span></dt>
               <dd>{fraicheur.lastFullSyncAt ? formatDateTime(fraicheur.lastFullSyncAt) : '—'}</dd>
             </div>
             <div>

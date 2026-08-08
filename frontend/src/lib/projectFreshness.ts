@@ -32,7 +32,18 @@ export interface ProjectDataFreshness {
   /** VRAI seulement si l'on peut affirmer que les données décrivent l'instant. */
   isBusinessDataFresh: boolean;
   lastContactAt: string | null;
+  /** Âge de la photographie encore stockée — pas une preuve de réception. */
   lastFullSyncAt: string | null;
+  /**
+   * QUAND LE PANEL A REÇU UN ÉTAT MÉTIER. `null` = jamais.
+   *
+   * C'est le pendant de `lastContactAt`, et il ne faut jamais lire l'un pour
+   * l'autre : un projet qui bat depuis trois jours sans avoir rien projeté a
+   * un `lastContactAt` de quatre secondes et un `lastBusinessSyncAt` nul.
+   */
+  lastBusinessSyncAt: string | null;
+  /** A-t-on jamais reçu quoi que ce soit ? « Jamais » n'est pas « ancien ». */
+  businessDataEverReceived: boolean;
 }
 
 /**
@@ -86,6 +97,18 @@ export function getProjectDataFreshness(project: PublicProject): ProjectDataFres
       connection === 'ONLINE' && !isEnvironmentMismatch && !isGenerationMismatch,
     lastContactAt: project.runtime?.lastHeartbeatAt ?? null,
     lastFullSyncAt: f?.lastSyncAt ?? null,
+    /**
+     * LA SOURCE CANONIQUE VIENT DU RUNTIME, PAS DES PROJECTIONS STOCKÉES.
+     *
+     * `freshness.lastSyncAt` la republie pour les écrans qui n'ont que le
+     * bloc `business` sous la main ; les deux désignent le même champ
+     * persisté, on prend le premier disponible.
+     */
+    lastBusinessSyncAt:
+      project.runtime?.lastBusinessSyncAt ?? f?.lastBusinessSyncAt ?? null,
+    businessDataEverReceived: Boolean(
+      project.runtime?.lastBusinessSyncAt ?? f?.lastBusinessSyncAt,
+    ),
   };
 }
 

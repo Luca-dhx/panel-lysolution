@@ -233,6 +233,31 @@ export const PROJECTORS = Object.freeze({
 export const PROJECTED_ENTITY_TYPES = Object.freeze(Object.keys(PROJECTORS));
 
 /**
+ * LESQUELLES DE CES ENTITÉS SONT UN ÉTAT MÉTIER — la question se tranche ici.
+ *
+ * Recevoir l'une d'elles signifie que le Panel détient une photographie neuve
+ * de ce que le projet EST. C'est cela, et seulement cela, qui date la
+ * fraîcheur métier d'une fiche (`runtime.lastBusinessSyncAt`).
+ *
+ * `DIAGNOSTIC` en est exclu : c'est un journal d'échanges, écrit par les
+ * sondes du pont. Le laisser avancer la fraîcheur ferait paraître « à jour »
+ * une fiche dont on n'a jamais reçu autre chose qu'un ping de test — ce qui
+ * est précisément le mensonge qu'on cherche à rendre impossible.
+ *
+ * La liste est DÉRIVÉE de la table des projecteurs : ajouter INVOICE ou EVENT
+ * l'inclura d'office, et il faudra un geste délibéré pour l'en retirer.
+ */
+const NON_METIER = Object.freeze(['DIAGNOSTIC']);
+export const BUSINESS_ENTITY_TYPES = Object.freeze(
+  Object.keys(PROJECTORS).filter((t) => !NON_METIER.includes(t)),
+);
+
+/** `true` si recevoir cette entité prouve un état métier neuf. */
+export function isBusinessEntity(entityType) {
+  return BUSINESS_ENTITY_TYPES.includes(entityType);
+}
+
+/**
  * « La projection de cette entité existe-t-elle pour ce projet ? »
  *
  * ── À QUOI CELA SERT ────────────────────────────────────────────────────────

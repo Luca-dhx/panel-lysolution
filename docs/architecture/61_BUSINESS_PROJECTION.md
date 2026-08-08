@@ -30,6 +30,7 @@ journal sont déjà écrits une fois pour toutes dans le cœur de synchronisatio
 | `DIAGNOSTIC` | 1.0.0 | `PanelDiagnostic` |
 | `PROJECT_PRESENTATION` | **1.4.0** | `PanelProjectPresentation` |
 | `CONTRACT` | 1.0.0 (projeté en **1.4.0**) | `PanelProjectContract` |
+| `TEAM_MEMBER` | 1.4.0 | `PanelProjectMember` (clé `projectId` + `entityId`) |
 
 Tout autre type reste **réservé** : accepté par le contrat, refusé à
 l'application tant qu'aucun projecteur ne le réclame. La table `PROJECTORS`
@@ -49,13 +50,44 @@ d'euros finit toujours par produire un « 49,00000000001 € » sur un écran cl
 
 ## 4. Fraîcheur
 
-Chaque projection conserve deux dates, et elles ne disent pas la même chose :
+### Sur la projection : deux dates, deux propriétaires
 
 - `sourceModifiedAt` — quand le **projet** a changé. C'est elle qui arbitre le
   dernier-écrit-gagne ; une écriture plus ancienne que l'état courant est
   ignorée, même si elle arrive après.
-- `receivedAt` — quand le **Panel** l'a reçue. C'est elle qui dit si le lien
-  vit encore.
+- `receivedAt` — quand le **Panel** l'a reçue.
+
+### Sur la fiche : `runtime.lastBusinessSyncAt`, et c'est la source canonique
+
+Écrite par `syncCore.applyIncoming` **après** qu'un projecteur métier a
+réussi, avec l'heure du Panel. Sont métier `PROJECT_PRESENTATION`, `CONTRACT`
+et `TEAM_MEMBER` (`BUSINESS_ENTITY_TYPES`, dérivé de la table des
+projecteurs) ; `DIAGNOSTIC` en est exclu — c'est un journal de sondes, et le
+laisser dater la fraîcheur ferait paraître « à jour » une fiche dont on n'a
+reçu qu'un ping de test.
+
+N'avancent **pas** cette date : un battement de cœur, une lecture de fiche, le
+polling de l'écran, le manifeste, une découverte sans donnée nouvelle, une
+écriture `REJECTED`, une écriture destinée à une autre instance.
+
+> **Pourquoi persistée et non déduite.** On savait la déduire —
+> `max(receivedAt)` sur les projections stockées, ce que fait encore
+> `business.freshness.lastSyncAt`. Cette déduction ment dans trois cas : un
+> tombstone efface la projection et fait **reculer** la date ; un
+> `TEAM_MEMBER` reçu ne compte pas ; une réception qui n'a rien changé n'y
+> laisse aucune trace. Une observation ne se recalcule pas.
+
+`business.freshness.lastSyncAt` reste publié : c'est l'**âge de la
+photographie affichée**, pas une preuve de réception. Les deux ne doivent pas
+être lus l'un pour l'autre.
+
+### Le battement de cœur ne prouve rien de tout cela
+
+`lastHeartbeatAt` répond à « cette instance répond-elle ? ».
+`lastBusinessSyncAt` répond à « quand ai-je reçu son état métier ? ». Un
+projet dont l'entreprise ne change pas bat pendant des jours sans rien
+projeter : sa fiche est vivante **et** n'a jamais rien reçu. L'écran écrit
+« jamais reçues » — jamais « à jour ».
 
 Un contrat qui disparaît (aucun contrat pertinent côté projet) arrive en
 **tombstone** : `deleted: true`, `payload: null`. La projection est supprimée,
