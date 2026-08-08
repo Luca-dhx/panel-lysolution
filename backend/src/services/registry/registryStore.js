@@ -14,6 +14,7 @@
 // Le laisser filtrer dans `panelprojects` créerait une quatrième copie des
 // URLs — exactement la multiplication de sources qu'on supprime.
 import PanelProject from '../../models/PanelProject.model.js';
+import { PanelProjectPresentation } from '../../models/PanelProjectProjection.model.js';
 import PanelProjectDestination, { DESTINATION_STATUS } from '../../models/PanelProjectDestination.model.js';
 import { projectEnvironmentOf } from './projectDestination.service.js';
 
@@ -45,6 +46,49 @@ function networkOf(destination) {
   };
 }
 
+/**
+ * LA PRÉSENTATION POUSSÉE PAR LE PROJET — la photographie la plus récente.
+ *
+ * ══ POURQUOI ELLE REJOINT LE POINT DE CHARGEMENT ════════════════════════════
+ *
+ * Le nom affiché d'un projet se lisait dans son MANIFESTE. Or un manifeste est
+ * une photographie prise à l'appairage, relue seulement sur action d'un
+ * opérateur : renommer l'entreprise dans le Manager ne le touche pas. Le
+ * projet poussait pourtant sa nouvelle présentation en moins d'une seconde, le
+ * Panel la persistait — et personne ne la lisait.
+ *
+ * C'est mot pour mot le défaut déjà corrigé sur les URLs, un champ plus loin :
+ * deux sources pour une même vérité, dont une seule vivante.
+ *
+ * La correction est la même, et pour la même raison : la fiche arrive DÉJÀ
+ * résolue. Un écran, un service ou une sonde ne peut plus « oublier » de lire
+ * la projection, puisqu'elle est là.
+ *
+ * Le champ est CALCULÉ, jamais persisté — `save()` le retire avant écriture.
+ */
+function presentationOf(projection) {
+  if (!projection) return null;
+  return {
+    companyName: projection.companyName ?? null,
+    tagline: projection.tagline ?? null,
+    logoUrl: projection.logoUrl ?? null,
+    logo: projection.logo ?? null,
+    contacts: projection.contacts ?? null,
+    project: projection.project ?? null,
+    network: projection.network ?? null,
+    /**
+     * QUAND LE PROJET A PRODUIT CETTE PHOTOGRAPHIE — jamais quand on l'a reçue.
+     *
+     * Le projecteur l'écrit sous `sourceModifiedAt` : c'est la date que le
+     * PROJET a mise sur son écriture, pas celle de notre réception. Les deux
+     * diffèrent dès qu'une livraison a été retardée, et c'est la première qui
+     * dit si l'on regarde bien son dernier état.
+     */
+    modifiedAt: projection.sourceModifiedAt ?? null,
+    receivedAt: projection.updatedAt ?? null,
+  };
+}
+
 /** Décore UNE fiche avec sa destination active. */
 async function withNetwork(record) {
   if (!record) return null;
@@ -53,13 +97,27 @@ async function withNetwork(record) {
   // environnement où plus personne n'irait la chercher : elle existerait sans
   // jamais être trouvée.
   const environment = projectEnvironmentOf(record);
-  if (!environment) return { ...record, activeNetwork: networkOf(null) };
+  if (!environment) {
+    const seule = await PanelProjectPresentation.findOne({ projectId: record.projectId }).lean();
+    return {
+      ...record,
+      activeNetwork: networkOf(null),
+      activePresentation: presentationOf(seule),
+    };
+  }
   const destination = await PanelProjectDestination.findOne({
     projectId: record.projectId,
     environment,
     status: DESTINATION_STATUS.ACTIVE,
   }).lean();
-  return { ...record, activeNetwork: networkOf(destination) };
+  const presentation = await PanelProjectPresentation.findOne({
+    projectId: record.projectId,
+  }).lean();
+  return {
+    ...record,
+    activeNetwork: networkOf(destination),
+    activePresentation: presentationOf(presentation),
+  };
 }
 
 /**
@@ -75,9 +133,16 @@ async function withNetworkAll(records) {
     status: DESTINATION_STATUS.ACTIVE,
   }).lean();
   const par = new Map(destinations.map((d) => [`${d.projectId}|${d.environment}`, d]));
+  // UNE seule requête pour tout le parc — la fiche projet et la liste lisent
+  // la même chose, et personne ne paie un N+1 pour l'obtenir.
+  const presentations = await PanelProjectPresentation.find({
+    projectId: { $in: records.map((r) => r.projectId) },
+  }).lean();
+  const parProjet = new Map(presentations.map((p) => [p.projectId, p]));
   return records.map((r) => ({
     ...r,
     activeNetwork: networkOf(par.get(`${r.projectId}|${projectEnvironmentOf(r) ?? ''}`) ?? null),
+    activePresentation: presentationOf(parProjet.get(r.projectId) ?? null),
   }));
 }
 
@@ -89,7 +154,7 @@ async function withNetworkAll(records) {
  * celle-là, puisque plus rien ne la recalculerait.
  */
 function forStorage(record) {
-  const { _id, activeNetwork, ...data } = record;
+  const { _id, activeNetwork, activePresentation, ...data } = record;
   return data;
 }
 

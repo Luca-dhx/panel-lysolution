@@ -146,6 +146,87 @@ pairing → heartbeat → snapshot → projection → freshness → generation
 
 ---
 
+## 4bis. L'état métier d'un projet est VIVANT
+
+> **Le Panel est une vue de ce que chaque instance déclare aujourd'hui.**
+> Un manifeste est une photographie d'appairage ; une projection est un flux.
+
+### Trois niveaux, et ils ne se remplacent pas
+
+| Niveau | Question | Source |
+|---|---|---|
+| **Vivacité** | le projet parle-t-il ? | `runtime.lastHeartbeatAt` |
+| **État métier** | ai-je sa dernière photographie ? | `PanelProjectPresentation` (poussée) |
+| **Écran** | l'onglet ouvert l'a-t-il reçue ? | `useLiveQuery` (sondage silencieux) |
+
+**Un battement frais ne prouve JAMAIS que les données affichées sont**
+**fraîches.** « Connecté » décrit la connexion, rien d'autre.
+
+### Le nom affiché venait du manifeste — c'était le défaut
+
+Renommer l'entreprise dans le Manager d'un projet ne touche pas son
+manifeste : celui-ci n'est relu que sur action d'un opérateur
+(`REFRESH_MANIFEST`, `DISCOVER_PROJECT`). Le projet poussait pourtant sa
+nouvelle présentation en moins d'une seconde, le Panel la persistait — et
+personne ne la lisait. La fiche affichait l'ancien nom indéfiniment.
+
+C'est le défaut déjà corrigé sur les URLs, un champ plus loin : deux sources
+pour une même vérité, dont une seule vivante.
+
+```
+Manager du projet : Company.name modifié
+   │  post(save) → notifyEntitySaved(COMPANY, ["name"])
+   ↓  syncTriggers : "name" ∈ COMPANY_PATHS → scheduleProjection
+PROJECT_PRESENTATION → outbox durable → push Bridge
+   ↓
+Panel : applyIncoming → projecteur → PanelProjectPresentation
+   ↓  registryStore attache activePresentation à CHAQUE fiche chargée
+describeProject().name   ← la projection, PUIS le manifeste en repli
+   ↓  useLiveQuery (sondage silencieux, liste ET fiche)
+L'écran ouvert se met à jour sans reload
+```
+
+### La priorité du nom, et son origine déclarée
+
+| Rang | Source | `presentationSource` |
+|---|---|---|
+| 1 | projection poussée (`activePresentation.companyName`) | `PROJECTION` |
+| 2 | manifeste d'appairage | `MANIFEST` |
+| 3 | nom saisi à la déclaration | `REGISTRY` |
+
+`presentationSource` et `presentationModifiedAt` accompagnent le nom : un
+écran peut donc dire d'où vient ce qu'il montre, et depuis quand — sans
+jamais inventer une fraîcheur.
+
+### Ce qui est calculé, et ne se persiste jamais
+
+`activeNetwork` et `activePresentation` sont attachés par `registryStore`,
+seul point de chargement, et retirés par `save()`. Les laisser filtrer dans
+`panelprojects` créerait une copie figée — exactement le défaut corrigé ici.
+
+### Ce que le projet ne possède pas
+
+| Classe | Exemples | Qui écrit |
+|---|---|---|
+| état du projet | nom, identité, contrat, réseau, version | **le projet** |
+| état Panel | notes, métadonnées internes, configuration locale | **le Panel** |
+| technique | battement, génération, appairage, horodatages | constaté |
+
+Une écriture Panel sur une fiche ne touche aucune projection, et
+réciproquement.
+
+### TEST / PROD et convergence
+
+Chaque instance a SA projection, indexée par `projectId`. Un
+`logicalProjectKey` commun ne mélange rien. Et si le pont a été coupé pendant
+que le projet passait de A à B puis C, la dernière écriture gagne : le Panel
+converge directement sur **C**, sans rejouer B.
+
+→ `backend/src/services/registry/registryStore.js`
+→ `tests/project-live-business-sync.test.js`
+
+---
+
 ## 5. Génération d'instance — « ces données sont-elles encore de ce monde ? »
 
 La génération d'un projet est un triplet :

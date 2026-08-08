@@ -654,6 +654,11 @@ export async function loadBusinessProjections(projectIds) {
  */
 export function describeProject(record) {
   const manifest = record.manifest ?? null;
+  /**
+   * La photographie POUSSÉE par le projet, attachée par `registryStore` — le
+   * seul point de chargement, donc le seul résolveur. Voir son commentaire.
+   */
+  const presentation = record.activePresentation ?? null;
   const runtime = record.runtime ?? {};
   /**
    * LE RÉSEAU EST DÉJÀ RÉSOLU quand la fiche arrive ici.
@@ -666,14 +671,37 @@ export function describeProject(record) {
   const network = record.activeNetwork ?? null;
   return {
     slug: record.projectKey,
-    // PRÉSENTATION (contrat >= 1.4.x) — le nom COMMERCIAL prime sur le nom
-    // technique dès que le projet le publie : c'est celui sous lequel
-    // l'équipe connaît le client.
-    name: manifest?.presentation?.companyName
+    /**
+     * ── LE NOM VIENT DE LA PROJECTION POUSSÉE, PAS DU MANIFESTE ────────────
+     *
+     * Il se lisait dans `manifest.presentation.companyName`. Un manifeste est
+     * une photographie prise à l'APPAIRAGE, relue seulement sur action d'un
+     * opérateur : renommer l'entreprise dans le Manager ne le touche jamais.
+     * Le projet poussait pourtant sa nouvelle présentation en moins d'une
+     * seconde, le Panel la persistait — et personne ne la lisait. La fiche
+     * affichait indéfiniment l'ancien nom, sans que rien ne le signale.
+     *
+     * C'est le défaut déjà corrigé sur les URLs, un champ plus loin. La
+     * correction est la même : la PROJECTION fait autorité, le manifeste n'est
+     * plus qu'un repli pour un projet qui n'en pousse pas encore.
+     */
+    name: presentation?.companyName
+      ?? manifest?.presentation?.companyName
       ?? manifest?.descriptor?.name
       ?? manifest?.project?.name
       ?? record.projectName,
-    presentation: manifest?.presentation ?? null,
+    presentation: presentation ?? manifest?.presentation ?? null,
+    /**
+     * D'OÙ VIENT CE QU'ON AFFICHE — dit, jamais deviné.
+     *
+     * `PROJECTION` : poussé par le projet, vivant. `MANIFEST` : figé à
+     * l'appairage. `REGISTRY` : le nom saisi à la déclaration, dernier repli.
+     */
+    presentationSource: presentation?.companyName ? 'PROJECTION'
+      : (manifest?.presentation?.companyName || manifest?.descriptor?.name
+        || manifest?.project?.name) ? 'MANIFEST' : 'REGISTRY',
+    /** Quand le PROJET a produit cette photographie. */
+    presentationModifiedAt: presentation?.modifiedAt ?? null,
     type: manifest?.descriptor?.type ?? null,
     description: manifest?.descriptor?.description ?? null,
     layout: manifest?.descriptor?.layout ?? null,

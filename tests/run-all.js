@@ -36,6 +36,8 @@ const TESTS = [
   // Un enregistrement, et la page « Aide » du projet suit — sans second geste.
   'panel-company-save-to-help-e2e.test.js',
   'instance-generation-freshness.test.js',
+  // L'état métier d'un projet est vivant, pas figé à l'appairage.
+  'project-live-business-sync.test.js',
   'contract-current-history.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
