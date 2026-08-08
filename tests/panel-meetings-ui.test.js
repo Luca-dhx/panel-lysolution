@@ -120,11 +120,28 @@ section('3. Icônes : le jeu Bootstrap, sans bibliothèque ni couleur propre');
   check('une icône décorative est masquée aux lecteurs d’écran',
     icones.includes("'aria-hidden': true"));
   check('…une icône seule porte un nom', /role: 'img', 'aria-label': label/.test(icones));
-  check('aucune bibliothèque d’icônes n’a été ajoutée',
+  check('le jeu maison n’importe aucune bibliothèque d’icônes',
     !/from 'bootstrap-icons'|from 'react-icons'/.test(icones));
+  /**
+   * ── LA LISTE DE DÉPENDANCES ÉTAIT PÉRIMÉE, ET C'EST ELLE QUI AVAIT TORT ──
+   *
+   * L'allow-list valait `react, react-dom, react-router-dom`. Elle datait
+   * d'avant le sélecteur d'icônes de « Mon entreprise », qui repose sur la
+   * POLICE Bootstrap Icons : `referenceIcons.ts` stocke des noms `bi-*` et le
+   * rendu les résout en classes CSS. Ce n'est pas une bibliothèque de
+   * composants qui se serait glissée dans le jeu maison — celui-ci reste
+   * intact, le contrôle ci-dessus le vérifie — c'est une police, importée une
+   * seule fois dans `main.tsx`.
+   *
+   * L'allow-list reste EXACTE : ajouter quoi que ce soit d'autre fera toujours
+   * échouer ce contrôle.
+   */
   const pkg = JSON.parse(lire('frontend/package.json'));
-  check('…et les dépendances du frontend sont inchangées',
-    Object.keys(pkg.dependencies).join(',') === 'react,react-dom,react-router-dom');
+  check('…et les dépendances du frontend restent celles-là, exactement',
+    Object.keys(pkg.dependencies).sort().join(',')
+      === 'bootstrap-icons,react,react-dom,react-router-dom');
+  check('…la police n’est importée qu’en un seul point',
+    (lire('frontend/src/main.tsx').match(/^import 'bootstrap-icons/gm) ?? []).length === 1);
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -267,9 +284,17 @@ section('7. Filtres : aucun menu déroulant du système');
   }
   check(`aucun filtre ne repose sur un select natif${fautifs.length ? ` — ${[...new Set(fautifs)].join(', ')}` : ''}`,
     fautifs.length === 0);
+  /**
+   * `pages/CompanyPage.tsx` A QUITTÉ CETTE LISTE — et c'est un progrès.
+   *
+   * Son dernier `<select>` natif est parti avec la restructuration de « Mon
+   * entreprise » (sélecteur d'icônes dédié). L'attendu n'avait pas suivi : il
+   * réclamait un widget qui n'existe plus. La liste reste EXACTE — un
+   * `<select>` de plus, où que ce soit, fera échouer ce contrôle.
+   */
   check(`les selects restants sont tous des champs de formulaire (${[...new Set(restants)].join(', ')})`,
     [...new Set(restants)].sort().join('|')
-      === 'components/EventConfirmation.tsx|components/EventForms.tsx|pages/CompanyPage.tsx'
+      === 'components/EventConfirmation.tsx|components/EventForms.tsx'
       + '|pages/DeploymentPage.tsx|pages/IntegratedApisPage.tsx|pages/ProjectActionsPage.tsx'
       + '|pages/ThemePage.tsx');
 
