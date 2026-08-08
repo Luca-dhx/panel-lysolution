@@ -30,7 +30,7 @@ import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { runLocalPreflight } from './localPreflight.js';
 import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
-import { inspectDestination, removeQuarantine, runDeprovision } from './deprovision.js';
+import { inspectDestination, removeQuarantine, runDeprovision, runDestinationDelete } from './deprovision.js';
 import { probePort, readPortLandscape } from './ports.js';
 
 /**
@@ -214,6 +214,31 @@ export class DeploymentEngine {
    * jamais avant : tant qu'une destination retirée est connue du Panel, son
    * domaine doit répondre 410 plutôt que de retomber sur un autre site.
    */
+  /**
+   * SUPPRESSION DÉFINITIVE — la part serveur : prouver, lever, re-prouver.
+   *
+   * Le pendant de `deprovision`. Elle ne touche PAS la fiche : l'application
+   * décide quand oublier une destination, le moteur constate ce que le serveur
+   * porte encore et lève la quarantaine quand plus rien ne la justifie.
+   */
+  async deleteDestination({ url, sessionId, options = {}, onStep = () => {}, transport }) {
+    const { tx, ephemeral } = this._transport(transport, sessionId);
+    try {
+      const target = this.parseUrl(url);
+      return await runDestinationDelete({
+        transport: tx,
+        host: target.host,
+        remoteRoot: options.remoteRoot,
+        port: options.backendPort ?? null,
+        profile: options.profile,
+        protectedPaths: options.protectedPaths ?? [],
+        onStep,
+      });
+    } finally {
+      if (ephemeral) await tx.close?.();
+    }
+  }
+
   async releaseQuarantine({ url, sessionId, transport }) {
     const { tx, ephemeral } = this._transport(transport, sessionId);
     try {

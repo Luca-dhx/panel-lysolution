@@ -36,6 +36,10 @@ export { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity
 export {
   DEPROVISION_STEPS,
   DEPROVISION_STEP_IDS,
+  DESTINATION_DELETE_STEPS,
+  DESTINATION_DELETE_STEP_IDS,
+  DESTINATION_DELETE_REMOTE_STEP_IDS,
+  runDestinationDelete,
   NEVER_DELETE,
   assertSafeSiteRoot,
   renderNginxQuarantine,

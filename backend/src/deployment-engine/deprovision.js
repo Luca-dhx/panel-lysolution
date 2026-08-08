@@ -66,6 +66,56 @@ export const DEPROVISION_STEPS = Object.freeze([
 export const DEPROVISION_STEP_IDS = Object.freeze(DEPROVISION_STEPS.map((s) => s.id));
 
 /**
+ * ÉTAPES DE LA SUPPRESSION DÉFINITIVE — le second geste, et il est distinct.
+ *
+ * ══ POURQUOI DEUX OPÉRATIONS, ET PAS UNE ════════════════════════════════════
+ *
+ *   DEPROVISION        vide le serveur et POSE la quarantaine 410.
+ *                      La destination reste connue : son domaine dit « cette
+ *                      adresse n'existe plus » au lieu de retomber sur le site
+ *                      d'un autre projet.
+ *
+ *   DESTINATION_DELETE oublie la destination. C'est le seul moment où la
+ *                      quarantaine doit être LEVÉE — parce qu'après, plus
+ *                      aucune fiche ne dirait qu'elle est là.
+ *
+ * ══ L'IMPASSE QUE CETTE LISTE FERME ═════════════════════════════════════════
+ *
+ * Le moteur savait déjà lever une quarantaine (`removeQuarantine`), et
+ * `DeploymentEngine.releaseQuarantine` l'exposait — mais RIEN ne l'appelait.
+ * La suppression se contentait de refuser : « le domaine est encore neutralisé
+ * (410) : utilisez Supprimer la destination avec une session serveur ouverte »
+ * — c'est-à-dire l'action qu'elle était en train de refuser. L'opérateur
+ * n'avait aucune sortie : le retrait répondait « déjà vidée », la suppression
+ * « quarantaine présente ».
+ *
+ * La capacité existait ; le chemin n'existait pas.
+ *
+ * ══ LA LISTE EST UNIQUE ═════════════════════════════════════════════════════
+ *
+ * Elle porte les étapes APPLICATIVES (verrou, retrait de la fiche) comme les
+ * étapes SERVEUR. `runDestinationDelete` n'exécute que les secondes ; le
+ * contrôleur émet les premières. L'écran, lui, reçoit UN plan — jamais une
+ * copie tenue à la main qui finirait par diverger des libellés réels.
+ */
+export const DESTINATION_DELETE_STEPS = Object.freeze([
+  Object.freeze({ id: 'delete.lock', label: 'Verrouillage de la destination', critical: true, scope: 'APP' }),
+  Object.freeze({ id: 'delete.inspect', label: 'Inspection du serveur', critical: true, scope: 'REMOTE' }),
+  Object.freeze({ id: 'delete.runtime.verify', label: 'Vérification : service, port et routage absents', critical: true, scope: 'REMOTE' }),
+  Object.freeze({ id: 'delete.quarantine.release', label: 'Levée de la quarantaine (410)', critical: true, scope: 'REMOTE' }),
+  Object.freeze({ id: 'delete.verify', label: 'Vérification finale du serveur', critical: true, scope: 'REMOTE' }),
+  Object.freeze({ id: 'delete.record.remove', label: 'Suppression de la fiche', critical: true, scope: 'APP' }),
+  Object.freeze({ id: 'delete.finalize', label: 'Destination supprimée', critical: false, scope: 'APP' }),
+]);
+
+export const DESTINATION_DELETE_STEP_IDS = Object.freeze(DESTINATION_DELETE_STEPS.map((s) => s.id));
+
+/** Les étapes que le MOTEUR exécute — les autres appartiennent à l'application. */
+export const DESTINATION_DELETE_REMOTE_STEP_IDS = Object.freeze(
+  DESTINATION_DELETE_STEPS.filter((s) => s.scope === 'REMOTE').map((s) => s.id),
+);
+
+/**
  * Chemins qui ne doivent JAMAIS être supprimés, quelle que soit la fiche qui
  * les désigne. Un `siteRoot` mal renseigné, une racine distante erronée, une
  * fiche importée : la garde ne dépend pas de la qualité de la donnée d'entrée.
@@ -520,6 +570,149 @@ export async function runDeprovision({
   }
 }
 
+/**
+ * SUPPRESSION DÉFINITIVE — la part SERVEUR, et rien d'autre.
+ *
+ * ══ CE QU'ELLE PROUVE AVANT DE LEVER QUOI QUE CE SOIT ═══════════════════════
+ *
+ * Lever une quarantaine rend le domaine au `default_server` de Nginx. Si un
+ * service, un port ou un routage applicatif subsistait, le visiteur
+ * retomberait sur le site d'un AUTRE projet — la fuite exacte que la
+ * quarantaine existe pour empêcher. On relit donc le serveur AVANT, et l'on
+ * refuse si quelque chose reste debout.
+ *
+ * ══ IDEMPOTENTE PAR CONSTRUCTION ════════════════════════════════════════════
+ *
+ * Chaque étape regarde avant d'agir. Une quarantaine déjà levée n'est pas une
+ * erreur : c'est une étape `skipped` avec sa raison. Une seconde exécution
+ * après interruption est un SUCCÈS, pas un « inutile ».
+ *
+ * @returns {Promise<{ok:boolean, steps:object[], failedStep:string|null, inspection:object|null, error?:object}>}
+ */
+export async function runDestinationDelete({
+  transport, host, remoteRoot = '/var/www', port = null, profile,
+  protectedPaths = [], onStep = () => {},
+}) {
+  const steps = [];
+  let failedStep = null;
+  let inspection = null;
+
+  const step = async (id, fn) => {
+    const meta = DESTINATION_DELETE_STEPS.find((s) => s.id === id) ?? { id, label: id };
+    const debut = clock();
+    onStep({ step: id, label: meta.label, status: 'running' });
+    try {
+      const detail = await fn();
+      // `already_done` est une ISSUE À PART ENTIÈRE : « rien à faire » et
+      // « fait à l'instant » ne se racontent pas de la même façon.
+      const statut = detail?.alreadyDone === true ? 'skipped' : 'ok';
+      const done = {
+        step: id, label: meta.label, status: statut,
+        durationMs: clock() - debut, detail: detail ?? null,
+        reason: detail?.reason ?? null,
+      };
+      steps.push(done);
+      onStep({ ...done });
+      return detail;
+    } catch (err) {
+      const failed = {
+        step: id, label: meta.label, status: 'error', durationMs: clock() - debut,
+        error: { code: err.code || 'ERROR', message: err.message },
+      };
+      steps.push(failed);
+      onStep({ ...failed });
+      failedStep = id;
+      throw err;
+    }
+  };
+
+  try {
+    const topo = planTopology({ host, remoteRoot, profile });
+    const pm2Name = serviceName(host);
+    // La forme du chemin est validée comme au retrait : une fiche incohérente
+    // ne doit pas pouvoir désigner le dossier d'un autre projet.
+    const siteRoot = assertSafeSiteRoot(topo.siteRoot, { remoteRoot, host, protectedPaths });
+
+    inspection = await step('delete.inspect', async () =>
+      inspectDestination(transport, { host, remoteRoot, port, profile }));
+
+    await step('delete.runtime.verify', async () => {
+      const processus = await pm2List(transport);
+      const pm2Present = processus.some((p) => p?.name === pm2Name);
+      const vhost = await transport.exec(`test -e ${nginxEnabledPath(host)} && echo OUI || echo NON`);
+      const routagePresent = (vhost.stdout ?? '').trim() === 'OUI';
+      let portTenu = null;
+      if (port) {
+        const res = await transport.exec(`ss -ltnp 2>/dev/null | grep ':${port} ' || echo LIBRE`);
+        const ligne = (res.stdout ?? '').trim();
+        if (ligne !== 'LIBRE' && ligne !== '') portTenu = ligne.replace(/\s+/g, ' ').slice(0, 200);
+      }
+      const dossier = await transport.exec(`test -d ${siteRoot} && echo OUI || echo NON`);
+      const fichiersPresents = (dossier.stdout ?? '').trim() === 'OUI';
+
+      const restants = [
+        pm2Present ? `le process PM2 « ${pm2Name} » est encore déclaré` : null,
+        portTenu ? `le port ${port} est encore détenu (${portTenu})` : null,
+        routagePresent ? 'une configuration Nginx applicative est encore active' : null,
+        fichiersPresents ? `le dossier ${siteRoot} existe encore` : null,
+      ].filter(Boolean);
+
+      if (restants.length > 0) {
+        throw new DeploymentError('DESTINATION_NOT_EMPTY',
+          `Suppression impossible : ${restants.join(' · ')}. Retirez d'abord le déploiement.`, {
+            step: 'delete.runtime.verify', details: { restants },
+          });
+      }
+      return { pm2Absent: true, portFree: true, applicationRoutingAbsent: true, filesAbsent: true };
+    });
+
+    await step('delete.quarantine.release', async () => {
+      const lien = quarantineEnabledPath(host);
+      const conf = quarantineConfigPath(host);
+      const present = await transport.exec(
+        `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
+      if ((present.stdout ?? '').trim() !== 'OUI') {
+        return { alreadyDone: true, reason: 'already_absent', host };
+      }
+      // `removeQuarantine` valide `nginx -t` AVANT de recharger : le serveur
+      // doit rester rechargeable pour tous les autres sites.
+      const retire = await removeQuarantine(transport, { host });
+      return { ...retire, host };
+    });
+
+    await step('delete.verify', async () => {
+      const lien = quarantineEnabledPath(host);
+      const conf = quarantineConfigPath(host);
+      const reste = await transport.exec(
+        `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
+      if ((reste.stdout ?? '').trim() === 'OUI') {
+        throw new DeploymentError('QUARANTINE_STILL_PRESENT',
+          `La quarantaine de « ${host} » est encore en place après sa levée.`, {
+            step: 'delete.verify', details: { lien, conf },
+          });
+      }
+      const processus = await pm2List(transport);
+      if (processus.some((p) => p?.name === pm2Name)) {
+        throw new DeploymentError('PM2_PROCESS_STILL_PRESENT',
+          `Le process PM2 « ${pm2Name} » est réapparu pendant la suppression.`, {
+            step: 'delete.verify', details: { pm2Name },
+          });
+      }
+      return { quarantineAbsent: true, pm2Absent: true };
+    });
+
+    return { ok: true, steps, failedStep: null, inspection };
+  } catch (err) {
+    return {
+      ok: false,
+      steps,
+      failedStep,
+      inspection,
+      error: { code: err.code || 'ERROR', message: err.message, details: err.details ?? null },
+    };
+  }
+}
+
 function clock() {
   // Monotone, disponible partout — jamais Date.now pour une durée.
   return Number(process.hrtime.bigint() / 1_000_000n);
@@ -528,6 +721,10 @@ function clock() {
 export default {
   DEPROVISION_STEPS,
   DEPROVISION_STEP_IDS,
+  DESTINATION_DELETE_STEPS,
+  DESTINATION_DELETE_STEP_IDS,
+  DESTINATION_DELETE_REMOTE_STEP_IDS,
+  runDestinationDelete,
   NEVER_DELETE,
   assertSafeSiteRoot,
   renderNginxQuarantine,
