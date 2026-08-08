@@ -1,28 +1,31 @@
 /**
- * ACTIONS D'UNE CONNEXION — générer un code, révoquer un appairage.
+ * ACTIONS D'UNE FICHE — générer un code, révoquer son appairage.
  *
  * ══ POURQUOI CE COMPOSANT EXISTE ════════════════════════════════════════════
  *
  * La refonte de la page Appairages a retiré la table qui portait ces deux
  * boutons. Les points d'API, eux, n'ont jamais bougé : les actions étaient
  * devenues INJOIGNABLES depuis l'interface, ce qui est pire que mal rangé.
- * Elles reviennent ici, à leur place — sur la connexion qu'elles concernent,
- * et non sur une ligne de tableau qui ne disait pas de quel environnement il
- * s'agissait.
+ * Elles reviennent ici, à leur place — sur la fiche qu'elles concernent.
+ *
+ * ══ UNE FICHE, UN APPAIRAGE ═════════════════════════════════════════════════
+ *
+ * Ces actions ne prennent plus d'environnement en paramètre : elles portent
+ * sur LA fiche. L'environnement, quand il est connu, ne sert plus qu'à
+ * calibrer la gravité de la confirmation — révoquer une production n'est pas
+ * révoquer une recette.
  *
  * ══ POURQUOI UNE MODALE ET PAS `window.confirm` ═════════════════════════════
  *
- * Parce que `confirm()` ne peut pas nommer l'environnement en rouge, ne peut
- * pas énumérer les conséquences, et ne peut pas exiger une confirmation
- * renforcée en production. Il pose une question de la même façon pour
- * « révoquer la recette » et « révoquer la production », alors que ce sont
- * deux gestes de gravité très différente.
+ * Parce que `confirm()` ne peut pas énumérer les conséquences ni exiger une
+ * confirmation renforcée en production. Il pose la question de la même façon
+ * dans les deux cas, alors que ce sont deux gestes de gravité très différente.
  */
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { CopyField } from '@/components/ui';
 import { formatDateTime } from '@/lib/format';
-import type { EnvironmentConnection } from '@/lib/projectConnections';
+import type { PairingRow } from '@/lib/projectConnections';
 
 /** La phrase à recopier pour révoquer une PRODUCTION. Jamais pour une recette. */
 const PHRASE_PROD = 'RÉVOQUER LA PRODUCTION';
@@ -77,25 +80,19 @@ function Modale({
 }
 
 export function ConnectionActions({
-  connection,
-  projectName,
+  row,
   onDone,
 }: {
-  connection: EnvironmentConnection;
-  projectName: string;
+  row: PairingRow;
   onDone: () => Promise<void> | void;
 }) {
-  const { project, environment } = connection;
+  const { project, environment, name: projectName } = row;
   const [menuOuvert, setMenuOuvert] = useState(false);
   const [dialogue, setDialogue] = useState<'REVOKE' | 'CODE' | null>(null);
   const [phrase, setPhrase] = useState('');
   const [occupe, setOccupe] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
   const [code, setCode] = useState<{ value: string; expiresAt: string } | null>(null);
-
-  // Sans fiche, il n'y a pas d'appairage à gérer : le raccourci de création
-  // est rendu ailleurs (`EnvironmentConnectionRow`).
-  if (!project) return null;
 
   const estProd = environment === 'PROD';
   const appaire = project.pairing.status === 'PAIRED';
@@ -146,7 +143,7 @@ export function ConnectionActions({
           className="btn btn-secondary btn-small conn-menu-trigger"
           aria-haspopup="menu"
           aria-expanded={menuOuvert}
-          aria-label={`Autres actions pour la connexion ${environment} de ${projectName}`}
+          aria-label={`Autres actions pour ${projectName}`}
           onClick={() => setMenuOuvert((o) => !o)}
         >
           •••
@@ -187,10 +184,10 @@ export function ConnectionActions({
       </div>
 
       {dialogue === 'CODE' ? (
-        <Modale titre={`Code d’appairage — ${environment}`} onClose={fermer}>
+        <Modale titre="Code d’appairage" onClose={fermer}>
           <p className="modal-text">
-            Ce code relie l’instance <strong>{environment}</strong> de{' '}
-            <strong>{projectName}</strong> au Panel. Il n’est affiché qu’une fois.
+            Ce code relie <strong>{projectName}</strong> au Panel. Il n’est affiché
+            qu’une fois.
           </p>
           {erreur ? <div className="alert alert-error">{erreur}</div> : null}
           {occupe ? <p className="muted">Génération…</p> : null}
@@ -209,10 +206,11 @@ export function ConnectionActions({
       ) : null}
 
       {dialogue === 'REVOKE' ? (
-        <Modale titre={`Révoquer la connexion ${environment}`} onClose={fermer}>
+        <Modale titre="Révoquer l’appairage" onClose={fermer}>
           <p className="modal-text">
-            L’instance <strong>{environment}</strong> de <strong>{projectName}</strong> passera en
-            mode autonome : elle continuera de fonctionner, sans plus dialoguer avec le Panel.
+            <strong>{projectName}</strong>
+            {environment ? <> (<strong>{environment}</strong>)</> : null} passera en mode
+            autonome : le projet continuera de fonctionner, sans plus dialoguer avec le Panel.
           </p>
           {/*
             CE QUE LA RÉVOCATION NE FAIT PAS — dit explicitement.
@@ -220,9 +218,9 @@ export function ConnectionActions({
             effets de bord. Les énumérer vaut mieux que de le laisser deviner.
           */}
           <ul className="modal-list">
-            <li>L’autre environnement n’est pas touché.</li>
+            <li>Les autres fiches du parc ne sont pas touchées.</li>
             <li>La destination n’est pas supprimée.</li>
-            <li>Le projet et son historique restent dans le Panel.</li>
+            <li>La fiche et son historique restent dans le Panel.</li>
             <li>Aucune donnée du site n’est modifiée.</li>
           </ul>
 
@@ -253,7 +251,7 @@ export function ConnectionActions({
               disabled={occupe || !revocationAutorisee}
               onClick={() => void revoquer()}
             >
-              {occupe ? 'Révocation…' : `Révoquer ${environment}`}
+              {occupe ? 'Révocation…' : 'Révoquer l’appairage'}
             </button>
           </div>
         </Modale>

@@ -35,8 +35,9 @@ import { useProject, useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import { getProjectDataFreshness } from '@/lib/projectFreshness';
-import { groupProjectsByLogicalProject } from '@/lib/projectConnections';
-import { EnvironmentConnectionRow } from '@/components/connections';
+import { toPairingRow } from '@/lib/projectConnections';
+import { ConnectionStatusDot } from '@/components/connections';
+import { ConnectionActions } from '@/components/ConnectionActions';
 import type {
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
 } from '@/types';
@@ -92,9 +93,12 @@ export function ProjectDetailPage() {
     else next.set('tab', t);
     setSearchParams(next, { replace: true });
   };
-  /** L'environnement mis en avant par le lien profond, s'il y en a un. */
-  const envParam = searchParams.get('env');
-  const focusEnvironment = envParam === 'TEST' || envParam === 'PROD' ? envParam : null;
+  /*
+    `?env=TEST` A DISPARU DE CETTE PAGE.
+    Il servait à mettre en avant l'une des deux lignes d'une fiche qui en
+    portait deux. Une fiche n'en porte plus qu'une : il n'y a plus rien à
+    désigner, et un paramètre qui ne désigne rien finit par mentir.
+  */
   const showRefreshHint = useSustained(isRefreshing, 500);
 
   if (isInitialLoading) return <div className="page"><p className="muted">Chargement du projet…</p></div>;
@@ -174,18 +178,21 @@ export function ProjectDetailPage() {
       </header>
 
       {/*
-        UNE FICHE NE CHANGE PAS D'IDENTITÉ.
+        UNE FICHE = UNE INSTANCE. RIEN NE MÈNE AILLEURS DEPUIS ICI.
 
-        Un contrôle segmenté `[TEST][PROD]` avait été posé ici. Il naviguait
-        correctement — mais il donnait à lire l'inverse de ce que le modèle
-        dit : une fiche décrit UNE instance, un environnement, une destination,
-        un appairage, un état métier. On ne « bascule » pas une fiche d'un monde
-        à l'autre ; on ouvre celle de l'autre monde.
+        Deux constructions sont passées par cet emplacement, et toutes deux
+        sont parties :
 
-        Reste donc un LIEN, discret, qui dit qu'une sœur existe et y mène. La
-        fiche courante, elle, ne bouge pas d'un octet.
+          · un contrôle segmenté `[TEST][PROD]`, qui donnait à lire l'inverse
+            du modèle — on ne « bascule » pas une fiche d'un monde à l'autre ;
+          · puis un lien « Autre instance de ce produit », dérivé de
+            `logicalProjectKey`.
+
+        Le second était plus honnête, mais reposait sur une situation qui ne
+        peut pas exister : un Panel ne sert qu'un environnement, et l'appairage
+        refuse l'autre. La « sœur » affichée n'était jamais qu'une fiche
+        fantôme, jamais appairée.
       */}
-      <SisterInstanceLink project={project} />
 
       {/* AVANT toute donnée métier : ce qui suit est-il encore vrai ? */}
       <FreshnessBanner fraicheur={fraicheur} />
@@ -222,67 +229,12 @@ export function ProjectDetailPage() {
         <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
-      {tab === 'dev' && isDev ? <DeveloperTab project={project} focusEnvironment={focusEnvironment} fraicheur={fraicheur} /> : null}
+      {tab === 'dev' && isDev ? <DeveloperTab project={project} fraicheur={fraicheur} /> : null}
     </div>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-
-/**
- * L'AUTRE INSTANCE DU MÊME PRODUIT — un lien, jamais une bascule.
- *
- * ══ CE QU'IL EST, ET CE QU'IL N'EST PAS ═════════════════════════════════════
- *
- * `logicalProjectKey` dit que deux fiches décrivent le même produit. Il ne dit
- * RIEN de leurs données : ni le nom, ni le contrat, ni la destination, ni la
- * protection. Ce lien est donc de la NAVIGATION, et rien d'autre — il mène au
- * `projectId` de la sœur, dont la fiche se chargera seule.
- *
- * C'est ce qui rend structurellement impossible qu'une valeur de PROD
- * apparaisse sur la fiche TEST : ce n'est pas la même page, et `useLiveQuery`
- * change de clé avec le `projectId`.
- *
- * ══ QUAND LA SŒUR N'EXISTE PAS ══════════════════════════════════════════════
- *
- * On ne montre rien. Un projet sans production déclarée est un projet normal,
- * pas un projet incomplet — et l'appairage se propose depuis la page qui sert
- * à cela.
- */
-function SisterInstanceLink({ project }: { project: PublicProject }) {
-  // Le parc est déjà en cache : les sœurs s'y lisent sans requête.
-  const { projects } = useProjects();
-  const groupe = useMemo(() => {
-    const source = projects.length ? projects : [project];
-    const groupes = groupProjectsByLogicalProject(source);
-    return (
-      groupes.find((g) => g.projects.some((p) => p.projectId === project.projectId))
-      ?? groupProjectsByLogicalProject([project])[0]
-    );
-  }, [projects, project]);
-
-  /** Les sœurs RÉELLES : une autre fiche, un autre environnement. */
-  const soeurs = groupe.connections.filter(
-    (c) => c.project !== null && c.project.projectId !== project.projectId,
-  );
-  if (soeurs.length === 0) return null;
-
-  return (
-    <p className="sister-instances">
-      <span className="sister-label">
-        {soeurs.length > 1 ? 'Autres instances de ce produit' : 'Autre instance de ce produit'}
-      </span>
-      {soeurs.map((c) => (
-        <Link key={c.environment} className="sister-link" to={`/projects/${c.project?.projectId}`}>
-          {/* Le symbole accompagne le mot : l'état ne se lit jamais à la
-              seule couleur. */}
-          <span className="sister-env">{c.environment}</span>
-          <span className="sister-state">{c.state.symbol} {c.state.label}</span>
-        </Link>
-      ))}
-    </p>
-  );
-}
 
 function OverviewTab({
   project,
@@ -469,57 +421,79 @@ function OverviewTab({
  * Les développeurs gardent leur vocabulaire : c'est lui qui sert au diagnostic.
  */
 /**
- * LES CONNEXIONS DU PROJET — la première chose que l'onglet doit montrer.
+ * LA CONNEXION DE CETTE FICHE — une, et une seule.
  *
- * ── CE QU'IL MONTRAIT ─────────────────────────────────────────────────────
- * Un cadre « Connexion au Panel » listant `pairing.status`, `liveness`,
- * « Curseur de synchronisation », « Outbox » — des noms de champs, au singulier,
- * pour un projet qui a deux environnements. Rien ne disait où était la
- * production, ni comment l'appairer.
+ * ══ CE QUE CE CADRE MONTRAIT ════════════════════════════════════════════════
  *
- * ── CE QU'IL MONTRE ───────────────────────────────────────────────────────
- * Les deux environnements, leur état, leur domaine, leurs deux horodatages
- * distincts, et l'action qui manque. Le détail technique n'est pas supprimé :
- * il descend d'un cran, dans un repli.
+ * Deux lignes : TEST et PROD, l'une remplie, l'autre vide avec un bouton
+ * « Appairer la production ». Ce bouton était une impasse — un Panel ne sert
+ * qu'un environnement, et l'appairage de l'autre est refusé côté pont. La
+ * ligne vide, elle, se lisait comme un constat sur la production du client,
+ * alors que le Panel n'en savait rien.
+ *
+ * ══ CE QU'IL MONTRE ═════════════════════════════════════════════════════════
+ *
+ * L'instance de CETTE fiche : son état, l'environnement qu'elle DÉCLARE, sa
+ * destination courante, ses deux horodatages distincts. Avant appairage, trois
+ * de ces quatre valeurs sont « non connues » — et le disent.
  */
-function ConnectionsSection({
-  project,
-  focusEnvironment,
-}: {
-  project: PublicProject;
-  focusEnvironment: 'TEST' | 'PROD' | null;
-}) {
-  // Le parc entier est déjà en cache : les sœurs s'y lisent sans requête.
-  const { projects, reload } = useProjects();
-  const groupe = useMemo(() => {
-    const groupes = groupProjectsByLogicalProject(projects.length ? projects : [project]);
-    return (
-      groupes.find((g) => g.projects.some((p) => p.projectId === project.projectId))
-      ?? groupProjectsByLogicalProject([project])[0]
-    );
-  }, [projects, project]);
+function ConnectionSection({ project }: { project: PublicProject }) {
+  const { reload } = useProjects();
+  const row = useMemo(() => toPairingRow(project), [project]);
 
   return (
-    <Card title="Connexions">
+    <Card title="Connexion">
       <p className="muted read-only-note">
-        Une fiche du registre décrit UNE instance appairée. Les instances d’un
-        même projet sont regroupées par l’identité que le projet annonce
-        lui-même — jamais par ressemblance de nom ou de domaine.
+        Cette fiche décrit UNE instance appairée : un projet distant, un
+        environnement, une destination. L’environnement et la destination
+        viennent du projet lui-même — le Panel ne les devine jamais.
       </p>
-      <div className="conn-detail-list">
-        {groupe.connections.map((c) => (
-          <div
-            key={c.environment}
-            className={
-              focusEnvironment === c.environment ? 'conn-focus' : undefined
-            }
-            /* Le lien profond met en avant l'environnement demandé : on arrive
-               SUR la bonne connexion, pas sur une page où il faut la chercher. */
-            aria-current={focusEnvironment === c.environment ? 'true' : undefined}
-          >
-            <EnvironmentConnectionRow connection={c} group={groupe} onChanged={reload} />
-          </div>
-        ))}
+
+      <dl className="detail-list">
+        <div>
+          <dt>État</dt>
+          <dd>
+            <span className="pairing-state">
+              <ConnectionStatusDot row={row} />
+              <span className={`conn-state-label conn-state-${row.state.tone}`}>
+                {row.state.label}
+              </span>
+            </span>
+          </dd>
+        </div>
+        <div>
+          <dt>Environnement <span className="dt-source">déclaré par le projet</span></dt>
+          <dd>{row.environment ?? <span className="conn-unknown">— non connu —</span>}</dd>
+        </div>
+        <div>
+          <dt>Destination <span className="dt-source">annoncée par le projet</span></dt>
+          <dd>
+            {row.destination
+              ? <code className="inline-code">{row.destination}</code>
+              : <span className="conn-unknown">— non connue —</span>}
+          </dd>
+        </div>
+        <div>
+          <dt>Dernier contact <span className="dt-source">observé par le Panel</span></dt>
+          <dd>{row.lastContactLabel ?? <span className="conn-unknown">— jamais —</span>}</dd>
+        </div>
+        <div>
+          <dt>Données métier <span className="dt-source">reçues et appliquées</span></dt>
+          <dd>
+            {row.lastBusinessSyncAt
+              ? formatDateTime(row.lastBusinessSyncAt)
+              : <span className="conn-unknown">— jamais reçues —</span>}
+          </dd>
+        </div>
+      </dl>
+
+      {/*
+        UNE SEULE ACTION D'APPAIRAGE, ET ELLE PORTE SUR CETTE FICHE.
+        Aucun bouton n'ajoute une seconde destination, ni n'appaire « la
+        production » : ce serait une autre fiche, dans un autre Panel.
+      */}
+      <div className="pairing-actions">
+        <ConnectionActions row={row} onDone={reload} />
       </div>
     </Card>
   );
@@ -527,11 +501,9 @@ function ConnectionsSection({
 
 function DeveloperTab({
   project,
-  focusEnvironment,
   fraicheur,
 }: {
   project: PublicProject;
-  focusEnvironment: 'TEST' | 'PROD' | null;
   /* La fraîcheur est calculée UNE fois, par la fiche, et descend telle quelle.
      La recalculer ici rouvrirait la porte à deux règles divergentes — le
      défaut même que cette règle unique a fermé. */
@@ -545,7 +517,7 @@ function DeveloperTab({
 
   return (
     <>
-      <ConnectionsSection project={project} focusEnvironment={focusEnvironment} />
+      <ConnectionSection project={project} />
 
       {/*
         ── LES QUATRE HORODATAGES NE FUSIONNENT JAMAIS ───────────────────────
@@ -598,21 +570,26 @@ function DeveloperTab({
             */}
             <div><dt>Instance <span className="dt-source">autorité des données métier</span></dt>
               <dd><code className="inline-code">{project.projectId}</code></dd></div>
-            <div><dt>Environnement</dt><dd>{project.environment ?? '—'}</dd></div>
+            <div><dt>Environnement</dt><dd>
+              {project.environment ?? <span className="conn-unknown">— non connu —</span>}
+            </dd></div>
             <div><dt>Destination</dt><dd>
               {project.descriptor?.primaryDomain
                 ? <code className="inline-code">{project.descriptor.primaryDomain}</code>
-                : <span className="muted">aucune destination active</span>}
+                : <span className="conn-unknown">— non connue —</span>}
             </dd></div>
             <div><dt>Source de la présentation</dt><dd>
               <code className="inline-code">{project.descriptor?.presentationSource ?? '—'}</code>
             </dd></div>
-            <div><dt>Identité logique <span className="dt-source">parenté, jamais un périmètre de données</span></dt><dd>
-              {project.logicalProjectKey
-                ? <code className="inline-code">{project.logicalProjectKey}</code>
-                : <span className="muted">aucune — fiche seule de son groupe</span>}
-            </dd></div>
-            <div><dt>Clé technique de la fiche</dt><dd><code className="inline-code">{project.projectKey}</code></dd></div>
+            {/*
+              L'IDENTITÉ LOGIQUE A QUITTÉ CET ÉCRAN.
+              Elle ne détermine ni le nom, ni le contrat, ni la destination, ni
+              la fraîcheur — et depuis que rien ne regroupe deux fiches, elle
+              ne détermine plus rien du tout. Le champ reste en base pour les
+              fiches historiques ; l'API ne le publie plus.
+            */}
+            <div><dt>Clé technique de la fiche <span className="dt-source">anti-collision, jamais un périmètre</span></dt>
+              <dd><code className="inline-code">{project.projectKey}</code></dd></div>
             <div><dt>Appairage</dt><dd>{project.pairing.status}</dd></div>
             <div><dt>Appairé le</dt><dd>{formatDateTime(project.pairing.pairedAt)}</dd></div>
             <div><dt>Révoqué le</dt><dd>{formatDateTime(project.pairing.revokedAt)}</dd></div>
@@ -676,7 +653,7 @@ function DeveloperTab({
           </dl>
         </Card>
 
-        <DestinationsCard projectId={project.projectId} />
+        <DestinationsCard projectId={project.projectId} environment={project.environment ?? null} />
 
       <Card title="Fiche technique du projet">
         <dl className="detail-list">
@@ -984,7 +961,16 @@ function EventsTab({ project }: { project: PublicProject }) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * OÙ VIT CE PROJET — la vérité du Panel, environnement par environnement.
+ * OÙ VIT CETTE INSTANCE — la vérité du Panel, pour SON environnement.
+ *
+ * ══ CE QUI A CHANGÉ ═════════════════════════════════════════════════════════
+ *
+ * Ce cadre affichait deux sections, `TEST` puis `PROD`, pour une fiche qui n'en
+ * sert qu'une. La seconde disait invariablement « Aucune destination active »,
+ * ce qui se lisait comme un défaut alors que c'était une absence de sujet.
+ *
+ * Une fiche non appairée n'affiche aucune destination : son environnement
+ * n'est pas encore connu, donc la question « où vit-elle » n'a pas de réponse.
  *
  * ══ POURQUOI IL N'Y A NI « DÉPLOYER », NI « REDÉPLOYER », NI « MIGRER » ═════
  *
@@ -1000,7 +986,14 @@ function EventsTab({ project }: { project: PublicProject }) {
  * Les destinations sont chargées une fois, pas sondées : elles ne changent
  * qu'au rythme des déménagements.
  */
-function DestinationsCard({ projectId }: { projectId: string }) {
+function DestinationsCard({
+  projectId,
+  environment,
+}: {
+  projectId: string;
+  /** L'environnement DÉCLARÉ par le projet. `null` tant qu'il n'a pas parlé. */
+  environment: 'TEST' | 'PROD' | null;
+}) {
   const isDev = useIsDev();
   const [parEnv, setParEnv] = useState<ProjectDestinationsByEnvironment | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -1030,18 +1023,34 @@ function DestinationsCard({ projectId }: { projectId: string }) {
     }
   };
 
+  // Tant que le projet n'a pas déclaré son environnement, la question « où
+  // vit-il » n'a pas de réponse — et on ne la fabrique pas.
+  if (!environment) {
+    return (
+      <Card title="Destination">
+        <p className="muted">
+          <span className="conn-unknown">— non connue —</span> Le projet n’a pas
+          encore déclaré son environnement ni sa destination. Le Panel les
+          enregistrera dès le premier échange.
+        </p>
+      </Card>
+    );
+  }
+
   if (!parEnv) {
     return (
-      <Card title="Destinations">
+      <Card title="Destination">
         <p className="muted">{erreur ?? 'Chargement…'}</p>
       </Card>
     );
   }
 
+  const bloc = parEnv[environment];
+
   return (
-    <Card title="Destinations">
+    <Card title="Destination">
       <p className="muted read-only-note">
-        Le Panel n’effectue aucun déploiement : ces destinations sont ce que le
+        Le Panel n’effectue aucun déploiement : cette destination est ce que le
         projet lui a ANNONCÉ depuis son propre poste. Un changement de domaine
         se déclenche là-bas, et la bascule n’a lieu ici qu’une fois la
         photographie complète reçue.
@@ -1049,42 +1058,35 @@ function DestinationsCard({ projectId }: { projectId: string }) {
 
       {erreur ? <div className="alert alert-error">{erreur}</div> : null}
 
-      {(['TEST', 'PROD'] as const).map((env) => {
-        const bloc = parEnv[env];
-        return (
-          <section key={env} className="destination-env">
-            <h3 className="section-title">{env}</h3>
+      <section className="destination-env">
+        {bloc?.active ? (
+          <DestinationRow d={bloc.active} occupe={occupe} isDev={isDev} onAgir={agir} />
+        ) : (
+          <p className="muted">
+            Aucune destination active. Le Panel ne sait pas où vit cette
+            instance — et n’affichera aucune adresse plutôt qu’une adresse
+            périmée.
+          </p>
+        )}
 
-            {bloc.active ? (
-              <DestinationRow d={bloc.active} occupe={occupe} isDev={isDev} onAgir={agir} />
-            ) : (
-              <p className="muted">
-                Aucune destination active. Le Panel ne sait pas où vit ce projet
-                dans cet environnement — et n’affichera aucune adresse plutôt
-                qu’une adresse périmée.
-              </p>
-            )}
+        {bloc?.pending ? (
+          <div className="alert alert-warning">
+            <strong>Migration annoncée vers {bloc.pending.host}.</strong> La
+            bascule attend la photographie complète
+            {bloc.pending.missing.length
+              ? ` — il manque : ${bloc.pending.missing.join(', ')}.`
+              : '.'}
+          </div>
+        ) : null}
 
-            {bloc.pending ? (
-              <div className="alert alert-warning">
-                <strong>Migration annoncée vers {bloc.pending.host}.</strong> La
-                bascule attend la photographie complète
-                {bloc.pending.missing.length
-                  ? ` — il manque : ${bloc.pending.missing.join(', ')}.`
-                  : '.'}
-              </div>
-            ) : null}
-
-            {bloc.history.length > 0 ? (
-              <Disclosure title={`Historique (${bloc.history.length})`}>
-                {bloc.history.map((d) => (
-                  <DestinationRow key={d.destinationId} d={d} occupe={occupe} isDev={isDev} onAgir={agir} />
-                ))}
-              </Disclosure>
-            ) : null}
-          </section>
-        );
-      })}
+        {bloc && bloc.history.length > 0 ? (
+          <Disclosure title={`Historique (${bloc.history.length})`}>
+            {bloc.history.map((d) => (
+              <DestinationRow key={d.destinationId} d={d} occupe={occupe} isDev={isDev} onAgir={agir} />
+            ))}
+          </Disclosure>
+        ) : null}
+      </section>
     </Card>
   );
 }

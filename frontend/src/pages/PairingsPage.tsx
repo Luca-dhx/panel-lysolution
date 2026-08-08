@@ -1,48 +1,60 @@
 /**
- * APPAIRAGES — « quels projets sont connectés, et où ? »
+ * APPAIRAGES — « quelles fiches sont appairées, et à quoi ? »
  *
- * ══ CE QUE CETTE PAGE MONTRAIT, ET POURQUOI C'ÉTAIT ILLISIBLE ═══════════════
+ * ══ CE QUE CETTE PAGE MONTRAIT, ET POURQUOI C'ÉTAIT FAUX ════════════════════
  *
- * Une table d'appairages techniques : une ligne par fiche, colonnes « Appairé
- * le », « Révoqué le », « Code expire », deux gros boutons concurrents. Deux
- * instances d'un même client — sa recette et sa production — y figuraient comme
- * deux projets sans rapport, et rien ne disait laquelle servait quoi. Pour
- * répondre à « la production de SB Auto est-elle branchée ? », il fallait
- * connaître par cœur le nom de la fiche.
+ * Une carte par « projet client », portant deux lignes : TEST et PROD. Le
+ * regroupement lisait `logicalProjectKey`, la clé que le projet annonce.
+ * L'intention était bonne ; le modèle ne l'était pas :
+ *
+ *   · une instance de Panel ne sert QU'UN environnement — l'appairage refuse
+ *     l'autre. La seconde ligne ne pouvait jamais se remplir, et son bouton
+ *     « Appairer la production » menait à une impasse ;
+ *   · une fiche non appairée affichait quand même un environnement et une
+ *     destination, tirés de la saisie locale. Le Panel présentait comme un
+ *     constat ce qui n'était qu'une intention.
  *
  * ══ CE QU'ELLE MONTRE MAINTENANT ════════════════════════════════════════════
  *
- * Un projet par carte, ses environnements dessous :
+ * Une liste verticale. Une ligne pleine largeur par fiche du Panel :
  *
- *     PROJET
- *     ├── TEST  ● Connecté · demo-sbauto06.ly-solution.com
- *     └── PROD  ○ Non appairé
+ *     SB Auto 06                      ● Connecté
+ *     Environnement  TEST
+ *     Destination    demo-sbauto06.ly-solution.com
+ *     Dernier contact / Données métier reçues        [ Gérer ]
  *
- * Le regroupement ne devine rien : il lit l'identité logique que le projet
- * annonce lui-même. Une fiche qui n'en a pas reste seule de sa carte — le
- * comportement exact d'avant.
+ * Et pour une fiche qui n'a pas encore parlé :
+ *
+ *     Garage du Nord                  ○ Non appairé
+ *     Environnement  — non connu —
+ *     Destination    — non connue —                 [ Appairer ]
  *
  * ══ CE QUI A QUITTÉ CETTE PAGE ══════════════════════════════════════════════
  *
- * Identifiants, clés techniques, dates d'appairage et de révocation, expiration
- * de code. Rien n'est perdu : tout est dans l'onglet Développeur de la fiche,
- * à un clic. Cette page répond à quatre questions, pas à quarante.
+ * Le regroupement, les segments TEST/PROD, les cases vides, les clés
+ * techniques, les dates d'appairage et de révocation. Rien n'est perdu : le
+ * technique est dans l'onglet Développeur de la fiche, à un clic.
  */
 import { useMemo, useState } from 'react';
 import { EmptyState } from '@/components/ui';
 import { SearchField } from '@/components/SearchField';
-import { ProjectConnectionsCard } from '@/components/connections';
+import { PairingRowItem } from '@/components/connections';
 import { useProjects } from '@/lib/useProjects';
 import {
-  filterCounts, groupProjectsByLogicalProject, matchesFilter, matchesSearch,
+  filterCounts, matchesFilter, matchesSearch, toPairingRows,
   type ConnectionFilter,
 } from '@/lib/projectConnections';
 
+/**
+ * LES FILTRES PORTENT SUR LE LIEN, PAS SUR L'ENVIRONNEMENT.
+ *
+ * `TEST` et `PROD` ont disparu : dans un Panel qui n'en sert qu'un, l'un des
+ * deux boutons rendait toujours une liste vide.
+ */
 const FILTRES: { id: ConnectionFilter; label: string }[] = [
-  { id: 'all', label: 'Tous' },
-  { id: 'test', label: 'TEST' },
-  { id: 'prod', label: 'PROD' },
-  { id: 'todo', label: 'À connecter' },
+  { id: 'all', label: 'Toutes' },
+  { id: 'paired', label: 'Appairées' },
+  { id: 'unpaired', label: 'À appairer' },
   { id: 'attention', label: 'Problème' },
 ];
 
@@ -51,13 +63,13 @@ export function PairingsPage() {
   const [recherche, setRecherche] = useState('');
   const [filtre, setFiltre] = useState<ConnectionFilter>('all');
 
-  // Le regroupement est une fonction PURE : il se teste sans monter React, et
-  // ne se recalcule qu'au changement du parc.
-  const groupes = useMemo(() => groupProjectsByLogicalProject(projects), [projects]);
-  const compteurs = useMemo(() => filterCounts(groupes), [groupes]);
+  // La traduction fiche → ligne est une fonction PURE : elle se teste sans
+  // monter React, et ne se recalcule qu'au changement du parc.
+  const lignes = useMemo(() => toPairingRows(projects), [projects]);
+  const compteurs = useMemo(() => filterCounts(lignes), [lignes]);
   const visibles = useMemo(
-    () => groupes.filter((g) => matchesFilter(g, filtre) && matchesSearch(g, recherche)),
-    [groupes, filtre, recherche],
+    () => lignes.filter((l) => matchesFilter(l, filtre) && matchesSearch(l, recherche)),
+    [lignes, filtre, recherche],
   );
 
   return (
@@ -65,7 +77,8 @@ export function PairingsPage() {
       <header className="page-header">
         <h1>Appairages</h1>
         <p className="page-description">
-          Les projets du parc et leurs connexions au Panel, par environnement.
+          Une fiche, un appairage, une instance. L’environnement et la destination
+          viennent du projet lui-même — ils restent inconnus tant qu’il n’a pas parlé.
         </p>
       </header>
 
@@ -73,10 +86,10 @@ export function PairingsPage() {
 
       {isInitialLoading ? (
         <p className="muted">Chargement des projets…</p>
-      ) : groupes.length === 0 ? (
+      ) : lignes.length === 0 ? (
         <EmptyState
-          title="Aucun projet dans le parc"
-          hint="Déclarez un projet depuis la page Projets pour gérer ses connexions ici."
+          title="Aucune fiche dans le parc"
+          hint="Déclarez un projet depuis la page Projets pour gérer son appairage ici."
         />
       ) : (
         <>
@@ -84,8 +97,8 @@ export function PairingsPage() {
             <div className="conn-search">
               <SearchField
                 id="conn-search"
-                label="Rechercher un projet ou un domaine"
-                placeholder="Rechercher un projet, un domaine…"
+                label="Rechercher une fiche ou une destination"
+                placeholder="Rechercher une fiche, une destination…"
                 value={recherche}
                 onChange={setRecherche}
               />
@@ -93,7 +106,7 @@ export function PairingsPage() {
 
             {/* Quatre filtres, pas une barre d'outils. Chacun porte son
                 compteur : un filtre qui ne ramène rien se voit AVANT le clic. */}
-            <div className="conn-filters" role="group" aria-label="Filtrer les projets">
+            <div className="conn-filters" role="group" aria-label="Filtrer les fiches">
               {FILTRES.map((f) => (
                 <button
                   key={f.id}
@@ -111,13 +124,13 @@ export function PairingsPage() {
 
           {visibles.length === 0 ? (
             <EmptyState
-              title="Aucun projet ne correspond"
-              hint="Modifiez la recherche ou revenez au filtre « Tous »."
+              title="Aucune fiche ne correspond"
+              hint="Modifiez la recherche ou revenez au filtre « Toutes »."
             />
           ) : (
-            <div className="conn-list">
-              {visibles.map((g) => (
-                <ProjectConnectionsCard key={g.key} group={g} onChanged={reload} />
+            <div className="pairing-list">
+              {visibles.map((l) => (
+                <PairingRowItem key={l.projectId} row={l} onChanged={reload} />
               ))}
             </div>
           )}

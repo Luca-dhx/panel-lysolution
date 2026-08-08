@@ -6,7 +6,6 @@ import { deriveLiveness, LIVENESS, secondsSinceLastHeartbeat } from '../supervis
 import { buildProjectHealth } from '../supervision/health.service.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
-import logger from '../../utils/logger.js';
 import registryStore from './registryStore.js';
 import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
@@ -17,7 +16,6 @@ import {
   generateProjectKey,
   normalizeBackendUrl,
   resolveProjectName,
-  slugify,
 } from './projectIdentity.js';
 
 // La vivacité et la santé vivent dans les services de supervision : le
@@ -50,27 +48,30 @@ export function normalizeEnvironment(valeur) {
 }
 
 /**
- * L'ENVIRONNEMENT D'UNE FICHE — le CONSTAT d'abord, l'intention à défaut.
+ * L'ENVIRONNEMENT D'UNE FICHE — DÉCLARÉ PAR LE PROJET, ou inconnu.
  *
- * Le projet est l'autorité de son propre environnement : ce qu'il annonce au
- * battement prime toujours. `declaredEnvironment` ne sert qu'avant le premier
- * contact — sans quoi une fiche tout juste déclarée n'aurait aucun
- * environnement, et deux instances d'un même projet seraient indiscernables
- * jusqu'à leur premier battement.
+ * ══ CE QUI A CHANGÉ, ET POURQUOI ════════════════════════════════════════════
+ *
+ * Cette fonction rendait `runtime.environment` puis, à défaut,
+ * `declaredEnvironment` — l'intention saisie au moment de la déclaration. Une
+ * fiche jamais appairée affichait donc « TEST » ou « PROD » avec la même
+ * assurance qu'une fiche vivante, alors que RIEN ne le prouvait : personne
+ * n'avait encore parlé. L'écran présentait une intention comme un constat.
+ *
+ * ══ LA RÈGLE ════════════════════════════════════════════════════════════════
+ *
+ * Avant appairage : `null`. Il n'y a pas d'environnement « supposé » — pas de
+ * repli sur le nom, sur le domaine, sur le manifeste ni sur l'intention.
+ * Après appairage : la valeur que le PROJET a annoncée à son bootstrap et
+ * réaffirme à chaque battement, et elle seule.
+ *
+ * `declaredEnvironment` reste en base : il est écrit à la déclaration et sert
+ * UNIQUEMENT à départager deux clés techniques identiques (anti-collision).
+ * Il ne pilote plus aucun affichage, aucun regroupement, aucun périmètre.
  */
 export function declaredEnvironmentOf(record) {
-  return normalizeEnvironment(record?.runtime?.environment)
-    ?? normalizeEnvironment(record?.declaredEnvironment);
-}
-
-/** Les autres instances du MÊME projet logique — jamais la fiche elle-même. */
-export async function listSiblings(logicalProjectKey, exceptProjectId = null) {
-  const cle = String(logicalProjectKey ?? '').trim();
-  if (!cle) return [];
-  const toutes = await registryStore.list();
-  return toutes.filter(
-    (r) => r.logicalProjectKey === cle && r.projectId !== exceptProjectId,
-  );
+  if (record?.pairing?.status !== 'PAIRED') return null;
+  return normalizeEnvironment(record?.runtime?.environment);
 }
 
 function dejaDeclare(existant) {
@@ -143,123 +144,46 @@ export async function declareProject({
     throw ApiError.badRequest('PANEL_PROJECT_NAME_REQUIRED', 'projectName est requis.');
   }
 
-  /**
-   * L'IDENTITÉ LOGIQUE — la clé que le PROJET annonce, telle quelle.
-   *
-   * Elle n'est ni saisie, ni devinée : c'est la valeur que le pont transporte
-   * (>= 1.4.0), la même que le Panel tient déjà pour la plus autoritaire. Deux
-   * instances d'un même projet la produisent identique, puisque le déploiement
-   * embarque le `.env` du projet verbatim. Sans annonce, pas d'identité
-   * logique — et la fiche reste seule de son groupe, comme avant.
-   */
-  const logicalProjectKey = slugify(bridgeIdentity?.projectKey) || null;
   const env = normalizeEnvironment(environment);
 
   /**
-   * ── ANTI-DOUBLONS, DÉSORMAIS PAR INSTANCE ────────────────────────────────
+   * ── ANTI-DOUBLONS — UNE ADRESSE, UNE FICHE ───────────────────────────────
    *
    * Une même ADRESSE ne peut entrer qu'une fois : deux fiches pointant le même
-   * backend décriraient la même instance deux fois. Cela ne change pas.
+   * backend décriraient la même instance deux fois.
    *
-   * En revanche, la même IDENTITÉ LOGIQUE dans un AUTRE environnement n'est
-   * pas un doublon : c'est la recette et la production du même projet. Les
-   * refuser — ce que faisait la comparaison de clé annoncée — rendait
-   * simplement impossible d'enregistrer un projet en TEST et en PROD.
+   * ══ CE QUI A ÉTÉ RETIRÉ ICI, ET POURQUOI ═════════════════════════════════
    *
-   * Ce qui reste interdit, et le sera explicitement : DEUX fiches du même
-   * projet logique dans le MÊME environnement. Un projet n'a qu'une recette.
+   * Ce bloc portait tout un appareil de regroupement logique : recherche de
+   * « sœurs » partageant `logicalProjectKey`, rattachement automatique des
+   * fiches antérieures, refus d'une seconde fiche du même projet dans le même
+   * environnement. Il servait une doctrine abandonnée — une carte d'écran
+   * portant la recette ET la production d'un même client.
+   *
+   * Cette doctrine était de surcroît IRRÉALISABLE dans une instance de Panel :
+   * `pairing.service` refuse tout appairage dont l'environnement ne concorde
+   * pas avec celui du Panel (fail closed, et c'est une protection qu'on garde).
+   * Un Panel de recette ne peut donc JAMAIS héberger une instance de
+   * production appairée. Le groupe TEST+PROD ne pouvait, au mieux, contenir
+   * qu'une fiche vivante et une fiche fantôme.
+   *
+   * Reste ce qui protège réellement : une adresse, une fiche ; une clé
+   * technique, une fiche.
    */
   const surLaMemeAdresse = await registryStore.getByBackendUrl(normalizedUrl);
   if (surLaMemeAdresse) throw dejaDeclare(surLaMemeAdresse);
 
   /**
-   * UN PROJET N'A QU'UNE RECETTE ET QU'UNE PRODUCTION.
+   * LA CLÉ TECHNIQUE RESTE UNIQUE PAR FICHE — anti-collision, rien de plus.
    *
-   * C'est l'invariant métier que remplace l'ancien refus « même clé annoncée ».
-   * Le message nomme l'instance fautive : « déjà déclaré » sans dire laquelle
-   * obligeait à parcourir le parc pour comprendre.
-   */
-  /**
-   * RATTACHEMENT DES FICHES ANTÉRIEURES — sans les toucher autrement.
+   * `projectKey` identifie une FICHE, et son index est unique. Deux projets
+   * voisins peuvent dériver la même valeur ; on la qualifie alors par
+   * l'environnement DÉCLARÉ à la saisie — `<cle>-prod` — ce qui reste
+   * déterministe : mêmes entrées, même clé, un double clic reste inoffensif.
    *
-   * ══ LE CAS RÉEL ══════════════════════════════════════════════════════════
-   * SB Auto TEST existe depuis avant l'identité logique : son champ vaut
-   * `null`. On déclare sa production, qui annonce la clé `K`. Sans ce
-   * rattachement, la recette resterait éternellement seule de sa carte, et il
-   * faudrait la RÉAPPAIRER pour la rejoindre — c'est-à-dire lui faire perdre
-   * son jeton pour un problème d'affichage.
-   *
-   * ══ CE QUI PERMET DE RATTACHER, ET RIEN D'AUTRE ══════════════════════════
-   * La clé TECHNIQUE de la fiche antérieure vaut `K`. Ce n'est pas une
-   * ressemblance : c'est la valeur que le projet lui-même a annoncée à son
-   * appairage et que le Panel a adoptée (`projectKeySource` BRIDGE_KEY ou
-   * RECONCILED). Deux instances d'un même projet annoncent la même.
-   *
-   * Toute autre provenance — un nom, un domaine, un slug dérivé — est écartée :
-   * `NAME` et `URL` sont des dérivations locales, et deux projets voisins
-   * peuvent les produire identiques. Fail closed : deux cartes séparées valent
-   * mieux qu'un faux regroupement.
-   *
-   * ══ CE QUE CE RATTACHEMENT NE FAIT PAS ═══════════════════════════════════
-   * Il écrit UN champ. Ni jeton, ni appairage, ni environnement, ni
-   * destination, ni projection, ni génération. La fiche rattachée continue
-   * exactement sa vie.
-   */
-  let soeurs = logicalProjectKey ? await listSiblings(logicalProjectKey) : [];
-
-  if (logicalProjectKey) {
-    const PROVENANCES_FIABLES = new Set(['BRIDGE_KEY', 'RECONCILED']);
-    const aRattacher = (await registryStore.list()).filter(
-      (r) => !r.logicalProjectKey
-        && r.projectKey === logicalProjectKey
-        && PROVENANCES_FIABLES.has(r.projectKeySource),
-    );
-    for (const ancienne of aRattacher) {
-      ancienne.logicalProjectKey = logicalProjectKey;
-      ancienne.updatedAt = nowIso();
-      await registryStore.save(ancienne);
-      logger.info(
-        `Fiche « ${ancienne.projectKey} » rattachée au projet logique « ${logicalProjectKey} » : `
-        + 'son appairage, ses projections et ses destinations sont inchangés.',
-      );
-      soeurs = [...soeurs, ancienne];
-    }
-  }
-
-  const collision = logicalProjectKey
-    ? soeurs.find((s) => declaredEnvironmentOf(s) === env)
-    : null;
-  if (collision) {
-    /**
-     * SANS ENVIRONNEMENT DÉCLARÉ, RIEN N'A CHANGÉ.
-     *
-     * Deux fiches du même projet dont aucune ne dit à quoi elle sert restent
-     * ce qu'elles ont toujours été : un doublon. Le message et le code le
-     * disent comme avant — la nouveauté ne s'applique qu'à qui déclare son
-     * environnement, c'est-à-dire à qui sait ce qu'il fait.
-     */
-    if (!env) throw dejaDeclare(collision);
-
-    throw ApiError.conflict(
-      'PANEL_PROJECT_ENVIRONMENT_ALREADY_DECLARED',
-      `Ce projet a déjà une instance ${env} dans le Panel.`,
-      {
-        projectId: collision.projectId,
-        projectName: collision.projectName,
-        environment: env,
-        logicalProjectKey,
-      },
-    );
-  }
-
-  /**
-   * LA CLÉ TECHNIQUE RESTE UNIQUE PAR FICHE — et le reste sans arbitrage.
-   *
-   * Deux instances d'un même projet annoncent la MÊME clé : c'est justement ce
-   * qui les regroupe. Mais `projectKey` identifie une FICHE et son index est
-   * unique. On la qualifie donc par l'environnement — `<cle>-prod` — ce
-   * qui reste déterministe : mêmes entrées, même clé, un double clic reste
-   * inoffensif. L'identité logique, elle, demeure identique de part et d'autre.
+   * C'est le SEUL emploi survivant de `declaredEnvironment`, et il est
+   * purement technique : cette valeur ne s'affiche nulle part et ne détermine
+   * ni l'environnement de la fiche, ni sa destination, ni son périmètre métier.
    */
   let projectKey = generated.projectKey;
   if (await registryStore.getByKey(projectKey)) {
@@ -280,16 +204,21 @@ export async function declareProject({
     projectId: newBridgeId(),
     projectKey,
     projectKeySource: generated.source,
-    logicalProjectKey,
+    /**
+     * L'IDENTITÉ LOGIQUE N'EST PLUS ÉCRITE.
+     *
+     * Le champ demeure dans le schéma, nullable, pour ne rien détruire des
+     * fiches historiques qui le portent. Aucune écriture neuve ne le
+     * renseigne, et plus aucune lecture ne s'en sert : ni pour regrouper, ni
+     * pour résoudre une donnée métier, ni pour construire un écran.
+     */
     projectName: resolvedName,
     /**
-     * L'ENVIRONNEMENT DÉCLARÉ — l'intention, distincte du constat.
+     * L'ENVIRONNEMENT SAISI — anti-collision de clé technique, et rien d'autre.
      *
-     * `runtime.environment` reste ce que le projet AFFIRME à chaque battement,
-     * et lui seul entre dans la génération. Celui-ci dit ce que la fiche est
-     * censée être, avant le premier contact. Les confondre reviendrait à
-     * décider de l'environnement d'un projet depuis le Panel, ce qu'il ne fait
-     * pas.
+     * Il ne s'affiche nulle part : `declaredEnvironmentOf` ne le lit plus.
+     * Tant que le projet n'a pas parlé, l'environnement de la fiche est
+     * INCONNU, et c'est ce que l'API rend.
      */
     declaredEnvironment: env,
     createdAt: now,
@@ -519,11 +448,13 @@ export function toPublicProject(record, now = Date.now(), projections = {}, dest
     projectId: record.projectId,
     projectKey: record.projectKey,
     /**
-     * L'identité LOGIQUE et l'environnement de cette instance — de quoi
-     * regrouper les fiches d'un même projet client SANS que l'écran ait à
-     * deviner quoi que ce soit. `null` = fiche seule de son groupe.
+     * L'ENVIRONNEMENT DE CETTE INSTANCE — déclaré par le projet, ou `null`.
+     *
+     * `logicalProjectKey` NE FIGURE PLUS dans la projection publique : une
+     * fiche du Panel décrit UNE instance appairée, et plus rien à l'écran ne
+     * regroupe deux fiches. Le champ reste en base pour les fiches
+     * historiques ; il ne franchit plus l'API.
      */
-    logicalProjectKey: record.logicalProjectKey ?? null,
     environment: declaredEnvironmentOf(record),
     projectName: record.projectName,
     createdAt: record.createdAt,
@@ -677,14 +608,30 @@ export function describeProject(record) {
   const presentation = record.activePresentation ?? null;
   const runtime = record.runtime ?? {};
   /**
-   * LE RÉSEAU EST DÉJÀ RÉSOLU quand la fiche arrive ici.
+   * UNE FICHE NON APPAIRÉE NE DÉCLARE RIEN — ni environnement, ni destination.
    *
-   * `registryStore` — le seul point de chargement — attache `activeNetwork` à
-   * toute fiche qu'il rend. Le descripteur n'a donc rien à choisir : il n'y a
-   * plus qu'une source, et elle est déjà là. C'est ce qui rend le résolveur
-   * unique par CONSTRUCTION plutôt que par discipline.
+   * ══ CE QU'ON MONTRAIT, ET POURQUOI C'ÉTAIT FAUX ═════════════════════════
+   *
+   * Une fiche tout juste déclarée affichait un environnement (l'intention
+   * saisie, ou celle du manifeste de secours) et une destination (l'adresse
+   * qu'on venait de taper, promue « destination active »). Les deux se
+   * présentaient exactement comme les valeurs d'une instance vivante — même
+   * champ, même mise en forme, aucune réserve.
+   *
+   * Or personne n'avait encore parlé. L'environnement et la destination d'un
+   * projet sont DÉCLARÉS PAR LUI, à l'appairage puis à chaque échange. Avant,
+   * la seule réponse honnête est « inconnu ».
+   *
+   * ══ CE QUI N'EST PAS DÉTRUIT POUR AUTANT ═════════════════════════════════
+   *
+   * La destination technique reste enregistrée (c'est elle qui permet de
+   * sonder l'adresse saisie), et `runtime.publicBackendUrl` — une donnée
+   * ADMINISTRATIVE, réellement connue localement puisqu'on l'a saisie — reste
+   * exposée telle quelle. Ce qui disparaît est la PRÉTENTION : rien de dérivé
+   * du futur projet n'est présenté comme un fait.
    */
-  const network = record.activeNetwork ?? null;
+  const paired = record.pairing?.status === 'PAIRED';
+  const network = paired ? (record.activeNetwork ?? null) : null;
   return {
     slug: record.projectKey,
     /**
@@ -739,7 +686,15 @@ export function describeProject(record) {
       ?? null,
     descriptorSource: presentation?.description ? 'PROJECTION'
       : manifest?.descriptor?.description ? 'MANIFEST' : 'NONE',
-    environment: runtime.environment ?? manifest?.project?.environment ?? null,
+    /**
+     * L'ENVIRONNEMENT — DÉCLARÉ, jamais déduit d'un manifeste de secours.
+     *
+     * Le repli `manifest.project.environment` a disparu : un manifeste est une
+     * photographie, parfois SAISIE À LA MAIN (`manifestSource: 'MANUAL'`).
+     * S'en servir revenait à laisser un opérateur décider de l'environnement
+     * d'une instance qui n'avait jamais parlé.
+     */
+    environment: paired ? (runtime.environment ?? null) : null,
     /**
      * ── LES URLs VIENNENT DE LA DESTINATION ACTIVE, ET DE NULLE PART AILLEURS ──
      *
@@ -760,8 +715,12 @@ export function describeProject(record) {
     urls: network?.resolved
       ? { website: network.website, manager: network.manager, backend: network.backend }
       : null,
-    /** D'où vient cette adresse — pour que la déduction ne soit jamais magique. */
-    networkSource: network?.reason ?? 'NON_RESOLU',
+    /**
+     * D'où vient cette adresse — pour que la déduction ne soit jamais magique.
+     * `NON_APPAIRE` dit franchement pourquoi il n'y en a pas : ce n'est pas un
+     * échec de résolution, c'est une absence de déclaration.
+     */
+    networkSource: paired ? (network?.reason ?? 'NON_RESOLU') : 'NON_APPAIRE',
     destinationId: network?.destinationId ?? null,
     versions: {
       software: runtime.softwareVersion ?? manifest?.project?.softwareVersion ?? null,

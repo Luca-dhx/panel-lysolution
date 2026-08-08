@@ -172,40 +172,61 @@ C'est la cardinalité que tout le reste du Panel suppose, et elle se lit mal
 parce que le Manager et le Panel ne comptent pas la même chose.
 
 ```
-MANAGER / SB AUTO                    PANEL
+MANAGER / SB AUTO                    PANEL (une instance = un environnement)
 
-Projet SB Auto                       Produit logique « SB Auto »
-├── destination TEST                 ├── PanelProject A — projectId A · TEST
-├── destination PROD                 └── PanelProject B — projectId B · PROD
+Projet SB Auto                       ┌── PanelProject — projectId · TEST
+├── destination TEST  ───────────────┘   1 appairage · 1 destination
+├── destination PROD                     1 état métier
 └── … d'autres
-                                     (logicalProjectKey commun)
-UN projet, N destinations.           UNE fiche, UNE instance.
+                                     La production s'appaire à l'AUTRE Panel,
+UN projet, N destinations.           avec son propre code et son propre jeton.
 ```
 
 ```
-1 PanelProject = 1 instance = 1 environnement = 1 appairage
-               = 1 destination = 1 état métier
+1 fiche Panel = 1 appairage = 1 projet distant observé
+              = 1 environnement = 1 destination = 1 état métier
 ```
+
+Il n'y a **pas**, dans une fiche : deux destinations, un sélecteur TEST/PROD,
+deux connexions, deux appairages, une « sœur » à sélectionner, ni une
+destination à ajouter.
 
 ### Ce que l'appairage établit, et ce qu'il ne touche pas
 
 L'appairage produit le `projectId` — **l'autorité absolue du périmètre
 métier**. Toute projection reçue ensuite est indexée par lui, et par lui seul.
 
-Il **renseigne** aussi `logicalProjectKey`, à partir de la clé que le projet
-annonce (`bridgeIdentity.projectKey`). Cette clé sert exclusivement à :
+Il **réconcilie** aussi la clé technique de la fiche (`projectKey`) sur la
+valeur que le projet annonce (`bridgeIdentity.projectKey`), sauf si une autre
+fiche la détient déjà — l'index est unique. C'est de l'**anti-collision**, et
+rien d'autre : cette clé ne détermine aucun périmètre métier, aucun
+environnement, aucune destination, aucun écran.
 
-- **la navigation** — proposer la fiche sœur depuis la fiche courante ;
-- **la déclaration** — rattacher une nouvelle instance au bon produit ;
-- **l'appairage** — détecter une collision (deux instances du même
-  environnement pour un même produit) ;
-- **la détection de sœur** — savoir qu'une autre instance existe.
+**`logicalProjectKey` n'est plus écrit.** L'appairage le posait, pour
+regrouper à l'écran la recette et la production d'un même client. Cette
+écriture était sans emploi réel : le contrôle de concordance d'environnement
+(§9) interdit à un Panel de recette d'appairer une instance de production, de
+sorte que deux « sœurs » ne pouvaient jamais coexister appairées dans le même
+Panel. Le champ reste en base sur les fiches historiques ; plus rien ne
+l'écrit ni ne le lit.
 
-Elle ne porte **aucune** donnée métier. Deux fiches parentes ont deux noms,
-deux contrats, deux protections, deux destinations et deux fraîcheurs
-distinctes. Aucun repli inter-environnement n'existe : quand une instance n'a
-pas de destination active, on écrit « aucune destination active » — on
-n'emprunte jamais celle de la sœur.
+Aucun repli inter-fiche n'existe : quand une instance n'a pas de destination
+active, on écrit « aucune destination active » — on n'emprunte jamais celle
+d'une autre.
+
+### Avant appairage, le Panel ne sait rien du projet
+
+Une fiche déclarée mais non appairée rend `environment: null`,
+`primaryDomain: null`, `urls: null` et `networkSource: 'NON_APPAIRE'`.
+L'environnement saisi à la déclaration (`declaredEnvironment`) survit en base
+pour départager deux clés techniques identiques — il ne s'affiche nulle part.
+
+L'ordre des refus le reflète : la **concordance d'environnement est vérifiée
+en premier**, avant même de discuter d'identifiants. Une production présentée
+au Panel de recette annonce la même clé que la recette déjà enregistrée ;
+buter d'abord sur « clé déjà prise » aurait nommé un détail d'index à la place
+de la seule cause actionnable — une adresse de Panel recopiée d'un
+environnement à l'autre.
 
 ### Ce que le manifeste d'appairage est, et n'est plus
 

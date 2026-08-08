@@ -123,37 +123,40 @@ async function wire() {
   const projectSync = await import(SB('src/services/projectBridge/projectSync.service.js'));
   const teamSync = await import(SB('src/services/projectBridge/teamSync.service.js'));
   const { installSyncTriggers } = await import(SB('src/services/projectBridge/syncTriggers.js'));
-  const { runSyncCycle } = await import(SB('src/services/panelBridge/bridgeScheduler.js'));
-  /** Vidange de la file, sans rattrapage — voir le commentaire de `flush`. */
-  const pousserOutbox = async () => {
-    const instance = bridgeRuntime.getPanelBridge();
-    if (instance) await instance.flushOutbox();
-  };
+  const { runPushCycle } = await import(SB('src/services/panelBridge/bridgeScheduler.js'));
 
   projectSync.configureProjectSync({
     enqueueProjection: (change) => outboxAdapter.enqueue(change),
     /**
-     * TENTATIVE IMMÉDIATE, jamais attendue par l'appelant : la sauvegarde
-     * métier a déjà répondu à l'utilisateur.
+     * EXACTEMENT LE CÂBLAGE DE `config/bootstrap.js` — et c'est le propos.
      *
-     * On POUSSE seulement — là où le bootstrap fait un cycle complet. La
-     * différence est délibérée : le RATTRAPAGE (pull) reste commandé par le
-     * test, sinon une instance appliquerait des écritures du Panel entre deux
+     * ── CE QUE CE HARNAIS FAISAIT DE DIFFÉRENT, ET CE QUE ÇA A COÛTÉ ───────
+     * Il appelait `instance.flushOutbox()` en direct, quand la production
+     * appelait `runSyncCycle()` — un cycle GARDÉ contre le chevauchement. Le
+     * harnais poussait donc TOUJOURS, là où la production sautait sa poussée
+     * chaque fois qu'un tic périodique tournait. Le test était vert et le
+     * produit intermittent : la divergence de câblage était le défaut.
+     *
+     * Les deux passent désormais par `runPushCycle`, qui a sa propre garde et
+     * mémorise les demandes arrivées en vol.
+     *
+     * On POUSSE seulement : le RATTRAPAGE (pull) reste commandé par le test,
+     * sinon une instance appliquerait des écritures du Panel entre deux
      * assertions et l'on ne saurait plus ce qui a déclenché quoi.
      */
-    flush: () => { void pousserOutbox(); },
+    flush: () => { void runPushCycle(); },
   });
   teamSync.configureTeamSync({
     enqueueProjection: (change) => outboxAdapter.enqueue(change),
-    flush: () => { void pousserOutbox(); },
+    flush: () => { void runPushCycle(); },
   });
   installSyncTriggers();
 
   bridgeRuntime.configureInitialProjections(async () => {
     await projectSync.projectNow('PROJECT_PRESENTATION');
     await projectSync.projectNow('CONTRACT');
-    const issue = await runSyncCycle();
-    return { delivered: (issue?.pushed?.delivered ?? 0) > 0 };
+    const issue = await runPushCycle();
+    return { delivered: (issue?.delivered ?? 0) > 0 };
   });
 
   projectBridgeService.configureProjectBridge({

@@ -87,6 +87,59 @@ export async function bootstrap(dto) {
     throw new BridgeError(BRIDGE_ERROR_CODES.ALREADY_PAIRED, 'Projet déjà appairé.');
   }
 
+  /**
+   * ══ L'ENVIRONNEMENT DOIT CONCORDER — et la question se pose EN PREMIER ═════
+   *
+   * ── POURQUOI CE CONTRÔLE A REMONTÉ ────────────────────────────────────────
+   * Il venait après la réconciliation de la clé technique. Or une production
+   * qui se présente au Panel de recette annonce la MÊME clé que la recette
+   * déjà enregistrée : elle butait donc sur « un autre projet porte déjà cette
+   * clé technique » — un message qui parle d'un détail d'index alors que la
+   * vraie cause, la seule actionnable, est une adresse de Panel recopiée d'un
+   * environnement à l'autre.
+   *
+   * Le refus le plus fondamental passe donc devant, et la fiche n'est même pas
+   * touchée : on refuse un monde étranger avant de discuter d'identifiants.
+   *
+   * ── CE QUE LE DOMAINE PROUVE, ET CE QU'IL NE PROUVE PAS ───────────────────
+   * Un projet choisit SON instance de Panel par l'URL qu'il appelle :
+   * `panel-test.exemple.com` ou `panel.exemple.com`. C'est le bon mécanisme —
+   * deux instances, deux domaines, deux bases. Mais une URL est une chaîne
+   * saisie dans un `.env` : elle prouve QUELLE MACHINE répond, jamais à quel
+   * monde elle appartient.
+   *
+   * Une adresse recopiée d'un projet à l'autre, une variable oubliée lors d'une
+   * promotion TEST → PROD, et la production d'un client se relie au Panel de
+   * recette. Le pont fonctionnerait parfaitement : jetons valides, battements
+   * reçus, projections appliquées. Le Panel de recette afficherait simplement,
+   * et durablement, les contrats et l'équipe d'un site en production.
+   *
+   * ── POURQUOI ON NE DEVINE JAMAIS ─────────────────────────────────────────
+   * On ne lit pas `hostname.includes('test')` : un domaine n'est pas une
+   * déclaration, et « panel.garage-test.fr » n'est pas une recette. Les deux
+   * côtés DISENT leur environnement, et on compare ce qui est dit.
+   *
+   * ── FAIL CLOSED ──────────────────────────────────────────────────────────
+   * Aucune correction automatique, dans aucun sens. Rapprocher TEST de PROD
+   * « pour que ça marche » serait précisément produire l'accident qu'on
+   * empêche. On refuse, on nomme les deux valeurs, et l'opérateur corrige son
+   * `.env`.
+   *
+   * ── C'EST AUSSI CE QUI FONDE LA DOCTRINE MONO-INSTANCE ───────────────────
+   * Une instance de Panel ne peut héberger QUE des fiches de son propre
+   * environnement. Un écran qui regrouperait « la recette et la production
+   * d'un même client » ne pourrait donc jamais afficher deux fiches vivantes :
+   * la seconde serait toujours une fiche jamais appairée.
+   */
+  if (dto.environment !== config.env) {
+    throw new BridgeError(
+      BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH,
+      `Ce projet se declare en ${dto.environment} alors que cette instance du Panel sert `
+      + `${config.env}. Verifiez l'adresse du Panel configuree dans le projet : chaque `
+      + 'environnement a la sienne.',
+    );
+  }
+
   // ── RÉCONCILIATION DE LA CLÉ ─────────────────────────────────────────────
   // Le PROJET est propriétaire de sa clé : il la dérive de son propre nom et
   // l'annonce ici. Le Panel, lui, ne fait que la pré-calculer au moment de la
@@ -104,70 +157,41 @@ export async function bootstrap(dto) {
   const announcedKey = typeof dto.projectKey === 'string' ? dto.projectKey.trim() : '';
 
   /**
-   * L'IDENTITÉ LOGIQUE SE POSE ICI, à chaque appairage.
+   * ══ L'IDENTITÉ LOGIQUE N'EST PLUS POSÉE ICI ═══════════════════════════════
    *
-   * ── POURQUOI À L'APPAIRAGE, ET AUTOMATIQUEMENT ────────────────────────────
-   * C'est le seul instant où le projet PARLE de lui-même avec certitude. La
-   * clé qu'il annonce est la même pour toutes ses instances — le déploiement
-   * embarque son `.env` verbatim — donc la recette et la production d'un même
-   * projet la produisent identique, sans que personne ne saisisse rien et sans
-   * qu'aucune ressemblance de nom ou de domaine n'entre en jeu.
+   * L'appairage écrivait `record.logicalProjectKey = announcedKey`, pour
+   * regrouper à l'écran la recette et la production d'un même client. La
+   * doctrine a changé : une fiche du Panel EST une instance appairée, et rien
+   * ne regroupe plus deux fiches.
    *
-   * Les fiches antérieures l'acquièrent au prochain appairage. Tant qu'elles ne
-   * l'ont pas, elles restent seules de leur groupe — ce qui est exactement leur
-   * comportement d'aujourd'hui.
+   * Cette écriture était de toute façon sans emploi réel ici : le contrôle de
+   * concordance d'environnement, quelques lignes plus bas, interdit à un Panel
+   * de recette d'appairer une instance de production. Deux « sœurs » ne
+   * pouvaient donc jamais coexister appairées dans le même Panel.
+   *
+   * Le champ reste en base sur les fiches qui le portent — on ne détruit
+   * aucune donnée historique — mais plus rien ne l'écrit ni ne le lit.
+   *
+   * ══ CE QUI SUBSISTE : LA RÉCONCILIATION DE LA CLÉ TECHNIQUE ═══════════════
+   *
+   * Le projet reste propriétaire de sa clé et le Panel l'adopte, sauf si une
+   * AUTRE fiche la détient déjà — l'index est unique, et deux fiches ne
+   * peuvent pas la partager. Anti-collision pur : cette clé ne détermine
+   * aucun périmètre métier.
    */
-  if (announcedKey.length > 0) record.logicalProjectKey = announcedKey;
-
   if (announcedKey.length > 0 && announcedKey !== record.projectKey) {
     const collision = await registryStore.getByKey(announcedKey);
-    /**
-     * ── UNE SŒUR N'EST PAS UNE COLLISION ────────────────────────────────────
-     *
-     * Deux instances d'un même projet annoncent la MÊME clé : c'est le fait
-     * qui permet de les regrouper. Refuser le second appairage pour cette
-     * raison rendait tout simplement impossible d'avoir une recette et une
-     * production dans le Panel.
-     *
-     * La clé TECHNIQUE reste propre à chaque fiche — elle est unique en base,
-     * et deux fiches ne peuvent pas la partager. On renonce donc à l'adopter
-     * quand une sœur la détient déjà, et on garde la nôtre : ce n'est qu'un
-     * identifiant de fiche, tandis que l'identité logique, elle, est posée.
-     */
-    /**
-     * UNE SŒUR SERT UN AUTRE ENVIRONNEMENT — sinon ce n'est pas une sœur.
-     *
-     * Partager l'identité logique ne suffit pas : deux fiches du MÊME
-     * environnement resteraient deux vérités concurrentes, et l'exemption
-     * laisserait passer l'adoption d'une clé qui appartient réellement à
-     * quelqu'un d'autre. La condition porte donc sur les deux à la fois.
-     */
-    const monEnv = record.runtime?.environment ?? dto.environment ?? null;
-    const sonEnv = collision?.runtime?.environment ?? collision?.declaredEnvironment ?? null;
-    const memeProjetLogique = collision
-      && collision.projectId !== record.projectId
-      && collision.logicalProjectKey === announcedKey
-      && monEnv !== null && sonEnv !== null && monEnv !== sonEnv;
-
-    if (collision && collision.projectId !== record.projectId && !memeProjetLogique) {
+    if (collision && collision.projectId !== record.projectId) {
       throw new BridgeError(
         BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
         'Un autre projet du registre porte déjà cette clé technique.',
       );
     }
-
-    if (memeProjetLogique) {
-      logger.info(
-        `Clé technique « ${record.projectKey} » conservée : « ${announcedKey} » appartient déjà à `
-        + `l’instance ${collision.runtime?.environment ?? 'sœur'} du même projet.`,
-      );
-    } else {
-      logger.info(
-        `Clé réconciliée à l’appairage : « ${record.projectKey} » -> « ${announcedKey} » (le projet fait foi).`,
-      );
-      record.projectKey = announcedKey;
-      record.projectKeySource = 'RECONCILED';
-    }
+    logger.info(
+      `Clé réconciliée à l’appairage : « ${record.projectKey} » -> « ${announcedKey} » (le projet fait foi).`,
+    );
+    record.projectKey = announcedKey;
+    record.projectKeySource = 'RECONCILED';
   }
 
   // Contrat ≥ 1.1.0 : Manifest joint au bootstrap. Canal OFFICIEL — validé
@@ -199,42 +223,6 @@ export async function bootstrap(dto) {
   // intacte, donc le code réutilisable. On mémorise le hash validé pour que
   // l'écriture finale puisse exiger qu'il soit TOUJOURS en place — sans quoi
   // deux bootstraps simultanés porteurs du même code réussiraient tous les deux.
-  /**
-   * ══ L'ENVIRONNEMENT DOIT CONCORDER — et le refus est SEC ═══════════════════
-   *
-   * ── CE QUE LE DOMAINE PROUVE, ET CE QU'IL NE PROUVE PAS ───────────────────
-   * Un projet choisit SON instance de Panel par l'URL qu'il appelle :
-   * `panel-test.exemple.com` ou `panel.exemple.com`. C'est le bon mécanisme —
-   * deux instances, deux domaines, deux bases. Mais une URL est une chaîne
-   * saisie dans un `.env` : elle prouve QUELLE MACHINE répond, jamais à quel
-   * monde elle appartient.
-   *
-   * Une adresse recopiée d'un projet à l'autre, une variable oubliée lors d'une
-   * promotion TEST → PROD, et la production d'un client se relie au Panel de
-   * recette. Le pont fonctionnerait parfaitement : jetons valides, battements
-   * reçus, projections appliquées. Le Panel de recette afficherait simplement,
-   * et durablement, les contrats et l'équipe d'un site en production.
-   *
-   * ── POURQUOI ON NE DEVINE JAMAIS ─────────────────────────────────────────
-   * On ne lit pas `hostname.includes('test')` : un domaine n'est pas une
-   * déclaration, et « panel.garage-test.fr » n'est pas une recette. Les deux
-   * côtés DISENT leur environnement, et on compare ce qui est dit.
-   *
-   * ── FAIL CLOSED ──────────────────────────────────────────────────────────
-   * Aucune correction automatique, dans aucun sens. Rapprocher TEST de PROD
-   * « pour que ça marche » serait précisément produire l'accident qu'on
-   * empêche. On refuse, on nomme les deux valeurs, et l'opérateur corrige son
-   * `.env`.
-   */
-  if (dto.environment !== config.env) {
-    throw new BridgeError(
-      BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH,
-      `Ce projet se declare en ${dto.environment} alors que cette instance du Panel sert `
-      + `${config.env}. Verifiez l'adresse du Panel configuree dans le projet : chaque `
-      + 'environnement a la sienne.',
-    );
-  }
-
   const consumedHash = record.pairing.pairingCodeHash;
   record.pairing.pairingCodeHash = null;
   record.pairing.pairingCodeExpiresAt = null;

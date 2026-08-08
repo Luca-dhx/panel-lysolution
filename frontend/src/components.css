@@ -1947,51 +1947,12 @@ body {
 }
 .conn-filter-active .conn-filter-count { color: var(--p-text-muted); }
 
-/* ── Grille de cartes ──────────────────────────────────────────────────── */
-.conn-grid {
-  display: grid;
-  gap: var(--p-space-4);
-  /* `minmax(0, 1fr)` et non `min-content` : c'est ce qui autorise les enfants
-     à rétrécir, donc les longs domaines à se tronquer au lieu de pousser la
-     page hors du viewport. */
-  grid-template-columns: repeat(auto-fill, minmax(min(20rem, 100%), 1fr));
-}
-
-/* ── Carte projet ──────────────────────────────────────────────────────── */
-.conn-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--p-space-4);
-  padding: var(--p-space-5);
-  border: 1px solid var(--p-border);
-  border-radius: var(--p-radius-lg);
-  background: var(--p-surface);
-  min-width: 0;
-}
-
-.conn-card-head {
-  display: flex;
-  gap: var(--p-space-3);
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.conn-card-identity { min-width: 0; }
-
-.conn-card-name {
-  margin: 0;
-  font-size: var(--p-text-lg);
-  font-weight: 600;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-
-.conn-card-tagline {
-  margin: var(--p-space-1) 0 0;
-  color: var(--p-text-muted);
-  font-size: var(--p-text-sm);
-  overflow-wrap: anywhere;
-}
+/*
+   ── LA GRILLE DE CARTES ET LA CARTE PROJET ONT DISPARU ──────────────────
+   Elles servaient un objet qui n'existe plus : le « projet client » portant
+   deux connexions. La page rend désormais une liste d'items pleine largeur,
+   un par fiche — voir `.pairing-list` / `.pairing-item` plus bas.
+*/
 
 .conn-flag {
   display: inline-flex;
@@ -2006,47 +1967,7 @@ body {
   white-space: nowrap;
 }
 
-.conn-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--p-space-3);
-}
-
-/* ── Ligne d'environnement ─────────────────────────────────────────────── */
-.conn-row {
-  display: grid;
-  gap: var(--p-space-2);
-  padding: var(--p-space-3) 0 0;
-  border-top: 1px solid var(--p-border);
-  min-width: 0;
-}
-.conn-card-body > .conn-row:first-child { border-top: 0; padding-top: 0; }
-
-/* Un environnement non appairé s'efface — il n'est pas en défaut. */
-.conn-row-absent .conn-env,
-.conn-row-absent .conn-host { color: var(--p-text-faint); }
-
-.conn-row-head {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--p-space-2) var(--p-space-3);
-  align-items: baseline;
-}
-
-.conn-env {
-  font-size: var(--p-text-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  color: var(--p-text-muted);
-}
-
-.conn-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--p-space-2);
-  min-width: 0;
-}
-
+/* ── État d'une fiche : point + libellé ────────────────────────────────── */
 .conn-dot { font-size: 0.7rem; line-height: 1; }
 .conn-dot-ok { color: var(--p-ok); }
 .conn-dot-warn { color: var(--p-warn); }
@@ -2059,46 +1980,13 @@ body {
 .conn-state-error { color: var(--p-danger); }
 .conn-state-neutral { color: var(--p-text-faint); }
 
-/* Un domaine long se tronque ; il ne fait jamais défiler la page. */
-.conn-host {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--p-text-sm);
-  color: var(--p-text-muted);
-}
-a.conn-host:hover { color: var(--p-text); }
-.conn-host-empty { margin: 0; color: var(--p-text-faint); }
-
-.conn-meta { margin: 0; font-size: var(--p-text-xs); color: var(--p-text-faint); }
-
-.conn-facts {
-  display: grid;
-  gap: var(--p-space-2) var(--p-space-4);
-  grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
-  margin: var(--p-space-1) 0 0;
-}
-.conn-facts dt { font-size: var(--p-text-xs); color: var(--p-text-faint); }
-.conn-facts dd { margin: 0; font-size: var(--p-text-sm); overflow-wrap: anywhere; }
-
-.conn-actions { display: flex; flex-wrap: wrap; gap: var(--p-space-2); }
-.conn-actions .btn { min-height: 2.25rem; }
-
-/* ── Onglet Développeur ────────────────────────────────────────────────── */
-.conn-detail-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--p-space-4);
-}
-
-/* L'environnement visé par un lien profond : on ARRIVE dessus, on ne le
-   cherche pas. Un liseré, pas un aplat — le contenu reste roi. */
-.conn-focus {
-  padding-left: var(--p-space-3);
-  border-left: 3px solid var(--p-primary);
-}
+/*
+   ── DOMAINE, MÉTA, FAITS, ACTIONS ET LIEN PROFOND ONT DÉMÉNAGÉ ────────────
+   Ils appartenaient à la ligne d'environnement, qui n'existe plus. Leurs
+   équivalents mono-instance vivent avec `.pairing-item`. `.conn-focus` n'a pas
+   de successeur : il mettait en avant l'une de deux lignes, et il n'y en a
+   plus qu'une.
+*/
 
 .dt-source {
   display: block;
@@ -2107,12 +1995,10 @@ a.conn-host:hover { color: var(--p-text); }
   color: var(--p-text-faint);
 }
 
-/* ── Sous 400px : la ligne d'environnement passe en pile ────────────────── */
+/* ── Sous 400px : la barre d'outils passe en pile ───────────────────────── */
 @media (max-width: 25rem) {
-  .conn-card { padding: var(--p-space-4); }
   .conn-toolbar { flex-direction: column; align-items: stretch; }
   .conn-filters { justify-content: flex-start; }
-  .conn-actions .btn { width: 100%; justify-content: center; }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -2328,22 +2214,29 @@ a.conn-host:hover { color: var(--p-text); }
 .search-field-clear:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 1px; }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   APPAIRAGES — LISTE VERTICALE D'ITEMS HORIZONTAUX PLEINE LARGEUR.
+   APPAIRAGES — LISTE VERTICALE, UN ITEM HORIZONTAL PLEINE LARGEUR PAR FICHE.
 
-   La grille de cartes donnait un « dashboard à cartes » : trois colonnes de
-   blocs étroits où le domaine, l'information la plus longue, était la plus
-   comprimée. Un projet occupe désormais toute la largeur, et ses deux
-   environnements se lisent en ligne — c'est la forme d'un tableau, sans en
-   avoir la rigidité sur mobile.
+   ══ CE QUI A CHANGÉ ══════════════════════════════════════════════════════
+   L'item portait une carte de PROJET, avec deux lignes d'environnement
+   imbriquées. Il porte désormais UNE FICHE : identité à gauche, les faits
+   déclarés au centre, les actions à droite. Un seul niveau, donc une seule
+   lecture.
+
+   ══ AUCUNE LARGEUR FIXE ══════════════════════════════════════════════════
+   Toutes les colonnes sont en `minmax(0, …)` : c'est ce qui autorise un long
+   domaine à se tronquer au lieu de pousser la page hors du viewport. Vérifié
+   de 320 à 1280 px.
    ══════════════════════════════════════════════════════════════════════════ */
 
-.conn-list {
+.pairing-list {
   display: flex;
   flex-direction: column;
   gap: var(--p-space-3);
 }
 
-.conn-item {
+.pairing-item {
+  display: grid;
+  gap: var(--p-space-3);
   width: 100%;
   min-width: 0;
   padding: var(--p-space-4) var(--p-space-5);
@@ -2352,44 +2245,85 @@ a.conn-host:hover { color: var(--p-text); }
   background: var(--p-surface);
 }
 
-/* Desktop : l'environnement se lit en LIGNE — badge, état, domaine, contact,
-   action — avec des colonnes qui ne s'effondrent pas. */
+/* Une fiche non appairée s'efface — elle n'est pas en défaut, elle attend. */
+.pairing-item-unpaired { background: transparent; }
+
+.pairing-identity { min-width: 0; }
+
+.pairing-name {
+  margin: 0;
+  font-size: var(--p-text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.pairing-tagline {
+  margin: var(--p-space-1) 0 0;
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  overflow-wrap: anywhere;
+}
+
+.pairing-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  margin-top: var(--p-space-2);
+  min-width: 0;
+}
+
+.pairing-facts {
+  display: grid;
+  gap: var(--p-space-2) var(--p-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+  margin: 0;
+  min-width: 0;
+}
+.pairing-facts dt { font-size: var(--p-text-xs); color: var(--p-text-faint); }
+.pairing-facts dd { margin: 0; font-size: var(--p-text-sm); min-width: 0; overflow-wrap: anywhere; }
+
+/* Un domaine long se tronque ; il ne fait jamais défiler la page. */
+.pairing-host {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* « — non connu — » : une absence DITE, jamais un tiret muet. */
+.conn-unknown { color: var(--p-text-faint); font-style: italic; }
+
+.pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+.pairing-actions .btn { min-height: 2.25rem; }
+
+/* Desktop : identité | faits | actions, sur une seule ligne. */
 @media (min-width: 60rem) {
-  .conn-item .conn-row {
-    display: grid;
+  .pairing-item {
+    grid-template-columns: minmax(0, 18rem) minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--p-space-4);
-    /* `minmax(0, …)` partout : c'est ce qui autorise le domaine à se tronquer
-       au lieu d'élargir la ligne au-delà du conteneur. */
-    grid-template-columns:
-      4.5rem                    /* TEST / PROD          */
-      minmax(0, 11rem)          /* état                 */
-      minmax(0, 1fr)            /* domaine              */
-      minmax(0, 12rem)          /* dernier contact      */
-      auto;                     /* actions              */
-    padding: var(--p-space-3) 0;
+    gap: var(--p-space-5);
   }
-  .conn-item .conn-row-head { display: contents; }
-  .conn-item .conn-host { margin: 0; }
-  .conn-item .conn-meta { margin: 0; text-align: right; }
-  .conn-item .conn-actions { justify-content: flex-end; }
+  .pairing-actions { justify-content: flex-end; }
 }
 
-/* Tablette : deux colonnes utiles, l'action passe dessous sans se coincer. */
+/* Tablette : identité et faits côte à côte, actions dessous à droite. */
 @media (min-width: 48rem) and (max-width: 59.99rem) {
-  .conn-item .conn-row {
-    display: grid;
-    gap: var(--p-space-2) var(--p-space-4);
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+  .pairing-item {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
-  .conn-item .conn-actions { grid-column: 2; }
+  .pairing-actions { grid-column: 1 / -1; justify-content: flex-end; }
 }
 
-.conn-item .conn-card-head {
-  padding-bottom: var(--p-space-3);
-  border-bottom: 1px solid var(--p-border);
-  margin-bottom: var(--p-space-2);
+@media (max-width: 25rem) {
+  .pairing-item { padding: var(--p-space-4); }
+  .pairing-actions .btn { width: 100%; justify-content: center; }
 }
 
 /* ── Marque du Panel dans la barre latérale ────────────────────────────── */
@@ -2488,54 +2422,10 @@ a.conn-host:hover { color: var(--p-text); }
   .distribution-env { grid-row: 2; grid-column: 1; }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   L'AUTRE INSTANCE DU MÊME PRODUIT — un lien, jamais une bascule.
-
-   Une fiche décrit UNE instance. `logicalProjectKey` dit seulement que deux
-   fiches parlent du même produit ; il ne porte aucune donnée métier. Ce lien
-   est donc de la navigation pure — la fiche courante ne bouge pas.
-
-   L'état ne se lit jamais à la seule couleur : chaque lien porte son symbole
-   (● ◐ ○) et son mot.
-   ══════════════════════════════════════════════════════════════════════════ */
-.sister-instances {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 16px;
-  font-size: 12px;
-}
-
-.sister-label { color: var(--p-text-muted); }
-
-.sister-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  /* Cible tactile confortable, même à 320 px. */
-  min-height: 40px;
-  /* Un nom long ne doit jamais élargir la page. */
-  min-width: 0;
-  padding: 4px 10px;
-  border: 1px solid var(--p-border);
-  border-radius: 999px;
-  text-decoration: none;
-  color: var(--p-text);
-}
-
-.sister-link:hover { background: var(--p-surface); }
-
-.sister-link:focus-visible {
-  outline: 2px solid var(--p-primary);
-  outline-offset: 1px;
-}
-
-.sister-env { font-weight: 600; letter-spacing: 0.04em; }
-
-.sister-state {
-  color: var(--p-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/*
+   ══ « L'AUTRE INSTANCE DU MÊME PRODUIT » A ÉTÉ RETIRÉE ═══════════════════
+   Ce lien dérivait de `logicalProjectKey`. Il désignait une fiche qui, dans un
+   Panel donné, ne peut jamais être appairée : le pont refuse tout projet dont
+   l'environnement ne concorde pas avec celui du Panel. Il menait donc
+   invariablement à une fiche fantôme. Ses styles sont partis avec lui.
+*/

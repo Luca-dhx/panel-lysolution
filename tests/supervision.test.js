@@ -110,26 +110,29 @@ let declared;
   check('description issue du Manifest', d.description === 'Garage du Nord');
   check('layout issu du Manifest', d.layout === 'vitrine:web + backend:server');
   /**
-   * ── LES ADRESSES NE VIENNENT PLUS DU MANIFESTE ──────────────────────────
+   * ── UNE FICHE NON APPAIRÉE N'A NI DESTINATION NI ENVIRONNEMENT ───────────
    *
-   * Elles viennent de la DESTINATION ACTIVE, alimentée par ce que le projet
-   * annonce — ici, le manifeste sondé à la déclaration. La différence n'est
-   * pas cosmétique : le manifeste est une photographie prise une fois, que
-   * rien ne rafraîchit ensuite. S'y fier laissait un projet ayant changé de
-   * domaine afficher l'ancien hôte à côté du nouveau.
+   * UNPAIRED_PROJECT_HAS_NO_DESTINATION / UNPAIRED_PROJECT_HAS_NO_ENVIRONMENT.
    *
-   * Le manifeste de ce projet ne déclare qu'une URL `site`, que le contrat ne
-   * nomme pas parmi `website`/`manager`/`backend` : l'hôte de la destination
-   * dérive donc de l'adresse saisie à la déclaration.
+   * Ce test attendait auparavant que le domaine principal vienne de la
+   * destination active — celle que la DÉCLARATION venait d'annoncer à partir
+   * de l'adresse saisie. C'était présenter une saisie locale comme une
+   * déclaration du projet.
+   *
+   * La destination et l'environnement d'un projet lui appartiennent : ils
+   * arrivent à l'appairage, puis à chaque échange. Avant, la seule réponse
+   * juste est « inconnu » — et `networkSource` le NOMME, au lieu de laisser
+   * croire à un échec de résolution.
+   *
+   * Le manifeste, lui, continue de renseigner ce qu'il décrit légitimement :
+   * le type, la topologie, les versions. Il ne sert jamais d'adresse.
    */
-  check('le domaine principal vient de la destination active',
-    d.primaryDomain === 'garage-nord.test');
-  check('…et son origine est annoncée', d.networkSource === 'DESTINATION_ACTIVE');
-  check('l’adresse du backend est celle déclarée',
-    d.urls.backend === 'https://garage-nord.test');
-  check('…une seule et même source pour toutes les adresses',
-    new Set(Object.values(d.urls).filter(Boolean)
-      .map((u) => new URL(u).hostname.replace(/^(api|manager)\./, ''))).size === 1);
+  check('UNPAIRED_PROJECT_HAS_NO_DESTINATION : aucun domaine principal',
+    d.primaryDomain === null);
+  check('…ni aucune adresse résolue', d.urls === null);
+  check('…et la raison est nommée', d.networkSource === 'NON_APPAIRE');
+  check('UNPAIRED_PROJECT_HAS_NO_ENVIRONMENT : environnement inconnu',
+    d.environment === null);
   check('version de moteur de déploiement', d.versions.deploymentEngine === '1.1.0');
   check('version de moteur de duplication', d.versions.duplicationEngine === '1.1.0');
   check('version de contrat', d.versions.contract === CONTRACT_VERSION);

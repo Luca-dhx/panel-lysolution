@@ -419,7 +419,8 @@ export async function describeCompanyDistribution(company) {
     return {
       projectId: p.projectId,
       projectName: p.projectName,
-      logicalProjectKey: p.logicalProjectKey ?? null,
+      // Une instance = une fiche. Aucune identité logique n'est republiée :
+      // l'écran n'a rien à regrouper, il rend une ligne par instance.
       environment: declaredEnvironmentOf(p),
       paired,
       liveness,

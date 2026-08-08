@@ -81,53 +81,53 @@ const panelProjectSchema = new mongoose.Schema(
       default: null,
     },
     /**
-     * IDENTITÉ LOGIQUE — « ces deux fiches sont le même projet client ».
+     * IDENTITÉ LOGIQUE — CHAMP GELÉ, conservé pour les fiches historiques.
      *
-     * ══ CE QUE CE CHAMP FERME ═══════════════════════════════════════════════
+     * ══ CE QU'IL FAISAIT ════════════════════════════════════════════════════
      *
-     * Une fiche du registre est UNE INSTANCE appairée : un appairage, un jeton,
-     * un environnement. C'est volontaire et ce champ n'y touche pas. Mais un
-     * même projet client vit en TEST *et* en PROD — deux bases, deux jetons,
-     * donc deux fiches — et RIEN ne disait qu'elles se rapportaient au même
-     * client. L'écran ne pouvait qu'aligner des appairages techniques
-     * indépendants, et l'opérateur devait faire le rapprochement de tête.
+     * Il portait la clé que le projet annonce au pont (`bridgeIdentity
+     * .projectKey`), identique pour toutes ses instances, et permettait
+     * d'afficher la recette et la production d'un même client sous une seule
+     * carte.
      *
-     * ══ D'OÙ ELLE VIENT, ET POURQUOI PAS D'UNE RESSEMBLANCE ═════════════════
+     * ══ POURQUOI IL NE PILOTE PLUS RIEN ═════════════════════════════════════
      *
-     * De la CLÉ QUE LE PROJET ANNONCE lui-même au pont (`bridgeIdentity
-     * .projectKey`, contrat >= 1.4.0) — la même source que le Panel tient déjà
-     * pour la plus autoritaire (`projectKeySource: 'BRIDGE_KEY'`). Deux
-     * instances d'un même projet la produisent identique par construction : le
-     * déploiement embarque le `.env` du projet VERBATIM et ne réécrit que ce
-     * qui est propre à l'hôte (ENV, PORT, CORS, PUBLIC_URL).
+     * Une INSTANCE de Panel ne sert qu'un environnement : `pairing.bootstrap`
+     * refuse tout projet dont l'environnement ne concorde pas avec le sien
+     * (fail closed, et c'est une protection qu'on garde). Une carte « recette +
+     * production » ne pouvait donc jamais porter deux fiches VIVANTES : la
+     * seconde était toujours une fiche jamais appairée, présentée comme un
+     * constat, avec un bouton d'appairage qui menait à une impasse.
      *
-     * Ce n'est donc ni une saisie, ni une similarité de nom ou de domaine :
-     * c'est une égalité exacte entre deux valeurs déclarées.
+     * La doctrine est désormais : 1 fiche = 1 appairage = 1 instance = 1
+     * environnement = 1 destination = 1 état métier.
      *
-     * ══ CE QU'ELLE N'EST PAS ════════════════════════════════════════════════
+     * ══ POURQUOI LE CHAMP RESTE ═════════════════════════════════════════════
      *
-     * Ni une identité d'appairage, ni une clé technique de fiche
-     * (`projectKey` reste unique et propre à l'instance), ni une donnée que le
-     * Panel transmet. Elle n'entre dans AUCUN calcul de génération, de
-     * fraîcheur, de heartbeat ni de snapshot.
-     *
-     * `null` est une valeur normale : les fiches antérieures — et celles dont
-     * le projet ne déclare aucune clé — n'en ont pas, et se comportent
-     * exactement comme avant, chacune seule de son groupe.
+     * Des fiches en production le portent. Le retirer du schéma serait
+     * détruire une donnée historique pour un gain nul. Il reste donc nullable
+     * et inerte : plus AUCUNE écriture ne le renseigne, plus aucune lecture ne
+     * s'en sert, et l'API publique ne le transporte plus.
      */
     logicalProjectKey: { type: String, default: null },
     /**
-     * L'ENVIRONNEMENT QUE CETTE FICHE EST CENSÉE SERVIR — l'intention.
+     * L'ENVIRONNEMENT SAISI À LA DÉCLARATION — anti-collision, et rien d'autre.
      *
-     * `runtime.environment` est le CONSTAT : ce que le projet affirme à chaque
-     * battement, et la seule valeur qui entre dans la génération. Elle n'existe
-     * qu'après le premier contact. Il fallait pourtant pouvoir dire, dès la
-     * déclaration, « celle-ci sera la production » — sinon deux fiches d'un
-     * même projet ne peuvent pas être distinguées avant leur premier battement.
+     * ══ CE QU'IL N'EST PLUS ═════════════════════════════════════════════════
      *
-     * Les deux ne fusionnent jamais : le Panel ne décide pas de
-     * l'environnement d'un projet, il enregistre une intention que le projet
-     * confirmera.
+     * Il servait à afficher un environnement avant le premier contact. C'était
+     * présenter une INTENTION comme un CONSTAT : une fiche jamais appairée
+     * annonçait « TEST » ou « PROD » avec la même assurance qu'une instance
+     * vivante, alors que personne n'avait encore parlé.
+     *
+     * `declaredEnvironmentOf` ne le lit plus. Avant appairage, l'environnement
+     * d'une fiche est `null` — « non connu », et l'écran le dit.
+     *
+     * ══ SON SEUL EMPLOI SURVIVANT ═══════════════════════════════════════════
+     *
+     * Départager deux clés techniques identiques (`<cle>-prod`). C'est
+     * purement technique : cette valeur ne s'affiche nulle part et ne
+     * détermine ni périmètre métier, ni destination.
      */
     declaredEnvironment: { type: String, enum: ['TEST', 'PROD', null], default: null },
     projectName: { type: String, required: true },
@@ -153,13 +153,14 @@ const panelProjectSchema = new mongoose.Schema(
 );
 
 /**
- * Le regroupement se lit, il ne se cherche pas. Index NON unique : plusieurs
- * fiches partagent volontairement la même identité logique — c'est tout
- * l'objet du champ. L'unicité qui compte (une fiche par environnement dans un
- * groupe) est un invariant MÉTIER, vérifié à la déclaration : l'imposer par un
- * index partiel sur deux champs dont l'un est renseigné après coup (le
- * `runtime.environment` vient du premier battement) ferait échouer des
- * écritures parfaitement légitimes.
+ * INDEX CONSERVÉ AVEC LE CHAMP — non unique, et désormais sans lecteur.
+ *
+ * Plus aucune requête n'interroge `logicalProjectKey` : l'index ne sert plus
+ * rien. Il est laissé en place parce que le supprimer déclencherait, au
+ * premier démarrage suivant, une opération de schéma sur une base de
+ * production — pour économiser quelques kilo-octets sur un parc qui compte
+ * une poignée de fiches. Le retirer relèvera d'une migration décidée, pas
+ * d'un effet de bord de nettoyage.
  */
 panelProjectSchema.index({ logicalProjectKey: 1 });
 

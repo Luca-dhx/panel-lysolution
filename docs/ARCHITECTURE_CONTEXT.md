@@ -18,73 +18,87 @@ différentes, et aucun n'est synonyme d'un autre.
 |---|---|---|
 | **Environnement** | `TEST` ou `PROD`. Une dimension fonctionnelle. | 2 |
 | **Instance de Panel** | Une installation déployée du Panel : un domaine, un backend, une base, un `ENV`. | 1 par environnement |
-| **Projet logique** | Le client. « SB Auto ». Identifié par `logicalProjectKey`. | 1 par client |
-| **Instance de projet** | Le projet déployé dans un environnement. « SB Auto TEST ». **1 instance = 1 `PanelProject`.** | ≤ 1 par environnement |
+| **Projet logiciel** | Le projet côté SB Auto / Manager. Il possède N **destinations** de déploiement. | notion du Manager, **pas du Panel** |
+| **Fiche Panel** (`PanelProject`) | **Une instance appairée observée.** « SB Auto 06, TEST, demo-sbauto06.ly-solution.com ». | 1 par instance |
 | **Destination** | L'endroit où une instance est publiée : `demo-sbauto06.ly-solution.com`. | 1 ACTIVE + N historiques |
 
 ### La doctrine, en une phrase
 
-> Le Manager possède les destinations. Le Panel observe des instances. Chaque
-> `PanelProject` représente **une seule** instance, et toutes ses données live
-> sont isolées par `projectId`. Le battement de cœur prouve la vivacité ; les
-> projections prouvent l'état métier.
-
-C'est le point que quatre missions successives ont mis à jour, et il se lit
-mal parce que les deux systèmes comptent différemment :
+> **Côté SB Auto / Manager :** un projet logiciel peut posséder N destinations
+> de déploiement (TEST, PROD, et d'autres plus tard). C'est interne au projet.
+>
+> **Côté Panel :** une fiche représente **exactement une** instance appairée.
+> Une fiche appairée possède exactement **un** environnement déclaré et **une**
+> destination courante. Le Panel ne regroupe **jamais** TEST et PROD dans une
+> même fiche.
 
 ```
-MANAGER / SB AUTO                    PANEL
+MANAGER / SB AUTO                    PANEL (instance TEST)
 
-Projet SB Auto                       Produit logique « SB Auto »
-├── destination TEST                 │   (logicalProjectKey commun)
-├── destination PROD                 │
-└── … d'autres                       ├── PanelProject A
-                                     │   projectId A · TEST
-UN projet, N destinations.           │   1 appairage · 1 destination
-                                     │   1 état métier
-                                     │
-                                     └── PanelProject B
-                                         projectId B · PROD
-                                         … les mêmes, indépendantes
-
+Projet SB Auto                       ┌── PanelProject
+├── destination TEST  ───────────────┤   projectId · TEST
+├── destination PROD                 │   1 appairage · 1 destination
+└── … d'autres                       │   1 état métier
+                                     └── … et rien d'autre sur cette fiche
+UN projet, N destinations.
                                      UNE fiche, UNE instance.
 ```
 
 **Cardinalité, côté Panel :**
 
 ```
-1 PanelProject = 1 instance = 1 environnement = 1 appairage
-               = 1 destination = 1 état métier
+1 fiche Panel = 1 appairage = 1 projet distant observé
+              = 1 environnement = 1 destination = 1 état métier
 ```
 
-Une fiche ne « bascule » donc pas d'un environnement à l'autre : on ouvre
-celle de l'autre environnement, à son propre `projectId`. Un contrôle segmenté
-`[TEST][PROD]` a existé une journée sur la fiche ; il naviguait correctement
-mais donnait à lire l'inverse du modèle, et a été remplacé par un lien.
+Il n'y a **pas**, dans une fiche : une destination TEST *et* une destination
+PROD ; un sélecteur TEST/PROD ; deux connexions ; deux appairages ; une notion
+de « sœur » à sélectionner ; une destination à « ajouter ».
 
-### Les deux clés, et ce que chacune n'est pas
+Pour connecter la recette **et** la production d'un même logiciel : ce sont
+simplement **deux fiches indépendantes**, dans deux instances de Panel.
 
-| Clé | Ce qu'elle établit | Ce qu'elle ne fait **jamais** |
+### Avant appairage : rien n'est connu, et le Panel le dit
+
+| | Avant appairage | Après appairage |
 |---|---|---|
-| `logicalProjectKey` | la **parenté** : ces deux fiches décrivent le même produit. Sert à la navigation, à la déclaration, à l'appairage et à la détection de sœur. | porter la moindre donnée métier. Elle ne détermine ni le nom, ni le contrat, ni la protection, ni la destination, ni la fraîcheur. |
-| `projectId` | l'**autorité absolue du périmètre métier**. Toute projection, toute lecture, tout état est indexé par lui. | regrouper. Deux instances d'un même produit ont deux `projectId`. |
+| Environnement | `null` — **« non connu »** | déclaré par le projet (`runtime.environment`) |
+| Destination | `null` — **« non connue »** | annoncée par le projet (destination ACTIVE) |
+| `networkSource` | `NON_APPAIRE` | `DESTINATION_ACTIVE` |
 
-Aucune agrégation métier par `logicalProjectKey` ne doit être réintroduite.
+Aucune déduction : ni depuis le nom, ni depuis le domaine, ni depuis
+l'intention saisie à la déclaration, ni depuis un manifeste de secours. Une
+intention n'est pas un constat.
 
-→ `tests/project-company-live-e2e.test.js` — sections « DEUX INSTANCES, UN
-PRODUIT » et « CARDINALITÉ » (`ONE_PANEL_PROJECT_EQUALS_ONE_INSTANCE`,
-`LOGICAL_PROJECT_KEY_DOES_NOT_SCOPE_BUSINESS_DATA`,
-`PROJECT_ID_IS_BUSINESS_DATA_AUTHORITY`)
+→ `backend/src/services/registry/projectRegistry.service.js`
+(`declaredEnvironmentOf`, `describeProject`) ·
+`tests/project-connections.test.js` (`UNPAIRED_PROJECT_HAS_NO_ENVIRONMENT`,
+`UNPAIRED_PROJECT_HAS_NO_DESTINATION`,
+`PAIRED_PROJECT_SHOWS_DECLARED_ENVIRONMENT`)
+
+### Ce que `projectKey` et `logicalProjectKey` ne pilotent plus
+
+| Clé | Ce qu'elle établit encore | Ce qu'elle ne fait **plus jamais** |
+|---|---|---|
+| `projectId` | l'**autorité absolue du périmètre métier**. Toute projection, toute lecture, tout état est indexé par lui. | regrouper. |
+| `projectKey` | **anti-collision technique** : une fiche, une clé, un index unique. Réconciliée à l'appairage sur la valeur que le projet annonce. | déterminer un périmètre métier, un environnement, une destination, ou construire un écran. |
+| `logicalProjectKey` | **rien.** Champ conservé, nullable, sur les fiches historiques — aucune écriture neuve, aucune lecture. | regrouper, naviguer, résoudre une donnée, apparaître dans l'API ou dans l'UI. |
+
+**Pourquoi le regroupement a été supprimé, et non simplement masqué :** une
+instance de Panel ne sert qu'un environnement (§2). Une carte « recette +
+production » ne pouvait donc **jamais** porter deux fiches vivantes : la
+seconde était toujours une fiche jamais appairée, présentée comme un constat,
+avec un bouton « Appairer la production » qui menait à une impasse.
+
+→ `tests/project-connections.test.js` (`ONE_ROW_EQUALS_ONE_PANEL_PROJECT`,
+`NO_TEST_PROD_GROUPING`, `NO_PROJECT_KEY_IN_PAIRINGS_UI`,
+`ONE_PANEL_SERVES_ONE_ENVIRONMENT`) ·
+`tests/project-company-live-e2e.test.js` (`PROJECT_ID_IS_BUSINESS_DATA_AUTHORITY`)
 
 ```
-                         PROJET LOGIQUE
-                            SB Auto
-                               │
-                ┌──────────────┴──────────────┐
-                │                             │
          SB AUTO TEST                  SB AUTO PROD
          ENV = TEST                    ENV = PROD
-         1 PanelProject                1 PanelProject
+         1 fiche Panel                 1 fiche Panel
                 │                             │
             pairing A                     pairing B
             jeton A                       jeton B
@@ -93,6 +107,8 @@ PRODUIT » et « CARDINALITÉ » (`ONE_PANEL_PROJECT_EQUALS_ONE_INSTANCE`,
           PANEL TEST                     PANEL PROD
           panel-test.…                   panel.…
           ENV = TEST                     ENV = PROD
+
+     Deux fiches, dans DEUX Panels. Elles ne se croisent jamais.
 ```
 
 Et sous une instance de projet :
@@ -153,28 +169,54 @@ en recette. Les deux côtés le **déclarent**.
 
 ---
 
-## 3. Le regroupement TEST + PROD à l'écran
+## 3. La page Appairages, et la fiche projet
 
-Le registre raisonne en instances ; l'opérateur raisonne en projets clients.
-`logicalProjectKey` fait le pont.
+**Une liste verticale. Un item horizontal pleine largeur par fiche.** Aucun
+regroupement, aucune grille de cartes, aucune table native, aucun `<select>`
+natif pour filtrer, aucune largeur fixe (responsive vérifié de 320 à 1280 px).
 
-Il vient de **la clé que le projet annonce lui-même** au pont
-(`bridgeIdentity.projectKey`). Deux instances d'un même projet la produisent
-identique, puisque le déploiement embarque le `.env` du projet verbatim et ne
-réécrit que ce qui est propre à l'hôte.
+**Avant appairage**, la ligne dit ce qui est réellement connu :
 
-Ce n'est **ni une saisie, ni une ressemblance** de nom ou de domaine : c'est
-une égalité exacte entre deux valeurs déclarées. Une clé issue d'une
-dérivation locale (`NAME`, `URL`) ne regroupe rien — deux cartes séparées
-valent mieux qu'un faux regroupement.
+```
+Garage du Nord                        ○ Non appairé
+Environnement   — non connu —
+Destination     — non connue —                       [ Appairer ]
+```
 
-`null` est normal : les fiches antérieures restent seules de leur groupe, et
-sont rattachées automatiquement à la déclaration d'une sœur.
+**Après appairage**, elle dit ce que le projet déclare :
 
-**Invariant :** un projet logique a **au plus une instance TEST et une
-instance PROD**.
+```
+SB Auto 06                            ● Connecté
+Environnement   TEST
+Destination     demo-sbauto06.ly-solution.com
+Dernier contact   il y a 12 secondes
+Données métier    08/08/2026 10:00                   [ Gérer ]
+```
 
-→ `frontend/src/lib/projectConnections.ts` · `tests/project-connections.test.js`
+Le nom affiché est le **nom courant poussé par le projet** (projection
+`PROJECT_PRESENTATION`) ; le manifeste n'est qu'un repli, et il est nommé
+comme tel (`presentationSource`).
+
+**Les filtres portent sur l'état du lien** — Toutes / Appairées / À appairer /
+Problème — jamais sur l'environnement : dans un Panel qui n'en sert qu'un, le
+filtre de l'autre rendait toujours une liste vide.
+
+**La fiche projet** suit la même règle : une carte « Connexion » (état,
+environnement, destination, dernier contact, données métier), une carte
+« Destination » au singulier, et **aucun** bouton qui ajouterait une seconde
+destination ou appairerait « la production ».
+
+→ `frontend/src/lib/projectConnections.ts` ·
+`frontend/src/components/connections.tsx` ·
+`frontend/src/pages/PairingsPage.tsx` ·
+`frontend/src/pages/ProjectDetailPage.tsx` ·
+`tests/project-connections.test.js` (`PAIRING_PAGE_FULL_WIDTH_LIST`,
+`CUSTOM_SEARCH_IS_USED`, `PROJECT_DETAIL_IS_SINGLE_INSTANCE`,
+`PROJECT_DETAIL_SHOWS_ONLY_ONE_ENVIRONMENT`,
+`PROJECT_DETAIL_SHOWS_ONLY_ONE_DESTINATION`,
+`NO_SECOND_DESTINATION_PAIRING_CTA`,
+`UNPAIRED_PROJECT_ENVIRONMENT_IS_UNKNOWN`,
+`LIVE_BUSINESS_NAME_USES_PROJECTION`, `MANIFEST_ONLY_AS_FALLBACK`)
 
 ---
 
@@ -318,14 +360,14 @@ réciproquement.
 
 ### TEST / PROD et convergence
 
-Chaque instance a SA projection, indexée par `projectId`. Un
-`logicalProjectKey` commun ne mélange rien. Et si le pont a été coupé pendant
-que le projet passait de A à B puis C, la dernière écriture gagne : le Panel
-converge directement sur **C**, sans rejouer B — et `lastBusinessSyncAt` date
-la réception de **C**, ni l'écriture de B, ni le battement de reconnexion.
+Chaque instance a SA projection, indexée par `projectId` — la seule autorité
+de périmètre. Et si le pont a été coupé pendant que le projet passait de A à B
+puis C, la dernière écriture gagne : le Panel converge directement sur **C**,
+sans rejouer B — et `lastBusinessSyncAt` date la réception de **C**, ni
+l'écriture de B, ni le battement de reconnexion.
 
-**TEST et PROD ne sont jamais fusionnés.** Même produit logique, donc
-`logicalProjectKey` commun — et strictement rien d'autre en commun :
+**TEST et PROD ne se croisent jamais.** Ils vivent dans deux instances de
+Panel distinctes (§2), et n'ont rigoureusement rien en commun :
 
 | Diffèrent toujours | |
 |---|---|
@@ -335,11 +377,10 @@ la réception de **C**, ni l'écriture de B, ni le battement de reconnexion.
 | destination | fraîcheur métier |
 | appairage | `appliedConfiguration` |
 
-**Aucun repli inter-environnement n'existe.** Si l'instance TEST n'a pas de
-destination active, la fiche affiche « aucune destination active » — elle
-n'emprunte jamais celle de sa sœur. Il en va de même pour le nom, le contrat
-et la protection : « inconnu » est une réponse, une valeur empruntée n'en est
-pas une.
+**Aucun repli inter-instance n'existe.** Si une fiche n'a pas de destination
+active, elle affiche « aucune destination active » — elle n'emprunte jamais
+celle d'une autre. Il en va de même pour le nom, le contrat et la protection :
+« inconnu » est une réponse, une valeur empruntée n'en est pas une.
 
 → `backend/src/services/registry/registryStore.js`
 → `tests/project-live-business-sync.test.js`
@@ -715,9 +756,9 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 
 | Question | Qui répond | Jamais |
 |---|---|---|
-| Quel est l'environnement d'un projet ? | le projet, à chaque battement | un nom de domaine |
-| Où vit un projet ? | la destination `ACTIVE` | `runtime.publicBackendUrl` (figée au bootstrap) |
-| Deux fiches sont-elles le même projet ? | `logicalProjectKey` déclaré | une ressemblance de nom |
+| Quel est l'environnement d'une fiche ? | le projet appairé, à chaque battement | un nom de domaine, une intention de saisie, un manifeste |
+| Où vit un projet ? | la destination `ACTIVE` d'une fiche **appairée** | `runtime.publicBackendUrl` (figée au bootstrap) |
+| Que sait-on d'une fiche non appairée ? | **rien du projet** — environnement et destination sont `null` | une valeur devinée |
 | Ce serveur est-il vide ? | l'inspection | l'absence de `currentVersion` |
 | Ces données sont-elles à jour ? | la génération + la fraîcheur, calculées par le backend | une comparaison de dates seule |
 | Qui détient ce média ? | `authority` dans le descripteur | l'hôte ou la clé d'objet |
@@ -728,9 +769,9 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 | Sujet | Source canonique |
 |---|---|
 | instance du Panel | `PanelProject.projectId` |
-| parenté entre instances | `PanelProject.logicalProjectKey` — **navigation seule** |
-| environnement | `declaredEnvironment` / `runtime.environment` de cette instance |
-| destination | `PanelProjectDestination` `ACTIVE` de cette instance |
+| clé technique de fiche | `PanelProject.projectKey` — **anti-collision seule** |
+| environnement | `runtime.environment`, et **uniquement si la fiche est appairée** |
+| destination | `PanelProjectDestination` `ACTIVE` d'une fiche **appairée** |
 | nom, présentation, description | `PanelProjectPresentation` (projection live) |
 | manifeste | `PanelProject.manifest` — **bootstrap et repli** |
 | vivacité | `runtime.lastHeartbeatAt` → `liveness` |
@@ -746,9 +787,10 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 | suppression de destination | `DeploymentRun.operationType = DESTINATION_DELETE` |
 
 `contract`, `siteStatus` et la protection contractuelle sont
-**instance-scoped**. Deux instances parentes peuvent donc porter des valeurs
-différentes — un contrat résilié en TEST et actif en PROD est un état légal.
-Le Panel ne les fusionne jamais et n'en déduit rien pour la sœur.
+**instance-scoped**. Deux instances d'un même logiciel peuvent donc porter des
+valeurs différentes — un contrat résilié en TEST et actif en PROD est un état
+légal. Elles vivent de toute façon dans deux Panels distincts : rien ne peut
+les fusionner, et rien n'en déduit quoi que ce soit pour l'autre.
 
 ---
 

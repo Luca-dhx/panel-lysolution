@@ -327,8 +327,17 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
     /searchParams\.get\('tab'\)/.test(detail));
   check('…sans empiler d’entrée d’historique à chaque changement',
     /setSearchParams\(next, \{ replace: true \}\)/.test(detail));
-  check('l’environnement ciblé par un lien profond est lu de l’URL',
-    /searchParams\.get\('env'\)/.test(detail));
+  /**
+   * PROJECT_DETAIL_IS_SINGLE_INSTANCE — plus aucun environnement dans l'URL.
+   *
+   * Le paramètre `?env=` servait à mettre en avant l'une des DEUX lignes d'une
+   * fiche qui en portait deux. Une fiche décrit une instance : il n'y a plus
+   * rien à désigner, et un paramètre qui ne désigne rien finit par mentir.
+   */
+  check('la fiche ne lit plus d’environnement depuis l’URL',
+    !/searchParams\.get\('env'\)/.test(detail));
+  check('…et ne porte plus de sélecteur d’instance sœur',
+    !/SisterInstanceLink|groupProjectsByLogicalProject/.test(detail));
   check('…et une valeur inattendue ne devient jamais un onglet',
     /tabParam === 'dev' \|\| tabParam === 'events'/.test(detail));
   check('la fiche n’affiche plus de chargement après le premier',

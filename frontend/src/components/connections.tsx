@@ -1,24 +1,27 @@
 /**
- * LES CONNEXIONS D'UN PROJET — les briques d'affichage, et rien d'autre.
+ * UNE FICHE DU PANEL — une ligne, pleine largeur, et rien d'autre.
  *
  * ══ CE QUE CES COMPOSANTS NE FONT PAS ═══════════════════════════════════════
  *
- * Ils ne décident rien. L'état d'une connexion, son besoin d'action, son
- * regroupement : tout est calculé par `projectConnections.ts`, à partir des
- * verdicts que le backend publie. Ici on met en forme.
+ * Ils ne décident rien. L'état d'une fiche, son besoin d'action, son
+ * environnement, sa destination : tout est calculé par `projectConnections.ts`
+ * à partir des verdicts que le backend publie. Ici on met en forme.
  *
- * C'est ce qui permet de tester la règle sans monter React, et de la corriger
- * à un seul endroit — plutôt qu'au fil de conditionnelles dispersées dans le
- * JSX, comme le faisait la table d'appairages.
+ * ══ CE QUI A DISPARU ════════════════════════════════════════════════════════
+ *
+ * `EnvironmentConnectionRow` rendait DEUX lignes par projet — TEST et PROD —
+ * dont l'une, presque toujours, était une case vide portant un bouton
+ * « Appairer la production ». Ce bouton ne pouvait pas aboutir : une instance
+ * de Panel ne sert qu'un environnement, et le bootstrap refuse l'autre.
+ *
+ * Une fiche, une ligne. Si le client a une recette et une production, ce sont
+ * deux fiches — dans deux Panels — et elles ne se croisent jamais.
  */
 import { Link } from 'react-router-dom';
 import { Icon } from '@/components/Icon';
 import { formatDateTime } from '@/lib/format';
 import { ConnectionActions } from '@/components/ConnectionActions';
-import {
-  connectionLink, pairEnvironmentLink,
-  type EnvironmentConnection, type ProjectGroup,
-} from '@/lib/projectConnections';
+import { manageLink, type PairingRow } from '@/lib/projectConnections';
 
 /**
  * LE POINT D'ÉTAT — couleur ET forme ET texte.
@@ -28,31 +31,40 @@ import {
  * en toutes lettres. Le point lui-même est décoratif : il est retiré de l'arbre
  * d'accessibilité pour ne pas faire lire « rond noir » avant le mot utile.
  */
-export function ConnectionStatusDot({ connection }: { connection: EnvironmentConnection }) {
+export function ConnectionStatusDot({ row }: { row: PairingRow }) {
   return (
-    <span className={`conn-dot conn-dot-${connection.state.tone}`} aria-hidden="true">
-      {connection.state.symbol}
+    <span className={`conn-dot conn-dot-${row.state.tone}`} aria-hidden="true">
+      {row.state.symbol}
     </span>
   );
 }
 
 /**
- * UNE LIGNE D'ENVIRONNEMENT — l'unité de lecture de toute la refonte.
+ * UNE VALEUR QU'ON NE CONNAÎT PAS — dite, jamais devinée.
  *
- * L'ordre est celui de la hiérarchie demandée : l'environnement, l'état, le
- * domaine, puis le reste. Rien de technique ici : ni identifiant, ni jeton, ni
- * génération. Ils vivent dans le repli « Informations techniques ».
+ * Un tiret muet se lit comme « vide ». « — non connu — » se lit comme « le
+ * projet ne l'a pas encore déclaré », ce qui est exactement la situation.
  */
-export function EnvironmentConnectionRow({
-  connection,
-  group,
-  compact = false,
+function Inconnu({ quoi }: { quoi: string }) {
+  return <span className="conn-unknown">— {quoi} —</span>;
+}
+
+/**
+ * LA LIGNE D'UNE FICHE — l'unité de lecture de toute la page.
+ *
+ * AVANT APPAIRAGE : le nom, « Non appairé », et l'action d'appairer. Aucun
+ * environnement, aucune destination, aucune clé technique — rien de dérivé
+ * d'un projet qui n'a pas encore parlé.
+ *
+ * APRÈS : le nom courant poussé par le projet, son état, l'environnement qu'il
+ * DÉCLARE, sa destination courante, son dernier contact et la dernière donnée
+ * métier reçue.
+ */
+export function PairingRowItem({
+  row,
   onChanged,
 }: {
-  connection: EnvironmentConnection;
-  group: ProjectGroup;
-  /** La page Appairages resserre ; la fiche projet respire. */
-  compact?: boolean;
+  row: PairingRow;
   /**
    * Les actions secondaires (code, révocation) ne sont proposées QUE si
    * l'écran sait se rafraîchir ensuite. Une action dont on ne voit pas l'effet
@@ -60,132 +72,72 @@ export function EnvironmentConnectionRow({
    */
   onChanged?: () => Promise<void> | void;
 }) {
-  const { environment, state, project } = connection;
-  const absent = state.status === 'ABSENT';
+  const titreId = `pairing-${row.projectId}`;
 
   return (
-    <div className={absent ? 'conn-row conn-row-absent' : 'conn-row'}>
-      <div className="conn-row-head">
-        <span className="conn-env">{environment}</span>
-        <span className="conn-state">
-          <ConnectionStatusDot connection={connection} />
-          <span className={`conn-state-label conn-state-${state.tone}`}>{state.label}</span>
+    <article
+      className={row.paired ? 'pairing-item' : 'pairing-item pairing-item-unpaired'}
+      aria-labelledby={titreId}
+    >
+      <div className="pairing-identity">
+        <h2 className="pairing-name" id={titreId}>{row.name}</h2>
+        {row.tagline ? <p className="pairing-tagline">{row.tagline}</p> : null}
+        <span className="pairing-state">
+          <ConnectionStatusDot row={row} />
+          <span className={`conn-state-label conn-state-${row.state.tone}`}>
+            {row.state.label}
+          </span>
         </span>
       </div>
 
-      {connection.host ? (
-        <a
-          className="conn-host"
-          href={connection.host}
-          target="_blank"
-          rel="noreferrer"
-          title={connection.host}
-        >
-          {connection.host.replace(/^https?:\/\//, '')}
-        </a>
-      ) : (
-        <p className="conn-host conn-host-empty">
-          {absent ? 'Aucune instance connectée' : 'Adresse inconnue'}
-        </p>
-      )}
-
-      {!compact && project ? (
-        <dl className="conn-facts">
-          <div>
-            <dt>Dernier contact</dt>
-            <dd>{connection.lastContactLabel ?? 'jamais'}</dd>
-          </div>
-          <div>
-            <dt>Dernière photographie reçue</dt>
-            <dd>
-              {connection.lastSnapshotAt ? formatDateTime(connection.lastSnapshotAt) : 'jamais'}
-            </dd>
-          </div>
-        </dl>
-      ) : null}
-
-      {compact && project && connection.lastContactLabel ? (
-        <p className="conn-meta">Dernier contact {connection.lastContactLabel}</p>
-      ) : null}
-
-      <div className="conn-actions">
-        {project ? (
-          <>
-            <Link
-              className="btn btn-secondary btn-small"
-              to={connectionLink(project.projectId, environment)}
-            >
-              Gérer
-              <span className="sr-only"> la connexion {environment} de {group.name}</span>
-            </Link>
-            {onChanged ? (
-              <ConnectionActions
-                connection={connection}
-                projectName={group.name}
-                onDone={onChanged}
-              />
-            ) : null}
-          </>
-        ) : (
-          <Link
-            className="btn btn-secondary btn-small"
-            to={pairEnvironmentLink(
-              environment,
-              group.projects[0]?.logicalProjectKey ?? null,
-              group.name,
-            )}
-          >
-            Appairer {environment === 'PROD' ? 'la production' : 'la recette'}
-            <span className="sr-only"> pour {group.name}</span>
-          </Link>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * UNE CARTE = UN PROJET. C'est toute la refonte tenue en une phrase.
- *
- * L'ancienne table alignait des lignes d'appairage : deux instances d'un même
- * client y apparaissaient comme deux projets sans rapport. Ici le projet est
- * l'objet, et ses environnements sont ses connexions.
- */
-export function ProjectConnectionsCard({
-  group,
-  onChanged,
-}: {
-  group: ProjectGroup;
-  onChanged?: () => Promise<void> | void;
-}) {
-  return (
-    <article className="conn-item" aria-labelledby={`conn-${group.key}`}>
-      <header className="conn-card-head">
-        <div className="conn-card-identity">
-          <h2 className="conn-card-name" id={`conn-${group.key}`}>{group.name}</h2>
-          {group.tagline ? <p className="conn-card-tagline">{group.tagline}</p> : null}
+      {/*
+        LES FAITS DU PROJET DISTANT — et eux seuls.
+        Sur une fiche non appairée, ce bloc dit trois fois « non connu ». C'est
+        l'information juste : le Panel ne sait rien d'un projet qui ne lui a
+        pas encore parlé.
+      */}
+      <dl className="pairing-facts">
+        <div>
+          <dt>Environnement</dt>
+          <dd>{row.environment ?? <Inconnu quoi="non connu" />}</dd>
         </div>
-        {group.needsAttention ? (
-          <span className="conn-flag" title="Une connexion demande une action">
+        <div>
+          <dt>Destination</dt>
+          <dd>
+            {row.destination
+              ? <span className="pairing-host" title={row.destination}>{row.destination}</span>
+              : <Inconnu quoi="non connue" />}
+          </dd>
+        </div>
+        <div>
+          <dt>Dernier contact</dt>
+          <dd>{row.lastContactLabel ?? <Inconnu quoi="jamais" />}</dd>
+        </div>
+        <div>
+          <dt>Données métier reçues</dt>
+          <dd>
+            {row.lastBusinessSyncAt
+              ? formatDateTime(row.lastBusinessSyncAt)
+              : <Inconnu quoi="jamais" />}
+          </dd>
+        </div>
+      </dl>
+
+      <div className="pairing-actions">
+        {row.needsAttention ? (
+          <span className="conn-flag" title="Cette fiche demande une action">
             <Icon name="plug" size={14} label="" />
             À vérifier
           </span>
         ) : null}
-      </header>
-
-      <div className="conn-card-body">
-        {group.connections.map((c) => (
-          <EnvironmentConnectionRow
-            key={c.environment}
-            connection={c}
-            group={group}
-            compact
-            onChanged={onChanged}
-          />
-        ))}
+        <Link className="btn btn-secondary btn-small" to={manageLink(row.projectId)}>
+          {row.paired ? 'Gérer' : 'Appairer'}
+          <span className="sr-only"> {row.name}</span>
+        </Link>
+        {onChanged ? <ConnectionActions row={row} onDone={onChanged} /> : null}
       </div>
     </article>
   );
 }
 
-export default ProjectConnectionsCard;
+export default PairingRowItem;

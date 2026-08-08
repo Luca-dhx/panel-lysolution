@@ -1,26 +1,32 @@
 /**
- * CONNEXIONS D'UN PROJET — une fiche par instance, une carte par projet.
+ * APPAIRAGES — UNE FICHE, UNE INSTANCE, UNE LIGNE.
  *
  * ══ CE QUE CE FICHIER VERROUILLE ════════════════════════════════════════════
  *
- * Le registre raisonne en INSTANCES : une fiche = un appairage = un jeton = un
- * environnement. L'opérateur raisonne en PROJETS CLIENTS. Entre les deux, il
- * manquait le lien : rien ne disait que deux fiches nommées « SB Auto »
- * décrivaient le même garage, et la page Appairages ne pouvait qu'aligner des
- * appairages techniques indépendants.
+ * La doctrine du Panel est désormais sans ambiguïté :
  *
- * Pire, le lien était IMPOSSIBLE à créer : `declareProject` refusait toute
- * seconde fiche annonçant la même clé de pont, et le bootstrap refusait
- * d'appairer une fiche dont la clé annoncée appartenait déjà à une autre. Le
- * Panel ne pouvait donc pas enregistrer un projet en TEST *et* en PROD.
+ *     1 fiche Panel = 1 appairage = 1 projet distant = 1 environnement
+ *                   = 1 destination = 1 état métier.
  *
- * On prouve ici les deux moitiés :
- *   · le backend sait désormais accueillir les deux instances, les rattache
- *     AUTOMATIQUEMENT à une identité logique déclarée par le projet, et refuse
- *     toujours deux fois le même environnement ;
- *   · le regroupement d'écran ne mélange jamais TEST et PROD.
+ * Ce fichier remplace la suite qui éprouvait le contraire : le regroupement de
+ * deux fiches par `logicalProjectKey`, les cartes TEST+PROD, le rattachement
+ * automatique des fiches historiques, les liens profonds `?env=`.
+ *
+ * ══ POURQUOI CETTE SUITE A ÉTÉ REMPLACÉE, ET NON « ASSOUPLIE » ══════════════
+ *
+ * Elle vérifiait fidèlement un modèle qui ne pouvait pas exister. Une instance
+ * de Panel ne sert QU'UN environnement : `pairing.bootstrap` refuse tout projet
+ * dont l'environnement ne concorde pas (fail closed, et c'est une protection
+ * qu'on garde — elle est éprouvée ici même). Une carte « recette + production »
+ * ne pouvait donc jamais porter deux fiches vivantes : la seconde était
+ * toujours une fiche jamais appairée, affichée comme un constat.
+ *
+ * Les invariants portent leur nom en toutes lettres — ils sont cherchables.
  */
 import { register } from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   check, connectTestDatabase, finish, rejectsWith, section, setTestEnv,
   startMemoryMongo, stopMemoryMongo,
@@ -34,600 +40,336 @@ await connectTestDatabase();
 
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
-const PanelProject = (await import('../backend/src/models/PanelProject.model.js')).default;
-const { encryptSecret: chiffrer } = await import('../backend/src/utils/panelCrypto.js');
+const pairing = await import('../backend/src/services/pairing/pairing.service.js');
 const {
-  groupProjectsByLogicalProject, connectionStateOf, environmentOf, groupKeyOf,
-  connectionLink, pairEnvironmentLink, matchesSearch, matchesFilter, filterCounts,
+  toPairingRow, toPairingRows, connectionStateOf, environmentOf, destinationOf,
+  manageLink, matchesSearch, matchesFilter, filterCounts,
 } = await import('@/lib/projectConnections');
 
-const CLE_LOGIQUE = 'sb-auto-06';
+const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
 
-/** Le pont annonce sa clé : c'est elle, et rien d'autre, qui regroupe. */
-const identiteAnnoncee = (projectName = 'SB Auto 06') => ({
-  projectKey: CLE_LOGIQUE, projectName, environment: null, softwareVersion: '1.0.0',
+/**
+ * LE CODE EXÉCUTABLE, SANS LES COMMENTAIRES.
+ *
+ * Les fichiers refondus CITENT volontairement ce qu'ils ont supprimé —
+ * « `pairEnvironmentLink` a disparu pour la même raison » — parce qu'un
+ * commentaire qui explique une absence vaut mieux qu'un silence. Chercher ces
+ * noms dans le fichier brut ferait donc échouer un contrôle sur la prose qui
+ * en atteste. Seul le code est jugé ; c'est la même discipline que
+ * `panel-instance-environment.test.js`.
+ */
+const codeSeul = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, ' ')
+  .replace(/\/\/[^\r\n]*/g, ' ');
+
+/** Les règles CSS dont le sélecteur nomme la liste d'appairages. */
+function reglesPairing(css) {
+  const sansCommentaires = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  return [...sansCommentaires.matchAll(/([^{}]*pairing[^{}]*)\{([^}]*)\}/g)]
+    .map((m) => `${m[1]}{${m[2]}}`)
+    .join('\n');
+}
+
+/** Le pont annonce sa clé — anti-collision technique, jamais un regroupement. */
+const identiteAnnoncee = (projectKey = 'sb-auto-06', projectName = 'SB Auto 06') => ({
+  projectKey, projectName, environment: null, softwareVersion: '1.0.0',
 });
 
-async function declarer({ url, name, environment, bridge = identiteAnnoncee() }) {
+async function declarer({ url, name, environment = null, bridge = identiteAnnoncee() }) {
   return registre.declareProject({
     publicBackendUrl: url, projectName: name, bridgeIdentity: bridge, environment,
   });
 }
 
+/** La fiche telle que l'API la publie — la même lecture que l'écran. */
+async function publique(projectId) {
+  const record = await registryStore.getById(projectId);
+  return registre.toPublicProject(record, Date.now(), {}, record.activeNetwork?.host ?? null);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('BACKEND — deux instances d’un même projet peuvent coexister');
+section('BACKEND — une fiche non appairée ne déclare RIEN du projet');
 {
   await registryStore.clear();
-
-  const test = await declarer({
-    url: 'https://api.demo-sbauto06.ly-solution.com', name: 'SB Auto 06', environment: 'TEST',
+  const { record } = await declarer({
+    url: 'https://api.demo-sbauto06.ly-solution.com',
+    name: 'SB Auto 06',
+    environment: 'TEST', // intention de saisie, purement anti-collision
   });
-  check('la recette est déclarée', test.record.projectId.length > 0);
-  check('…avec l’identité logique annoncée par le projet',
-    test.record.logicalProjectKey === CLE_LOGIQUE);
-  check('…sans qu’aucun nom ni domaine n’ait été comparé',
-    test.record.logicalProjectKey === identiteAnnoncee().projectKey);
-  check('…et son environnement déclaré', test.record.declaredEnvironment === 'TEST');
+  const vue = await publique(record.projectId);
+
+  check('UNPAIRED_PROJECT_HAS_NO_ENVIRONMENT', vue.environment === null);
+  check('…y compris dans le descripteur', vue.descriptor.environment === null);
+  check('UNPAIRED_PROJECT_HAS_NO_DESTINATION', vue.descriptor.primaryDomain === null);
+  check('…ni aucune adresse résolue', vue.descriptor.urls === null);
+  check('…et la raison est NOMMÉE, pas devinée',
+    vue.descriptor.networkSource === 'NON_APPAIRE');
+  check('NO_PROJECT_KEY_IN_PUBLIC_PROJECT : aucune identité logique publiée',
+    !('logicalProjectKey' in vue));
 
   /**
-   * LA SECONDE INSTANCE — c'est elle qui était refusée. Même clé annoncée,
-   * autre adresse, autre environnement : ce n'est pas un doublon, c'est la
-   * production du même projet.
+   * L'intention saisie EXISTE toujours en base — elle départage deux clés
+   * techniques identiques. Elle ne franchit simplement plus l'API.
    */
-  const prod = await declarer({
-    url: 'https://api.sbauto06.ly-solution.com', name: 'SB Auto 06', environment: 'PROD',
-  });
-  check('la production est déclarée à son tour', prod.record.projectId !== test.record.projectId);
-  check('…et partage la MÊME identité logique',
-    prod.record.logicalProjectKey === test.record.logicalProjectKey);
-  check('…tout en gardant sa PROPRE clé technique',
-    prod.record.projectKey !== test.record.projectKey);
-  check('…et son propre environnement', prod.record.declaredEnvironment === 'PROD');
-  check('deux fiches, deux appairages indépendants',
-    (await registryStore.list()).length === 2);
+  const enBase = await registryStore.getById(record.projectId);
+  check('l’environnement saisi reste en base, pour l’anti-collision seule',
+    enBase.declaredEnvironment === 'TEST');
+  check('…et aucune identité logique n’est écrite',
+    (enBase.logicalProjectKey ?? null) === null);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('BACKEND — ce qui reste interdit l’est toujours');
-{
-  await rejectsWith(
-    () => declarer({
-      url: 'https://api.autre.ly-solution.com', name: 'SB Auto 06', environment: 'TEST',
-    }),
-    'PANEL_PROJECT_ENVIRONMENT_ALREADY_DECLARED',
-    'deux recettes pour un même projet : refusé',
-  );
-
-  await rejectsWith(
-    () => declarer({
-      url: 'https://api.demo-sbauto06.ly-solution.com', name: 'SB Auto 06', environment: 'PROD',
-    }),
-    'PANEL_PROJECT_ALREADY_DECLARED',
-    'la même adresse deux fois : refusé, comme avant',
-  );
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('BACKEND — une fiche sans clé annoncée reste seule, exactement comme avant');
-{
-  const isole = await registre.declareProject({
-    publicBackendUrl: 'https://api.garage-martin.fr',
-    projectName: 'Garage Martin',
-    bridgeIdentity: null,
-    environment: null,
-  });
-  check('aucune identité logique n’est inventée', isole.record.logicalProjectKey === null);
-  check('…ni aucun environnement', isole.record.declaredEnvironment === null);
-
-  // Un second projet SANS clé ne se retrouve jamais groupé avec le premier,
-  // même si les noms se ressemblent. C'est le piège de l'heuristique, évité.
-  const voisin = await registre.declareProject({
-    publicBackendUrl: 'https://api.garage-martin-fils.fr',
-    projectName: 'Garage Martin Fils',
-    bridgeIdentity: null,
-    environment: null,
-  });
-  check('un nom voisin ne crée aucun regroupement',
-    groupKeyOf({ ...isole.record, logicalProjectKey: null }).key
-      !== groupKeyOf({ ...voisin.record, logicalProjectKey: null }).key);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('BACKEND — la projection publique porte de quoi regrouper');
-{
-  const fiche = await registryStore.getByKey(
-    (await registryStore.list()).find((r) => r.declaredEnvironment === 'TEST').projectKey,
-  );
-  const publie = registre.toPublicProject(fiche, Date.now(), {}, null);
-  check('l’identité logique est publiée', publie.logicalProjectKey === CLE_LOGIQUE);
-  check('l’environnement de l’instance est publié', publie.environment === 'TEST');
-  check('aucun secret n’accompagne ces champs',
-    !JSON.stringify(publie).includes('bridgeToken')
-    && !JSON.stringify(publie).includes('pairingCodeHash'));
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-/*  REGROUPEMENT D'ÉCRAN — fonctions pures, sans React                        */
-/* ══════════════════════════════════════════════════════════════════════════ */
-
-const fiche = ({
-  id, env, logical = CLE_LOGIQUE, liveness = 'ONLINE', pairing = 'PAIRED',
-  host = null, seconds = 10, name = 'SB Auto 06', snapshot = '2026-08-07T10:56:00.000Z',
-  generationMismatch = false, environmentMismatch = false,
-}) => ({
-  projectId: id,
-  projectKey: `${logical ?? 'x'}-${id}`,
-  logicalProjectKey: logical,
-  environment: env,
-  projectName: name,
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-01T00:00:00.000Z',
-  pairing: { status: pairing, pairedAt: null, revokedAt: null, pairingCodeExpiresAt: null },
-  runtime: {
-    environment: env, softwareVersion: '1.0.0', contractVersion: '1.4.0',
-    publicBackendUrl: null, lastHeartbeatAt: '2026-08-07T11:00:00.000Z',
-    lastHealth: { status: 'OK', details: null }, bridgeStats: null,
-  },
-  liveness,
-  secondsSinceLastHeartbeat: seconds,
-  descriptor: { urls: { website: host }, versions: {} },
-  capabilities: { enabled: [], reserved: [], unknown: [], panelModules: [] },
-  business: {
-    presentation: { companyName: name, tagline: 'Detailing automobile' },
-    contract: null,
-    freshness: {
-      runtimeEnvironment: env, runtimeGeneration: `${env}|g`,
-      projectionEnvironment: env, projectionGeneration: `${env}|g`,
-      generationMismatch, environmentMismatch, destinationKnown: true,
-      lastSyncAt: snapshot,
-    },
-  },
-});
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('A. Aucun appairage — les deux environnements sont proposés');
-{
-  const [g] = groupProjectsByLogicalProject([
-    fiche({ id: 'a1', env: null, logical: null, pairing: 'DECLARED', liveness: 'NEVER_SEEN' }),
-  ]);
-  check('un seul groupe', Boolean(g));
-  check('TEST est proposé', g.connections.find((c) => c.environment === 'TEST').state.status === 'ABSENT');
-  check('PROD est proposé', g.connections.find((c) => c.environment === 'PROD').state.status === 'ABSENT');
-  check('rien ne demande d’action — un projet neuf n’est pas en défaut',
-    g.needsAttention === false);
-  check('mais il reste à configurer', g.hasMissing === true);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('B. TEST seul');
-{
-  const [g] = groupProjectsByLogicalProject([
-    fiche({ id: 'b1', env: 'TEST', host: 'https://demo-sbauto06.ly-solution.com' }),
-  ]);
-  const test = g.connections.find((c) => c.environment === 'TEST');
-  const prod = g.connections.find((c) => c.environment === 'PROD');
-  check('TEST est connecté', test.state.status === 'ONLINE' && test.state.label === 'Connecté');
-  check('…avec SON domaine', test.host === 'https://demo-sbauto06.ly-solution.com');
-  check('PROD est simplement non appairé', prod.state.status === 'ABSENT');
-  check('…et n’affiche AUCUN domaine', prod.host === null);
-  check('…et n’est pas présenté comme une erreur',
-    prod.state.tone === 'neutral' && prod.needsAttention === false);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('C. PROD seul');
-{
-  const [g] = groupProjectsByLogicalProject([
-    fiche({ id: 'c1', env: 'PROD', host: 'https://sbauto06.ly-solution.com' }),
-  ]);
-  const test = g.connections.find((c) => c.environment === 'TEST');
-  const prod = g.connections.find((c) => c.environment === 'PROD');
-  check('PROD est connecté', prod.state.status === 'ONLINE');
-  check('…avec son domaine', prod.host === 'https://sbauto06.ly-solution.com');
-  check('TEST est proposé', test.state.status === 'ABSENT' && test.host === null);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('D→H. TEST + PROD — deux connexions, aucune contamination');
-{
-  const T = fiche({
-    id: 'd1', env: 'TEST', host: 'https://demo-sbauto06.ly-solution.com',
-    liveness: 'ONLINE', seconds: 12, snapshot: '2026-08-07T10:56:00.000Z',
-  });
-  const P = fiche({
-    id: 'd2', env: 'PROD', host: 'https://sbauto06.ly-solution.com',
-    liveness: 'OFFLINE', seconds: 90_000, snapshot: '2026-07-01T08:00:00.000Z',
-  });
-  const groupes = groupProjectsByLogicalProject([T, P]);
-
-  check('D. les deux fiches forment UN seul projet', groupes.length === 1);
-  const g = groupes[0];
-  check('…déclaré comme regroupé', g.grouped === true);
-  check('…avec deux connexions distinctes', g.connections.length === 2);
-  check('…et les deux fiches conservées', g.projects.length === 2);
-
-  const test = g.connections.find((c) => c.environment === 'TEST');
-  const prod = g.connections.find((c) => c.environment === 'PROD');
-
-  check('E. TEST connecté', test.state.status === 'ONLINE');
-  check('E. PROD hors ligne', prod.state.status === 'OFFLINE');
-  check('E. …et les états ne se contaminent pas',
-    test.state.label !== prod.state.label);
-
-  check('F. chaque environnement garde SA photographie',
-    test.lastSnapshotAt === '2026-08-07T10:56:00.000Z'
-    && prod.lastSnapshotAt === '2026-07-01T08:00:00.000Z');
-  check('F. aucun snapshot croisé', test.lastSnapshotAt !== prod.lastSnapshotAt);
-
-  check('G. chaque environnement garde SON domaine',
-    test.host === 'https://demo-sbauto06.ly-solution.com'
-    && prod.host === 'https://sbauto06.ly-solution.com');
-  check('G. le domaine TEST n’apparaît jamais côté PROD',
-    !String(prod.host).includes('demo-'));
-
-  check('H. les générations diffèrent sans créer de faux désaccord',
-    test.freshness.isGenerationMismatch === false
-    && prod.freshness.isGenerationMismatch === false);
-  check('H. …alors que leurs clés de génération SONT différentes',
-    T.business.freshness.runtimeGeneration !== P.business.freshness.runtimeGeneration);
-
-  check('la carte sait qu’une connexion vit', g.hasOnline === true);
-  check('…et qu’une autre demande une action', g.needsAttention === true);
-  check('…et qu’il ne manque plus aucun environnement', g.hasMissing === false);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('I/J. Réappairer un environnement n’altère jamais l’autre');
-{
-  const T = fiche({ id: 'i1', env: 'TEST', host: 'https://t.example.com' });
-  const P = fiche({ id: 'i2', env: 'PROD', host: 'https://p.example.com' });
-  const avant = groupProjectsByLogicalProject([T, P])[0];
-  const prodAvant = { ...avant.connections.find((c) => c.environment === 'PROD') };
-
-  // TEST est révoqué puis re-déclaré : seule sa colonne bouge.
-  const Trevoque = { ...T, pairing: { ...T.pairing, status: 'REVOKED' }, liveness: 'OFFLINE' };
-  const apres = groupProjectsByLogicalProject([Trevoque, P])[0];
-  const testApres = apres.connections.find((c) => c.environment === 'TEST');
-  const prodApres = apres.connections.find((c) => c.environment === 'PROD');
-
-  check('I. TEST reflète sa révocation', testApres.state.status === 'REVOKED');
-  check('I. PROD est strictement inchangé',
-    prodApres.state.status === prodAvant.state.status
-    && prodApres.host === prodAvant.host
-    && prodApres.lastSnapshotAt === prodAvant.lastSnapshotAt);
-
-  // …et symétriquement.
-  const Prevoque = { ...P, pairing: { ...P.pairing, status: 'REVOKED' }, liveness: 'OFFLINE' };
-  const inverse = groupProjectsByLogicalProject([T, Prevoque])[0];
-  check('J. PROD reflète sa révocation',
-    inverse.connections.find((c) => c.environment === 'PROD').state.status === 'REVOKED');
-  check('J. TEST reste connecté',
-    inverse.connections.find((c) => c.environment === 'TEST').state.status === 'ONLINE');
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Fiches sans identité logique — chacune son groupe');
-{
-  const a = fiche({ id: 'x1', env: 'TEST', logical: null, name: 'Garage Martin' });
-  const b = fiche({ id: 'x2', env: 'PROD', logical: null, name: 'Garage Martin Fils' });
-  const groupes = groupProjectsByLogicalProject([a, b]);
-  check('deux fiches sans clé → deux groupes', groupes.length === 2);
-  check('…et aucune n’est déclarée regroupée', groupes.every((g) => g.grouped === false));
-  check('…un nom voisin ne les rapproche pas',
-    groupes[0].projects.length === 1 && groupes[1].projects.length === 1);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Deux fiches du MÊME environnement — aucune n’est perdue');
-{
-  // Interdit par le backend, mais on ne fait jamais disparaître une donnée
-  // qu'on ne comprend pas : elle devient son propre groupe.
-  const a = fiche({ id: 'y1', env: 'TEST' });
-  const b = fiche({ id: 'y2', env: 'TEST' });
-  const groupes = groupProjectsByLogicalProject([a, b]);
-  check('les deux fiches restent visibles',
-    groupes.flatMap((g) => g.projects).length === 2);
-  check('…sans qu’aucune n’écrase l’autre',
-    groupes.some((g) => g.projects[0].projectId === 'y1')
-    && groupes.some((g) => g.projects[0].projectId === 'y2'));
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('États dégradés — chacun son mot');
-{
-  const cas = [
-    ['DECLARED', { pairing: 'DECLARED', liveness: 'NEVER_SEEN' }, 'En attente de connexion'],
-    ['REVOKED', { pairing: 'REVOKED', liveness: 'OFFLINE' }, 'Déconnecté'],
-    ['STALE', { pairing: 'PAIRED', liveness: 'STALE' }, 'Signal en retard'],
-    ['OFFLINE', { pairing: 'PAIRED', liveness: 'OFFLINE' }, 'Hors ligne'],
-  ];
-  for (const [nom, patch, attendu] of cas) {
-    const etat = connectionStateOf(fiche({ id: 'z', env: 'TEST', ...patch }));
-    check(`${nom} → « ${attendu} »`, etat.label === attendu);
-  }
-  check('absente → « Non appairé »', connectionStateOf(null).label === 'Non appairé');
-  check('un statut ne se lit jamais à la seule couleur',
-    ['●', '◐', '○'].includes(connectionStateOf(null).symbol));
-
-  // Une connexion en ligne dont les données sont périmées demande une action.
-  const perime = fiche({ id: 'z2', env: 'TEST', generationMismatch: true });
-  const [g] = groupProjectsByLogicalProject([perime]);
-  check('en ligne mais photographie périmée → action requise',
-    g.connections.find((c) => c.environment === 'TEST').needsAttention === true);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Environnement — lu, jamais deviné');
-{
-  check('l’environnement publié fait foi',
-    environmentOf(fiche({ id: 'e1', env: 'PROD' })) === 'PROD');
-  check('une valeur inconnue n’est pas inventée',
-    environmentOf({ environment: null, runtime: { environment: null } }) === null);
-  check('…et une valeur exotique est refusée',
-    environmentOf({ environment: 'STAGING', runtime: {} }) === null);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Recherche et filtres');
-{
-  const groupes = groupProjectsByLogicalProject([
-    fiche({ id: 'f1', env: 'TEST', host: 'https://demo-sbauto06.ly-solution.com' }),
-    fiche({ id: 'f2', env: 'PROD', logical: 'garage-nord', name: 'Garage du Nord', liveness: 'OFFLINE' }),
-  ]);
-  check('recherche par nom', groupes.filter((g) => matchesSearch(g, 'Garage')).length === 1);
-  check('recherche par domaine', groupes.filter((g) => matchesSearch(g, 'sbauto06')).length === 1);
-  check('recherche vide → tout', groupes.filter((g) => matchesSearch(g, '  ')).length === 2);
-  check('recherche insensible à la casse', groupes.filter((g) => matchesSearch(g, 'GARAGE')).length === 1);
-
-  const compte = filterCounts(groupes);
-  check('compteur « tous »', compte.all === 2);
-  check('compteur « TEST »', compte.test === 1);
-  check('compteur « PROD »', compte.prod === 1);
-  check('compteur « à connecter »', compte.todo === 2);
-  check('filtre TEST', groupes.filter((g) => matchesFilter(g, 'test')).length === 1);
-  check('filtre PROD', groupes.filter((g) => matchesFilter(g, 'prod')).length === 1);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Liens profonds — de vraies URL, qui survivent au rafraîchissement');
-{
-  const lien = connectionLink('p-1', 'PROD');
-  check('le lien porte le projet', lien.includes('/projects/p-1'));
-  check('…l’onglet visé', lien.includes('tab=dev'));
-  check('…et l’environnement', lien.includes('env=PROD'));
-  check('aucun état de navigation implicite', !lien.includes('undefined'));
-
-  const params = new URLSearchParams(lien.split('?')[1]);
-  check('les paramètres se relisent tels quels',
-    params.get('tab') === 'dev' && params.get('env') === 'PROD');
-
-  const creation = pairEnvironmentLink('PROD', CLE_LOGIQUE, 'SB Auto 06');
-  const p2 = new URLSearchParams(creation.split('?')[1]);
-  check('le raccourci d’appairage connaît déjà l’environnement', p2.get('env') === 'PROD');
-  check('…et le projet', p2.get('logical') === CLE_LOGIQUE && p2.get('name') === 'SB Auto 06');
-  check('l’utilisateur n’a donc rien à re-sélectionner',
-    creation.includes('declare=1'));
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-/*  PASSE DE CLÔTURE — rattachement, actions rendues, isolation stricte      */
-/* ══════════════════════════════════════════════════════════════════════════ */
-
-section('Cas 10. Fiche historique sans identité logique — rattachée, jamais réappairée');
+section('BACKEND — après appairage, l’environnement vient DU PROJET');
 {
   await registryStore.clear();
-
-  /**
-   * L'ÉTAT RÉEL D'AVANT : une fiche appairée, dont la clé technique vaut la
-   * clé annoncée par le projet (adoptée à son appairage), et dont l'identité
-   * logique n'existait pas encore.
-   */
-  const at = new Date().toISOString();
-  await registryStore.insert({
-    projectId: 'ancienne-test',
-    projectKey: CLE_LOGIQUE,
-    projectKeySource: 'BRIDGE_KEY',
-    logicalProjectKey: null,
-    declaredEnvironment: null,
+  const { record, pairingCode } = await declarer({
+    url: 'https://api.demo-sbauto06.ly-solution.com', name: 'SB Auto 06',
+  });
+  await pairing.bootstrap({
+    contractVersion: '1.4.0',
+    projectKey: 'sb-auto-06',
     projectName: 'SB Auto 06',
-    createdAt: at, updatedAt: at,
-    pairing: {
-      status: 'PAIRED', pairingCodeHash: null, pairingCodeExpiresAt: null,
-      bridgeTokenHash: 'jeton-test', bridgeTokenEncrypted: 'chiffre-test',
-      pairedAt: '2026-08-04T17:37:22.545Z', revokedAt: null,
-    },
-    runtime: {
-      environment: 'TEST', softwareVersion: '1.0.0', contractVersion: '1.4.0',
-      publicBackendUrl: 'https://api.demo-sbauto06.ly-solution.com',
-      lastHeartbeatAt: '2026-08-07T11:00:00.000Z', lastHealth: null, bridgeStats: null,
-    },
-    manifest: null, manifestSource: null,
+    environment: 'TEST',
+    softwareVersion: '1.0.0',
+    publicBackendUrl: 'https://api.demo-sbauto06.ly-solution.com',
+    pairingCode,
   });
 
-  const avant = await registryStore.getById('ancienne-test');
-
-  // On déclare la PRODUCTION, qui annonce la même clé de pont.
-  const prod = await declarer({
-    url: 'https://api.sbauto06.ly-solution.com', name: 'SB Auto 06', environment: 'PROD',
-  });
-
-  const apres = await registryStore.getById('ancienne-test');
-  check('la fiche historique est rattachée au projet logique',
-    apres.logicalProjectKey === CLE_LOGIQUE);
-  check('…et la production porte la MÊME identité',
-    prod.record.logicalProjectKey === apres.logicalProjectKey);
-
-  // ── CE QUI NE DOIT PAS AVOIR BOUGÉ ──────────────────────────────────────
-  check('TEST n’a PAS été réappairé', apres.pairing.pairedAt === avant.pairing.pairedAt);
-  check('…son jeton est intact', apres.pairing.bridgeTokenHash === avant.pairing.bridgeTokenHash);
-  check('…son statut d’appairage aussi', apres.pairing.status === 'PAIRED');
-  check('…son environnement n’a pas changé', apres.runtime.environment === 'TEST');
-  check('…ni son dernier battement',
-    apres.runtime.lastHeartbeatAt === avant.runtime.lastHeartbeatAt);
-  check('…ni sa clé technique', apres.projectKey === avant.projectKey);
-  check('la production a bien SA propre clé technique',
-    prod.record.projectKey !== apres.projectKey);
-  check('…et son propre identifiant', prod.record.projectId !== apres.projectId);
+  const vue = await publique(record.projectId);
+  check('PAIRED_PROJECT_SHOWS_DECLARED_ENVIRONMENT', vue.environment === 'TEST');
+  check('…et il vient du battement, pas de la saisie',
+    vue.runtime.environment === 'TEST');
+  check('la destination est désormais connue',
+    typeof vue.descriptor.primaryDomain === 'string' && vue.descriptor.primaryDomain.length > 0);
+  check('…et son origine est annoncée',
+    vue.descriptor.networkSource === 'DESTINATION_ACTIVE');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('Cas 11. Identité non fiable — aucun regroupement, jamais');
-{
-  const at = new Date().toISOString();
-  // Une clé issue d'une DÉRIVATION locale (nom ou URL) n'est pas une identité :
-  // deux projets voisins peuvent produire la même, et les rapprocher
-  // fusionnerait deux clients.
-  for (const source of ['NAME', 'URL']) {
-    await registryStore.clear();
-    await registryStore.insert({
-      projectId: 'derive-' + source,
-      projectKey: CLE_LOGIQUE,
-      projectKeySource: source,
-      logicalProjectKey: null,
-      declaredEnvironment: null,
-      projectName: 'Homonyme',
-      createdAt: at, updatedAt: at,
-      pairing: {
-        status: 'PAIRED', pairingCodeHash: null, pairingCodeExpiresAt: null,
-        bridgeTokenHash: 'x', bridgeTokenEncrypted: 'y',
-        pairedAt: at, revokedAt: null,
-      },
-      runtime: {
-        environment: 'TEST', softwareVersion: '1.0.0', contractVersion: '1.4.0',
-        publicBackendUrl: 'https://api.homonyme.fr',
-        lastHeartbeatAt: at, lastHealth: null, bridgeStats: null,
-      },
-      manifest: null, manifestSource: null,
-    });
-
-    await declarer({
-      url: 'https://api.autre-' + source + '.fr', name: 'SB Auto 06', environment: 'PROD',
-    });
-
-    const restee = await registryStore.getById('derive-' + source);
-    check('clé de provenance ' + source + ' → AUCUN rattachement',
-      restee.logicalProjectKey === null);
-  }
-}
-
-/* ══════════════════════════════════════════════════════════════════════════ */
-section('Cas 6/7/8. Isolation stricte entre les deux instances');
+section('BACKEND — un Panel ne sert QU’UN environnement (fondement de la doctrine)');
 {
   await registryStore.clear();
-  const test = await declarer({
-    url: 'https://api.test.example', name: 'Isolation', environment: 'TEST',
-    bridge: { projectKey: 'isolation', projectName: 'Isolation' },
-  });
-  const prod = await declarer({
-    url: 'https://api.prod.example', name: 'Isolation', environment: 'PROD',
-    bridge: { projectKey: 'isolation', projectName: 'Isolation' },
+  const recette = await declarer({ url: 'https://api.iso-test.fr', name: 'Iso Recette' });
+  await pairing.bootstrap({
+    contractVersion: '1.4.0', projectKey: 'iso', projectName: 'Iso',
+    environment: 'TEST', softwareVersion: '1.0.0',
+    publicBackendUrl: 'https://api.iso-test.fr', pairingCode: recette.pairingCode,
   });
 
-  check('deux fiches distinctes', test.record.projectId !== prod.record.projectId);
-  check('deux codes d’appairage distincts', test.pairingCode !== prod.pairingCode);
-  check('…et deux empreintes de code distinctes',
-    test.record.pairing.pairingCodeHash !== prod.record.pairing.pairingCodeHash);
+  const production = await declarer({ url: 'https://api.iso-prod.fr', name: 'Iso Production' });
+  check('ONE_PANEL_SERVES_ONE_ENVIRONMENT : la production est refusée ici',
+    await rejectsWith(
+      () => Promise.resolve(pairing.bootstrap({
+        contractVersion: '1.4.0', projectKey: 'iso', projectName: 'Iso',
+        environment: 'PROD', softwareVersion: '1.0.0',
+        publicBackendUrl: 'https://api.iso-prod.fr', pairingCode: production.pairingCode,
+      })),
+      'BRIDGE_ENVIRONMENT_MISMATCH',
+    ));
+  check('…et le refus nomme le VRAI problème, pas une collision de clé',
+    (await registryStore.getById(production.record.projectId)).pairing.status === 'DECLARED');
 
-  // Cas 8 — un battement TEST ne touche AUCUN horodatage PROD.
-  const prodAvant = JSON.stringify((await registryStore.getById(prod.record.projectId)).runtime);
-  await registre.recordHeartbeat(await registryStore.getById(test.record.projectId), {
-    sentAt: new Date().toISOString(), softwareVersion: '1.0.0', environment: 'TEST',
-    health: { status: 'OK' }, bridgeStats: { outboxSize: 0, lastSyncAt: new Date().toISOString() },
-  });
-  const prodApres = JSON.stringify((await registryStore.getById(prod.record.projectId)).runtime);
-  check('Cas 8 : un battement TEST laisse PROD strictement inchangé', prodAvant === prodApres);
-  check('…alors que TEST, lui, a bien bougé',
-    (await registryStore.getById(test.record.projectId)).runtime.lastHeartbeatAt !== null);
-
-  // Cas 7 — régénérer le code PROD ne touche pas TEST.
-  const pairing = await import('../backend/src/services/pairing/pairing.service.js');
-  const testAvant = JSON.stringify((await registryStore.getById(test.record.projectId)).pairing);
-  await pairing.issuePairingCode(await registryStore.getById(prod.record.projectId));
-  const testApres = JSON.stringify((await registryStore.getById(test.record.projectId)).pairing);
-  check('Cas 7 : régénérer le code PROD laisse l’appairage TEST intact', testAvant === testApres);
-
-  // Cas 6 — révoquer TEST ne touche pas PROD.
-  const testFiche = await registryStore.getById(test.record.projectId);
-  testFiche.pairing.status = 'PAIRED';
-  testFiche.pairing.bridgeTokenHash = 'h';
-  testFiche.pairing.bridgeTokenEncrypted = chiffrer('jeton-test-en-clair');
-  await registryStore.save(testFiche);
-
-  const prodAvantRevoc = JSON.stringify(await registryStore.getById(prod.record.projectId));
-  await pairing.revokeFromPanel(await registryStore.getById(test.record.projectId));
-  const testRevoque = await registryStore.getById(test.record.projectId);
-  const prodApresRevoc = JSON.stringify(await registryStore.getById(prod.record.projectId));
-
-  check('Cas 6 : TEST est révoqué', testRevoque.pairing.status === 'REVOKED');
-  check('…son jeton est effacé', testRevoque.pairing.bridgeTokenHash === null);
-  check('…et PROD est strictement identique', prodAvantRevoc === prodApresRevoc);
-  check('…la fiche PROD existe toujours',
-    (await registryStore.getById(prod.record.projectId)) !== null);
-  check('…et son identité logique est conservée',
-    (await registryStore.getById(prod.record.projectId)).logicalProjectKey === 'isolation');
+  /**
+   * C'est ce refus qui rend la doctrine mono-instance NÉCESSAIRE, et non
+   * seulement souhaitable : une carte « TEST + PROD » ne pourrait, dans ce
+   * Panel, jamais afficher deux fiches vivantes.
+   */
+  const fiches = await registryStore.list();
+  check('un seul jeton existe sur cette instance',
+    fiches.filter((f) => f.pairing.bridgeTokenHash).length === 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('Cas 4/5. Photographies et destinations distinctes, lues chacune chez soi');
+section('BACKEND — la clé technique reste unique, et ne scope AUCUNE donnée');
 {
-  const T = fiche({
-    id: 'iso-t', env: 'TEST', logical: 'isolation',
-    host: 'https://test.example', snapshot: '2026-08-07T10:00:00.000Z',
+  await registryStore.clear();
+  const a = await declarer({ url: 'https://api.a.fr', name: 'Homonyme A' });
+  const b = await declarer({
+    url: 'https://api.b.fr', name: 'Homonyme B', environment: 'PROD',
   });
-  const P = fiche({
-    id: 'iso-p', env: 'PROD', logical: 'isolation',
-    host: 'https://prod.example', snapshot: '2026-06-01T09:00:00.000Z',
-  });
-  const [g] = groupProjectsByLogicalProject([T, P]);
-  const t = g.connections.find((c) => c.environment === 'TEST');
-  const p = g.connections.find((c) => c.environment === 'PROD');
-
-  check('Cas 4 : chaque environnement lit SA photographie',
-    t.lastSnapshotAt === '2026-08-07T10:00:00.000Z'
-    && p.lastSnapshotAt === '2026-06-01T09:00:00.000Z');
-  check('Cas 5 : chaque environnement lit SA destination',
-    t.host === 'https://test.example' && p.host === 'https://prod.example');
-  check('…et aucune adresse ne traverse', !t.host.includes('prod') && !p.host.includes('test'));
-  check('les deux fiches restent séparées dans le groupe',
-    g.projects.length === 2 && g.projects[0].projectId !== g.projects[1].projectId);
+  check('deux fiches, deux clés techniques',
+    a.record.projectKey !== b.record.projectKey);
+  check('…et deux identifiants métier distincts',
+    a.record.projectId !== b.record.projectId);
+  check('la même ADRESSE reste refusée', await rejectsWith(
+    () => declarer({ url: 'https://api.a.fr', name: 'Doublon' }),
+    'PANEL_PROJECT_ALREADY_DECLARED',
+  ));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('Cas 2. Le raccourci porte tout le contexte, et rien de faux');
+section('UI — une fiche, une ligne, aucun regroupement');
 {
-  const lien = pairEnvironmentLink('PROD', 'isolation', 'Isolation');
-  const params = new URLSearchParams(lien.split('?')[1]);
-  check('l’assistant s’ouvrira', params.get('declare') === '1');
-  check('…en PRODUCTION', params.get('env') === 'PROD');
-  check('…pour le bon projet logique', params.get('logical') === 'isolation');
-  check('…et connaît son nom', params.get('name') === 'Isolation');
+  const fiche = (over = {}) => ({
+    projectId: over.projectId ?? 'p1',
+    projectKey: over.projectKey ?? 'sb-auto-06',
+    projectName: over.projectName ?? 'SB Auto 06',
+    environment: over.environment ?? null,
+    pairing: { status: over.status ?? 'DECLARED', pairedAt: null, revokedAt: null, pairingCodeExpiresAt: null },
+    runtime: {
+      environment: over.environment ?? null, softwareVersion: null, contractVersion: null,
+      publicBackendUrl: null, lastHeartbeatAt: over.lastHeartbeatAt ?? null,
+      lastBusinessSyncAt: over.lastBusinessSyncAt ?? null, lastHealth: null, bridgeStats: null,
+    },
+    liveness: over.liveness ?? 'NOT_PAIRED',
+    secondsSinceLastHeartbeat: over.secondsSinceLastHeartbeat ?? null,
+    descriptor: {
+      primaryDomain: over.primaryDomain ?? null,
+      urls: over.urls ?? null,
+      networkSource: over.networkSource ?? 'NON_APPAIRE',
+    },
+    business: over.business ?? null,
+    capabilities: { enabled: [], reserved: [], unknown: [], panelModules: [] },
+  });
 
-  // FAIL SAFE : la lecture d'un paramètre douteux ne doit JAMAIS donner PROD.
-  const lire = (brut) => (brut === 'TEST' || brut === 'PROD' ? brut : null);
-  for (const brut of ['prod', 'PRODUCTION', 'production', '', 'TEST ', 'x', null]) {
-    check('« ' + (brut || '(vide)') + ' » n’est pas interprété comme un environnement',
-      lire(brut) === null);
-  }
+  const nonAppairee = fiche({ projectId: 'libre', projectName: 'Garage du Nord' });
+  const appairee = fiche({
+    projectId: 'sb', status: 'PAIRED', environment: 'TEST', liveness: 'ONLINE',
+    primaryDomain: 'demo-sbauto06.ly-solution.com',
+    lastHeartbeatAt: '2026-08-08T10:00:00.000Z',
+    lastBusinessSyncAt: '2026-08-08T10:00:05.000Z',
+    secondsSinceLastHeartbeat: 12,
+    business: { presentation: { companyName: 'SB Auto 06', tagline: 'Lavage auto' } },
+  });
+
+  const lignes = toPairingRows([appairee, nonAppairee]);
+  check('ONE_ROW_EQUALS_ONE_PANEL_PROJECT', lignes.length === 2);
+  check('…une ligne par projectId, sans exception',
+    new Set(lignes.map((l) => l.projectId)).size === 2);
+  check('NO_TEST_PROD_GROUPING : aucune ligne ne porte deux fiches',
+    lignes.every((l) => typeof l.project === 'object' && !Array.isArray(l.project)));
+  check('l’ordre est stable et alphabétique',
+    lignes[0].name === 'Garage du Nord' && lignes[1].name === 'SB Auto 06');
+
+  const libre = toPairingRow(nonAppairee);
+  check('UNPAIRED_PROJECT_HAS_NO_ENVIRONMENT (UI)', libre.environment === null);
+  check('UNPAIRED_PROJECT_HAS_NO_DESTINATION (UI)', libre.destination === null);
+  check('…et son état se dit « Non appairé »',
+    libre.state.status === 'UNPAIRED' && libre.state.label === 'Non appairé');
+  check('…sans être présentée comme un défaut', libre.needsAttention === false);
+  check('…et son nom reste celui de la fiche', libre.name === 'Garage du Nord');
+
+  const sb = toPairingRow(appairee);
+  check('PAIRED_PROJECT_SHOWS_DECLARED_ENVIRONMENT (UI)', sb.environment === 'TEST');
+  check('…sa destination est celle annoncée',
+    sb.destination === 'demo-sbauto06.ly-solution.com');
+  check('LIVE_BUSINESS_NAME_USES_PROJECTION : le nom vient de la projection poussée',
+    sb.name === 'SB Auto 06' && appairee.projectName === 'SB Auto 06');
+  check('…et les données métier reçues sont datées',
+    sb.lastBusinessSyncAt === '2026-08-08T10:00:05.000Z');
+
+  /** Aucune déduction : un projet appairé sans environnement reste inconnu. */
+  const muette = fiche({ projectId: 'muette', status: 'PAIRED', liveness: 'NEVER_SEEN' });
+  check('NO_ENVIRONMENT_FALLBACK : appairé mais silencieux → inconnu',
+    environmentOf(muette) === null && destinationOf(muette) === null);
+  check('…et son état est « Hors ligne », jamais « Non appairé »',
+    connectionStateOf(muette).status === 'OFFLINE');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('Filtres TEST / PROD / à connecter / problème');
+section('UI — filtres, recherche et liens');
 {
-  const groupes = groupProjectsByLogicalProject([
-    fiche({ id: 'g1', env: 'TEST', logical: 'un', name: 'Un' }),
-    fiche({ id: 'g2', env: 'PROD', logical: 'deux', name: 'Deux', liveness: 'OFFLINE' }),
-    fiche({ id: 'g3', env: 'TEST', logical: 'trois', name: 'Trois' }),
-    fiche({ id: 'g4', env: 'PROD', logical: 'trois', name: 'Trois' }),
+  const base = (id, paired, env, host, name) => ({
+    projectId: id, projectKey: `cle-${id}`, projectName: name, environment: env,
+    pairing: { status: paired ? 'PAIRED' : 'DECLARED', pairedAt: null, revokedAt: null, pairingCodeExpiresAt: null },
+    runtime: {
+      environment: env, softwareVersion: null, contractVersion: null, publicBackendUrl: null,
+      lastHeartbeatAt: null, lastBusinessSyncAt: null, lastHealth: null, bridgeStats: null,
+    },
+    liveness: paired ? 'ONLINE' : 'NOT_PAIRED',
+    secondsSinceLastHeartbeat: paired ? 5 : null,
+    descriptor: { primaryDomain: host, urls: null, networkSource: host ? 'DESTINATION_ACTIVE' : 'NON_APPAIRE' },
+    business: null,
+    capabilities: { enabled: [], reserved: [], unknown: [], panelModules: [] },
+  });
+
+  const lignes = toPairingRows([
+    base('a', true, 'TEST', 'demo-sbauto06.ly-solution.com', 'SB Auto 06'),
+    base('b', false, null, null, 'Garage du Nord'),
   ]);
-  const c = filterCounts(groupes);
-  check('« TEST » ne compte que les projets AYANT une instance TEST', c.test === 2);
-  check('« PROD » de même', c.prod === 2);
-  check('« à connecter » compte les groupes incomplets', c.todo === 2);
-  check('un environnement absent n’est jamais un « problème »',
-    groupes.filter((g) => matchesFilter(g, 'attention')).length === 1);
-  const complet = groupes.find((g) => g.name === 'Trois');
-  check('le groupe complet n’est ni à connecter…', !matchesFilter(complet, 'todo'));
-  check('…ni en problème', !matchesFilter(complet, 'attention'));
+  const compteurs = filterCounts(lignes);
+  check('les compteurs disent le parc', compteurs.all === 2 && compteurs.paired === 1 && compteurs.unpaired === 1);
+  check('NO_ENVIRONMENT_FILTER : aucun filtre TEST/PROD',
+    !('test' in compteurs) && !('prod' in compteurs));
+  check('le filtre « appairées » ne garde que le lien établi',
+    lignes.filter((l) => matchesFilter(l, 'paired')).map((l) => l.projectId).join() === 'a');
+  check('le filtre « à appairer » garde l’autre',
+    lignes.filter((l) => matchesFilter(l, 'unpaired')).map((l) => l.projectId).join() === 'b');
+
+  const sb = lignes.find((l) => l.projectId === 'a');
+  check('la recherche trouve par le nom', matchesSearch(sb, 'sb auto'));
+  check('…par la destination', matchesSearch(sb, 'ly-solution'));
+  check('…et par la clé technique collée d’un journal', matchesSearch(sb, 'cle-a'));
+  check('une recherche vide ne filtre rien', matchesSearch(sb, '   '));
+
+  check('NO_ENVIRONMENT_IN_LINKS : le lien de gestion ne porte pas d’environnement',
+    manageLink('abc') === '/projects/abc?tab=dev');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('SOURCES — la page Appairages tient ses promesses de forme');
+{
+  const page = codeSeul(lire('frontend/src/pages/PairingsPage.tsx'));
+  const item = codeSeul(lire('frontend/src/components/connections.tsx'));
+  const css = lire('frontend/src/components.css');
+  const module = codeSeul(lire('frontend/src/lib/projectConnections.ts'));
+
+  check('PAIRING_PAGE_FULL_WIDTH_LIST : une liste verticale, pas une grille',
+    page.includes('pairing-list') && !page.includes('conn-grid'));
+  check('…et l’item occupe toute la largeur',
+    /\.pairing-item\s*\{[^}]*width:\s*100%/.test(css));
+  check('…sans aucune table native', !/<table|<thead|<tbody/i.test(page + item));
+  check('CUSTOM_SEARCH_IS_USED : la recherche maison, jamais un input nu',
+    page.includes('<SearchField') && page.includes("from '@/components/SearchField'"));
+  check('…et aucun select natif ne sert de filtre',
+    !/<select/i.test(page) && !/<select/i.test(item));
+  check('les filtres sont des boutons pressés, lisibles au clavier',
+    /aria-pressed=\{filtre === f\.id\}/.test(page));
+
+  check('NO_PROJECT_KEY_IN_PAIRINGS_UI : plus aucune identité logique lue',
+    !/project\.logicalProjectKey|logicalProjectKey \?\?/.test(module + page + item));
+  check('NO_TEST_PROD_GROUPING (sources) : plus de regroupement ni de sœurs',
+    !/groupProjectsByLogicalProject|listSiblings|pairEnvironmentLink/.test(module + page + item));
+  check('…ni de segment TEST/PROD dans l’item',
+    !/'TEST'\s*:\s*'PROD'|Appairer la production/.test(item));
+
+  /**
+   * RESPONSIVE — la contrainte qui compte est l'absence de largeur FIXE :
+   * c'est elle, et elle seule, qui produit un débordement horizontal.
+   */
+  const styles = reglesPairing(css);
+  check('les styles de la liste existent bien', styles.includes('.pairing-item'));
+  check('aucune largeur fixe dans la liste',
+    !/\bwidth:\s*\d+(px|rem)/.test(styles.replace(/width:\s*100%/g, '')));
+  check('…et toutes les colonnes peuvent rétrécir',
+    (styles.match(/minmax\(0,/g) ?? []).length >= 2);
+  check('un domaine long se tronque au lieu de pousser la page',
+    /\.pairing-host\s*\{[^}]*text-overflow:\s*ellipsis/.test(styles));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('SOURCES — la fiche projet est mono-instance');
+{
+  const brut = lire('frontend/src/pages/ProjectDetailPage.tsx');
+  const detail = codeSeul(brut);
+
+  check('PROJECT_DETAIL_IS_SINGLE_INSTANCE : plus aucun regroupement',
+    !/groupProjectsByLogicalProject|SisterInstanceLink/.test(detail));
+  check('PROJECT_DETAIL_SHOWS_ONLY_ONE_ENVIRONMENT : plus de boucle TEST/PROD',
+    !/\(\['TEST', 'PROD'\] as const\)/.test(detail));
+  check('PROJECT_DETAIL_SHOWS_ONLY_ONE_DESTINATION : la carte est au singulier',
+    detail.includes('<Card title="Destination">') && !detail.includes('<Card title="Destinations">'));
+  check('NO_SECOND_DESTINATION_PAIRING_CTA',
+    !/Appairer la production|Appairer la recette|ajouter une destination/i.test(detail));
+  check('UNPAIRED_PROJECT_ENVIRONMENT_IS_UNKNOWN : l’écran le DIT',
+    detail.includes('— non connu —') && detail.includes('— non connue —'));
+  check('MANIFEST_ONLY_AS_FALLBACK : le nom lit d’abord la projection poussée',
+    lire('frontend/src/lib/projectPresentation.ts')
+      .indexOf('business?.presentation?.companyName')
+    < lire('frontend/src/lib/projectPresentation.ts')
+      .indexOf('descriptor?.presentation?.companyName'));
 }
 
 await stopMemoryMongo();

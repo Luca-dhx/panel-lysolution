@@ -1,6 +1,11 @@
 node_modules/
 deploy/deploy.config.json
 
+# Sondes du portail de déploiement. Elles s'annoncent « supprimées
+# automatiquement » et le sont presque toujours — mais un run interrompu en
+# laisse une derrière lui, et un `git add -A` l'embarquerait dans l'historique.
+.deploy-gate-probe-*.tmp
+
 # Médias importés depuis le Panel (logo, portraits) — données, pas du code.
 #
 # La règle visait `/uploads/` À LA RACINE du dépôt. Or le service écrit dans
