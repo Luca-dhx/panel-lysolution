@@ -20,9 +20,9 @@
  * l'ancienne. Pire, il APPELLE l'ancienne pour les contrats, la santé et les
  * opérations.
  *
- * Constaté en base le 2026-08-06 sur « Demo SB Auto » : présentation sur
- * `demo-sbauto06.ly-solution.com`, runtime et manifeste sur
- * `demo-sbauto.lycarz.com`.
+ * Constaté en base le 2026-08-06 sur un projet du parc : présentation sur
+ * `demo.exemple-b.com`, runtime et manifeste sur `demo.exemple-a.com` — deux
+ * hôtes pour une seule instance, et le Panel appelait le mauvais.
  *
  * ══ LA RÈGLE ═══════════════════════════════════════════════════════════════
  *

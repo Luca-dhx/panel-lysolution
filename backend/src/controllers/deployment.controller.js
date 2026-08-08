@@ -220,8 +220,10 @@ export async function inspect(req, res) {
   }
 
   const { openSession, closeSession } = await import('../deployment-engine/passwordVault.js');
+  // Une seule durée de vie de session, repoussée à chaque usage : le réglage
+  // `keep` a disparu du coffre, il ne doit plus être passé nulle part.
   const session = openSession({
-    host: target.sshHost, username: target.sshUser, password: sshPassword, keep: false,
+    host: target.sshHost, username: target.sshUser, password: sshPassword,
   });
   try {
     const engine = new DeploymentEngine({ mongoUri: config.mongoUri });

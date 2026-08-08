@@ -37,9 +37,9 @@
  * génération restait donc IDENTIQUE de part et d'autre du déménagement, et
  * aucune projection reçue avant n'était considérée comme périmée.
  *
- * Constaté sur « Demo SB Auto » : projections et manifeste portaient la même
+ * Constaté sur un projet du parc : projections et manifeste portaient la même
  * génération `TEST|2026-08-04T17:37:22.545Z`, alors que le projet était passé
- * de `demo-sbauto.lycarz.com` à `demo-sbauto06.ly-solution.com`.
+ * de `demo.exemple-a.com` à `demo.exemple-b.com`.
  *
  * La DESTINATION entre donc dans la clé. Elle est lue sur la destination
  * ACTIVE — la seule autorité.
@@ -51,7 +51,7 @@
  * `record.activeDestinationHost` — un champ que RIEN, nulle part, n'écrit. Les
  * deux côtés calculaient donc deux clés qui ne pouvaient pas coïncider :
  *
- *   estampillée à l'écriture : TEST|<appairage>|demo-sbauto06.ly-solution.com
+ *   estampillée à l'écriture : TEST|<appairage>|demo.exemple-b.com
  *   recalculée à la lecture  : TEST|<appairage>|SANS-DESTINATION
  *
  * Conséquence : TOUT projet doté d'une destination active était déclaré d'une

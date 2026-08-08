@@ -257,7 +257,7 @@ export async function declareProject({
    *
    * Deux instances d'un même projet annoncent la MÊME clé : c'est justement ce
    * qui les regroupe. Mais `projectKey` identifie une FICHE et son index est
-   * unique. On la qualifie donc par l'environnement — `sb-auto-06-prod` — ce
+   * unique. On la qualifie donc par l'environnement — `<cle>-prod` — ce
    * qui reste déterministe : mêmes entrées, même clé, un double clic reste
    * inoffensif. L'identité logique, elle, demeure identique de part et d'autre.
    */
@@ -688,8 +688,8 @@ export function describeProject(record) {
      * donc figées sur l'ancien hôte, pendant que la projection poussée suivait
      * le nouveau. Le Panel affichait deux vérités — et appelait l'ancienne.
      *
-     * Constaté sur « Demo SB Auto » : manifeste et runtime sur
-     * `demo-sbauto.lycarz.com`, présentation sur `demo-sbauto06.ly-solution.com`.
+     * Constaté sur un projet du parc : manifeste et runtime sur
+     * `demo.exemple-a.com`, présentation sur `demo.exemple-b.com`.
      *
      * `null` quand aucune destination active n'est connue. « Inconnu » est une
      * réponse ; une adresse périmée présentée comme actuelle n'en est pas une.

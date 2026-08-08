@@ -265,25 +265,81 @@ section('Client sortant : la version de contrat part SUR LE FIL, à chaque appel
     fetchCalls > 0 && headerMentions >= fetchCalls);
 }
 
-section('Exclusivité architecturale : un seul fichier parle réseau aux projets');
+section('Exclusivité architecturale : chaque axe réseau a UN client, et un seul');
 {
+  /**
+   * ══ LA TABLE FERMÉE DES SORTIES RÉSEAU ═══════════════════════════════════
+   *
+   * Le Panel a deux axes sortants. Chacun a exactement un fichier autorisé à
+   * ouvrir une socket, et ce fichier ne fait que cela : la décision vit
+   * ailleurs, le transport vit ici.
+   *
+   * La règle ne nommait qu'un fichier — celui du pont projet — et interdisait
+   * `fetch` partout ailleurs. Son INTENTION était juste ; sa portée était
+   * fausse dans les deux sens :
+   *
+   *   · trop étroite — elle ne détectait que `fetch(`. Un `axios`, un
+   *     `http.request` ou un `undici` ouvraient une socket sans être vus ;
+   *   · mal ciblée — elle traitait le relais média Panel → Panel comme une
+   *     violation du pont PROJET, alors que c'est un autre axe. Le service
+   *     métier gardait donc sa propre socket, et la règle « échouait » sans
+   *     jamais désigner la correction à faire.
+   *
+   * La table est FERMÉE : ajouter un client oblige à venir écrire ici quel axe
+   * il sert, ce qui est exactement la décision qu'on veut rendre délibérée.
+   */
   const srcDir = path.join(root, 'backend', 'src');
+  const CLIENTS_RESEAU = [
+    { fichier: path.join('bridge', 'ProjectBridgeClient.js'), axe: 'Panel → projet appairé (contrat ProjectBridge)' },
+    { fichier: path.join('bridge', 'MediaAuthorityClient.js'), axe: 'Panel → autre instance du Panel (relais des médias)' },
+  ];
+
+  /**
+   * TOUTES les façons d'ouvrir une socket sortante, pas seulement `fetch`.
+   * Une règle qui n'en connaît qu'une se contourne sans le vouloir.
+   */
+  const SORTIES_RESEAU = [
+    /\bfetch\s*\(/,
+    /\baxios\b/,
+    /\bgot\s*\(/,
+    /from\s+['"]undici['"]/,
+    /\bhttps?\.request\s*\(/,
+    /\bXMLHttpRequest\b/,
+    /new\s+WebSocket\s*\(/,
+  ];
+
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.name.endsWith('.js')) {
+        const relPath = path.relative(srcDir, full);
+        if (CLIENTS_RESEAU.some((c) => relPath === c.fichier)) continue;
         const content = fs.readFileSync(full, 'utf8');
-        if (/\bfetch\s*\(/.test(content) && !full.endsWith('ProjectBridgeClient.js')) {
-          offenders.push(path.relative(srcDir, full));
-        }
+        if (SORTIES_RESEAU.some((motif) => motif.test(content))) offenders.push(relPath);
       }
     }
   };
   walk(srcDir);
-  check(`aucun fetch hors ProjectBridgeClient.js${offenders.length ? ` (trouvé : ${offenders.join(', ')})` : ''}`,
+  check(`aucune sortie réseau hors des clients déclarés${offenders.length ? ` (trouvé : ${offenders.join(', ')})` : ''}`,
     offenders.length === 0);
+
+  // La table doit rester COURTE, et chacun de ses fichiers exister vraiment :
+  // une entrée obsolète rouvrirait une porte que plus personne ne surveille.
+  check('exactement deux axes réseau sortants, pas un de plus',
+    CLIENTS_RESEAU.length === 2);
+  for (const { fichier, axe } of CLIENTS_RESEAU) {
+    check(`le client de l'axe « ${axe} » existe`,
+      fs.existsSync(path.join(srcDir, fichier)));
+  }
+  // …et chacun ouvre RÉELLEMENT une socket : un client qui n'émet plus rien
+  // n'a plus de raison d'occuper une place dans la table.
+  for (const { fichier } of CLIENTS_RESEAU) {
+    const source = fs.readFileSync(path.join(srcDir, fichier), 'utf8');
+    check(`${path.basename(fichier)} porte bien le transport de son axe`,
+      /this\.fetchImpl\s*\(/.test(source));
+  }
 
   const envReaders = [];
   const walkEnv = (dir) => {

@@ -33,6 +33,7 @@
  * déployé n'existe encore : le poste est alors seul, et se suffit.
  */
 import { config } from '../../config/env.js';
+import { MediaAuthorityClient } from '../../bridge/MediaAuthorityClient.js';
 import { resolveBackendUrl } from '../network/networkConfig.service.js';
 
 /** Retire le préfixe d'API : `api.panel.x` et `panel.x` désignent le même Panel. */
@@ -117,6 +118,14 @@ export async function resolveMediaAuthority() {
 /**
  * Relaie une requête vers l'autorité, en portant l'identité de l'appelant.
  *
+ * ── CE SERVICE DÉCIDE ; IL N'ÉMET PAS ───────────────────────────────────────
+ * Il ouvrait sa propre socket. Un service métier qui parle réseau est un
+ * second chemin de sortie : personne ne le cherche là, et rien n'empêche qu'un
+ * troisième apparaisse ailleurs. Le transport vit désormais dans
+ * `bridge/MediaAuthorityClient.js`, seul fichier autorisé à parler à une autre
+ * instance du Panel — exactement comme `ProjectBridgeClient.js` est le seul à
+ * parler aux projets.
+ *
  * ── AUCUN SECRET N'EST STOCKÉ ───────────────────────────────────────────────
  * On réémet le `Authorization` reçu. Les deux instances partagent la clé de
  * signature des jetons : celui de l'utilisateur est donc déjà valide côté
@@ -128,17 +137,7 @@ export async function resolveMediaAuthority() {
  * @param {object} options    { method, headers, body }
  */
 export async function relayToAuthority(authority, chemin, { method = 'GET', headers = {}, body } = {}) {
-  const cible = `${String(authority).replace(/\/+$/, '')}${chemin}`;
-  const reponse = await fetch(cible, {
-    method,
-    headers,
-    body,
-    // Un média ne suit jamais de redirection : une redirection vers un autre
-    // hôte ferait sortir la lecture de l'autorité sans qu'on le sache.
-    redirect: 'manual',
-    signal: AbortSignal.timeout(30_000),
-  });
-  return reponse;
+  return new MediaAuthorityClient({ baseUrl: authority }).relay(chemin, { method, headers, body });
 }
 
 export default { resolveMediaAuthority, relayToAuthority };

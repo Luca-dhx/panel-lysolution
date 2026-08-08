@@ -397,6 +397,64 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 
 ---
 
+## 9bis. Les frontières techniques — vérifiées, pas promises
+
+Trois règles séparent le Panel de ce qui l'entoure. Chacune est tenue par un
+contrôle qui échoue si le code s'en écarte : aucune ne repose sur la
+discipline de celui qui écrit.
+
+### Une socket par axe, et rien d'autre
+
+Le Panel a **deux** axes réseau sortants. Chacun a exactement un fichier
+autorisé à ouvrir une socket ; la décision vit ailleurs, le transport vit là.
+
+| Axe | Client unique | Contrat |
+|---|---|---|
+| Panel → **projet** appairé | `bridge/ProjectBridgeClient.js` | ProjectBridge (OpenAPI) |
+| Panel → **autre instance du Panel** | `bridge/MediaAuthorityClient.js` | relais des médias vers l'autorité |
+
+Le relais média vivait dans `services/upload/mediaAuthority.js` : un service
+métier qui ouvrait sa propre socket. Ce n'était pas du trafic de pont — donc
+pas une violation du contrat projet — mais c'était une sortie réseau que rien
+ne surveillait, et rien n'empêchait qu'une deuxième apparaisse ailleurs.
+
+La table est **fermée** : `bridge-conformity` refuse toute autre sortie, et
+détecte `fetch`, `axios`, `got`, `undici`, `http(s).request`, `XMLHttpRequest`
+et `WebSocket` — pas seulement `fetch`.
+
+### Une seule porte pour l'environnement
+
+`config/env.js` est le **seul** lecteur de `process.env`. Une exception
+nommée : `scripts/deploy-worker.js`, point d'entrée détaché qui lit ses
+PARAMÈTRES D'INVOCATION — jamais sa configuration — dans l'environnement,
+parce qu'`argv` exposerait le mot de passe SSH à `ps aux`.
+
+Propager l'environnement à un processus enfant (`{ ...process.env }` au
+lancement du worker) n'est pas une lecture : aucune décision n'en est tirée.
+
+`runJournal.service.js` lisait `DEPLOYMENT_DIAGNOSTIC_STACKS` lui-même. Un
+réglage qui vit hors de `config/env.js` n'est ni validé, ni documenté, ni
+visible : le jour où l'on cherche ce qui pilote un comportement, on ne le
+trouve pas. Il est devenu `config.deploymentDiagnostic.stacks`.
+
+### Les moteurs sont des MIROIRS, et SB Auto fait référence
+
+Le cœur des moteurs `deployment-engine` et `duplication-engine` est
+**identique octet pour octet** entre les deux dépôts. Ce qui diffère
+légitimement est sorti dans `config/project.profile.js` et
+`engine.manifest.json`.
+
+| Contrôle | Qui le porte | Ce qu'il compare |
+|---|---|---|
+| `engine-drift` | **Panel** | son cœur de moteur au cœur de SB Auto |
+| `spec-drift` | **Panel** | `docs/spec/*.openapi.yaml` aux specs maîtresses de SB Auto |
+| `engine-governance` | **SB Auto** | son propre moteur à ses règles de généricité |
+
+Un correctif de moteur se porte donc **dans les deux dépôts** — jamais avec un
+`if (IS_PANEL)` qui préserverait une copie commune au prix de sa généricité.
+
+---
+
 ## 10. Ce que le Panel ne fait pas
 
 - il ne déploie rien : le déploiement est piloté depuis le poste du projet ;

@@ -699,8 +699,8 @@ export async function companyPublishedProfile(company) {
    * pour les fiches antérieures au descripteur.
    *
    * Et rien n'est publié tant qu'aucune destination active ne sert le média :
-   * `/uploads/…` n'existe pas depuis le serveur d'un client, et
-   * `http://localhost` encore moins. Le projet garde alors sa projection
+   * `/uploads/…` n'existe pas depuis le serveur d'un client, et une adresse
+   * de boucle locale encore moins. Le projet garde alors sa projection
    * précédente — ce qui vaut mieux qu'une image cassée.
    */
   /**

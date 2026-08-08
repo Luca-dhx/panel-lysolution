@@ -6,8 +6,18 @@
  * « … », la page semblait se recharger seule. Ces contrôles verrouillent le
  * comportement inverse, en exécutant le vrai hook — pas en lisant sa source.
  */
+import { register } from 'node:module';
 import { check, finish, section } from './helpers/harness.js';
 import { mount } from './helpers/reactHarness.mjs';
+
+/**
+ * L'ALIAS `@/` DOIT ÊTRE RÉSOLU AVANT D'IMPORTER LE MOINDRE MODULE FRONTEND.
+ *
+ * Il manquait ici — seul de toutes les suites qui lisent le frontend. Le
+ * fichier s'arrêtait donc sur `ERR_MODULE_NOT_FOUND` avant sa première
+ * assertion : le test ne « échouait » pas, il ne s'exécutait pas du tout.
+ */
+register('./helpers/frontendLoader.mjs', import.meta.url);
 
 /* ── Environnement navigateur minimal ────────────────────────────────────── */
 const listeners = new Map();

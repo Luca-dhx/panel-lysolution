@@ -245,6 +245,25 @@ export const config = {
   // Certificat : seuil d alerte avant expiration, en jours.
   certificateWarningDays: positiveInt('CERTIFICATE_WARNING_DAYS', 21),
   debug: process.env.PANEL_DEBUG === '1',
+  /**
+   * DIAGNOSTIC DE DÉPLOIEMENT — réglages du journal forensique.
+   *
+   * ── POURQUOI CE RÉGLAGE REMONTE ICI ─────────────────────────────────────
+   * `runJournal.service.js` lisait lui-même `process.env`. Un service qui
+   * interroge l'environnement crée une SECONDE couche de configuration :
+   * celle-ci n'est ni validée, ni documentée, ni visible depuis ce fichier —
+   * et le jour où l'on cherche « qu'est-ce qui pilote ce comportement », on ne
+   * la trouve pas. Il n'y a qu'une porte d'entrée pour l'environnement, et
+   * c'est celle-ci.
+   *
+   * `stacks` : la pile d'appel est utile au diagnostic et révèle
+   * l'arborescence du serveur. Elle est donc sanitizée, et son enregistrement
+   * reste un choix explicite — activé par défaut, coupé par
+   * `DEPLOYMENT_DIAGNOSTIC_STACKS=false`.
+   */
+  deploymentDiagnostic: {
+    stacks: (process.env.DEPLOYMENT_DIAGNOSTIC_STACKS ?? '') !== 'false',
+  },
 };
 
 export default config;

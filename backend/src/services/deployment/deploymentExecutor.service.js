@@ -105,7 +105,6 @@ export async function executeOperation({
       host: target.sshHost,
       username: target.sshUser,
       password: sshPassword,
-      keep: false,
     });
     sessionId = session.sessionId;
 

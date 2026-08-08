@@ -41,6 +41,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { config } from '../../../config/env.js';
 import PanelDeploymentRun from '../../../models/PanelDeploymentRun.model.js';
 import PanelDeploymentAttempt from '../../../models/PanelDeploymentAttempt.model.js';
 import { sanitizeText, sanitizeValue } from './sanitize.js';
@@ -131,7 +132,10 @@ export const newRequestId = () => randomUUID().slice(0, 8);
  * donc SANITIZÉE, et son enregistrement reste un choix explicite.
  */
 function stackAutorisee() {
-  return process.env.DEPLOYMENT_DIAGNOSTIC_STACKS !== 'false';
+  // Le réglage vient de la configuration canonique, jamais de l'environnement
+  // lu ici : deux portes d'entrée pour un même réglage, c'est un réglage qu'on
+  // ne retrouve plus quand on le cherche.
+  return config.deploymentDiagnostic.stacks;
 }
 
 /**

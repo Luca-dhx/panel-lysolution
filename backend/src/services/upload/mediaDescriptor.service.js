@@ -425,8 +425,8 @@ export function stableDescriptorOf(media) {
  *
  * ── AUCUNE ADRESSE LOCALE NE PART VERS UN PROJET ────────────────────────────
  * Tant qu'aucune destination active ne sert cet environnement, le média n'est
- * PAS publiable : `/uploads/…` ou `http://localhost` n'existent pas depuis le
- * serveur d'un client. On rend `null` — le projet garde alors sa projection
+ * PAS publiable : `/uploads/…` et les adresses de boucle locale n'existent pas
+ * depuis le serveur d'un client. On rend `null` — le projet garde sa projection
  * précédente, ce qui vaut mieux qu'une image cassée.
  */
 async function descriptorOfKnownMedia(media, role) {

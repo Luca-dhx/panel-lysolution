@@ -17,14 +17,23 @@
  */
 import crypto from 'node:crypto';
 
-/** Entrées : sessionId -> { password, host, username, keep, expiresAt } */
+/** Entrées : sessionId -> { password, host, username, expiresAt } */
 const store = new Map();
 
-/** Durée de vie maximale d'une session « conservée » (RAM). 8 h par défaut. */
-const KEEP_TTL_MS = Number(process.env.DEPLOY_VPS_SESSION_TTL_MS) || 8 * 60 * 60 * 1000;
-
-/** Durée de vie d'une session éphémère (non conservée) : le temps d'un déploiement. */
-const EPHEMERAL_TTL_MS = 15 * 60 * 1000;
+/**
+ * DUREE DE VIE D'UNE SESSION — une seule, et elle se prolonge a l'usage.
+ *
+ * Il en existait DEUX, choisies par une case a cocher : 8 h si l'operateur
+ * demandait de « garder la session ouverte », 15 min sinon. On lui faisait
+ * donc arbitrer la duree de vie d'un secret en RAM — une question a laquelle
+ * il n'a aucun moyen de repondre, et dont la mauvaise reponse se payait par
+ * une session disparue au milieu d'un retrait.
+ *
+ * Une seule duree suffit, parce qu'elle est REPOUSSEE a chaque utilisation :
+ * une operation active ne peut pas expirer sous les pieds de celui qui la
+ * mene, et une session oubliee s'eteint d'elle-meme.
+ */
+const SESSION_TTL_MS = Number(process.env.DEPLOY_VPS_SESSION_TTL_MS) || 30 * 60 * 1000;
 
 function now() {
   return Date.now();
@@ -49,35 +58,33 @@ function wipe(entry) {
 
 /**
  * Ouvre une session VPS en mémoire.
- * @param {{host:string, username:string, password:string, keep?:boolean}} creds
- * @returns {{sessionId:string, keep:boolean, expiresAt:number}}
+ * @param {{host:string, username:string, password:string}} creds
+ * @returns {{sessionId:string, expiresAt:number}}
  */
-export function openSession({ host, username, password, keep = false }) {
+export function openSession({ host, username, password }) {
   if (!host || !username || !password) {
     throw new Error('host, username et password sont requis pour ouvrir une session VPS.');
   }
   purgeExpired();
   const sessionId = crypto.randomBytes(18).toString('base64url');
-  const ttl = keep ? KEEP_TTL_MS : EPHEMERAL_TTL_MS;
-  const expiresAt = now() + ttl;
-  store.set(sessionId, { password, host, username, keep: Boolean(keep), expiresAt });
-  return { sessionId, keep: Boolean(keep), expiresAt };
+  const expiresAt = now() + SESSION_TTL_MS;
+  store.set(sessionId, { password, host, username, expiresAt });
+  return { sessionId, expiresAt };
 }
 
 /**
  * Récupère les identifiants d'une session (usage interne au transport).
  * Rafraîchit l'expiration d'une session éphémère pour couvrir un déploiement long.
- * @returns {{host:string, username:string, password:string, keep:boolean}|null}
+ * @returns {{host:string, username:string, password:string}|null}
  */
 export function getSession(sessionId) {
   purgeExpired();
   const entry = store.get(sessionId);
   if (!entry) return null;
-  if (!entry.keep) {
-    // Session éphémère : on prolonge tant qu'elle est activement utilisée.
-    entry.expiresAt = now() + EPHEMERAL_TTL_MS;
-  }
-  return { host: entry.host, username: entry.username, password: entry.password, keep: entry.keep };
+  // TOUTE utilisation repousse l'echeance : une operation en cours ne peut pas
+  // expirer entre deux de ses propres appels.
+  entry.expiresAt = now() + SESSION_TTL_MS;
+  return { host: entry.host, username: entry.username, password: entry.password };
 }
 
 /** Existe-t-elle encore ? (sans exposer le secret) */
@@ -91,7 +98,7 @@ export function describeSession(sessionId) {
   purgeExpired();
   const entry = store.get(sessionId);
   if (!entry) return null;
-  return { host: entry.host, username: entry.username, keep: entry.keep, expiresAt: entry.expiresAt };
+  return { host: entry.host, username: entry.username, expiresAt: entry.expiresAt };
 }
 
 /**
@@ -105,17 +112,14 @@ export function closeSession(sessionId) {
 }
 
 /**
- * Détruit une session éphémère après usage. À appeler par le moteur en fin de
- * déploiement quand `keep` est faux. Ne touche pas aux sessions conservées.
+ * FERME UNE SESSION EN FIN D'OPERATION.
+ *
+ * Remplace `closeIfEphemeral` : il n'y a plus deux natures de session, donc
+ * plus de condition a evaluer. On ferme explicitement, ou l'expiration s'en
+ * charge.
  */
-export function closeIfEphemeral(sessionId) {
-  const entry = store.get(sessionId);
-  if (entry && !entry.keep) {
-    wipe(entry);
-    store.delete(sessionId);
-    return true;
-  }
-  return false;
+export function closeAfterOperation(sessionId) {
+  return closeSession(sessionId);
 }
 
 /** Détruit TOUTES les sessions (fermeture du Manager / arrêt du process). */
@@ -136,7 +140,7 @@ export default {
   hasSession,
   describeSession,
   closeSession,
-  closeIfEphemeral,
+  closeAfterOperation,
   closeAll,
   activeSessionCount,
 };
