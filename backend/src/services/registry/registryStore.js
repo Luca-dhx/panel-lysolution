@@ -75,6 +75,8 @@ function presentationOf(projection) {
     logo: projection.logo ?? null,
     contacts: projection.contacts ?? null,
     faviconUrl: projection.faviconUrl ?? null,
+    /** Le pendant de `logo` — il manquait, et lui seul portait l'empreinte. */
+    favicon: projection.favicon ?? null,
     /** Le projet tel qu’il se nomme et se décrit — mis à plat par le projecteur. */
     projectName: projection.projectName ?? null,
     description: projection.description ?? null,

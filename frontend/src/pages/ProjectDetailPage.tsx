@@ -328,6 +328,39 @@ function OverviewTab({
               )}
             </dd>
           </div>
+          {/*
+            LA LIVRAISON EST-ELLE BLOQUÉE ? — le troisième fait, et il manquait.
+
+            ══ CE QUE CET ÉCRAN LAISSAIT CROIRE ═══════════════════════════════
+
+            « ● Connecté » et une date de données métier ancienne : les deux
+            lignes étaient justes, et personne ne pouvait les relier. Une
+            instance dont TOUTES les écritures étaient refusées par le contrat
+            battait parfaitement et n'avait plus rien livré depuis des
+            semaines. L'opérateur en concluait, très raisonnablement, que « la
+            synchronisation est lente » — alors qu'elle était arrêtée.
+
+            La ligne n'apparaît QUE lorsqu'il y a quelque chose à dire : une
+            fiche saine ne gagne pas un champ de plus. Le détail technique
+            reste court ; le reste vit dans l'onglet développeur.
+          */}
+          {project.businessSync?.status === 'BLOCKED' && (
+            <div>
+              <dt>Livraison</dt>
+              <dd>
+                <span className="badge badge-warn">⚠ bloquée</span>
+                {' '}
+                <span className="muted">
+                  {project.businessSync.blocked?.entityType
+                    ? `${project.businessSync.blocked.entityType} refusé`
+                    : `${project.businessSync.rejectedCount} écriture(s) refusée(s)`}
+                  {project.businessSync.blocked?.since
+                    ? ` depuis le ${formatDateTime(project.businessSync.blocked.since)}`
+                    : ''}
+                </span>
+              </dd>
+            </div>
+          )}
           <div>
             <dt>Dernière modification annoncée par le projet</dt>
             <dd>

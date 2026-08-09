@@ -316,6 +316,77 @@ pendant le polling.
 → `tests/project-company-live-e2e.test.js` — deux backends réels, un vrai
 `Company.save()`, aucun `applyIncoming` appelé par le test.
 
+### Ce que le pipeline live ne disait pas : un refus le coupe ENTIÈREMENT
+
+Le schéma ci-dessus est exact — tant que le Panel **accepte** ce que le projet
+envoie. Il ne le faisait pas.
+
+`PROJECT_PRESENTATION` est validé par un schéma **fermé**
+(`projectPresentationPayloadSchema`, `.strict()`). Le projet publiait, en plus
+des adresses, le **descripteur complet** de ses médias (`logo`, `favicon`) —
+ajouté au manifeste et au sens Panel → projet, jamais à la projection. Toute
+instance disposant d'un logo, c'est-à-dire **toute instance de production**,
+voyait donc sa présentation refusée en `ENTITY_PAYLOAD_INVALID`. La fiche
+restait figée sur l'ancien nom, indéfiniment, et rien à l'écran ne le disait.
+
+Ce n'était pas une lenteur : le chemin nominal met **~550 ms**. C'était un refus
+définitif que personne ne pouvait voir.
+
+| Doctrine | Règle |
+|---|---|
+| **autorité média** | `logo` / `favicon` (descripteurs) font foi. `logoUrl` / `faviconUrl` en sont la projection **héritée**, conservée pour un lecteur antérieur. Jamais deux vérités : `logoUrl` **est** `logo.url`. |
+| **adresse** | une URL n'est publiée que si elle est **absolue et joignable**. Sinon le champ est **omis** — un média s'affiche depuis une autre origine que celle qui l'a produit. |
+| **fermeture du schéma** | on **nomme** le champ, on ne retire pas la garde. `.passthrough()` ferait passer ce payload et tous les suivants, y compris celui qui transporterait un secret par mégarde. |
+| **contrat d'abord** | un payload qui circule doit être écrit dans la spec. `ProjectPresentationPayload` et `MediaDescriptor` y sont désormais. |
+
+Le contrôle qui manquait existe : `tests/payload-drift.check.mjs` soumet la
+projection construite par le **vrai** code de SB Auto au **vrai** schéma du
+Panel, sur quatre configurations dont « entreprise avec logo ». `spec-drift`
+comparait les deux specs entre elles — identiques, et toutes deux muettes sur ce
+payload.
+
+→ `tests/project-presentation-media-contract-e2e.test.js`
+  (`PROJECT_PRESENTATION_WITH_MEDIA_IS_ACCEPTED`,
+  `PROJECT_MEDIA_AUTHORITY_IS_PRESERVED`,
+  `PROJECT_PRESENTATION_MEDIA_URL_POLICY_IS_CANONICAL`)
+
+### Un refus n'est pas un accusé — et il se répare tout seul
+
+Trois faits, et le troisième manquait :
+
+```
+● Connecté              « répond-elle ? »        runtime.lastHeartbeatAt
+✓ Données métier        « qu'ai-je reçu ? »      runtime.lastBusinessSyncAt
+⚠ Livraison bloquée     « ses écritures PASSENT-elles ? »   businessSync
+```
+
+Une instance dont toutes les écritures sont refusées **bat parfaitement**. Les
+deux premières lignes étaient justes et personne ne pouvait les relier.
+
+| État | Signification |
+|---|---|
+| `APPLIED` / `DUPLICATE` / `IGNORED` | **résolu** — le dossier se ferme |
+| `REJECTED` | **non appliqué**, conservé, classé, daté, **réaffirmé** |
+
+Un refus ne pose **jamais** d'`acknowledgedAt` : c'est ce champ qui livrait
+l'entrée à l'index TTL, et faisait disparaître la preuve au bout de sept jours.
+
+**La réparation ne demande aucun geste.** Le cycle périodique — dans son rôle
+légitime, qui est la réparation et non la livraison — réaffirme les refus dus.
+Le `writeId` étant déterministe et l'entité une photographie, réémettre le même
+état est sans effet de bord : le destinataire corrigé l'applique, et le dossier
+se ferme. Aucun bouton « resynchroniser », aucun réenregistrement.
+
+`businessSync.status` vaut `HEALTHY`, `BLOCKED` — ou `UNKNOWN` pour un projet
+qui ne sait pas encore le dire. **`UNKNOWN` n'est pas `HEALTHY`** : déduire une
+santé d'un silence est l'erreur que toute cette page s'applique à ne pas
+commettre.
+
+→ `SB Auto 06/backend/src/services/panelBridge/rejectionPolicy.js`
+→ `tests/project-presentation-media-contract-e2e.test.js`
+  (`PROJECT_PRESENTATION_CONTRACT_REJECTION_IS_NOT_SILENT`,
+  `REJECTED_SNAPSHOT_CONVERGES_AFTER_RECEIVER_FIX_WITHOUT_USER_SAVE`)
+
 ### La priorité du nom, et son origine déclarée
 
 | Rang | Source | `presentationSource` |

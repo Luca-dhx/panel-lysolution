@@ -55,6 +55,20 @@ const presentationSchema = new mongoose.Schema(
     tagline: { type: String, default: null },
     logoUrl: { type: String, default: null },
     faviconUrl: { type: String, default: null },
+    /**
+     * LE DESCRIPTEUR COMPLET DU MÉDIA — l'adresse seule ne suffit pas.
+     *
+     * Elle ne dit ni si l'image a changé (aucune empreinte), ni son type, ni
+     * ses dimensions, ni qui la détient. `Mixed` volontairement : le
+     * descripteur est un objet de CONTRAT, validé par
+     * `mediaDescriptorSchema` à l'entrée. Le redéclarer champ par champ ici
+     * créerait une seconde définition à maintenir — et c'est exactement le
+     * genre de divergence qui a produit le refus que ce champ répare.
+     *
+     * `null` est SIGNIFIANT : le projet publie la suppression de son média.
+     */
+    logo: { type: mongoose.Schema.Types.Mixed, default: null },
+    favicon: { type: mongoose.Schema.Types.Mixed, default: null },
     contacts: { type: contactsSchema, default: () => ({}) },
     projectName: { type: String, default: null },
     description: { type: String, default: null },

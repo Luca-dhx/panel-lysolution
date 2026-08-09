@@ -564,8 +564,14 @@ components:
           properties:
             companyName: { type: string, description: 'Nom commercial de l''entreprise cliente.' }
             tagline: { type: string, description: 'Slogan ou phrase de presentation.' }
-            logoUrl: { type: string, format: uri, description: 'URL absolue du logo principal.' }
-            faviconUrl: { type: string, format: uri, description: 'URL absolue de l''icone d''onglet.' }
+            logoUrl: { type: string, format: uri, description: 'HERITE. URL absolue derivee du descripteur.' }
+            faviconUrl: { type: string, format: uri, description: 'HERITE. URL absolue derivee du descripteur.' }
+            logo:
+              allOf: [{ $ref: '#/components/schemas/MediaDescriptor' }]
+              description: 'ADDITIF (>= 1.4.x) : descripteur CANONIQUE du logo.'
+            favicon:
+              allOf: [{ $ref: '#/components/schemas/MediaDescriptor' }]
+              description: 'ADDITIF (>= 1.4.x) : descripteur CANONIQUE de l''icone.'
             contacts:
               type: object
               description: >
@@ -781,10 +787,40 @@ components:
             details: { type: string, nullable: true }
         bridgeStats:
           type: object
-          description: Observabilité du pont lui-même.
+          description: >
+            Observabilité du pont lui-même. rejectedCount et oldestRejection
+            sont ADDITIFS (contrat >= 1.4.x) et OPTIONNELS : ils portent le fait
+            que « connecté » ne disait pas. Une instance dont toutes les
+            écritures métier sont REFUSÉES bat parfaitement ; sans ces champs,
+            la fiche du Panel restait verte devant une donnée figée. Le silence
+            d'un projet antérieur ne vaut donc PAS « aucun refus », mais « ne
+            sait pas le dire ». Aucune charge utile, aucun secret : un compte,
+            un code, une date.
           properties:
-            outboxSize: { type: integer, minimum: 0 }
+            outboxSize:
+              type: integer
+              minimum: 0
+              description: >
+                Écritures en attente de DÉPART (PENDING/SENDING). Les refusées
+                n'y figurent pas : elles attendent une réparation, pas un envoi.
             lastSyncAt: { type: string, format: date-time, nullable: true }
+            rejectedCount:
+              type: integer
+              minimum: 0
+              description: Écritures REFUSÉES par le Panel et non encore réparées.
+            oldestRejection:
+              type: object
+              description: Le refus le plus ancien encore ouvert.
+              required: [entityType]
+              properties:
+                entityType: { type: string }
+                failureClass:
+                  type: string
+                  nullable: true
+                  enum: [TRANSIENT, COMPATIBILITY, SECURITY, BUSINESS, IDEMPOTENT]
+                code: { type: string, nullable: true }
+                since: { type: string, format: date-time, nullable: true }
+                rejections: { type: integer, minimum: 0 }
         runtime:
           type: object
           description: >
@@ -879,8 +915,18 @@ components:
         payload:
           nullable: true
           description: >
-            Contenu du document (schéma par entityType, défini lot par lot en
-            Phase 3+). null si deleted=true. Aucun secret en clair.
+            Contenu du document, dont le schéma dépend de entityType. null si
+            deleted=true. Aucun secret en clair.
+
+            PROJECT_PRESENTATION : voir ProjectPresentationPayload. Ce schéma
+            est FERMÉ côté Panel — une clé inconnue fait REFUSER l'écriture
+            (ENTITY_PAYLOAD_INVALID). C'est volontaire : la fermeture est ce
+            qui empêche un champ sensible de traverser le pont par mégarde.
+            C'est aussi ce qui a coûté cher tant que le schéma n'était pas
+            documenté : le descripteur de média était émis par tout projet
+            disposant d'un logo, refusé par le Panel, et la présentation de ces
+            instances n'arrivait jamais. Un payload qui circule doit être écrit
+            ICI, dans le contrat, sans quoi les deux côtés divergent en silence.
         modifiedAt:
           type: string
           format: date-time
@@ -889,6 +935,98 @@ components:
           type: string
           enum: [PANEL, PROJECT]
           description: Côté qui a produit l'écriture d'ORIGINE.
+
+    MediaDescriptor:
+      type: object
+      description: >
+        DESCRIPTEUR MEDIA CANONIQUE. Il dit tout ce qu'une URL seule ne disait
+        pas : qui detient le media (authority), s'il a change (sha256,
+        version), son type et ses dimensions. Les deux sens du pont
+        l'utilisent : le Panel en publie vers les projets, un projet en publie
+        vers le Panel. authority est DECLAREE par l'emetteur et jamais deduite
+        d'un hote ni d'une cle d'objet — c'est elle qui decide contre quelle
+        origine l'adresse se resout. url est TOUJOURS absolue : un media est
+        affiche depuis une autre origine que celle qui l'a produit.
+      required: [url]
+      properties:
+        authority:
+          type: string
+          nullable: true
+          enum: [PANEL, PROJECT]
+          description: 'PANEL = reste sur le Panel. PROJECT = suit la destination active du projet.'
+        mediaId: { type: string, nullable: true, description: 'null pour une URL externe non geree.' }
+        url: { type: string, format: uri }
+        mime: { type: string, nullable: true }
+        size: { type: integer, minimum: 0, nullable: true }
+        width: { type: integer, minimum: 1, nullable: true }
+        height: { type: integer, minimum: 1, nullable: true }
+        sha256: { type: string, nullable: true, description: 'Empreinte du CONTENU.' }
+        version: { type: integer, minimum: 0, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        role: { type: string, nullable: true }
+        publicationState:
+          type: string
+          nullable: true
+          enum: [LOCAL_ONLY, PUBLISHED]
+          description: 'Servi par une destination ACTIVE — releve, jamais deduit.'
+        external: { type: boolean, description: 'URL externe dont on n''a aucune metadonnee.' }
+
+    ProjectPresentationPayload:
+      type: object
+      additionalProperties: false
+      description: >
+        Payload de l'entityType PROJECT_PRESENTATION — l'identite COMMERCIALE
+        d'une instance, poussee par le PROJET a chaque enregistrement.
+
+        Schema FERME : toute cle inconnue fait REFUSER l'ecriture. Tous les
+        champs sont optionnels — l'absence se distingue d'une valeur vide, et
+        un projet qui ne publie rien reste conforme.
+
+        DOCTRINE MEDIA : logo et favicon sont la source CANONIQUE. logoUrl et
+        faviconUrl sont leur projection HERITEE, conservees pour un Panel
+        antérieur ; elles ne portent aucune information que le descripteur n'ait
+        deja. Un emetteur ne publie une URL que si elle est ABSOLUE et
+        joignable — sinon il omet le champ, plutot que de transporter une
+        adresse que le destinataire ne saura pas afficher.
+      properties:
+        companyName: { type: string, minLength: 1 }
+        tagline: { type: string, minLength: 1 }
+        logoUrl: { type: string, format: uri, description: 'HERITE. Derive de logo.url.' }
+        faviconUrl: { type: string, format: uri, description: 'HERITE. Derive de favicon.url.' }
+        logo:
+          allOf: [{ $ref: '#/components/schemas/MediaDescriptor' }]
+          nullable: true
+          description: 'CANONIQUE. null publie la SUPPRESSION du media.'
+        favicon:
+          allOf: [{ $ref: '#/components/schemas/MediaDescriptor' }]
+          nullable: true
+          description: 'CANONIQUE. null publie la SUPPRESSION du media.'
+        contacts:
+          type: object
+          additionalProperties: false
+          description: 'Uniquement les moyens de contact ACTIVES et renseignes.'
+          properties:
+            email: { type: string, minLength: 1 }
+            phone: { type: string, minLength: 1 }
+            website: { type: string, minLength: 1 }
+        project:
+          type: object
+          additionalProperties: false
+          description: 'Le projet tel qu''il se nomme et se decrit.'
+          properties:
+            name: { type: string, minLength: 1 }
+            description: { type: string, minLength: 1 }
+        network:
+          type: object
+          additionalProperties: false
+          description: >
+            Adresses publiques annoncees par le projet. C'est le SEUL canal qui
+            suit un changement de domaine : le battement n'en transporte aucune
+            et le manifeste n'est relu que sur action d'un operateur.
+          properties:
+            website: { type: string, minLength: 1 }
+            manager: { type: string, minLength: 1 }
+            backend: { type: string, minLength: 1 }
 
     SyncPushRequest:
       type: object

@@ -650,8 +650,17 @@ components:
           properties:
             companyName: { type: string, description: 'Nom commercial de l''entreprise cliente.' }
             tagline: { type: string, description: 'Slogan ou phrase de presentation.' }
-            logoUrl: { type: string, format: uri, description: 'URL absolue du logo principal.' }
-            faviconUrl: { type: string, format: uri, description: 'URL absolue de l''icone d''onglet.' }
+            logoUrl: { type: string, format: uri, description: 'HERITE. URL absolue derivee du descripteur.' }
+            faviconUrl: { type: string, format: uri, description: 'HERITE. URL absolue derivee du descripteur.' }
+            logo:
+              type: object
+              description: >
+                ADDITIF (>= 1.4.x) : descripteur CANONIQUE du logo — authority,
+                empreinte, dimensions. Meme forme que MediaDescriptor de
+                PanelBridge.openapi.yaml, qui en porte la definition.
+            favicon:
+              type: object
+              description: 'ADDITIF (>= 1.4.x) : descripteur CANONIQUE de l''icone.'
             contacts:
               type: object
               description: >

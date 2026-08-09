@@ -80,6 +80,17 @@ export interface PublicProject {
   manifestUpdatedAt: string | null;
   /** Ce que le projet déclare avoir APPLIQUÉ. `null` = jamais constaté. */
   appliedConfiguration: AppliedConfiguration | null;
+  /**
+   * SES ÉCRITURES PASSENT-ELLES ? — le troisième fait, distinct des deux
+   * autres, et le seul qui explique une fiche « connectée » dont les données
+   * n'ont pas bougé depuis des semaines.
+   *
+   * `UNKNOWN` n'est PAS `HEALTHY` : un projet antérieur au champ ne le publie
+   * pas, et son silence ne prouve rien. L'écran doit faire la différence —
+   * déduire la santé d'une absence est l'erreur que toute cette fiche
+   * s'applique à ne plus commettre.
+   */
+  businessSync: BusinessSyncHealth;
   /** Note de supervision saisie côté Panel, jamais transmise au projet. */
   note: string | null;
   /**
@@ -281,6 +292,27 @@ export interface ProjectDescriptor {
     lastActivityAt: string;
     manifestUpdatedAt: string | null;
   };
+}
+
+/**
+ * SANTÉ DE LA LIVRAISON MÉTIER — déclarée par l'instance, jamais déduite.
+ *
+ * `HEALTHY` : elle publie « aucune écriture refusée ».
+ * `BLOCKED` : elle en déclare au moins une, et dit laquelle.
+ * `UNKNOWN` : elle ne sait pas le dire — un projet antérieur au champ. Ce
+ *             n'est pas une bonne nouvelle, seulement une absence de nouvelle.
+ */
+export interface BusinessSyncHealth {
+  status: 'HEALTHY' | 'BLOCKED' | 'UNKNOWN';
+  rejectedCount: number | null;
+  blocked: {
+    entityType: string | null;
+    /** TRANSIENT · COMPATIBILITY · SECURITY · BUSINESS · IDEMPOTENT */
+    failureClass: string | null;
+    code: string | null;
+    since: string | null;
+    rejections: number | null;
+  } | null;
 }
 
 export interface AppliedConfiguration {

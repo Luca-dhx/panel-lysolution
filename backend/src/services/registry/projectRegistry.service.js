@@ -747,6 +747,57 @@ export function describeProject(record) {
       lastActivityAt: runtime.lastHeartbeatAt ?? record.updatedAt,
       manifestUpdatedAt: record.manifestUpdatedAt ?? null,
     },
+    /**
+     * LA SANTÉ DE LA LIVRAISON MÉTIER — le troisième fait, et il manquait.
+     *
+     * ══ CE QU'UN ÉCRAN NE POUVAIT PAS DIRE ═══════════════════════════════════
+     *
+     * Deux faits étaient déjà séparés : « cette instance répond-elle ? »
+     * (vivacité) et « quand ai-je reçu son état ? » (fraîcheur). Il en manquait
+     * un troisième, et c'est celui qui explique les deux autres quand elles se
+     * contredisent : « ses écritures PASSENT-elles ? »
+     *
+     * Une instance dont toutes les présentations sont refusées bat
+     * parfaitement et n'a plus rien reçu depuis des semaines. L'écran montrait
+     * « ● Connecté » et une date ancienne, sans jamais relier les deux — et
+     * l'opérateur en concluait que la synchronisation « était lente ».
+     *
+     * ══ « NE SAIT PAS » N'EST PAS « TOUT VA BIEN » ═══════════════════════════
+     *
+     * Un projet antérieur au champ ne publie pas `rejectedCount`. On rend
+     * alors `status: 'UNKNOWN'` — jamais `HEALTHY`. Déduire la santé d'un
+     * silence est exactement l'erreur que cette fiche entière cherche à ne
+     * plus commettre.
+     */
+    businessSync: describeBusinessSyncHealth(runtime),
+  };
+}
+
+/**
+ * Traduit ce que l'instance DÉCLARE de sa file en un verdict lisible.
+ * Aucune déduction : ce qui n'est pas déclaré vaut « inconnu ».
+ */
+export function describeBusinessSyncHealth(runtime = {}) {
+  const stats = runtime.bridgeStats ?? null;
+  if (!stats || typeof stats.rejectedCount !== 'number') {
+    return { status: 'UNKNOWN', rejectedCount: null, blocked: null };
+  }
+  if (stats.rejectedCount === 0) {
+    return { status: 'HEALTHY', rejectedCount: 0, blocked: null };
+  }
+  const plus = stats.oldestRejection ?? null;
+  return {
+    status: 'BLOCKED',
+    rejectedCount: stats.rejectedCount,
+    blocked: plus
+      ? {
+        entityType: plus.entityType ?? null,
+        failureClass: plus.failureClass ?? null,
+        code: plus.code ?? null,
+        since: plus.since ?? null,
+        rejections: plus.rejections ?? null,
+      }
+      : null,
   };
 }
 

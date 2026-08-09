@@ -81,6 +81,21 @@ async function applyProjectPresentation({ projectId, change, stamp }) {
         tagline: p.tagline ?? null,
         logoUrl: p.logoUrl ?? null,
         faviconUrl: p.faviconUrl ?? null,
+        /**
+         * LE DESCRIPTEUR EST PERSISTÉ TEL QUEL — il ne se recompose pas.
+         *
+         * `registryStore.presentationOf` le lisait déjà (`projection.logo`) ;
+         * il n'était ni accepté par le contrat, ni écrit ici, ni porté par le
+         * modèle. Trois maillons sur quatre : le champ rendait donc toujours
+         * `null`, et le Panel ne pouvait ni détecter un remplacement d'image
+         * ni casser son cache.
+         *
+         * `?? null` et non `?? undefined` : l'absence PUBLIE la suppression du
+         * média. Laisser l'ancien descripteur en place afficherait une image
+         * que le projet a retirée.
+         */
+        logo: p.logo ?? null,
+        favicon: p.favicon ?? null,
         contacts: {
           email: p.contacts?.email ?? null,
           phone: p.contacts?.phone ?? null,

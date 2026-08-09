@@ -381,6 +381,29 @@ export const heartbeatSchema = z
       .object({
         outboxSize: z.number().int().min(0).optional(),
         lastSyncAt: isoDate.nullable().optional(),
+        /**
+         * ── CE QUE « CONNECTÉ » NE DISAIT PAS (>= 1.4.x, ADDITIF) ───────────
+         *
+         * Une instance dont toutes les écritures métier sont REFUSÉES bat
+         * parfaitement : le battement prouve qu'on répond, jamais qu'on livre.
+         * La fiche restait verte devant une donnée figée depuis des semaines.
+         *
+         * Ces deux champs portent le fait manquant. Ni charge utile, ni
+         * secret : un compte, un code, une date. Optionnels — le silence d'un
+         * projet antérieur ne vaut pas « aucun refus », seulement « ne sait
+         * pas dire », et l'écran doit faire la différence.
+         */
+        rejectedCount: z.number().int().min(0).optional(),
+        oldestRejection: z
+          .object({
+            entityType: z.string().min(1),
+            failureClass: z.string().min(1).nullable().optional(),
+            code: z.string().min(1).nullable().optional(),
+            since: isoDate.nullable().optional(),
+            rejections: z.number().int().min(0).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -433,8 +456,48 @@ export const projectPresentationPayloadSchema = z
   .object({
     companyName: z.string().min(1).optional(),
     tagline: z.string().min(1).optional(),
+    /**
+     * ADRESSES HÉRITÉES — dérivées du descripteur, conservées pour un Panel
+     * antérieur. Elles ne font PAS autorité : voir `logo` / `favicon`.
+     *
+     * Elles restent des URL ABSOLUES. Un média est affiché depuis une autre
+     * origine que celle qui l'a produit ; un chemin relatif y donne une image
+     * cassée, et l'émetteur ne le publie donc pas (il omet le champ).
+     */
     logoUrl: z.string().url().optional(),
     faviconUrl: z.string().url().optional(),
+    /**
+     * ── LE DESCRIPTEUR EST LA SOURCE CANONIQUE, ET IL MANQUAIT ICI ──────────
+     *
+     * ══ LE DÉFAUT QUE CES DEUX LIGNES FERMENT ═══════════════════════════════
+     *
+     * Le descripteur média a été ajouté au Bridge dans le sens Panel → projet,
+     * puis accepté sur le MANIFESTE d'un projet (`projectManifestSchema
+     * .presentation.logo`). Il n'a jamais été ajouté ici, sur la PROJECTION —
+     * le seul des trois chemins qui soit vivant.
+     *
+     * Or `describeProjectPresentation` le publie « en additif » depuis le même
+     * moment. Ce schéma étant `.strict()`, toute instance disposant d'un logo
+     * — c'est-à-dire toute instance de production — voyait sa présentation
+     * REFUSÉE avec `ENTITY_PAYLOAD_INVALID`. L'écriture sortait de la file du
+     * projet, rien ne la rejouait, et la fiche restait sur l'ancien nom
+     * indéfiniment. Le symptôme observé était « la synchronisation n'est pas
+     * live » ; la cause était un champ de trop dans un schéma fermé.
+     *
+     * ══ POURQUOI ON N'OUVRE PAS LE SCHÉMA ═══════════════════════════════════
+     *
+     * `.passthrough()` aurait fait passer ce payload — et tous les suivants,
+     * y compris celui qui transporterait un jour un secret par mégarde. La
+     * fermeture est la protection ; ce qui manquait n'était pas la souplesse,
+     * c'était l'accord entre l'émetteur et le validateur sur un champ DÉJÀ
+     * émis. On nomme donc le champ, on ne retire pas la garde.
+     *
+     * `authority` reste déclarée par l'émetteur (`PROJECT` ici) et n'est jamais
+     * déduite : c'est elle qui décide contre quelle origine l'adresse se
+     * résout.
+     */
+    logo: mediaDescriptorSchema.nullable().optional(),
+    favicon: mediaDescriptorSchema.nullable().optional(),
     contacts: z
       .object({
         email: z.string().min(1).optional(),

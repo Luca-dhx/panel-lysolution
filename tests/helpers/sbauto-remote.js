@@ -24,12 +24,19 @@ export const SBAUTO_BACKEND = path.resolve(HERE, '../../../SB Auto 06/backend');
  * @param {'TEST'|'PROD'} opts.env  l'environnement qu'elle sert
  * @param {string} opts.projectName son nom, d'où le pont dérive sa clé
  */
-export async function startSbAutoInstance({ mongoUri, dbName, env, projectName, silent = true }) {
+export async function startSbAutoInstance({
+  mongoUri, dbName, env, projectName, silent = true,
+  /** Paliers de réaffirmation d'un refus, en secondes. Voir le harnais. */
+  rejectionCadenceSeconds = undefined,
+}) {
   const child = fork(CHILD, [], {
     silent,
     env: {
       ...process.env,
-      SBAUTO_HARNESS: JSON.stringify({ mongoUri, dbName, env, projectName, sbautoBackend: SBAUTO_BACKEND }),
+      SBAUTO_HARNESS: JSON.stringify({
+        mongoUri, dbName, env, projectName, sbautoBackend: SBAUTO_BACKEND,
+        rejectionCadenceSeconds,
+      }),
     },
   });
 
@@ -93,6 +100,18 @@ export async function startSbAutoInstance({ mongoUri, dbName, env, projectName, 
     renameCompany(args) { return send('renameCompany', args); },
     /** Un cycle de synchronisation réel : vidange d’outbox puis rattrapage. */
     syncNow() { return send('syncNow'); },
+    /** L’ordonnanceur RÉEL — celui du bootstrap, cadences comprises. */
+    startScheduler(args) { return send('startScheduler', args); },
+    stopScheduler() { return send('stopScheduler'); },
+    schedulerState() { return send('schedulerState'); },
+    /** La file durable, ligne par ligne — pour dater chaque maillon. */
+    outboxDump() { return send('outboxDump'); },
+    /** L’état de santé publié au Panel : en attente, refusées, plus ancien refus. */
+    outboxHealth() { return send('outboxHealth'); },
+    /** Donne un logo à l’entreprise — la configuration de toute production. */
+    setCompanyLogo(args) { return send('setCompanyLogo', args); },
+    /** La projection telle que le projet la construit, avant tout transport. */
+    buildPresentation() { return send('buildPresentation'); },
     outboxPending() { return send('outboxPending'); },
     severDatabase() { return send('severDatabase'); },
     restoreDatabase() { return send('restoreDatabase'); },

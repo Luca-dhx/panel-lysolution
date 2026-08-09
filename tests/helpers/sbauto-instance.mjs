@@ -117,7 +117,23 @@ async function wire() {
   const { createMongoOutboxAdapter } = await import(
     SB('src/services/panelBridge/persistence/mongoOutboxAdapter.js'),
   );
-  const outboxAdapter = createMongoOutboxAdapter({ generation: config.env });
+  /**
+   * LA CADENCE DE RÉAFFIRMATION EST RACCOURCIE — et c'est la SEULE divergence
+   * assumée avec `config/bootstrap.js`.
+   *
+   * La politique de production réaffirme un refus au bout de cinq minutes,
+   * parce qu'un écart de contrat se répare par un déploiement. Une recette ne
+   * peut pas attendre cinq minutes pour observer une réparation dont la
+   * correction, elle, ne dépend pas de la durée. On injecte donc des paliers
+   * courts — exactement comme on injecte la génération.
+   *
+   * Ce qui est éprouvé reste le VRAI chemin : même classification, même
+   * conservation, même `reviveRejected`, même vidange.
+   */
+  const outboxAdapter = createMongoOutboxAdapter({
+    generation: config.env,
+    rejectionCadenceSeconds: cfg.rejectionCadenceSeconds ?? undefined,
+  });
   bridgeRuntime.configureOutboxAdapter(outboxAdapter);
 
   const projectSync = await import(SB('src/services/projectBridge/projectSync.service.js'));
@@ -302,6 +318,94 @@ const COMMANDS = {
     company.name = name;
     await company.save();
     return { name: company.name };
+  },
+
+  /**
+   * DÉMARRE L'ORDONNANCEUR RÉEL — celui de `config/bootstrap.js`.
+   *
+   * ══ POURQUOI CETTE COMMANDE EXISTE ════════════════════════════════════════
+   * Le harnais coupait l'ordonnanceur (`PANEL_SCHEDULER_ENABLED=false`) pour
+   * savoir qui déclenche quoi. C'est une garantie de lisibilité, mais elle
+   * supprime la seule condition dans laquelle la poussée immédiate peut être
+   * concurrencée : un cycle périodique EN COURS au moment de l'enregistrement.
+   * Un test qui ne peut pas produire la concurrence ne peut pas prouver qu'elle
+   * est traitée. Les tests de latence l'allument donc explicitement.
+   */
+  async startScheduler({ heartbeatMs = 60_000, syncMs = 30_000 } = {}) {
+    const { configureBridgeScheduler, startBridgeScheduler } = await import(
+      SB('src/services/panelBridge/bridgeScheduler.js'),
+    );
+    configureBridgeScheduler({
+      identityProvider: projectBridgeService.getBridgeIdentity,
+      healthProvider: projectBridgeService.getBridgeHealth,
+    });
+    return startBridgeScheduler({ heartbeatIntervalMs: heartbeatMs, syncIntervalMs: syncMs });
+  },
+
+  async stopScheduler() {
+    const { stopBridgeScheduler } = await import(
+      SB('src/services/panelBridge/bridgeScheduler.js'),
+    );
+    stopBridgeScheduler();
+    return { stopped: true };
+  },
+
+  /** L'état de l'ordonnanceur — cadences, tentatives, dernier incident. */
+  async schedulerState() {
+    const { describeScheduler } = await import(
+      SB('src/services/panelBridge/bridgeScheduler.js'),
+    );
+    return describeScheduler();
+  },
+
+  /**
+   * LA FILE, LIGNE PAR LIGNE — la seule façon de dater ce qui s'est passé
+   * ENTRE la sauvegarde métier et la requête HTTP.
+   */
+  async outboxDump() {
+    const { PanelOutboxEntry } = await import(SB('src/models/PanelOutboxEntry.model.js'));
+    return PanelOutboxEntry.find({}).sort({ createdAt: 1 }).lean();
+  },
+
+  /**
+   * L'ÉTAT DE SANTÉ DE LA FILE, tel que l'instance le PUBLIE au Panel.
+   * Pas une relecture du modèle : la fonction que le battement appelle.
+   */
+  async outboxHealth() {
+    const { describeOutboxHealth } = await import(
+      SB('src/services/panelBridge/persistence/mongoOutboxAdapter.js'),
+    );
+    return describeOutboxHealth();
+  },
+
+  /** Les incidents de synchronisation observés — jamais reconstruits. */
+  async incidents() {
+    const { describeSyncIncidents } = await import(
+      SB('src/services/panelBridge/syncIncidents.js'),
+    );
+    return typeof describeSyncIncidents === 'function' ? describeSyncIncidents() : null;
+  },
+
+  /**
+   * DONNE UN LOGO À L'ENTREPRISE — par le VRAI chemin métier.
+   *
+   * Une instance de test n'en a pas ; toute instance de production en a un.
+   * C'est exactement la différence de configuration qui décide si la
+   * projection publie un DESCRIPTEUR de média, et donc si le Panel l'accepte.
+   */
+  async setCompanyLogo({ url }) {
+    const { getSingleton } = await import(SB('src/utils/singleton.js'));
+    const { Company } = await import(SB('src/models/Company.model.js'));
+    const company = await getSingleton(Company);
+    company.logos = { ...(company.logos ?? {}), header: url };
+    await company.save();
+    return { logo: company.logos.header };
+  },
+
+  /** LA PROJECTION TELLE QUE LE PROJET LA CONSTRUIT — avant tout transport. */
+  async buildPresentation() {
+    const projectSync = await import(SB('src/services/projectBridge/projectSync.service.js'));
+    return projectSync.buildPresentationProjection();
   },
 
   /** Un cycle de synchronisation RÉEL — vidange de l'outbox, puis rattrapage. */
