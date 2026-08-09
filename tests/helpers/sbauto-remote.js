@@ -114,6 +114,10 @@ export async function startSbAutoInstance({
     /** Bascule la protection / la suspension technique depuis le Manager. */
     setProtection(args) { return send('setProtection', args); },
     setTechnical(args) { return send('setTechnical', args); },
+    /** Un jeton de session Manager — émis par le vrai service du projet. */
+    managerToken() { return send('managerToken'); },
+    /** L’état du canal d’invalidation d’interface. */
+    uiLiveState() { return send('uiLiveState'); },
     /** L’état du site tel que le PROJET le tient. */
     siteState() { return send('siteState'); },
     /** Donne un logo à l’entreprise — la configuration de toute production. */

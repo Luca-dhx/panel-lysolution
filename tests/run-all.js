@@ -38,6 +38,8 @@ const TESTS = [
   // L4 — le Panel LIVRE au lieu d'attendre que le projet tire ; le journal
   // durable reste la source de vérité, et le tirage la réparation.
   'panel-to-project-event-driven-e2e.test.js',
+  // LOT A — le dernier maillon : backend projet → Manager ouvert, sans reload.
+  'manager-live-ui-e2e.test.js',
   // L8 — l'état du site devient une projection vivante ; plus aucune lecture
   // métier directe depuis un écran du Panel.
   'project-site-status-live-e2e.test.js',

@@ -85,6 +85,15 @@ const projectBridgeService = await import(
 );
 const bridgeRuntime = await import(SB('src/services/panelBridge/bridgeRuntime.js'));
 const projectBridgeRoutes = (await import(SB('src/routes/projectBridge.routes.js'))).default;
+/**
+ * LE FLUX D'INVALIDATION D'INTERFACE — monté comme en production.
+ *
+ * `routes/index.js` le monte sous `/api/live`. Le harnais ne sert que les
+ * surfaces qu'un test exerce ; celle-ci en fait désormais partie, avec sa
+ * garde d'authentification, sans quoi on éprouverait un flux ouvert que la
+ * production n'expose pas de la même façon.
+ */
+const uiLiveRoutes = (await import(SB('src/routes/uiLive.routes.js'))).default;
 const { errorHandler } = await import(SB('src/middlewares/error.middleware.js'));
 const { PanelCompanyConfiguration, PanelProvidedApi } = await import(
   SB('src/models/PanelConfiguration.model.js')
@@ -215,6 +224,7 @@ function serve(portVoulu = 0) {
   const app = express();
   app.use(express.json());
   app.use('/api/project-bridge/v1', projectBridgeRoutes);
+  app.use('/api/live', uiLiveRoutes);
   app.use(errorHandler);
   return new Promise((resolve) => {
     server = app.listen(portVoulu, '127.0.0.1', () => resolve(server.address().port));
@@ -295,6 +305,44 @@ const COMMANDS = {
     if (server) return { listening: true, port };
     await serve(port);
     return { listening: true, port };
+  },
+
+  /**
+   * UN JETON DE SESSION MANAGER — le vrai, signé par le vrai service.
+   *
+   * Le flux d'invalidation est authentifié comme le reste de l'API. Fabriquer
+   * un jeton à la main dans le test contournerait précisément la garde qu'on
+   * veut éprouver ; on demande donc au projet d'en émettre un.
+   */
+  async managerToken() {
+    /**
+     * On crée un VRAI compte et on le signe comme le service d'authentification
+     * le fait — même secret, même forme de charge utile. Un jeton bricolé
+     * contournerait `authenticate`, c'est-à-dire précisément la garde que le
+     * flux d'invalidation doit honorer.
+     */
+    const jwt = (await dep('jsonwebtoken')).default;
+    const { User } = await import(SB('src/models/User.model.js'));
+    let user = await User.findOne({ email: 'dev-live@test.local' });
+    if (!user) {
+      user = await User.create({
+        email: 'dev-live@test.local',
+        password: 'MotDePasseDeRecette123!',
+        name: 'Dev Live',
+        role: 'DEV',
+      });
+    }
+    return jwt.sign(
+      { sub: user._id.toString(), role: user.role },
+      config.jwt.secret,
+      { expiresIn: config.jwt.expiresIn },
+    );
+  },
+
+  /** L'état du canal d'invalidation — des comptes, jamais du contenu. */
+  async uiLiveState() {
+    const { describeUiLive } = await import(SB('src/services/uiLive/uiLive.service.js'));
+    return describeUiLive();
   },
 
   /** L'ÉTAT MÉTIER RÉELLEMENT APPLIQUÉ, tel que les écrans du projet le lisent. */

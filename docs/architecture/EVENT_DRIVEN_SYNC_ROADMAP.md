@@ -18,6 +18,7 @@
 | **L2** | ✅ | Un refus n'est plus un ACK : il est classé, conservé, publié au Panel, et **réaffirmé jusqu'à convergence sans aucun geste**. |
 | **L4** | ✅ | Le Panel LIVRE au lieu d'attendre. `saveCompany` → journal → push immédiat. **T0→T5 médiane 35 ms, pire 103 ms** ; la sauvegarde rend la main en 20 ms devant un projet à 5 s. |
 | **L8** | ✅ | `PROJECT_SITE_STATUS` : l'accessibilité du site et la protection contractuelle deviennent une projection. Le **troisième motif** (lecture métier synchrone depuis un écran) disparaît du produit. Aller-retour commande Panel → projet → Panel : **622 ms**. |
+| **LIVE UI Manager** | ✅ | Le dernier maillon : `GET /api/live/events` (NDJSON authentifié) invalide les ressources d'un Manager ouvert. **60–124 ms** de la persistance à la valeur relue. Le canal ne transporte aucun objet métier — flux perdu ≠ donnée perdue. |
 | L3, L5 → L7, L9 → L17 | ⏸ | Voir §T. |
 
 ---
