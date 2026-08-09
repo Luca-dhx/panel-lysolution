@@ -1329,28 +1329,50 @@ divergent toujours, et la divergence est invisible — chacun lit la sienne.
 
 ---
 
-## INTEGRATED API — un CADRAGE, pas un état livré
+## INTEGRATED API — la fondation est livrée, la migration ne l'est pas
 
-Attention à ne pas lire le document suivant comme le reste de celui-ci : il
-décrit une architecture **visée**, pas implémentée.
+Deux systèmes coexistent aujourd'hui, volontairement. Les confondre est
+l'erreur à ne pas commettre en arrivant.
 
-> **[`docs/architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md`](architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md)**
+> Cadrage complet : **[`docs/architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md`](architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md)**
 
-**Ce qui est vrai aujourd'hui**, et que le code porte :
+### Ce qui est LIVRÉ (lot L1)
 
-- `PanelIntegratedApi` est un **coffre de clés** qui déchiffre des secrets et
-  les **pousse vers les projets autorisés** sur le pont
-  (`services/company/integratedApi.service.js`). Ce n'est pas un plan de
-  contrôle.
-- Le Panel **n'appelle aucun fournisseur** : aucune dépendance Stripe, Brevo ou
-  Yousign dans `backend/package.json`, aucune route de webhook.
-- Les intégrations réellement exploitées (Stripe, Brevo, Yousign, Hostinger)
-  vivent **dans SB Auto**, configurées depuis son Manager, avec un mode
-  fournisseur choisi à la main, indépendant de l'`ENV`.
-- Côté projet, les credentials reçus du Panel sont persistés puis **lus par
-  aucun code**.
+Le **plan de contrôle** du Panel — `/api/integrated-apis`, écran
+« Intégrations API ».
 
-**Ce que le document propose** — Panel comme plan de contrôle, capacités métier
-à la place des clés, `environment = config.env` sans exception, registre de
-webhooks centralisé — n'est **ni décidé ni commencé**. Il attend cinq décisions
-produit (§17) et un GO sur son premier lot.
+- **Registre code-first** (`services/integratedApi/providerRegistry.js`) :
+  quatre fournisseurs, et eux seuls — Stripe, Brevo, Yousign (portée
+  `ENVIRONMENT`), Hostinger (`PANEL_GLOBAL`). Rien en base ne peut en ajouter.
+- **Coffre** : jeux d'identifiants chiffrés AES-256-GCM, un par environnement
+  (ou un seul pour un fournisseur global). Une valeur confidentielle ne sort
+  jamais par `/api` — vérifié par test, jusque dans le document Mongo brut.
+- **Résolveur d'environnement** : `environnement = config.env du Panel`.
+  Aucun hostname, aucun paramètre client, aucun `activeMode`. Refus canonique
+  `INTEGRATED_API_ENVIRONMENT_MISMATCH`, fail closed.
+- **Validation** : un appel réel au fournisseur, en lecture seule. Aucun
+  paiement, aucun e-mail, aucune signature, aucun webhook.
+
+### Ce qui NE l'est PAS
+
+- **Aucun appel métier ne passe par le Panel.** SB Auto appelle toujours
+  Stripe, Brevo, Yousign et Hostinger directement, avec ses propres
+  identifiants, depuis sa propre page Manager. Rien n'a changé pour lui.
+- **Les capacités sont déclarées, pas invocables** (`capabilitiesInvocable:
+  false`). La passerelle est le lot L3.
+- **L'ancien coffre reste en service.** `PanelIntegratedApi` déchiffre encore
+  des secrets et les pousse aux projets appairés sur le pont ; son écran vit à
+  `/integrated-apis/legacy` et porte un avertissement. Le débrancher est le lot
+  L4 — et il est peu risqué, puisque côté projet ces secrets sont persistés
+  mais **lus par aucun code**.
+- **La doctrine `activeMode` de SB Auto est intacte.** Un DEV peut toujours y
+  choisir Stripe PROD sur une instance TEST. C'est le lot L2, et il exige
+  d'abord un inventaire du parc réel.
+
+### La distinction qui tient la doctrine
+
+Configurer le jeu PROD depuis le Panel TEST est **autorisé** — c'est du
+provisionnement, sans quoi l'autre instance ne pourrait jamais être préparée.
+Exécuter une action en PROD depuis le Panel TEST est **refusé**, toujours. Deux
+fonctions séparées portent ces deux règles (`assertAdministrableEnvironment`
+et `assertEnvironmentServed`), et un test affirme les deux côte à côte.

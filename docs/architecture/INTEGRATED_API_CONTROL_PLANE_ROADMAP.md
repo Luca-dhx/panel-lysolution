@@ -1,0 +1,1246 @@
+# IntegratedAPI — Panel comme plan de contrôle des intégrations
+
+> **Statut : L1 LIVRÉ. Aucun provider migré.**
+>
+> | | |
+> |---|---|
+> | Plan de contrôle Panel | **✅ opérationnel** — registre, coffre, validation, écran |
+> | Runtime métier des projets | **inchangé** — SB Auto appelle toujours les fournisseurs directement |
+> | Migration des providers | **non commencée** |
+> | Diffusion de secrets sur le pont | **toujours active** — L4 la coupera |
+> | Doctrine `activeMode` côté projet | **toujours en place** — L2 la révoquera |
+>
+> Ce document décrit ce qui EXISTE (prouvé par le code, référence à l'appui),
+> ce qui est VISÉ, et la route entre les deux. Les sections §1 à §12 décrivent
+> l'état AVANT L1 et restent la référence de l'audit ; §13 porte l'avancement
+> réel, lot par lot.
+
+---
+
+## 0. Baseline
+
+Relevé au moment de l'audit — les deux dépôts ont des modifications non
+committées, sans rapport avec ce chantier.
+
+| Dépôt | Branche | HEAD | Arbre de travail |
+|---|---|---|---|
+| `Panel` | `feat/generic-deployment-engine` | `518ac79` | 4 fichiers modifiés (`tests/helpers/*`, `tests/payload-drift.check.mjs`), 1 non suivi (`tests/event-driven-system-e2e.test.js`) |
+| `SB Auto 06` | `feat/unified-production-baseline` | `ab85e8b` | 12 fichiers modifiés (contrat, uiLive, bridge), 3 non suivis (`services/lifecycle/`, 2 tests) |
+
+Aucun autre dépôt n'entre dans le périmètre : `LYCARZ`,
+`ly-solution-carvertical`, `SITE RAUL` et les autres dossiers voisins ne sont
+ni appairés ni référencés par le Panel.
+
+---
+
+## 1. Architecture actuelle — ce que le code dit
+
+### 1.1 Il y a DEUX systèmes IntegratedAPI, et ils ne se parlent pas
+
+C'est le fait central de cet audit, et il n'était pas attendu.
+
+```
+┌─ PANEL ─────────────────────────────┐      ┌─ SB AUTO 06 ────────────────────────┐
+│                                     │      │                                      │
+│  PanelIntegratedApi                 │      │  PanelProvidedApi                    │
+│  ├── apiId, key, provider (libres)  │      │  ├── credentials rechiffrées         │
+│  ├── credentials.TEST / .PROD       │─────▶│  └── LU PAR PERSONNE ✗               │
+│  ├── grants[] par projet            │ pont │                                      │
+│  └── mode TEST|PROD                 │      │  ────────────────────────────────    │
+│                                     │      │                                      │
+│  ✗ aucun driver fournisseur         │      │  IntegratedApi  ← LE SYSTÈME RÉEL    │
+│  ✗ aucun webhook                    │      │  ├── 4 providers catalogués          │
+│  ✗ aucune dépendance Stripe/Brevo   │      │  ├── activeMode choisi par un DEV    │
+│                                     │      │  ├── drivers + tests de connexion    │
+│                                     │      │  ├── réconciliateur de webhooks      │
+│                                     │      │  └── page Manager DEV → Intégrations │
+└─────────────────────────────────────┘      └──────────────────────────────────────┘
+```
+
+**Preuve que la branche Panel est morte.** `PanelIntegratedApi` déchiffre des
+secrets et les pousse sur le pont
+([integratedApi.service.js:294-324](../../backend/src/services/company/integratedApi.service.js#L294-L324)).
+SB Auto les reçoit, les rechiffre, les range dans `PanelProvidedApi`
+([panelConfiguration.service.js:156-204](../../../SB%20Auto%2006/backend/src/services/panelConfiguration/panelConfiguration.service.js#L156-L204))
+et expose un lecteur déchiffrant, `getProvidedApiCredentials(key)`. Une
+recherche exhaustive sur les deux dépôts montre que **ce lecteur n'a aucun
+appelant**. Le seul consommateur de `PanelProvidedApi` est
+`listProvidedApis()`, appelé par
+[panelBridge.controller.js:65](../../../SB%20Auto%2006/backend/src/controllers/panelBridge.controller.js#L65)
+— un inventaire d'affichage, sans valeurs.
+
+> Des secrets fournisseurs traversent aujourd'hui le pont en clair, sont
+> persistés côté projet, et **aucun code ne les utilise**. Le risque est réel,
+> le bénéfice est nul. C'est le premier point à traiter, et il ne dépend
+> d'aucune migration.
+
+### 1.2 Le système réel : `IntegratedApi` côté projet
+
+Un document par fournisseur, deux jeux de credentials chiffrés AES-256-GCM
+(`modes.TEST` / `modes.PROD`), un `activeMode`, un état de webhook par mode
+([IntegratedApi.model.js](../../../SB%20Auto%2006/backend/src/models/IntegratedApi.model.js)).
+
+La couche de consommation
+([integratedApi.service.js](../../../SB%20Auto%2006/backend/src/services/integratedApi.service.js))
+est propre : erreurs typées, fail-loud, empreinte de vérification pour prouver
+que « vérifié » concerne la clé courante, jamais de secret journalisé.
+
+### 1.3 Ce que le Panel sait déjà faire, et qu'on croyait à construire
+
+Trois briques de la cible existent déjà, testées.
+
+| Brique | État | Preuve |
+|---|---|---|
+| **Autorité d'environnement** | Livrée | `pairing.bootstrap` refuse `BRIDGE_ENVIRONMENT_MISMATCH` ([pairing.service.js:134](../../backend/src/services/pairing/pairing.service.js#L134)) ; la livraison de sync refuse aussi ([syncDelivery.service.js:211-224](../../backend/src/services/sync/syncDelivery.service.js#L211-L224)) ; couvert par `tests/panel-instance-environment.test.js` |
+| **URLs runtime frontend/backend** | Livrée | `frontendUrl` + `backendUrl` dans `SystemConfiguration`, écrites par le déploiement avec relecture de validation ([runtimeConfig.js](../../backend/src/deployment-engine/runtimeConfig.js)), résolues par [networkConfig.service.js](../../backend/src/services/network/networkConfig.service.js), `api.<domaine>` dérivé par `API_SUBDOMAIN` |
+| **Coffre chiffré** | Livrée | `panelCrypto` AES-256-GCM, `BRIDGE_ENCRYPTION_KEY` validée au boot, refus de réutiliser `JWT_SECRET` ([env.js](../../backend/src/config/env.js)) |
+
+La **Phase 10** de la mission est donc déjà satisfaite. Rien à concevoir : il
+faudra seulement documenter que `backendUrl` est la racine des webhooks.
+
+---
+
+## 2. Inventaire des IntegratedAPI
+
+### 2.1 Providers réellement présents
+
+Quatre, tous côté SB Auto, catalogués dans
+[integratedApiCatalog.js](../../../SB%20Auto%2006/backend/src/utils/integratedApiCatalog.js).
+
+| | **STRIPE** | **BREVO** | **YOUSIGN** | **HOSTINGER** |
+|---|---|---|---|---|
+| **Fonction** | Paiement, abonnement, facturation | E-mail transactionnel | Signature électronique | DNS / domaines au déploiement |
+| **Configuré où** | Manager SB Auto → DEV → Intégrations API | idem | idem | idem |
+| **Credentials vivent où** | Mongo de l'instance, chiffrés | idem | idem | idem |
+| **Champs** | `secretKey`*, `webhookSecret` (auto), `publishableKey` | `apiKey`*, `webhookSecret` | `apiKey`*, `webhookSecret`* | `apiToken`* |
+| **TEST/PROD** | `sk_test_` / `sk_live_`, même hôte | Deux **comptes** distincts, aucun préfixe | Deux **hôtes** : `api-sandbox` / `api` | Un seul compte, pas de sandbox |
+| **Refresh de token** | Aucun (clé statique) | Aucun | Aucun | Aucun |
+| **Webhooks** | `/api/webhooks/stripe`, HMAC | `/api/webhooks/brevo/transactional/:mode`, Bearer | `/api/webhooks/yousign`, HMAC | Aucun |
+| **Appels entrants** | `checkout.session.*`, `invoice.*`, `customer.subscription.*` | `delivered`, `hardBounce`, `blocked`… | `signature_request.done`… | — |
+| **Appels sortants** | Checkout, Customer, Subscription, Invoice, Price, `webhook_endpoints` | `POST /smtp/email`, `/v3/webhooks` | `/v3/signature_requests`, `/v3/webhooks` | Zones + records DNS |
+| **Consommateurs métier** | `payment`, `subscription`, `billing`, `contract*`, `reconciliation` | `email/*`, `contact`, `emailConfiguration` | `contract*`, `contractDocument` | `deployment-engine/dns` |
+| **Secrets** | 3 (dont 1 auto-géré) | 2 | 2 | 1 |
+| **Coût** | Commission par transaction | Volume d'e-mails | Par signature | Inclus hébergement |
+| **État migration** | Non commencé | Non commencé | Non commencé | Non commencé |
+
+`*` = requis pour que le mode soit « configuré ».
+
+### 2.2 Providers ABSENTS — à ne pas planifier
+
+La mission cite Ubiflow, AssuCarteGrise, CarVertical, Car Studio AI, Autoviza.
+**Aucun n'existe dans le code.** Recherche exhaustive sur les deux dépôts
+(`*.js`, `*.ts`, `*.tsx`, `*.json`, `*.md`, hors `node_modules`) : deux
+occurrences, toutes deux rhétoriques.
+
+- `SB Auto 06/docs/BREVO_MODULE.md:8` — « (… Ubiflow, CarVertical…) » dans une
+  phrase sur les intégrations futures.
+- `SB Auto 06/docs/yousign/YOUSIGN_TECHNICAL_AUDIT.md:57` — une colonne
+  « CarVertical 🟡 » dans un tableau comparatif, marquée non implémentée.
+
+AssuCarteGrise, Car Studio AI et Autoviza : **zéro occurrence**, y compris dans
+les docs. Ils ne sont pas au périmètre de cette roadmap.
+
+### 2.3 Les secrets ne sont dans AUCUN `.env`
+
+Vérifié sur les `.env` réels et les `.env.example` des deux dépôts. Aucune
+variable `STRIPE_*`, `BREVO_*`, `YOUSIGN_*`, `HOSTINGER_*`. La seule variable
+liée est `INTEGRATED_API_ENCRYPTION_KEY` (SB Auto), qui chiffre le coffre —
+elle n'est pas un secret fournisseur.
+
+**Conséquence pour la migration :** il n'y a rien à retirer d'un fichier de
+configuration. La migration est une migration de **base de données** et de
+**chemin d'appel**, pas de variables d'environnement.
+
+---
+
+## 3. Classification des scopes
+
+Le scope naturel se déduit d'un seul critère : *combien de comptes fournisseur
+l'entreprise détient-elle réellement ?*
+
+| Provider | Scope | Pourquoi, et ce qui le prouve |
+|---|---|---|
+| **BREVO** | `ENVIRONMENT` | Le catalogue dit qu'un compte TEST et un compte PROD sont **deux comptes distincts** (`integratedApiCatalog.js:99-101`), avec deux expéditeurs vérifiés et deux quotas. Ce n'est donc pas `PANEL_GLOBAL`. Une seule identité support par environnement suffit à tous les projets. |
+| **STRIPE** | `ENVIRONMENT` | Un compte Stripe porte nativement les deux mondes (`sk_test_` / `sk_live_`), mais ce sont deux jeux de données, deux jeux de webhooks, deux jeux d'objets. Les traiter comme deux credential sets est la seule lecture qui ne mélange rien. |
+| **YOUSIGN** | `ENVIRONMENT` | Deux **hôtes** distincts (`api-sandbox.yousign.app` / `api.yousign.app`) et deux clés. La séparation est imposée par le fournisseur. |
+| **HOSTINGER** | `PANEL_GLOBAL` | Un seul portefeuille de domaines, une seule clé, aucun sandbox documenté. Le DNS d'un domaine de recette et celui d'un domaine de production vivent dans le même compte — les séparer serait inventer une distinction que le fournisseur n'a pas. |
+
+**`PROJECT` et `PROJECT_ENVIRONMENT` : aucun provider n'en relève aujourd'hui.**
+Aucun des quatre n'impose un compte par client. On ne crée donc pas ces
+catégories dans le modèle « au cas où » — mais le champ `scope` doit les
+admettre comme valeurs, pour qu'un provider futur (une API de données
+véhicule facturée au client, typiquement) n'oblige pas à une migration de
+schéma.
+
+**Conséquence pour l'instance de Panel.** Une instance de Panel ne sert qu'un
+environnement (§1.3). Un credential set `ENVIRONMENT` est donc, du point de vue
+d'**une** instance, un singleton : le Panel TEST ne détient que les credentials
+TEST. Cela simplifie beaucoup le modèle — mais impose que le Panel PROD et le
+Panel TEST soient **provisionnés séparément** (§9.4).
+
+---
+
+## 4. Architecture cible du modèle
+
+### 4.1 Ce qui ne va pas dans le modèle actuel du Panel
+
+`PanelIntegratedApi` a été conçu comme un **coffre générique de clés**, pas
+comme un plan de contrôle :
+
+- `provider` et `key` sont des chaînes libres. Rien n'empêche
+  `provider: "Stripe"` et `provider: "STRIPE"` de coexister.
+- Aucun catalogue de champs : `credentials.TEST.values` est une `Map` ouverte.
+  Le Panel ne sait pas qu'il manque `secretKey`.
+- `mode` est un champ du document, pas une conséquence de l'environnement.
+- Aucune notion de capacité, de webhook, ni de vérification.
+- Le seul comportement métier est *distribuer les secrets*, qui est précisément
+  ce que la cible interdit.
+
+### 4.2 Migration minimale compatible
+
+On ne repart pas de zéro : `apiId`, `companyId`, `credentials.{TEST,PROD}`,
+le chiffrement et l'API d'administration sont réutilisables. Quatre entités
+cibles, dont **deux sont des évolutions** du modèle existant.
+
+```
+IntegratedApiDefinition                       ← NOUVEAU (code-first, pas en base)
+  provider          STRIPE | BREVO | YOUSIGN | HOSTINGER
+  scope             PANEL_GLOBAL | ENVIRONMENT | PROJECT | PROJECT_ENVIRONMENT
+  capabilities[]    billing.refund, email.send_template, …
+  fields[]          { key, required, secret, prefixByMode }
+  defaultBaseUrl(environment)
+  webhook           { supported, remoteSync, secretAtCreationOnly, … }
+
+IntegratedApiCredentialSet                    ← ÉVOLUTION de PanelIntegratedApi
+  provider          (enum, remplace la chaîne libre)
+  environment       TEST | PROD                (remplace `mode`)
+  scope             (dénormalisé depuis la définition, pour l'index)
+  encryptedCredentials  (= credentials.<env>.values, inchangé)
+  fingerprints          (déjà là)
+  status            UNCONFIGURED | CONFIGURED | VERIFIED | FAILED
+  lastValidatedAt
+  ✗ grants[]        ← RETIRÉ (§5)
+
+IntegratedApiWebhook                          ← NOUVEAU
+  provider, environment
+  remoteWebhookId, endpointUrl
+  secretRef         (nom du credential, jamais la valeur)
+  subscribedEvents[]
+  status, lastReconciledAt, lastError
+  ← calqué sur webhookConfigSchema de SB Auto, qui a déjà la bonne forme
+
+ExternalProviderEvent                         ← NOUVEAU (§8)
+```
+
+**`IntegratedApiRuntime` (token, expiresAt, refreshState) n'est PAS retenu.**
+Les quatre providers utilisent une clé statique ; aucun n'a d'OAuth, aucun n'a
+de token à rafraîchir. Créer cette entité serait porter une complexité sans
+usage. Le jour où un provider OAuth arrive, elle s'ajoutera — la définition
+porte déjà `runtimeModel` implicitement via `fields[]`.
+
+**`environment` remplace `mode`, et ce n'est pas cosmétique.** Le mot `mode`
+porte l'idée d'un choix ; `environment` porte celle d'un fait. Le renommage est
+la première marque, dans le code, du changement de doctrine.
+
+---
+
+## 5. Centralisation des secrets
+
+### 5.1 Matrice
+
+| Secret | Avant | Après | Migration | Risque |
+|---|---|---|---|---|
+| `STRIPE.secretKey` | Mongo instance (chiffré) | Mongo Panel de l'env (chiffré) | Ressaisie dans le Panel, puis bascule de capacité | **Élevé** — coupe les paiements si mal fait. Dual-path obligatoire. |
+| `STRIPE.webhookSecret` | Mongo instance, auto-capturé | Mongo Panel, auto-capturé | Recréation de l'endpoint côté Panel (le secret n'est jamais relisible) | Moyen — un endpoint orphelin subsiste chez Stripe |
+| `STRIPE.publishableKey` | Mongo instance | Mongo Panel | Idem | Faible — clé publique |
+| `BREVO.apiKey` | Mongo instance | Mongo Panel | Ressaisie | Moyen — coupe les e-mails |
+| `BREVO.webhookSecret` | Mongo instance | Mongo Panel | Regénéré (c'est NOUS qui le choisissons) | Faible |
+| `YOUSIGN.apiKey` | Mongo instance | Mongo Panel | Ressaisie | **Élevé** — bloque la signature de contrat |
+| `YOUSIGN.webhookSecret` | Mongo instance | Mongo Panel | Recréation de l'endpoint | Moyen |
+| `HOSTINGER.apiToken` | Mongo instance | Mongo Panel | Ressaisie | Moyen — bloque le DNS automatique au déploiement |
+| `INTEGRATED_API_ENCRYPTION_KEY` | `.env` instance | **reste local** | Aucune | — |
+| `BRIDGE_ENCRYPTION_KEY` | `.env` Panel | **reste local** | Aucune | — |
+
+Les deux dernières lignes sont importantes : ce sont des clés d'infrastructure,
+pas des credentials fournisseurs. Elles ne migrent jamais.
+
+### 5.2 Ce qui reste projet-scoped
+
+Rien, côté credentials. Mais deux choses **ressemblent** à des credentials et
+n'en sont pas :
+
+- **L'identité expéditrice** (`EmailConfiguration.modes[].sender`) — c'est une
+  donnée métier de l'entreprise, pas un secret. Elle migre vers le Panel comme
+  configuration, pas comme credential (§10).
+- **Les identifiants externes** (`customerId` Stripe, `signatureRequestId`
+  Yousign) — ils appartiennent au projet, ils restent dans le projet. Un
+  `Payment` doit continuer de porter son `externalPaymentId`.
+
+### 5.3 La règle, en une phrase
+
+> Le Panel exécute. Le projet demande. **Aucun secret ne traverse le pont.**
+
+Cela invalide `buildApiPayloadFor()` et `grants[]` dans leur forme actuelle.
+Le grant ne disparaît pas — il devient une **autorisation de capacité**, pas
+une autorisation de clé.
+
+---
+
+## 6. Modèle de capacités
+
+### 6.1 Pourquoi pas une API brute
+
+Si un projet peut appeler `POST /panel/proxy/stripe/v1/refunds`, le Panel n'est
+plus un plan de contrôle : c'est un relais avec un problème d'authentification
+en plus. Le contrôle d'environnement deviendrait décoratif — le projet
+choisirait l'objet Stripe à toucher, donc le monde.
+
+Une capacité est **une intention métier nommée**, dont le Panel dérive tout le
+reste.
+
+### 6.2 Catalogue initial, dérivé des appels réels
+
+Chaque capacité ci-dessous correspond à un appel qui existe aujourd'hui dans SB
+Auto. Aucune n'est spéculative.
+
+| Capacité | Provider | Remplace, côté projet |
+|---|---|---|
+| `billing.customer.ensure` | STRIPE | `payment.service` / `subscription.service` |
+| `billing.checkout.create` | STRIPE | `stripe.service.createLaunchFeeCheckout` / `createSubscriptionCheckout` |
+| `billing.subscription.cancel_at_period_end` | STRIPE | `stripe.service.cancelSubscriptionAtPeriodEnd` |
+| `billing.subscription.reconcile` | STRIPE | `subscription.service.reconcileAndDescribe` |
+| `billing.refund` | STRIPE | *n'existe pas encore* — c'est le cas d'usage cible du bouton « Rembourser » |
+| `billing.invoice.list` | STRIPE | `Invoice` + `hosted_invoice_url` |
+| `email.send_template` | BREVO | `brevoEmail.service.sendTransactional` |
+| `email.sender.verify` | BREVO | `emailConfiguration.service` (envoi de test) |
+| `signature.request.create` | YOUSIGN | `yousign.service` |
+| `signature.document.download` | YOUSIGN | `contractDocument.service` |
+| `dns.record.ensure` | HOSTINGER | `deployment-engine/dns/ensureDns` |
+
+### 6.3 Ce que le Panel décide, que le projet ne décide plus
+
+```
+Projet ──▶ POST /bridge/capabilities/billing.checkout.create
+           { contractRef, amountIncludingTax, currency, successUrl, cancelUrl }
+                    │
+                    ▼
+           Panel résout, dans cet ordre :
+             1. l'INSTANCE (via le bridgeToken)          → projectId
+             2. l'ENVIRONNEMENT de l'instance            → TEST
+             3. la capacité autorisée pour ce projet ?   → sinon 403
+             4. le credential set (provider, TEST)       → sinon 409
+             5. l'appel fournisseur, retry, idempotence
+             6. l'audit (§12)
+                    │
+                    ▼
+           { checkoutUrl, externalId, environment: "TEST" }
+```
+
+Le projet ne transmet **jamais** `provider`, `mode`, `environment`, ni aucune
+clé. Il n'a pas le vocabulaire pour le faire.
+
+### 6.4 Écart avec les drivers actuels
+
+Les drivers SB Auto sont déjà des fonctions à intention métier
+(`createLaunchFeeCheckout`, pas `postToStripe`). La transformation en capacité
+est donc surtout un **déplacement**, pas une réécriture : le corps de la
+fonction part au Panel, l'appelant devient un appel de pont. Les schémas
+d'entrée/sortie existent déjà implicitement.
+
+Deux exceptions demandent un vrai travail :
+- `verifyStripeWebhookAnyMode` et l'ingestion de webhooks : elles ne sont pas
+  des capacités mais leur miroir (§7, §8).
+- `dns.record.ensure` : appelé par le **moteur de déploiement du Panel**
+  lui-même, pas par un projet. C'est un cas §9.
+
+---
+
+## 7. Routage d'environnement
+
+### 7.1 L'autorité existe déjà
+
+Le Panel n'a pas à inventer comment connaître l'environnement d'une instance :
+il le sait depuis l'appairage, il le refuse s'il ne concorde pas, et il ne
+livre pas si la fiche diverge.
+
+```
+pairing.bootstrap                 syncDelivery.deliverToProject
+  dto.environment !== config.env    record.runtime.environment !== config.env
+        │                                   │
+        ▼                                   ▼
+  BRIDGE_ENVIRONMENT_MISMATCH (409)   outcome ENVIRONMENT_MISMATCH, rien livré
+```
+
+Sources : [pairing.service.js:134](../../backend/src/services/pairing/pairing.service.js#L134),
+[syncDelivery.service.js:211](../../backend/src/services/sync/syncDelivery.service.js#L211).
+Couvert par `tests/panel-instance-environment.test.js` et
+`tests/project-connections.test.js`.
+
+### 7.2 La règle pour les capacités
+
+```
+environnement effectif d'un appel = config.env de l'instance de Panel
+```
+
+Et rien d'autre. Pas le domaine, pas un paramètre de la requête, pas un
+en-tête, pas un réglage d'écran. Le `config.env` du processus Panel est déjà la
+valeur contre laquelle l'appairage a été validé : la réutiliser ferme la boucle
+sans introduire de seconde vérité.
+
+Une conséquence agréable : **le contrôle est gratuit**. Si le Panel TEST ne
+détient que les credentials TEST, un appel PROD est impossible par construction,
+pas par vérification. La vérification explicite reste, en défense en
+profondeur :
+
+```
+INTEGRATED_API_ENVIRONMENT_MISMATCH   409
+  « Capacité refusée : cette instance de Panel sert TEST,
+    le credential set demandé est PROD. »
+```
+
+**Fail closed.** Aucun repli sur l'autre environnement, aucun défaut. Si le
+credential set de l'environnement courant est absent, la réponse est
+`INTEGRATED_API_NOT_CONFIGURED` (409), jamais un basculement silencieux.
+
+### 7.3 Le point dur : la doctrine actuelle dit l'inverse
+
+C'est **la contradiction majeure de cet audit**, et elle est explicite,
+documentée et testée.
+
+> « MODE FOURNISSEUR ≠ ENVIRONNEMENT APPLICATIF. Chaque fournisseur possède son
+> propre `activeMode` (TEST | PROD), choisi par un DEV depuis le Manager,
+> **INDÉPENDAMMENT de `config.env`**. »
+> — [integratedApiCatalog.js:7-11](../../../SB%20Auto%2006/backend/src/utils/integratedApiCatalog.js#L7-L11)
+
+Et le tableau de `docs/INTEGRATED_API.md` §0 déclare les **quatre**
+combinaisons possibles, dont `App TEST × Stripe PROD`, « techniquement permis
+mais alerté ». Cette combinaison a une implémentation dédiée :
+`crossModeRisk` ([integratedApi.controller.js:88](../../../SB%20Auto%2006/backend/src/controllers/integratedApi.controller.js#L88)),
+une bannière dans le Manager
+([DevIntegrationsPage.tsx:297-302](../../../SB%20Auto%2006/manager/src/pages/dev/DevIntegrationsPage.tsx#L297-L302)),
+et deux assertions de test
+(`integrated-api.test.js:193` et `:246`).
+
+**Ce n'est pas un oubli, c'est un choix produit qu'il faut révoquer
+explicitement.** Cinq artefacts au moins tombent avec lui :
+
+1. `IntegratedApi.activeMode` et son API `POST /:provider/active-mode`
+2. `confirmVerb` (« ACTIVER STRIPE PROD ») et son garde-fou de confirmation
+3. `crossModeRisk` et sa bannière
+4. Le tableau à quatre lignes de `docs/INTEGRATED_API.md`
+5. Les deux tests qui affirment que `crossModeRisk` peut valoir `true`
+
+**Il faut trancher avant L1.** Voir §21, décision D1.
+
+### 7.4 Un cas légitime que la nouvelle doctrine casse
+
+La combinaison `App PROD × Stripe TEST` est marquée « Sûr » dans la doctrine
+actuelle, et elle a un usage réel : **une recette sur l'instance de
+production**, avant d'ouvrir les paiements réels. La doctrine cible l'interdit.
+
+Ce n'est pas une raison de renoncer — c'en est une de prévoir le remplacement :
+un **mode « pré-ouverture »** au niveau du contrat, ou une instance PROD dont
+l'ouverture des paiements est un état métier explicite, pas un réglage de
+credential. À décider (§21, D2), pas à improviser au moment de la bascule.
+
+---
+
+## 8. Webhooks
+
+### 8.1 Ce qui existe aujourd'hui — et c'est beaucoup
+
+SB Auto possède déjà un plan de contrôle de webhooks complet, générique et
+testé. **Il ne faut pas le réécrire, il faut le déplacer.**
+
+- **Registre code-first** —
+  [managedWebhookRegistry.js](../../../SB%20Auto%2006/backend/src/services/webhooks/managedWebhookRegistry.js) :
+  provider × category → route, événements attendus, référence du secret. Un
+  seul fabricant d'URL, `buildWebhookUrl()`, calculé depuis la racine publique.
+  La configuration ne stocke jamais une route complète.
+- **Contrat de driver uniforme** —
+  [integrationWebhookProviders.js](../../../SB%20Auto%2006/backend/src/services/webhooks/integrationWebhookProviders.js) :
+  `listManagedWebhooks / ensureWebhooks / repairWebhooks / getWebhookHealth /
+  testWebhooks`, plus un objet `capabilities()` que l'UI consomme au lieu d'un
+  `if (provider === …)`.
+- **Adaptateurs distants** —
+  [remoteWebhookAdapters.js](../../../SB%20Auto%2006/backend/src/services/webhooks/remoteWebhookAdapters.js) :
+  `fetch` nu, CRUD Stripe et Yousign, capture du secret à la création.
+- **Identification par description canonique** —
+  `SB_AUTO_06_MANAGED_<PROVIDER>_<CATEGORY>_<MODE>#<installationId>`, avec
+  reconnaissance des descriptions historiques pour l'adoption. C'est ce qui
+  rend le dédoublonnage sûr sans se fier à l'URL.
+- **Déclenchement** — au **boot**
+  ([bootstrap.js:537-578](../../../SB%20Auto%2006/backend/src/config/bootstrap.js#L537-L578)),
+  best-effort, timeout 20 s, jamais bloquant ; plus une veille ngrok de 60 s en
+  développement.
+
+### 8.2 Capacité réelle de création automatique — vérifié en doc officielle
+
+| Provider | CRUD API | Endpoints multiples | Secret de signature | Secret relisible ? | TEST/PROD | Retry fournisseur |
+|---|---|---|---|---|---|---|
+| **Stripe** | Oui — `POST/GET/DELETE /v1/webhook_endpoints`, update par `POST /v1/webhook_endpoints/:id` | Oui, **plafond documenté à 16 par compte** | HMAC-SHA256, en-tête `Stripe-Signature` | **Non** — `secret` n'est renvoyé qu'à la création | Séparés par la clé (`sk_test_` / `sk_live_`) ; `livemode` sur l'objet | Oui, avec backoff |
+| **Brevo** | Oui — `POST/GET/PUT/DELETE /v3/webhooks`, filtrables par `type` (`transactional`, `marketing`, `inbound`) | Oui, plafond non documenté publiquement (l'UI parle de « supprimer des webhooks existants ») | **Aucun HMAC** — en-têtes personnalisés ou `auth.token`, plus allowlist d'IP | Oui, c'est nous qui le posons | **Aucun sandbox** — deux comptes distincts | Oui |
+| **Yousign / Youtrust** | Oui — endpoints dédiés v3, champ `sandbox` sur la souscription | Oui | `secret_key` « utilisée pour signer les charges utiles » | **Non documenté explicitement** — le code actuel suppose « à la création seulement » | Sandbox et production, **hôtes distincts** et clés distinctes | `auto_retry` booléen, politique non documentée |
+| **Hostinger** | **Aucun webhook** | — | — | — | Un seul compte | — |
+
+Trois précisions qui changent la conception :
+
+1. **Le plafond Stripe de 16 endpoints est une contrainte de capacité réelle.**
+   Aujourd'hui, chaque instance SB Auto enregistre son propre endpoint sur le
+   compte Stripe partagé. Au-delà de ~16 instances, la création échoue. La
+   centralisation **résout** ce problème : un endpoint Panel par environnement,
+   quel que soit le nombre de projets. C'est un argument fort en faveur de L5.
+
+2. **Brevo n'a pas de signature cryptographique.** Un webhook Brevo n'est
+   jamais *prouvé*, seulement *authentifié* par secret partagé et IP. Le code
+   SB Auto le dit déjà explicitement
+   ([integratedApiCatalog.js:102-106](../../../SB%20Auto%2006/backend/src/utils/integratedApiCatalog.js#L102-L106)).
+   Le handler Panel doit conserver cette nuance — pas prétendre à une garantie
+   qu'il n'a pas.
+
+3. **Yousign est devenu Youtrust (juillet 2026).** `developers.yousign.com`
+   redirige en 301 vers `developers.youtrust.com`. Les hôtes d'API
+   `api.yousign.app` / `api-sandbox.yousign.app` codés en défaut dans
+   [integratedApiCatalog.js:126-129](../../../SB%20Auto%2006/backend/src/utils/integratedApiCatalog.js#L126-L129)
+   **ne sont pas confirmés stables**. Le modèle stocke une `baseUrl` éditable —
+   le risque est donc contenu, mais la vérification est un prérequis de L6.
+
+### 8.3 Réconciliateur cible
+
+```
+Déploiement du Panel terminé
+        │
+        ▼
+Backend public en bonne santé  (health check déjà dans le pipeline)
+        │
+        ▼
+URLs runtime committées        (runtimeConfig.js, avec relecture — déjà là)
+        │
+        ▼
+reconcileProviderWebhooks(environment = config.env)
+        │
+        └── pour chaque provider dont webhook.supported :
+              endpoint souhaité = `${backendUrl}/webhooks/${provider}`
+              vs endpoints distants portant NOTRE description canonique
+```
+
+| Situation | Action |
+|---|---|
+| Déjà conforme (URL + événements) | No-op, `lastReconciledAt` avancé |
+| Absent | Créer, **capturer le secret immédiatement**, persister chiffré |
+| URL périmée, même id | `update` en place — préserve le secret, c'est le chemin sûr |
+| Doublons portant notre description | Garder le plus récent conforme, **vérifier**, puis seulement désactiver les autres |
+| Endpoint inconnu (pas notre description) | **Ne jamais toucher.** Journaliser. |
+| Erreur fournisseur | Voir §8.4 |
+
+L'ordre « créer → vérifier → retirer l'ancien » n'est pas négociable : retirer
+d'abord ouvre une fenêtre où aucun endpoint n'écoute, et les événements de
+cette fenêtre sont perdus définitivement.
+
+### 8.4 Un échec de webhook doit-il casser un déploiement ?
+
+**Non, par défaut** — et la recommandation de la mission est la bonne. Un
+provider externe momentanément indisponible ne doit pas empêcher une release
+valide d'aller en production ; le réconciliateur est idempotent et repassera au
+prochain boot.
+
+Mais « par défaut » n'est pas « toujours ». Provider par provider :
+
+| Provider | Politique | Pourquoi |
+|---|---|---|
+| **Stripe** | `DEPLOYED_WITH_WARNING` | Un paiement dont le webhook est perdu laisse un contrat non activé et un client débité. C'est grave — mais réparable par `billing.subscription.reconcile`, qui existe déjà. Le déploiement passe, l'alerte est forte. |
+| **Yousign** | `DEPLOYED_WITH_WARNING` | Une signature dont l'événement se perd bloque le contrat sans trace. Réparable par polling manuel. Même arbitrage. |
+| **Brevo** | Avertissement simple | Perdre un événement de délivrabilité dégrade le suivi, jamais un état métier. |
+| **Hostinger** | Sans objet | Pas de webhook. |
+
+Aucun provider ne justifie de **bloquer** un déploiement. `DEPLOYED_WITH_WARNING`
+doit être un état visible dans le rapport de déploiement et dans la supervision,
+pas une ligne de log.
+
+### 8.5 Routes Panel
+
+```
+POST /webhooks/stripe          raw body, HMAC Stripe-Signature
+POST /webhooks/brevo           raw body, Bearer partagé + allowlist IP
+POST /webhooks/yousign         raw body, HMAC
+GET  /webhooks/<provider>/health   sonde anonyme, sans effet de bord
+```
+
+Pas de segment `:mode` dans l'URL : l'instance de Panel **est** l'environnement.
+C'est plus simple que le schéma SB Auto actuel (`/brevo/transactional/:mode`),
+et cohérent avec la doctrine. Le routeur doit être monté **avant**
+`express.json()` — la vérification de signature exige le corps brut. C'est le
+piège classique, et SB Auto le documente déjà
+([webhook.routes.js:5-9](../../../SB%20Auto%2006/backend/src/routes/webhook.routes.js#L5-L9)).
+
+Chaque handler, dans l'ordre : vérifier la signature → déterminer
+l'environnement (= le sien) → contrôler l'idempotence → journaliser →
+normaliser (§8.6) → router vers le projet concerné.
+
+**Aucun projet ne reçoit jamais un webhook fournisseur.** Le Panel reçoit,
+normalise, et pousse un événement métier sur le pont existant.
+
+### 8.6 Normalisation des événements
+
+```
+ExternalProviderEvent
+  provider, environment
+  externalEventId          ← clé d'idempotence, index unique
+  eventType                ← brut, conservé pour le forensic
+  receivedAt, status, payloadHash
+
+        │  mapping, une seule fois, à la passerelle
+        ▼
+
+PAYMENT_SUCCEEDED · PAYMENT_FAILED · REFUND_SUCCEEDED · INVOICE_PAID
+EMAIL_DELIVERED · EMAIL_BOUNCED · SIGNATURE_COMPLETED · SIGNATURE_DECLINED
+```
+
+Au-delà de la passerelle, plus aucun code ne connaît le mot
+`checkout.session.completed`. C'est ce qui rend un changement de provider
+possible sans toucher au métier — et c'est aussi ce qui rend le mapping
+testable isolément.
+
+SB Auto a déjà les registres de correspondance
+(`stripeEventRegistry.js`, `brevoTransactionalEventRegistry.js`) : ils
+deviennent la table de mapping du Panel.
+
+---
+
+## 9. Le Panel lui-même
+
+### 9.1 Ce qu'il consomme aujourd'hui
+
+**Presque rien.** `Panel/backend/package.json` ne contient aucune dépendance
+fournisseur. Le seul appel externe est le DNS au déploiement, via l'interface
+`DnsProvider` — et **il n'existe aucune implémentation Hostinger dans le
+Panel** : seulement `MockDnsProvider`. Les messages d'erreur du moteur
+renvoient l'opérateur vers « DEV → Intégrations API », qui est l'écran du
+Manager SB Auto
+([DeploymentEngine.js:806](../../backend/src/deployment-engine/DeploymentEngine.js#L806)).
+
+Un commentaire de `env.js` affirme même : « le Panel n'a pas d'IntegratedAPI ».
+C'est vrai au sens de la consommation, faux au sens du stockage — cette
+ambiguïté doit disparaître avec L1.
+
+### 9.2 Ce qu'il consommera
+
+| Usage Panel | Provider | Capacité |
+|---|---|---|
+| DNS au déploiement | HOSTINGER | `dns.record.ensure` |
+| E-mails de support et de notification | BREVO | `email.send_template` |
+| Facturation des projets, remboursements | STRIPE | `billing.*` |
+| Réconciliation d'abonnement | STRIPE | `billing.subscription.reconcile` |
+
+### 9.3 La même règle, sans exception
+
+```
+Panel TEST  →  credential set TEST   →  Stripe test, Brevo compte test, Yousign sandbox
+Panel PROD  →  credential set PROD   →  Stripe live, Brevo compte prod, Yousign production
+```
+
+Le Panel n'a **pas** de sélecteur d'environnement. `config.env` du runtime
+choisit le credential set, point. Aucune action d'administration ne doit
+proposer « exécuter en PROD depuis le Panel TEST ».
+
+### 9.4 Provisionnement séparé — la conséquence à ne pas manquer
+
+Une instance de Panel ne détenant que les credentials de son environnement, il
+faut **saisir les credentials deux fois** : une dans le Panel TEST, une dans le
+Panel PROD. Ce n'est pas une régression, c'est la doctrine appliquée — mais
+c'est un pas d'exploitation à écrire dans le runbook (§13, L1).
+
+Corollaire : le Panel TEST ne peut pas vérifier les clés PROD, ni réconcilier
+les webhooks PROD. Chaque instance ne voit que son monde. C'est exactement ce
+qu'on veut, et c'est aussi ce qui empêchera de tout tester depuis un poste de
+développement.
+
+---
+
+## 10. Brevo, support et templates
+
+### 10.1 Ce qui existe côté SB Auto
+
+Un module e-mail mature, à migrer **à l'identique fonctionnellement** :
+
+| Brique | Fichier | Rôle |
+|---|---|---|
+| Templates persistés | `EmailTemplate.model.js` + `EmailTemplateVersion` | HTML éditable, versionné, `enabled`, **jamais de destinataire dans le template** |
+| Registre code-first | `utils/emailTemplateRegistry.js` | 5 templates : `PASSWORD_RESET_REQUEST`, `CONTACT_ADMIN_NOTIFICATION`, `CONTRACT_CANCELLATION_ADMIN_CONFIRMATION`, `CONTRACT_CANCELLATION_DEV_NOTIFICATION`, `EMAIL_SENDER_VERIFICATION_TEST` |
+| Identité expéditrice | `EmailConfiguration.model.js` | Par mode : nom d'expéditeur, adresse support, issue du dernier test |
+| Résolution du destinataire | `emailRecipientResolvers.js` | À l'exécution, jamais dans le contenu |
+| Suivi de livraison | `EmailDelivery` + `EmailDeliveryEvent` + `brevoDeliveryTransitions.js` | Machine à états alimentée par les webhooks |
+| Diagnostic | `emailDiagnostics.service.js`, `emailReadiness.service.js` | Pourquoi un envoi n'est pas possible |
+
+Le modèle a une propriété qu'il faut préserver : **le destinataire n'est jamais
+dans le template**. Le mettre là rendrait une adresse éditable depuis une
+interface web. La cible doit garder cette séparation.
+
+### 10.2 Cible
+
+```
+Panel
+├── UNE IntegratedApi BREVO par environnement
+├── UNE identité support (nom + adresse), configurée dans le Panel
+├── Les templates, versionnés, édités dans le Panel
+├── EmailDelivery + événements normalisés (EMAIL_DELIVERED, EMAIL_BOUNCED)
+└── Capacité email.send_template
+        ▲
+        │  { templateId, recipientRef, variables }
+        │
+    Projet — ne connaît ni la clé Brevo, ni l'expéditeur, ni l'URL de l'API
+```
+
+Le projet demande une notification. Il ne sait pas qu'elle passe par Brevo.
+
+### 10.3 Le point délicat
+
+`EmailConfiguration` est **par mode** parce que « la clé API Brevo appartient à
+UN compte, TEST et PROD portent deux clés, donc potentiellement deux comptes
+distincts, deux expéditeurs autorisés, deux quotas »
+([EmailConfiguration.model.js:16-21](../../../SB%20Auto%2006/backend/src/models/EmailConfiguration.model.js#L16-L21)).
+
+Cette analyse reste juste dans la cible — elle se traduit simplement par « une
+identité par instance de Panel » au lieu de « deux identités par instance de
+projet ». C'est une simplification, pas une perte.
+
+**Rien de tout cela ne migre dans ce lot.** C'est L8, et c'est le plus gros lot
+fonctionnel de la roadmap.
+
+---
+
+## 11. Stripe en détail
+
+### 11.1 Ce qui est déjà bon
+
+L'exigence de la mission — « toute transaction financière doit porter
+environment, provider, credential scope, external IDs » — **est déjà
+satisfaite** :
+
+| Modèle | Champs |
+|---|---|
+| `Payment` | `providerMode` (TEST\|PROD, requis), `environment` (requis), `externalPaymentId`, `externalInvoiceId`, index unique sur `stripe.checkoutSessionId` |
+| `Invoice` | `environment` (requis), `provider` + `externalInvoiceId` en index unique |
+| `Contract` | `environment` (requis), projection `stripe.*` marquée comme projection, pas comme vérité |
+
+Et les métadonnées Stripe portent déjà `providerMode` et
+`applicationEnvironment`
+([stripe.service.js:33-41](../../../SB%20Auto%2006/backend/src/services/stripe/stripe.service.js#L33-L41)).
+
+> Le futur bouton « Rembourser » a donc déjà tout ce qu'il lui faut : il lit
+> `payment.environment`, en déduit le credential set, et n'a **jamais** à
+> demander à l'utilisateur quel Stripe utiliser. C'est le meilleur signal de
+> l'audit : la donnée est prête, seul le chemin d'appel manque.
+
+### 11.2 Ce qui bouge
+
+- `providerMode` et `environment` deviennent **toujours égaux**. Garder les deux
+  champs reste utile : l'historique contient des lignes où ils diffèrent, et les
+  effacer serait détruire la preuve d'une exécution passée. On ajoute un
+  invariant à l'écriture, on ne réécrit pas le passé.
+- `verifyStripeWebhookAnyMode` disparaît : avec un seul credential set par
+  instance, il n'y a plus d'« autre mode » à essayer. Le repli devient un refus.
+- Le webhook secret n'est plus relisible après création : la recréation
+  d'endpoint côté Panel **invalide** le secret côté projet. D'où l'ordre imposé
+  en L5 (créer côté Panel, vérifier, puis seulement retirer côté projet).
+
+### 11.3 Objets à couvrir
+
+`Customer`, `Subscription`, `Invoice`, `PaymentIntent`, `Charge`, `Refund`,
+`Checkout Session`, `Hosted Invoice Page`, `Price`. Tous sont déjà manipulés
+par SB Auto sauf `Refund`, qui est le premier cas d'usage neuf du plan de
+contrôle.
+
+---
+
+## 12. Sécurité et observabilité
+
+### 12.1 Sécurité
+
+| Point | Aujourd'hui | Cible |
+|---|---|---|
+| Chiffrement au repos | AES-256-GCM des deux côtés | Inchangé, Panel seul détenteur |
+| Rotation | `rotate-secrets` déclare la conséquence (« les credentials chiffrés deviennent illisibles ») | Idem, plus rotation *par credential* sans re-chiffrer le coffre |
+| Affichage UI | Masqué (`lastFour`) côté SB Auto, empreinte 8 caractères côté Panel | Inchangé |
+| Permissions | Rôle DEV côté SB Auto, admin côté Panel | Inchangé |
+| Logs | Jamais de valeur ; noms de clés seulement | Inchangé — invariant à retester |
+| Erreurs | Messages sûrs, codes stables | Inchangé |
+| Secrets de webhook | Chiffrés, `secretRef` dans les descripteurs | Inchangé |
+| **Secrets sur le pont** | **En clair vers les projets** ✗ | **Jamais** ✓ |
+
+La dernière ligne est le seul vrai changement — et c'est le plus important.
+
+### 12.2 Observabilité
+
+Un enregistrement par invocation de capacité, sans aucun secret :
+
+```
+provider · environment · capability · projectId · requestId
+status · durationMs · externalRequestId · retryCount · errorCode
+```
+
+`externalRequestId` mérite d'être capté dès L3 : c'est le `Request-Id` de
+Stripe, et c'est la seule chose qui permet à un support fournisseur de
+retrouver un appel. On ne peut pas le reconstituer après coup.
+
+Le tableau de bord vient plus tard. Le journal, non : sans lui, la migration
+progressive du §13 n'est pas vérifiable.
+
+---
+
+## 13. Roadmap
+
+Chaque lot est petit, indépendamment livrable, et se termine sur un critère
+observable. La roadmap dérive de l'audit : **L2 vient tôt** parce que la
+contradiction de doctrine bloque tout le reste, et **L5 vient avant les
+migrations** parce que le plafond Stripe de 16 endpoints est déjà une contrainte
+de capacité.
+
+---
+
+### L0 — Audit et doctrine · *ce document*
+
+- **Objectif** — établir les faits, trancher les contradictions.
+- **Dépendances** — aucune.
+- **Livrables** — ce document ; mise à jour de `ARCHITECTURE_CONTEXT.md` (renvoi).
+- **Tests** — aucun (documentaire).
+- **Risque** — nul.
+- **GO** — les décisions D1 à D5 (§21) sont tranchées par écrit.
+
+---
+
+### L1 — Fondation IntegratedAPI du Panel · ✅ **LIVRÉ**
+
+- **Objectif** — le Panel sait décrire, stocker et vérifier des credentials
+  fournisseurs typés. Les projets ne changent pas.
+- **Dépendances** — L0.
+- **Risque** — **faible.** Additif, sans consommateur.
+
+**Ce qui a été livré**
+
+| Brique | Fichier |
+|---|---|
+| Registre code-first | [`services/integratedApi/providerRegistry.js`](../../backend/src/services/integratedApi/providerRegistry.js) |
+| Résolveur d'environnement | [`services/integratedApi/environment.js`](../../backend/src/services/integratedApi/environment.js) |
+| Coffre (chiffrer / masquer / déchiffrer) | [`services/integratedApi/credentialVault.js`](../../backend/src/services/integratedApi/credentialVault.js) |
+| Validation fournisseur, lecture seule | [`services/integratedApi/providerValidation.js`](../../backend/src/services/integratedApi/providerValidation.js) |
+| Service métier unique | [`services/integratedApi/controlPlane.service.js`](../../backend/src/services/integratedApi/controlPlane.service.js) |
+| Amorçage idempotent | [`services/integratedApi/seed.js`](../../backend/src/services/integratedApi/seed.js) |
+| Modèle | [`models/PanelIntegratedApiCredentialSet.model.js`](../../backend/src/models/PanelIntegratedApiCredentialSet.model.js) |
+| Surface `/api/integrated-apis` | [`routes/integratedApi.routes.js`](../../backend/src/routes/integratedApi.routes.js) · [`controllers/integratedApi.controller.js`](../../backend/src/controllers/integratedApi.controller.js) |
+| Écran | [`pages/IntegratedApiControlPlanePage.tsx`](../../frontend/src/pages/IntegratedApiControlPlanePage.tsx) |
+
+**Décisions prises pendant le lot**
+
+- **Un modèle NEUF, pas une extension.** `PanelIntegratedApi` porte `grants[]`
+  et la diffusion de secrets — bâtir la fondation dessus reviendrait à
+  l'appuyer sur ce que L4 doit démolir. Les deux collections coexistent
+  volontairement ; l'ancienne est intacte.
+- **`IntegratedApiRuntime` : NOT_NEEDED_L1.** Les quatre fournisseurs sont à
+  clé statique (`tokenStrategy: STATIC_KEY`) : aucun jeton à rafraîchir, aucun
+  état runtime à persister. Créer une table vide serait de l'anticipation
+  spéculative. Un test verrouille la justification — il tombera le jour où un
+  fournisseur OAuth arrivera.
+- **`baseUrl` est un rôle de credential**, non confidentiel, avec défaut issu
+  du registre (et un défaut PAR ENVIRONNEMENT pour Yousign, dont les hôtes
+  diffèrent). Aucun driver ne codera jamais une URL.
+- **`publishableKey` n'est pas confidentielle.** Elle est faite pour partir
+  dans un navigateur : la masquer n'apporterait aucune sécurité et
+  empêcherait de la relire. Elle est la seule valeur que l'API rend en clair.
+- **La validation est une ÉCRITURE.** Elle sort sur le réseau, consomme du
+  quota et horodate le coffre — donc DEV, pas ADMIN.
+- **`INVALID` ≠ `ERROR`.** Un 401 signifie « le fournisseur refuse la clé » ;
+  une coupure réseau signifie « on n'a pas pu savoir ». Les confondre enverrait
+  un opérateur régénérer une clé parfaitement valide.
+
+**Ce que L1 n'a PAS fait** — aucun appel métier redirigé, aucun credential
+projet supprimé, aucun webhook touché, aucun driver retiré, aucune page Manager
+modifiée, aucun secret copié depuis une base de projet.
+
+**Tests** — 5 suites, 247 assertions, dans `run-all.js` :
+`integrated-api-provider-registry` · `integrated-api-environment-routing` ·
+`integrated-api-encryption` · `integrated-api-control-plane` ·
+`integrated-api-http-security`.
+
+**GO atteint** — les quatre fournisseurs se configurent et se testent depuis le
+Panel, dans les deux jeux, sans qu'aucun projet ne bouge.
+
+---
+
+### L2 — Doctrine d'environnement · **lot de rupture**
+
+- **Objectif** — supprimer le choix manuel de mode. `environment = config.env`,
+  partout, des deux côtés.
+- **Dépendances** — L1, et la décision D1.
+- **Fichiers probables** — Panel : garde `INTEGRATED_API_ENVIRONMENT_MISMATCH`.
+  SB Auto : `integratedApiCatalog.js` · `IntegratedApi.model.js` *(retrait de
+  `activeMode`)* · `integratedApi.controller.js` *(retrait de `setActiveMode`,
+  `crossModeRisk`, `confirmVerb`)* · `routes/integratedApi.routes.js` ·
+  `manager/src/pages/dev/DevIntegrationsPage.tsx` · `docs/INTEGRATED_API.md`
+- **Tests** — `INTEGRATED_API_ENVIRONMENT_MISMATCH` est bien un 409 ·
+  aucune clé LIVE atteignable depuis une instance TEST · **retrait** des deux
+  assertions `crossModeRisk === true` · un `activeMode` résiduel en base est
+  ignoré, pas honoré.
+- **Migration** — `activeMode` reste en base (donnée historique, comme
+  `logicalProjectKey`) mais n'est plus lu. Une instance dont
+  `activeMode !== config.env` doit **journaliser un avertissement au boot** :
+  c'est la seule façon de repérer les instances en configuration croisée avant
+  qu'elles ne changent de comportement.
+- **Rollback** — remettre la lecture d'`activeMode`. Réversible tant que L3
+  n'est pas livré.
+- **Risque** — **ÉLEVÉ.** Toute instance en configuration croisée change de
+  comportement. Il faut **inventorier les instances réelles avant de livrer**.
+- **GO** — l'inventaire des instances est fait, aucune n'est en croisement, ou
+  celles qui le sont ont été migrées d'abord.
+
+---
+
+### L3 — Passerelle de capacités
+
+- **Objectif** — un projet peut invoquer une capacité. Aucune n'est encore
+  branchée sur un chemin de production.
+- **Dépendances** — L1, L2.
+- **Fichiers probables** —
+  `backend/src/services/capabilities/registry.js` ·
+  `.../capability.service.js` (résolution, retry, idempotence) ·
+  `backend/src/routes/bridge.routes.js` ·
+  `backend/src/bridge/bridgeContract.js` *(nouvelle version de contrat)* ·
+  `backend/src/services/capabilities/invocation-log.service.js`
+- **Modèles** — `PanelCapabilityInvocation` (§12.2).
+- **Tests** — capacité inconnue → 404 · projet non autorisé → 403 · credential
+  absent → 409 · idempotence sur rejeu · **aucun secret dans la réponse** ·
+  journal complet et sans secret.
+- **Migration** — additive, version de contrat de pont incrémentée.
+- **Rollback** — retirer la route.
+- **Risque** — **moyen** (surface d'API nouvelle, authentifiée par bridgeToken
+  existant).
+- **GO** — une capacité de lecture (`billing.invoice.list`) fonctionne de bout
+  en bout depuis SB Auto TEST, journalisée, sans secret transmis.
+
+---
+
+### L4 — Arrêt de la diffusion de secrets · **lot de sécurité**
+
+- **Objectif** — plus aucun secret ne traverse le pont. Peut être livré **très
+  tôt** : rien ne consomme ces secrets (§1.1).
+- **Dépendances** — L1 *(livré)*. Indépendant de L2 et L3 — c'est le prochain
+  lot recommandé.
+
+**Chaîne de propagation — inventaire EXHAUSTIF relevé pendant L1.**
+C'est la liste de travail de L4 ; aucun de ces fichiers n'a été modifié.
+
+*Côté Panel — production du secret en clair*
+
+| Fichier | Ce qu'il fait |
+|---|---|
+| `services/company/integratedApi.service.js:294` | `buildApiPayloadFor()` — **le seul point qui déchiffre pour envoyer ailleurs** |
+| `…:327` | `publishToProject()` — pousse la charge sur le pont, `audience` = projet |
+| `…:355` | `republishToGrantees()` — rediffuse à chaque écriture de clé |
+| `…:380` | `apisForProject()` — la charge du bootstrap |
+| `…:344` | `emitRevocation()` — tombstone (à CONSERVER : il faut bien révoquer) |
+| `services/pairing/pairing.service.js:340-352` | injecte `integratedApis` dans la réponse de bootstrap |
+| `bridge/bridgeContract.js:749-762` | `integratedApiConfigSchema` — champ `credentials` |
+| `bridge/bridgeContract.js:159` | `INTEGRATED_API_CONFIG` dans les types d'entité |
+| `models/PanelIntegratedApi.model.js:43-54` | `grantSchema` — devient un grant de CAPACITÉ |
+| `controllers/company.controller.js:227` | `grantsForProject()` — sans secret, peut rester |
+| `frontend/src/pages/IntegratedApisPage.tsx` | l'écran de l'ancien coffre (déjà signalé « en remplacement ») |
+
+*Côté SB Auto — réception et stockage*
+
+| Fichier | Ce qu'il fait |
+|---|---|
+| `services/panelConfiguration/panelConfiguration.service.js:156` | `applyIntegratedApi()` — rechiffre et persiste |
+| `…:207` | `applyIntegratedApiChange()` — handler de sync |
+| `…:250` | `getProvidedApiCredentials()` — **déchiffre, et n'a AUCUN appelant** |
+| `models/PanelConfiguration.model.js:92` | modèle `PanelProvidedApi` |
+| `services/panelBridge/bridgeContract.js:491` | `integratedApiConfigSchema` (miroir) |
+| `config/bootstrap.js:623, 717, 723` | branchement des handlers + application au bootstrap |
+| `controllers/panelBridge.controller.js:65` | `listProvidedApis()` — affichage, **sans valeurs** : peut rester |
+
+**Constat qui rend L4 peu risqué** — `getProvidedApiCredentials()` est le seul
+lecteur des secrets reçus, et il n'est appelé par aucun code. Les supprimer ne
+casse aucun chemin en service.
+
+**Migration** — purger `PanelProvidedApi.credentials` au premier boot suivant.
+- **Tests** — **aucune charge utile de pont ne contient de valeur de
+  credential** (test de non-fuite, à écrire en premier) · un projet appairé
+  reçoit la liste de ses capacités, pas de clés · purge des
+  `PanelProvidedApi.credentials` existantes au premier boot.
+- **Migration** — les `PanelProvidedApi` existantes sont **purgées** (leurs
+  credentials sont inutiles et dangereux).
+- **Rollback** — possible, mais on ne remet pas une fuite en place. En pratique :
+  sans retour.
+- **Risque** — **faible fonctionnellement** (personne ne lit ces secrets),
+  **fort en valeur de sécurité**.
+- **GO** — le test de non-fuite passe ; les bases des projets ne contiennent
+  plus aucun credential venu du Panel.
+
+---
+
+### L5 — Registre et réconciliateur de webhooks
+
+- **Objectif** — le Panel possède ses endpoints chez les fournisseurs, et les
+  réconcilie après déploiement.
+- **Dépendances** — L1, L2.
+- **Fichiers probables** — portage de
+  `SB Auto 06/backend/src/services/webhooks/*` vers
+  `Panel/backend/src/services/webhooks/` (registre, contrat de driver,
+  adaptateurs, moteur de synchronisation) ·
+  `backend/src/routes/webhook.routes.js` *(nouveau, monté avant
+  `express.json()`)* · `backend/src/models/PanelIntegratedApiWebhook.model.js` ·
+  crochet dans `deployment-engine/pipeline.js` après le health check.
+- **Modèles** — `IntegratedApiWebhook` (§4.2), `ExternalProviderEvent` (§8.6).
+- **Tests** — signature valide/invalide par provider · idempotence sur rejeu ·
+  réconciliation : no-op / création / URL changée / doublon · **un endpoint
+  inconnu n'est jamais touché** · échec fournisseur →
+  `DEPLOYED_WITH_WARNING`, jamais un déploiement rouge · capture du secret à la
+  création.
+- **Migration** — les endpoints SB Auto restent en place. Deux endpoints
+  coexistent volontairement pendant L6/L7.
+- **Rollback** — désactiver l'endpoint Panel chez le fournisseur ; SB Auto
+  continue de recevoir.
+- **Risque** — **moyen.** Le plafond Stripe de 16 endpoints doit être vérifié
+  **avant** de créer le nouveau. Prévoir un inventaire des endpoints existants
+  en préflight.
+- **GO** — un événement Stripe de test atteint le Panel, est vérifié,
+  normalisé, journalisé, et l'endpoint SB Auto reçoit toujours le sien.
+
+---
+
+### L6 — Migration du provider #1 : **Stripe**
+
+Stripe d'abord, parce que c'est le provider dont le plafond d'endpoints est le
+plus contraignant et dont la donnée est déjà prête (§11.1).
+
+- **Objectif** — SB Auto n'appelle plus Stripe directement.
+- **Dépendances** — L3, L5.
+- **Étapes** — dual-read (le projet appelle la capacité, retombe sur le chemin
+  local en cas d'échec) → capacité seule → retrait du chemin local → retrait
+  des credentials.
+- **Tests** — E2E `SB Auto TEST → capacité → Panel TEST → Stripe sandbox` ·
+  **preuve qu'aucune clé LIVE n'est atteignable** · Panel indisponible → le
+  projet dégrade proprement, sans perte de contrat.
+- **Rollback** — repasser le drapeau de dual-read. Possible **tant que les
+  credentials locaux ne sont pas supprimés**.
+- **Risque** — **ÉLEVÉ** (paiements).
+- **GO** — sept jours sans appel Stripe local en journal, et sans incident.
+
+---
+
+### L7 — Migration du provider #2 : **Yousign / Youtrust**
+
+- **Prérequis spécifique** — vérifier les hôtes d'API après le rebranding
+  (§8.2, note 3) avant toute écriture.
+- **Risque** — **élevé** (blocage de signature de contrat).
+- **GO** — même critère que L6, sur un cycle de signature complet.
+
+---
+
+### L8 — Migration du provider #3 : **Brevo**, support et templates
+
+Le plus gros lot fonctionnel (§10) : identité support, templates, résolveurs de
+destinataires, suivi de livraison.
+
+- **Risque** — **moyen** (dégrade la notification, jamais un état métier).
+
+---
+
+### L9 — Migration du provider #4 : **Hostinger**
+
+Le seul consommateur est le moteur de déploiement du Panel lui-même (§9.1) :
+c'est en réalité une **implémentation**, pas une migration.
+
+- **Risque** — **faible.**
+
+---
+
+### L10 — Retrait des credentials projet
+
+- **Objectif** — `IntegratedApi` disparaît de SB Auto ; la page Manager devient
+  un diagnostic (§14).
+- **Dépendances** — L6 à L9 tous en GO.
+- **Critère absolu** — **zéro appel fournisseur local en journal sur 30 jours**
+  avant toute suppression.
+- **Rollback** — aucun. C'est le point de non-retour, et il doit être franchi
+  en connaissance de cause.
+
+---
+
+## 14. La page Manager cible
+
+Aujourd'hui, `DevIntegrationsPage.tsx` (376 lignes) contient des champs de
+saisie de secrets, un sélecteur TEST/PROD, un verbe de confirmation, et une
+bannière de risque croisé.
+
+Après L10, elle ne contient plus rien de tout cela.
+
+```
+Environnement de cette instance : TEST
+Toutes les intégrations sont fournies par le Panel.
+
+  Stripe      Mode : TEST    ● Disponible     vérifié il y a 4 min
+  Brevo       Mode : TEST    ● Disponible     vérifié il y a 4 min
+  Yousign     Mode : TEST    ○ Indisponible   credential absent côté Panel
+  Hostinger   Mode : TEST    ● Disponible     vérifié il y a 12 min
+
+  Capacités disponibles pour ce projet : 9
+  [Diagnostic]  [Contacter le support]
+```
+
+Ce qui reste : l'environnement (constaté, non modifiable), l'état par provider,
+la date de dernière vérification, la liste des capacités accordées, un
+diagnostic, un contact support.
+
+Ce qui disparaît : tout champ secret, tout sélecteur d'environnement, tout
+jeton, tout bouton « Tester la connexion » (le test appartient au Panel), la
+bannière de risque croisé.
+
+L'information vient d'une capacité de lecture — `integrations.describe` — que
+le projet interroge. Il n'a **aucune** connaissance locale à afficher.
+
+---
+
+## 15. Stratégie de test
+
+| Suite | Ce qu'elle prouve | Lot |
+|---|---|---|
+| `integrated-api-catalog` | Catalogue conforme, providers typés | L1 |
+| `integrated-api-vault` | Chiffrement au repos, aucun secret dans `/api` | L1 |
+| `environment-routing` | `config.env` seul décide ; `INTEGRATED_API_ENVIRONMENT_MISMATCH` = 409 | L2 |
+| `credential-isolation` | Une instance TEST **ne peut pas** atteindre une clé LIVE | L2 |
+| `no-secret-leakage` | **Aucune** charge utile de pont ne contient de valeur | **L4, en premier** |
+| `capability-invocation` | Autorisation, idempotence, retry, journal | L3 |
+| `webhook-signature` | Valide / invalide / rejeu / horodatage hors tolérance | L5 |
+| `webhook-reconciliation` | No-op / création / URL changée / doublon / endpoint étranger intact | L5 |
+| `deployment-domain-changed` | Changement de domaine → réconciliation, ancien retiré après vérification | L5 |
+| `provider-unavailable` | 5xx fournisseur → dégradation propre, jamais de corruption | L3, L5 |
+| `credential-rotation` | Rotation sans interruption d'appel | L1 |
+| `project-offline` / `panel-offline` | Chacun dégrade sans perte d'état métier | L6 |
+| `rollback` | Le retour au chemin local fonctionne à chaque étape | L6-L9 |
+
+### L'E2E indispensable
+
+```
+SB Auto TEST
+  └─▶ capability billing.checkout.create
+        └─▶ Panel TEST
+              └─▶ Stripe sandbox                        ✓ attendu
+
+SB Auto TEST
+  └─▶ capability billing.checkout.create
+        └─▶ Panel PROD                                  ✗ BRIDGE_ENVIRONMENT_MISMATCH
+
+Panel TEST, credential set PROD demandé
+        └─▶ ✗ INTEGRATED_API_ENVIRONMENT_MISMATCH
+```
+
+Il ne suffit pas de prouver que le chemin nominal marche. Il faut prouver
+qu'**aucune clé LIVE n'est atteignable** depuis une instance TEST — c'est
+l'assertion qui justifie tout le chantier, et elle doit être écrite avant L6.
+
+Le harnais existe : `Panel/tests/helpers/sbauto-instance.mjs` et
+`sbauto-remote.js` savent déjà lancer une instance SB Auto réelle contre un
+Panel réel.
+
+---
+
+## 16. Risques
+
+| # | Risque | Gravité | Atténuation |
+|---|---|---|---|
+| R1 | La doctrine actuelle (`activeMode` libre) est documentée, implémentée **et testée**. La révoquer casse des tests verts. | **Haute** | Décision écrite D1 avant tout code. L2 retire les assertions en même temps que le comportement. |
+| R2 | Une instance réelle est peut-être en croisement (`ENV=TEST` × `Stripe PROD`). | **Haute** | Inventaire des instances avant L2. Avertissement au boot pendant toute la durée de L2. |
+| R3 | Plafond Stripe de **16 endpoints** par compte et par mode. | Moyenne | Inventaire en préflight de L5. La centralisation résout le problème de fond. |
+| R4 | Les secrets de webhook Stripe et Yousign ne sont **pas relisibles** : recréer un endpoint invalide l'ancien secret. | Moyenne | Ordre imposé en L5 : créer → vérifier → retirer. Jamais l'inverse. |
+| R5 | Yousign devenu **Youtrust** ; hôtes d'API non confirmés. | Moyenne | `baseUrl` déjà éditable en base. Vérification en prérequis de L7. |
+| R6 | Le Panel devient un point de défaillance unique pour les paiements et la signature. | **Haute** | Dual-read en L6/L7. Aucune suppression de credential local avant 30 jours de preuve. |
+| R7 | Brevo n'offre **aucune signature cryptographique**. | Moyenne | Secret partagé + allowlist d'IP, comme aujourd'hui. Ne jamais présenter un webhook Brevo comme prouvé. |
+| R8 | Provisionnement double (Panel TEST et Panel PROD) oublié. | Faible | Runbook en L1, health check qui signale un credential set absent. |
+| R9 | Perte du cas légitime `App PROD × Stripe TEST` (recette avant ouverture). | Moyenne | Décision D2 : concevoir un remplacement métier avant L2. |
+
+---
+
+## 17. Décisions à prendre
+
+Aucune ne peut être tranchée par l'audit : ce sont des choix de produit.
+
+| # | Décision | Recommandation |
+|---|---|---|
+| **D1** | Révoque-t-on la doctrine « mode fournisseur ≠ environnement applicatif » ? | **Oui.** C'est le prérequis de tout le chantier. Sans elle, la centralisation n'apporte aucune garantie. |
+| **D2** | Que devient le cas légitime `App PROD × Stripe TEST` ? | Un **état métier de contrat** (« pré-ouverture ») plutôt qu'un réglage de credential. À concevoir avant L2. |
+| **D3** | Livre-t-on L4 (arrêt de la fuite de secrets) **avant** L2 et L3 ? | **Oui.** Il est indépendant, à faible risque, et supprime une exposition réelle immédiatement. |
+| **D4** | Le Panel devient-il un point de défaillance dur pour les paiements ? | Accepter, avec dual-read prolongé et un mode dégradé documenté. L'alternative — un cache de credentials côté projet — annulerait le bénéfice. |
+| **D5** | `PROJECT` et `PROJECT_ENVIRONMENT` : valeurs admises dès L1 ? | **Oui pour l'enum, non pour l'implémentation.** Aucun provider actuel n'en relève ; réserver la valeur évite une migration de schéma plus tard. |
+
+---
+
+## 18. Documents
+
+**Créé** — ce fichier.
+
+**À modifier en L0** — `Panel/docs/ARCHITECTURE_CONTEXT.md` : un renvoi vers ce
+document, présenté comme un **cadrage**, pas comme un état livré.
+
+**À modifier plus tard, lot par lot** —
+`Panel/docs/architecture/22_DATA_MODEL.md` (§C4) ·
+`Panel/docs/architecture/21_PROJECT_CAPABILITIES.md` ·
+`Panel/docs/architecture/24_ENVIRONMENT_AND_DOMAINS.md` ·
+`SB Auto 06/docs/INTEGRATED_API.md` (§0, à réécrire en L2) ·
+`SB Auto 06/docs/ARCHITECTURE_CONTEXT.md`.
+
+---
+
+## 19. Sources
+
+Documentation officielle consultée pour §8.2 :
+
+- [Stripe — Webhook Endpoints API](https://docs.stripe.com/api/webhook_endpoints)
+- [Stripe — Create a webhook endpoint](https://docs.stripe.com/api/webhook_endpoints/create)
+- [Brevo — Create a webhook](https://developers.brevo.com/reference/createwebhook)
+- [Brevo — Get all webhooks](https://developers.brevo.com/reference/getwebhooks-1)
+- [Brevo — How to use webhooks](https://developers.brevo.com/docs/how-to-use-webhooks)
+- [Yousign / Youtrust — Managing webhooks](https://developers.youtrust.com/docs/webhooks)
+- [Yousign / Youtrust — Webhook subscriptions](https://developers.youtrust.com/docs/subscription)
+- [Yousign becomes Youtrust](https://youtrust.com/yousign-becomes-youtrust)
+
+Points **non confirmés** par la documentation officielle, à vérifier avant le
+lot concerné :
+
+- Plafond de webhooks Brevo par compte (l'UI l'évoque, la doc ne le chiffre pas).
+- Politique de retry exacte de Yousign (`auto_retry` existe, le détail n'est pas publié).
+- Persistance de la `secret_key` Yousign après création (le code suppose « création seulement » ; à confirmer).
+- Stabilité des hôtes `api.yousign.app` / `api-sandbox.yousign.app` après le rebranding.
+
+---
+
+## 20. GO / STOP
+
+**Recommandation : GO conditionnel sur L1.**
+
+Ce qui le justifie :
+
+- L'architecture cible est **compatible** avec le code existant. Les trois
+  briques les plus délicates — autorité d'environnement, URLs runtime,
+  coffre chiffré — sont déjà livrées et testées côté Panel.
+- Le réconciliateur de webhooks, le registre code-first et les adaptateurs
+  distants existent déjà côté SB Auto, sous une forme générique. Ils se
+  **déplacent**, ils ne se réécrivent pas.
+- La donnée financière porte déjà `environment`, `providerMode` et les
+  identifiants externes. Le bouton « Rembourser » n'attend qu'un chemin d'appel.
+- L1 est additif, sans consommateur, et intégralement réversible.
+
+Ce qui conditionne le GO :
+
+1. **D1 tranchée par écrit.** Sans elle, L2 est impossible et L1 construit une
+   fondation dont on ignore la doctrine.
+2. **Inventaire des instances réelles** — combien tournent, dans quel
+   environnement, avec quel `activeMode` par provider. Sans cet inventaire, R2
+   n'est pas atténué.
+3. **D3 tranchée.** Si L4 passe avant L2, l'ordre des lots change.
+
+**Ce qui appellerait un STOP** : si D1 est refusée. Un Panel qui centralise les
+credentials tout en laissant chaque projet choisir son monde n'apporte aucune
+garantie nouvelle — il ajoute seulement un intermédiaire. Mieux vaudrait alors
+ne rien centraliser du tout.
+
+**L1 n'est pas commencé.**

@@ -8,6 +8,7 @@ import { CompanyPage } from '@/pages/CompanyPage';
 import { DeploymentPage } from '@/pages/DeploymentPage';
 import { DeploymentRunPage } from '@/pages/DeploymentRunPage';
 import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
+import { IntegratedApiControlPlanePage } from '@/pages/IntegratedApiControlPlanePage';
 import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { FleetPage } from '@/pages/FleetPage';
@@ -67,7 +68,13 @@ export default function App() {
         <Route path="/deployment" element={dev(<DeploymentPage />)} />
         <Route path="/deployment/runs/:runId" element={dev(<DeploymentRunPage />)} />
         <Route path="/deployment/:targetId" element={dev(<DeploymentTargetPage />)} />
-        <Route path="/integrated-apis" element={dev(<IntegratedApisPage />)} />
+        {/*
+          L1 — le plan de contrôle prend l'adresse principale. L'ancien coffre
+          reste joignable : il diffuse encore des identifiants aux projets
+          appairés, et le retirer AVANT L4 couperait un chemin en service.
+        */}
+        <Route path="/integrated-apis" element={dev(<IntegratedApiControlPlanePage />)} />
+        <Route path="/integrated-apis/legacy" element={dev(<IntegratedApisPage />)} />
         <Route path="/actions" element={dev(<ActionsPage />)} />
         <Route path="/actions/:executionId" element={dev(<ExecutionPage />)} />
         <Route path="/bridges" element={dev(<BridgesPage />)} />

@@ -59,13 +59,31 @@ export function IntegratedApisPage() {
   return (
     <div className="page">
       <header className="page-head">
-        <h1>API intégrées</h1>
+        <h1>API intégrées — ancien coffre</h1>
         <p className="muted">
           Les accès aux services tiers de l’entreprise. Le Panel les détient ;
           les projets reçoivent uniquement ceux qui leur sont accordés.
         </p>
-        <p><Link to="/company">← Entreprise</Link></p>
+        <p>
+          <Link to="/integrated-apis">← Plan de contrôle</Link>
+          {' · '}
+          <Link to="/company">Entreprise</Link>
+        </p>
       </header>
+
+      {/*
+        Cet écran survit à L1 parce qu'il pilote un chemin ENCORE EN SERVICE :
+        les identifiants qu'il diffuse partent réellement vers les projets
+        appairés. Le débrancher avant L4 couperait ce chemin sans remplacement.
+        Il ne doit plus servir à configurer un nouveau fournisseur.
+      */}
+      <p className="mode-notice mode-reel">
+        <strong>Ancien coffre — en cours de remplacement.</strong> Cet écran
+        diffuse encore des identifiants aux projets appairés. Pour configurer un
+        fournisseur, utilisez désormais le{' '}
+        <Link to="/integrated-apis">plan de contrôle</Link>, qui ne transmet
+        aucun secret. Le retrait de cette page est planifié (lot L4).
+      </p>
 
       <p className="mode-notice mode-simulation">
         Les valeurs des identifiants ne sortent jamais de cette interface :

@@ -11,6 +11,7 @@ import { migrateDeploymentTargets } from './services/deployment/destinationLifec
 import { migratePortRegistry } from './services/deployment/portRegistry.service.js';
 import { migratePanelMedia } from './services/upload/mediaDescriptor.service.js';
 import { reconcileDestinations } from './services/registry/projectDestination.service.js';
+import { seedIntegratedApiCredentialSets } from './services/integratedApi/seed.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -159,6 +160,24 @@ async function start() {
     logger.warn(`Destinations divergentes reprises pour « ${d.projectName} » (${d.environment}) : `
       + `retenue « ${d.retained.host} » (${d.retained.source}), `
       + `écartée(s) ${d.superseded.map((s) => `« ${s.host} » (${s.source})`).join(', ')}.`);
+  }
+
+  /**
+   * PLAN DE CONTRÔLE INTEGRATEDAPI (L1) — amorçage idempotent des jeux vides.
+   *
+   * Non bloquant : un Panel dont le coffre n'est pas amorcé démarre quand
+   * même, simplement sans cartes de fournisseurs pré-créées. Perdre cela
+   * n'empêche ni de se connecter, ni de superviser, ni de déployer — et un
+   * démarrage refusé pour ça serait une panne inventée.
+   *
+   * Ce seed ne lit AUCUNE base de projet et ne copie AUCUN identifiant.
+   */
+  const coffre = await seedIntegratedApiCredentialSets().catch((err) => {
+    logger.warn(`Amorçage du plan de contrôle IntegratedAPI impossible : ${err.message}`);
+    return null;
+  });
+  if (coffre?.created) {
+    logger.info(`Plan de contrôle IntegratedAPI : ${coffre.created} jeu(x) d’identifiants amorcé(s).`);
   }
 
   const backend = await resolveBackendUrl();

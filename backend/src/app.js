@@ -17,6 +17,7 @@ import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
+import integratedApiRoutes from './routes/integratedApi.routes.js';
 import uploadRoutes from './routes/upload.routes.js';
 import deploymentRoutes from './routes/deployment.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
@@ -74,6 +75,11 @@ export function createApp() {
   app.use('/api/diagnostic', diagnosticRoutes);
   app.use('/api/executions', executionRoutes);
   app.use('/api/company', companyRoutes);
+  // Plan de contrôle IntegratedAPI (L1). Volontairement HORS de /api/company :
+  // ce n'est pas une donnée d'entreprise, c'est l'infrastructure d'accès aux
+  // fournisseurs — et l'ancien coffre (/api/company/integrated-apis) reste en
+  // place, intact, pendant toute la migration.
+  app.use('/api/integrated-apis', integratedApiRoutes);
   app.use('/api/uploads', uploadRoutes);
   /**
    * Les médias importés sont servis en STATIQUE, et publiquement.

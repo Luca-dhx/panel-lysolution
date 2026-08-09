@@ -22,6 +22,10 @@ import type {
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
+  CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
+  ValidatedCredentialSet,
+} from '@/types.integratedApi';
+import type {
   DeploymentOverview, DeploymentRun, DeploymentTarget, DestinationInspection, PanelSelfInfo,
   ReleaseList, RunRow, StartedOperation, TargetDetail,
   DeployStreamEvent,
@@ -623,6 +627,54 @@ export const company = {
   revoke: (apiId: string, projectId: string) =>
     request<IntegratedApi>(`/api/company/integrated-apis/${apiId}/grants/${projectId}`, {
       method: 'DELETE',
+    }),
+};
+
+/**
+ * PLAN DE CONTRÔLE INTEGRATEDAPI (L1) — surface distincte de `company`.
+ *
+ * L'ancien coffre (`company.apis`, ci-dessus) reste en place pendant toute la
+ * migration : il diffuse encore des identifiants aux projets. Celui-ci n'en
+ * diffuse aucun, et c'est précisément pour cela qu'il ne le remplace pas
+ * silencieusement.
+ */
+export const integratedApis = {
+  /** Le catalogue code-first et l'état de chaque jeu. */
+  list: () => request<{ items: ProviderView[] }>('/api/integrated-apis'),
+
+  /** « Sur quoi puis-je compter, ici, maintenant ? » */
+  availability: () => request<{ items: ProviderAvailability[] }>('/api/integrated-apis/availability'),
+
+  get: (provider: string) => request<ProviderView>(`/api/integrated-apis/${provider}`),
+
+  /**
+   * Enregistre des identifiants. Seul appel qui transporte des secrets en
+   * clair — il faut bien les saisir. Ils sont chiffrés à réception et ne
+   * ressortent jamais.
+   *
+   * `environment` est un choix de PROVISIONNEMENT (préparer le jeu TEST ou le
+   * jeu PROD), jamais un sélecteur d'exécution : aucune action métier ne
+   * l'acceptera d'un client.
+   *
+   * Un champ laissé vide CONSERVE la valeur existante. Pour retirer une clé,
+   * il faut la nommer dans `remove`.
+   */
+  saveCredentials: (
+    provider: string,
+    environment: IntegratedApiEnvironment | null,
+    values: Record<string, string>,
+    remove: string[] = [],
+  ) =>
+    request<CredentialSetView>(`/api/integrated-apis/${provider}/credentials`, {
+      method: 'PUT',
+      body: { environment, values, remove },
+    }),
+
+  /** Appel RÉEL au fournisseur, en lecture seule. Aucune opération métier. */
+  validate: (provider: string, environment: IntegratedApiEnvironment | null) =>
+    request<ValidatedCredentialSet>(`/api/integrated-apis/${provider}/validate`, {
+      method: 'POST',
+      body: { environment },
     }),
 };
 

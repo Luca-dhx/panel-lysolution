@@ -28,6 +28,13 @@ const TESTS = [
   'generation-change.test.js',
   'project-connections.test.js',
   'panel-instance-environment.test.js',
+  // L1 — plan de contrôle IntegratedAPI. Le registre décide de ce qui existe,
+  // le runtime décide de l'environnement, et aucune clé ne sort du coffre.
+  'integrated-api-provider-registry.test.js',
+  'integrated-api-environment-routing.test.js',
+  'integrated-api-encryption.test.js',
+  'integrated-api-control-plane.test.js',
+  'integrated-api-http-security.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',

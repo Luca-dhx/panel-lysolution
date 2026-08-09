@@ -85,6 +85,12 @@ export const EVENT_TYPES = Object.freeze({
   INTEGRATED_API_REVOKED: 'INTEGRATED_API_REVOKED',
   INTEGRATED_API_PUBLISHED: 'INTEGRATED_API_PUBLISHED',
   PROJECT_DISCOVERED: 'PROJECT_DISCOVERED',
+  // L1 — plan de contrôle IntegratedAPI. Ces événements ne concernent aucun
+  // projet (`projectId: null`) : ils décrivent le Panel administrant son
+  // propre coffre. Leur `data` ne porte QUE des noms de rôles et des codes.
+  INTEGRATED_API_CREDENTIALS_UPDATED: 'INTEGRATED_API_CREDENTIALS_UPDATED',
+  INTEGRATED_API_VALIDATION_SUCCEEDED: 'INTEGRATED_API_VALIDATION_SUCCEEDED',
+  INTEGRATED_API_VALIDATION_FAILED: 'INTEGRATED_API_VALIDATION_FAILED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };
