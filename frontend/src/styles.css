@@ -1533,3 +1533,120 @@ textarea:focus {
 
 .modal-head { display: flex; flex-direction: column; gap: 0.25rem; }
 .modal-head h2 { font-size: 1.15rem; }
+
+
+/* ---------- Interrupteur (switch) ---------- */
+
+/*
+  UN INTERRUPTEUR CUSTOM, ET POURQUOI PAS UNE CASE NATIVE.
+
+  Le réglage qu'il porte VOYAGE : commande au projet, application, projection
+  de retour — 500 à 700 ms. Une case native reste figée pendant ce temps puis
+  saute d'un coup, ce qui invite à recliquer. Il faut donc trois choses qu'une
+  case ne sait pas faire : bouger tout de suite vers l'intention, montrer
+  l'attente, et revenir en douceur si le projet refuse.
+*/
+.switch-field {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.switch {
+  --switch-w: 44px;
+  --switch-h: 24px;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 999px;
+}
+
+.switch:disabled { cursor: progress; }
+
+.switch-track {
+  display: inline-block;
+  position: relative;
+  width: var(--switch-w);
+  height: var(--switch-h);
+  border-radius: 999px;
+  background: var(--border, #3a3f4b);
+  /* La couleur ET la position s'animent : le pouce ne « téléporte » jamais. */
+  transition: background-color 180ms ease;
+}
+
+.switch-on .switch-track { background: var(--accent, #2ea36b); }
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--switch-h) - 4px);
+  height: calc(var(--switch-h) - 4px);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.switch-on .switch-thumb {
+  transform: translateX(calc(var(--switch-w) - var(--switch-h)));
+}
+
+/*
+  L'ATTENTE SE VOIT SANS DÉPLACER QUOI QUE CE SOIT.
+
+  Une pulsation sur la piste, pas sur le pouce : déplacer le pouce pendant
+  l'attente laisserait croire que l'état change encore, alors qu'il est
+  précisément en train d'être confirmé.
+*/
+.switch-pending .switch-track { animation: switch-pulse 1.1s ease-in-out infinite; }
+
+@keyframes switch-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Un retour en arrière reste une TRANSITION, jamais un saut. */
+.switch-error .switch-track { background: var(--danger-bg, #5a2f2e); }
+
+.switch-label { font-size: 0.9rem; }
+
+.switch-error-message { flex-basis: 100%; }
+
+.switch:focus-visible {
+  outline: 2px solid var(--accent, #2ea36b);
+  outline-offset: 3px;
+}
+
+/*
+  MOUVEMENT RÉDUIT : on respecte le réglage système. L'état reste parfaitement
+  lisible — il est écrit à côté, pas seulement animé.
+*/
+@media (prefers-reduced-motion: reduce) {
+  .switch-track, .switch-thumb { transition: none; }
+  .switch-pending .switch-track { animation: none; opacity: 0.7; }
+}
+
+/*
+  RÉSERVÉ AUX LECTEURS D'ÉCRAN.
+
+  Le changement d'état d'un interrupteur doit être ANNONCÉ : sans cela, un
+  utilisateur non voyant reste sur la dernière valeur lue et ne sait ni que
+  l'opération est en cours, ni comment elle s'est terminée. `display: none`
+  ne conviendrait pas — il retirerait le texte de l'arbre d'accessibilité.
+*/
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

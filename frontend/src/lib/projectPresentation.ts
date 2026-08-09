@@ -222,11 +222,24 @@ export function connectionState(project: PublicProject): ReadableState {
 }
 
 /**
- * ÉTAT DU SITE (ex-`health`) — répond à « le site fonctionne-t-il ? ».
- * Tant qu'aucun contact n'a eu lieu, on dit qu'on ne sait pas : « inconnu »
- * et « en panne » ne doivent jamais se confondre.
+ * SANTÉ TECHNIQUE DE L'INSTANCE — ex-`siteState`, et le nom était FAUX.
+ *
+ * ══ CE QUE CETTE FONCTION A TOUJOURS DÉCRIT ═════════════════════════════════
+ *
+ * Elle lit `runtime.lastHealth` — ce que le BACKEND du projet déclare de
+ * lui-même dans son battement de cœur — et `liveness`, qui mesure la fraîcheur
+ * de ce battement. Deux faits qui parlent du PONT, jamais de la vitrine.
+ *
+ * Elle s'appelait pourtant `siteState`, et rendait « En ligne » sous un intitulé
+ * « État du site ». Une vitrine SUSPENDUE par la protection contractuelle —
+ * donc inaccessible à ses visiteurs — s'affichait « En ligne » dès lors que son
+ * backend battait normalement. L'écran disait l'exact contraire du réel.
+ *
+ * L'état de la vitrine est désormais une projection à part entière
+ * (`PROJECT_SITE_STATUS`, lot L8) : voir `vitrineState`. Celle-ci garde son
+ * rôle — la santé technique — sous un nom qui le dit.
  */
-export function siteState(project: PublicProject): ReadableState {
+export function instanceHealthState(project: PublicProject): ReadableState {
   if (project.pairing.status !== 'PAIRED') {
     return { label: 'Non suivi', tone: 'neutral' };
   }
@@ -234,10 +247,53 @@ export function siteState(project: PublicProject): ReadableState {
   if (!health) return { label: 'Jamais vérifié', tone: 'neutral' };
   if (health.status === 'OK') {
     return project.liveness === 'ONLINE'
-      ? { label: 'En ligne', tone: 'ok' }
+      ? { label: 'Instance saine', tone: 'ok' }
       : { label: 'À vérifier', tone: 'warn' };
   }
   return { label: 'À vérifier', tone: 'warn' };
+}
+
+/**
+ * ÉTAT DE LA VITRINE — « le site est-il accessible à ses visiteurs ? »
+ *
+ * ══ UNE SEULE SOURCE, ET ELLE EST PROJETÉE ══════════════════════════════════
+ *
+ * `business.siteStatus` — la projection `PROJECT_SITE_STATUS` que le projet
+ * pousse après avoir réconcilié son `SiteStatus`. Le Panel ne RECALCULE rien :
+ * il ne connaît ni les contrats vivants de l'instance, ni ses suspensions
+ * techniques. En déduire l'accessibilité serait inventer.
+ *
+ * ══ « AUCUN ÉTAT REÇU » N'EST PAS « ACTIVE » ════════════════════════════════
+ *
+ * `null` se lit tel quel. Supposer « active » ferait afficher une vitrine
+ * accessible devant un site dont on ne sait rien — exactement le mensonge que
+ * cette fonction remplace.
+ *
+ * Elle ne dépend PAS du battement : une projection reçue avant une coupure
+ * reste la dernière vérité connue, et elle est datée.
+ */
+export function vitrineState(project: PublicProject): ReadableState {
+  const site = project.business?.siteStatus ?? null;
+  if (!site) return { label: 'Aucun état reçu', tone: 'neutral' };
+  if (site.accessible) return { label: 'Active', tone: 'ok' };
+  return { label: 'Suspendue', tone: 'warn' };
+}
+
+/**
+ * POURQUOI la vitrine est suspendue — nommé par sa source, jamais deviné.
+ *
+ * Les deux causes sont indépendantes : une maintenance TECHNIQUE n'est pas un
+ * fait contractuel. Les confondre ferait chercher un problème de contrat devant
+ * une opération de maintenance.
+ */
+export function vitrineSuspensionReason(project: PublicProject): string | null {
+  const site = project.business?.siteStatus ?? null;
+  if (!site || site.accessible) return null;
+  if (site.suspensionSource === 'CONTRACT') return 'Protection contractuelle';
+  if (site.suspensionSource === 'TECHNICAL') {
+    return site.reason ? `Suspension technique — ${site.reason}` : 'Suspension technique';
+  }
+  return site.reason ?? 'Cause non précisée';
 }
 
 /** Le projet est-il relié au Panel ? (ex-`pairing.status`) */

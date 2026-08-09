@@ -56,7 +56,8 @@ import {
   projectLogoUrl,
   projectTechnicalUrls,
   projectSiteUrl,
-  siteState,
+  vitrineState,
+  vitrineSuspensionReason,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
@@ -116,7 +117,15 @@ export function ProjectDetailPage() {
     );
   }
 
-  const site = siteState(project);
+  /**
+   * DEUX FAITS, DEUX PASTILLES — et elles ne disent plus la même chose.
+   *
+   * L'en-tête montrait `siteState` (le battement du pont) à côté de
+   * `connectionState` (la fraîcheur de ce même battement) : deux pastilles pour
+   * une seule information, et aucune sur la vitrine. On montre désormais
+   * l'accessibilité du site à côté de l'état du lien.
+   */
+  const site = vitrineState(project);
   const link = linkState(project);
   const connection = connectionState(project);
   const url = projectSiteUrl(project);
@@ -249,7 +258,12 @@ function OverviewTab({
   link: { label: string; tone: 'ok' | 'warn' | 'error' | 'neutral' };
   fraicheur: ReturnType<typeof getProjectDataFreshness>;
 }) {
-  const site = siteState(project);
+  const site = vitrineState(project);
+  const causeSuspension = vitrineSuspensionReason(project);
+  const siteStatus = project.business?.siteStatus ?? null;
+  // La connexion au projet est calculée ICI : la carte l'affiche à côté de la
+  // vitrine, et les deux doivent pouvoir se contredire sans se confondre.
+  const connection = connectionState(project);
   /**
    * TROIS DATES, TROIS FAITS DIFFÉRENTS — et elles se lisaient comme une seule.
    *
@@ -272,9 +286,48 @@ function OverviewTab({
     <>
       <Card title="Le site">
         <dl className="detail-list">
+          {/*
+            ── DEUX LIGNES, PARCE QUE CE SONT DEUX FAITS ────────────────────
+
+            ══ CE QUE CETTE CARTE DISAIT, ET POURQUOI C'ÉTAIT FAUX ══════════
+
+            Une seule ligne, « État du site : En ligne », alimentée par le
+            battement de cœur du Bridge. Une vitrine SUSPENDUE par la
+            protection contractuelle — donc inaccessible à ses visiteurs — s'y
+            affichait « En ligne » dès lors que son backend répondait
+            normalement. L'écran disait l'exact contraire du réel.
+
+            « Le projet me parle » et « le site est accessible » sont deux
+            questions. Elles ont maintenant chacune leur ligne, et chacune sa
+            source : le battement pour la première, la projection
+            PROJECT_SITE_STATUS pour la seconde.
+          */}
           <div>
-            <dt>État du site</dt>
-            <dd><span className={toneBadgeClass(site.tone)}>{site.label}</span></dd>
+            <dt>Connexion projet</dt>
+            <dd><span className={toneBadgeClass(connection.tone)}>{connection.label}</span></dd>
+          </div>
+          <div>
+            <dt>Vitrine</dt>
+            <dd>
+              <span className={toneBadgeClass(site.tone)}>{site.label}</span>
+              {/*
+                LA CAUSE ACCOMPAGNE LA SUSPENSION — nommée par sa source.
+                Une maintenance technique n'est pas un fait contractuel :
+                chercher un problème de contrat devant une maintenance ferait
+                perdre exactement le temps que cette ligne fait gagner.
+              */}
+              {causeSuspension ? (
+                <span className="muted"> — {causeSuspension}</span>
+              ) : null}
+              {/*
+                DEPUIS QUAND ON LE SAIT. Une projection reçue avant une coupure
+                reste la dernière vérité connue : la dater évite de la prendre
+                pour un constat de l'instant.
+              */}
+              {siteStatus?.receivedAt ? (
+                <div className="muted">Reçu le {formatDateTime(siteStatus.receivedAt)}</div>
+              ) : null}
+            </dd>
           </div>
           <div>
             <dt>Adresse publique</dt>

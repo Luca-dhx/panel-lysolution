@@ -12,6 +12,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Card } from '@/components/ui';
+import { Switch } from '@/components/Switch';
 import { api, errorMessage } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { DernierEtatConnu } from '@/components/FreshnessBanner';
@@ -73,36 +74,31 @@ function ContractProtectionCard({
   project: PublicProject;
   onChanged: () => void;
 }) {
-  const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
   const relie = project.pairing.status === 'PAIRED';
   /** L'état PROJETÉ par le projet — persisté, daté, lisible hors ligne. */
   const site = project.business?.siteStatus ?? null;
 
+  /**
+   * LA COMMANDE PART, ET C'EST TOUT CE QU'ELLE FAIT.
+   *
+   * On n'adopte PAS sa réponse comme état d'affichage — pas même la valeur
+   * « constatée » qu'elle rapporte. Le projet réémet sa projection juste après
+   * avoir réconcilié ; c'est ELLE qui fera bouger cet interrupteur.
+   *
+   * La nuance n'est pas cosmétique : tant que l'écran croyait la réponse de la
+   * commande, il pouvait afficher un état que rien n'avait persisté, et qu'un
+   * rechargement contredisait.
+   *
+   * Cette fonction LÈVE en cas d'échec : c'est ce qui déclenche le retour en
+   * arrière visuel du `Switch`. L'avaler ici laisserait l'interrupteur figé sur
+   * une intention que personne n'a appliquée.
+   */
   const basculer = async (next: boolean) => {
     setErreur(null);
-    setEnCours(true);
-    try {
-      /**
-       * LA COMMANDE PART, ET C'EST TOUT CE QU'ELLE FAIT.
-       *
-       * On n'adopte PAS sa réponse comme état d'affichage — pas même la
-       * valeur « constatée » qu'elle rapporte. Le projet réémet sa projection
-       * juste après avoir réconcilié ; c'est elle qui fera bouger cet
-       * interrupteur, en quelques dizaines de millisecondes.
-       *
-       * La nuance n'est pas cosmétique : tant que l'écran croyait la réponse
-       * de la commande, il pouvait afficher un état que rien n'avait persisté,
-       * et qu'un rechargement contredisait.
-       */
-      await api.setContractProtection(project.projectId, next);
-      onChanged();
-    } catch (err) {
-      setErreur(errorMessage(err, 'Le projet a refusé le réglage.'));
-    } finally {
-      setEnCours(false);
-    }
+    await api.setContractProtection(project.projectId, next);
+    onChanged();
   };
 
   return (
@@ -125,16 +121,24 @@ function ContractProtectionCard({
         </p>
       ) : (
         <>
-          <label className="field-inline">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={Boolean(site.contractProtectionEnabled)}
-              disabled={enCours}
-              onChange={(e) => void basculer(e.target.checked)}
-            />
-            <span>{site.contractProtectionEnabled ? 'Activée' : 'Désactivée'}</span>
-          </label>
+          {/*
+            UN INTERRUPTEUR CUSTOM, ET PAS UNE CASE NATIVE.
+
+            Le réglage VOYAGE : commande au projet, application, réconciliation,
+            puis projection de retour — 500 à 700 ms. Une case native reste
+            figée pendant ce temps puis saute d'un coup, ce qui invite à
+            recliquer. Le `Switch` bouge tout de suite vers l'INTENTION,
+            montre l'attente, et revient en douceur si le projet refuse.
+
+            `checked` reste la valeur CONFIRMÉE par la projection : l'intention
+            n'est qu'un état d'affichage, jamais une écriture.
+          */}
+          <Switch
+            checked={Boolean(site.contractProtectionEnabled)}
+            onToggle={basculer}
+            label="Protection contractuelle"
+            busyLabel="Synchronisation avec le projet…"
+          />
 
           {/* Le texte d'aide DIT la règle, il ne l'alarme pas. */}
           <p className="muted">
@@ -169,7 +173,6 @@ function ContractProtectionCard({
             <p className="muted">Reçu du projet le {formatDateTime(site.receivedAt)}</p>
           ) : null}
 
-          {enCours ? <p className="muted">Transmission au projet…</p> : null}
           {erreur ? <div className="alert alert-error">{erreur}</div> : null}
         </>
       )}

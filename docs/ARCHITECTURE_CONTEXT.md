@@ -1129,3 +1129,80 @@ déploiement, **et rend le vhost pour y chercher la directive**. Une constante
 bien définie mais jamais écrite dans la configuration est exactement la
 situation qu'on répare : il ne suffit pas qu'elle existe, il faut qu'elle
 arrive jusqu'à Nginx.
+
+---
+
+## La fiche projet : trois faits, trois lignes
+
+> **« Le projet me parle », « ses écritures passent » et « son site est
+> accessible » sont trois questions. Elles ont chacune leur ligne, et chacune
+> sa source.**
+
+### Le libellé qui disait le contraire du réel
+
+La fiche portait « **État du site : En ligne** ». La valeur venait de
+`runtime.lastHealth` et de `liveness` — le **battement de cœur du pont**. Une
+vitrine suspendue par la protection contractuelle, donc inaccessible à ses
+visiteurs, s'y affichait « En ligne » dès lors que son backend répondait
+normalement.
+
+La fonction s'appelait `siteState` et ne décrivait aucun site. Elle est devenue
+`instanceHealthState`, et rend « Instance saine » — ce qu'elle a toujours
+mesuré.
+
+### Ce que la fiche montre désormais
+
+```
+Connexion projet   ● Connecté            ← runtime.lastHeartbeatAt · liveness
+Vitrine            ⏸ Suspendue           ← PROJECT_SITE_STATUS (projection)
+                     Protection contractuelle
+                     Reçu le 09/08/2026 16:41
+Données métier     ✓ reçues              ← runtime.lastBusinessSyncAt
+Livraison          ⚠ bloquée             ← businessSync (si refus ouvert)
+```
+
+**Les deux premières lignes doivent pouvoir se contredire** — c'est précisément
+quand elles se contredisent qu'elles servent à quelque chose. Le cas
+`heartbeat CONNECTÉ + SiteStatus SUSPENDED` est éprouvé.
+
+| Règle | |
+|---|---|
+| la vitrine ne dépend PAS du battement | `ONLINE`, `STALE`, `NEVER_SEEN` : la projection reste la même |
+| projet hors ligne | la **dernière** projection reçue reste affichée, et **datée** |
+| aucune projection | « Aucun état reçu », ton neutre — **jamais** « Active » |
+| la cause est nommée | `CONTRACT` et `TECHNICAL` ne se confondent jamais |
+
+### L'interrupteur de protection : l'intention est immédiate, la vérité distante
+
+Le réglage **voyage** : commande au projet, application, réconciliation, puis
+projection de retour — 500 à 700 ms, dont 500 ms de fenêtre de regroupement
+délibérée. Une case à cocher native restait figée pendant ce temps puis sautait
+d'un coup, ce qui invite à recliquer.
+
+```
+OFF ──clic──► PENDING(ON) ──projection ON──► ON
+ ▲                │
+ └──── échec ─────┘        retour au dernier état CONFIRMÉ
+
+PENDING(ON) ──projection OFF (contradictoire)──► OFF
+              LA PROJECTION GAGNE TOUJOURS
+```
+
+**Ce n'est pas une écriture optimiste.** `checked` reste la valeur confirmée par
+`PROJECT_SITE_STATUS` ; l'intention n'est qu'un état d'**affichage**, local et
+éphémère. Un rechargement pendant la synchronisation reconstruit depuis la
+projection — l'intention ne survit pas, et c'est voulu : elle afficherait un
+réglage que rien n'a persisté.
+
+La réponse de la commande **ne clôt pas** l'attente. Seule la projection le
+fait. Un double clic ne part jamais deux fois. `role="switch"`, `aria-checked`,
+`aria-busy`, annonce `aria-live`, focus visible, et le mot accompagne toujours
+la couleur.
+
+> **La fenêtre de regroupement de 500 ms n'a pas été réduite pour améliorer
+> l'animation.** C'est l'UX qui absorbe la latence — dégrader l'architecture
+> événementielle pour gagner quelques centaines de millisecondes reviendrait à
+> payer une seconde fois ce que le regroupement fait gagner.
+
+→ `frontend/src/lib/useSwitchIntent.ts` · `frontend/src/components/Switch.tsx`
+→ `tests/protection-switch-ux.test.js` · `tests/vitrine-vs-connexion.test.js`

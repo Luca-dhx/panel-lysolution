@@ -62,7 +62,18 @@ section('2. La carte projet dit peu');
   check('elle porte l’identité', /projectDisplayName\(project\)/.test(projets)
     && /projectInitials\(project\)|projectLogoUrl/.test(projets));
   check('…un slogan court', /project-card-tagline/.test(projets));
-  check('…l’état du site', /siteState\(project\)/.test(projets));
+  /**
+   * L'ÉTAT DE LA VITRINE — et non plus celui du pont.
+   *
+   * La carte lisait `siteState`, qui rendait le battement de cœur du Bridge
+   * sous un libellé parlant du site : une vitrine suspendue par la protection
+   * contractuelle s'y affichait « En ligne ». Elle lit désormais la projection
+   * `PROJECT_SITE_STATUS`, seule autorité sur l'accessibilité du site.
+   *
+   * L'attente est donc PLUS forte qu'avant : on exige la bonne source, pas
+   * seulement la présence d'une pastille.
+   */
+  check('…l’état de la VITRINE, depuis la projection', /vitrineState\(project\)/.test(projets));
   check('…l’état du contrat', /contractState\(contract\.status\)/.test(projets));
   check('…l’adresse mise en forme', /LinkChip icon="globe"/.test(projets));
   check('…et une seule action', (projets.match(/className="btn btn-secondary btn-small"/g) || []).length === 1);

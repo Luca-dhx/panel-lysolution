@@ -23,7 +23,7 @@ import {
   lastContact,
   projectAlert,
   projectDisplayName,
-  siteState,
+  connectionState,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
@@ -116,7 +116,12 @@ export function DashboardPage() {
         ) : (
           <ul className="plain-list">
             {recent.map((project) => {
-              const site = siteState(project);
+              /**
+               * « Activité récente » liste ce qui a COMMUNIQUÉ : la pastille
+               * décrit donc la connexion, jamais l'accessibilité de la
+               * vitrine. Les deux se lisent sur la fiche, séparément.
+               */
+              const site = connectionState(project);
               const since = lastContact(project);
               return (
                 <li key={project.projectId} className="alert-row">

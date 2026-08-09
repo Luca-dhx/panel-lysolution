@@ -37,7 +37,7 @@ import {
   projectLogoUrl,
   projectDomain,
   projectSiteUrl,
-  siteState,
+  vitrineState,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
@@ -143,7 +143,15 @@ export function ProjectsPage() {
               l'identité, l'état du site, l'état du contrat, l'adresse. Le reste
               appartient à la fiche, où il est lisible. */}
           {projects.map((project) => {
-            const site = siteState(project);
+            /**
+             * LA CARTE PARLE DU CLIENT — donc de sa VITRINE, pas du pont.
+             *
+             * Elle affichait `siteState`, qui lisait le battement de cœur du
+             * Bridge : une vitrine suspendue par la protection contractuelle
+             * s'y présentait « En ligne ». On montre désormais l'état PROJETÉ
+             * par le projet — la seule autorité sur l'accessibilité du site.
+             */
+            const site = vitrineState(project);
             const url = projectSiteUrl(project);
             const domain = projectDomain(project);
             const logoUrl = projectLogoUrl(project);

@@ -57,6 +57,10 @@ const TESTS = [
   'architecture.test.js',
   'panel-ux.test.js',
   'live-refresh.test.js',
+  // LOTS C+D — l'interrupteur de protection et la séparation
+  // « connexion projet » / « vitrine ».
+  'protection-switch-ux.test.js',
+  'vitrine-vs-connexion.test.js',
   'deploy.test.js',
   'deployment-build.test.js',
   'deployment-remote-env.test.js',
