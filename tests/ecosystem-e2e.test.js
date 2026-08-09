@@ -388,11 +388,32 @@ check('…qui nomme les chemins modifiés',
 check('…et la fiche ne réclame PAS un second enregistrement',
   updated.json.data.company.hasUnpublishedChanges === false);
 
-const statusBefore = await http('GET', `${projectProc.baseUrl}/api/panel-connection/status`, {
-  headers: projectProc.auth,
-});
-check('le projet ne bouge qu’au rattrapage : publier ne le force pas',
-  statusBefore.json.data.company.branding.primaryColor === '#1b4dff');
+/**
+ * ── ENREGISTRER LIVRE — ET C'EST L'INVERSE DE CE QUI ÉTAIT VÉRIFIÉ ICI ──────
+ *
+ * Cette ligne attendait que le projet NE bouge PAS : « il ne bouge qu'au
+ * rattrapage, publier ne le force pas ». C'était vrai, et c'était le défaut —
+ * le Panel écrivait son journal et n'appelait personne, si bien qu'une
+ * modification mettait jusqu'à trente secondes à devenir visible chez le
+ * client, pour une livraison qui prend quelques dizaines de millisecondes.
+ *
+ * Le lot L4 branche la livraison descendante. L'attente devient donc son
+ * contraire, et la garantie est plus forte : le projet a la nouvelle valeur
+ * AVANT qu'aucun rattrapage n'ait été demandé.
+ *
+ * Ce qui suit — le `sync-now`, la version 2, la convergence constatée — reste
+ * inchangé et garde tout son sens : le tirage doit rester idempotent, et la
+ * convergence rester constatable. Le filet n'est pas retiré parce qu'on a
+ * ajouté la vitesse.
+ */
+const livre = await eventually('livraison descendante de la couleur', async () => {
+  const r = await http('GET', `${projectProc.baseUrl}/api/panel-connection/status`, {
+    headers: projectProc.auth,
+  });
+  return r.json?.data?.company?.branding?.primaryColor === '#c0392b';
+}, { timeoutMs: 10_000, stepMs: 200 });
+check('ENREGISTRER LIVRE : le projet a la nouvelle couleur sans aucun rattrapage',
+  livre);
 
 // Republier sans rien changer est REFUSÉ : une version n'a de sens que si
 // elle décrit un état différent du précédent.

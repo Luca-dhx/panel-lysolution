@@ -13,6 +13,7 @@ import {
   activeDestination, announceDestination,
 } from '../registry/projectDestination.service.js';
 import { registryStore } from '../registry/registryStore.js';
+import { scheduleDelivery } from './syncDelivery.service.js';
 import logger from '../../utils/logger.js';
 import {
   ACK_STATUS,
@@ -275,6 +276,33 @@ export async function emitChange({
     change: { writeId, entityType, entityId, deleted, payload, modifiedAt, emitter },
   };
   await PanelSyncJournalEntry.create(entry);
+  /**
+   * ── LIVRAISON IMMÉDIATE — APRÈS le journal, et JAMAIS à sa place ──────────
+   *
+   * ══ POURQUOI ICI, ET NULLE PART AILLEURS ═════════════════════════════════
+   *
+   * C'est le seul endroit où naît une écriture destinée à un projet. Y poser
+   * le déclencheur rend la livraison immédiate VALABLE POUR TOUT — entreprise,
+   * contrat, médias, et les types qui viendront. L'alternative — un
+   * `pushProject(...)` recopié après chaque `emitChange` — se serait dégradée
+   * au premier producteur qui l'oublierait, et cet oubli aurait été
+   * silencieux : la donnée serait simplement arrivée trente secondes plus
+   * tard, sans que rien ne le signale.
+   *
+   * ══ APRÈS `create`, ET C'EST L'ORDRE QUI COMPTE ══════════════════════════
+   *
+   * Le journal est la source de vérité ; la poussée n'en est qu'un
+   * accélérateur. Livrer d'abord ouvrirait une fenêtre où un projet aurait
+   * appliqué une écriture que le Panel ne saurait pas avoir émise — donc
+   * introuvable au rattrapage, et impossible à rejouer.
+   *
+   * ══ NON ATTENDUE ═════════════════════════════════════════════════════════
+   *
+   * `scheduleDelivery` ne rend jamais de promesse à attendre. Une sauvegarde
+   * métier est acquise dès que cette ligne est passée : elle ne dépend ni de
+   * la disponibilité d'un projet, ni de son temps de réponse.
+   */
+  scheduleDelivery(entry);
   return entry;
 }
 

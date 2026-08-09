@@ -685,6 +685,52 @@ N'existent donc plus **pour l'utilisateur** : publier, version à publier,
 rediffuser, réessayer, « les projets utilisent encore la version N »,
 « dernière diffusion ».
 
+### Enregistrer LIVRE — le Panel n'attend plus que le projet vienne
+
+Le schéma ci-dessus s'arrêtait à « le PROJET tire, à son rythme ». C'était le
+défaut symétrique de celui corrigé dans l'autre sens : le Panel écrivait son
+journal et **n'appelait personne**. `ProjectBridgeClient.deliverChanges()`
+existait, l'endpoint du projet aussi — et rien ne les reliait. Une modification
+mettait donc jusqu'à trente secondes à devenir visible chez le client, pour une
+livraison qui en prend quelques dizaines de millisecondes.
+
+```
+Panel · Mon entreprise · [ Enregistrer ]
+   │
+   ├─ PanelCompany · PanelCompanyVersion
+   └─ emitChange(DEV_COMPANY)
+        └─ PanelSyncJournalEntry            ← LA SOURCE DE VÉRITÉ
+             ├──────────► scheduleDelivery  ← accélérateur, non attendu
+             │              └─ POST /api/project-bridge/v1/sync/push
+             │                   └─ le projet applique         ~35 ms
+             └──────────► le projet tire     ← RÉPARATION, si la livraison
+                                               n'a pas abouti
+```
+
+| Propriété | Ce qui la tient |
+|---|---|
+| **le journal fait foi** | la livraison part APRÈS `create`. Livrer d'abord laisserait un projet appliquer une écriture que le Panel ne saurait pas avoir émise |
+| **la sauvegarde n'attend rien** | `scheduleDelivery` ne rend aucune promesse à attendre — 20 ms de réponse devant un projet à 5 s |
+| **audience** | exactement la règle du tirage : nominative → une instance ; `null` → le parc ; jamais l'émetteur d'origine |
+| **TEST/PROD** | fail closed. Une fiche qui déclare un autre monde n'est pas livrée, et rien n'est « corrigé » |
+| **concurrence** | 6 simultanées. Un changement d'entreprise vise tout le parc : un `Promise.all` remplacerait une lenteur par une saturation |
+| **timeout** | 4 s, contre 10 s pour une opération demandée par un humain. Personne n'attend cette livraison |
+| **idempotence** | le `writeId` traverse les deux chemins ; la garde de version du projet écarte ce qu'il a déjà |
+| **générique** | le dispatcher ne connaît aucun type d'entité. Ajouter une projection demain ne le recâble pas |
+
+**Un échec de livraison n'est pas un échec.** Projet éteint, Panel interrompu
+avant la tentative, réseau coupé : l'écriture reste au journal, le tirage la
+reprend, et l'utilisateur n'a jamais rien vu. C'est pourquoi aucune erreur de ce
+module ne remonte vers un écran, et pourquoi il n'existe toujours **aucun bouton
+« Synchroniser »**.
+
+> **Le sondage n'est plus le chemin nominal.** `PANEL_SYNC_INTERVAL_S` demeure,
+> et sa doctrine est désormais explicite : **réparation, rattrapage,
+> reprise après coupure** — jamais la livraison.
+
+→ `backend/src/services/sync/syncDelivery.service.js`
+→ `tests/panel-to-project-event-driven-e2e.test.js`
+
 ### Ce que les versions restent
 
 Un mécanisme de protocole, et rien de plus :

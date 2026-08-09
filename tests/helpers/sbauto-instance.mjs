@@ -203,13 +203,13 @@ async function wire() {
 }
 
 /** La surface HTTP que le Panel interroge — le vrai routeur, les vraies gardes. */
-function serve() {
+function serve(portVoulu = 0) {
   const app = express();
   app.use(express.json());
   app.use('/api/project-bridge/v1', projectBridgeRoutes);
   app.use(errorHandler);
   return new Promise((resolve) => {
-    server = app.listen(0, '127.0.0.1', () => resolve(server.address().port));
+    server = app.listen(portVoulu, '127.0.0.1', () => resolve(server.address().port));
   });
 }
 
@@ -256,6 +256,37 @@ const COMMANDS = {
   /** LE VRAI RATTRAPAGE — curseur, anti-écho, idempotence, handlers. */
   async pull({ limit = 100 } = {}) {
     return bridge().pullUpdates({ limit });
+  },
+
+  /**
+   * COUPE LA SURFACE HTTP — une panne RÉELLE, vue du Panel.
+   *
+   * ══ POURQUOI CELA REMPLACE « on ne tire pas » ═══════════════════════════
+   *
+   * Tant que le Panel n'avait aucun chemin descendant, « le projet est
+   * absent » se simulait en s'abstenant d'appeler `pull()`. Ce n'était pas
+   * une absence : c'était une omission de l'observateur. Depuis que le Panel
+   * LIVRE, un projet qui écoute reçoit — et cette simulation ne simule plus
+   * rien.
+   *
+   * On ferme donc réellement le port. Le Panel obtient un refus de connexion,
+   * exactement comme devant un projet éteint ou en cours de redéploiement.
+   * Le processus, lui, reste vivant : c'est une coupure réseau, pas un crash
+   * — et l'on veut pouvoir vérifier que RIEN n'a été appliqué pendant ce
+   * temps-là.
+   */
+  async goOffline() {
+    if (!server) return { listening: false, port };
+    await new Promise((r) => server.close(r));
+    server = null;
+    return { listening: false, port };
+  },
+
+  /** Le projet revient — sur LE MÊME port, sinon son adresse serait périmée. */
+  async goOnline() {
+    if (server) return { listening: true, port };
+    await serve(port);
+    return { listening: true, port };
   },
 
   /** L'ÉTAT MÉTIER RÉELLEMENT APPLIQUÉ, tel que les écrans du projet le lisent. */

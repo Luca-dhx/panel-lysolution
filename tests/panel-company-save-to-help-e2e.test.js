@@ -121,7 +121,24 @@ section('HORS LIGNE A → B → C — au retour, c’est C, jamais B');
 {
   const versionsAvant = await PanelCompanyVersion.countDocuments({ companyId });
 
-  // Le projet ne tire pas : il est absent. Le Panel, lui, continue de vivre.
+  /**
+   * UNE ABSENCE RÉELLE — le port est fermé.
+   *
+   * ══ CE QUE « ne pas tirer » NE PROUVE PLUS ════════════════════════════════
+   *
+   * Cette section simulait l'absence en s'abstenant d'appeler `pull()`. Tant
+   * que le Panel n'avait aucun chemin descendant, cela suffisait. Depuis le
+   * lot L4, le Panel LIVRE dès l'enregistrement : un projet qui écoute reçoit,
+   * et l'omission de l'observateur ne simule plus rien du tout.
+   *
+   * On coupe donc réellement la surface HTTP. Le Panel obtient un refus de
+   * connexion — exactement ce qu'il obtiendrait d'un projet éteint ou en cours
+   * de redéploiement — et la garantie éprouvée ici devient plus forte
+   * qu'avant : ce n'est plus « personne n'a demandé », c'est « personne ne
+   * pouvait livrer, et rien n'a été perdu ».
+   */
+  await projet.goOffline();
+
   await societe.saveCompany(companyId, { identity: { name: 'Agence B' } }, ACTEUR);
   await societe.saveCompany(companyId, { identity: { name: 'Agence C' } }, ACTEUR);
 
@@ -130,6 +147,7 @@ section('HORS LIGNE A → B → C — au retour, c’est C, jamais B');
     pendantAbsence.company?.identity?.name === 'L.Y Solution Nouvelle');
 
   // Il revient, et ne fait qu'une chose : son rattrapage habituel.
+  await projet.goOnline();
   const tirage = await projet.pull();
   check('le rattrapage applique ce qui a été manqué', tirage.applied >= 1);
 

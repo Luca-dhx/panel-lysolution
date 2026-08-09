@@ -90,6 +90,16 @@ section('Le transport réseau vers les projets est exclusif');
     // simulables, machinerie sans rapport avec une demande unique dont
     // l'autorité reste chez le projet.
     'backend/src/services/contract/contractActions.service.js',
+    // Lot L4 — LIVRAISON DESCENDANTE. C'est le pendant exact de l'outbox d'un
+    // projet : un unique dispatcher qui porte une entrée du journal de
+    // synchronisation jusqu'aux instances de son audience.
+    //
+    // Il est ici pour la même raison que le moteur d'exécution : concentrer la
+    // sortie réseau plutôt que la disperser. Sans lui, chaque producteur
+    // (entreprise, contrat, médias…) aurait fini par pousser lui-même, et la
+    // garde d'environnement, la borne de concurrence et le timeout court
+    // auraient été recopiés — donc, un jour, oubliés quelque part.
+    'backend/src/services/sync/syncDelivery.service.js',
   ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
   check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,

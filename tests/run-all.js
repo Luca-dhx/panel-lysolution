@@ -35,6 +35,14 @@ const TESTS = [
   'real-panel-sbauto-branding-ack-e2e.test.js',
   // Un enregistrement, et la page « Aide » du projet suit — sans second geste.
   'panel-company-save-to-help-e2e.test.js',
+  // L4 — le Panel LIVRE au lieu d'attendre que le projet tire ; le journal
+  // durable reste la source de vérité, et le tirage la réparation.
+  'panel-to-project-event-driven-e2e.test.js',
+  // L1/L2 — le contrat de présentation avec médias, et le sort d'un refus.
+  'project-presentation-media-contract-e2e.test.js',
+  'payload-drift.check.mjs',
+  // L0 — latences de référence et non-régression de la poussée immédiate.
+  'event-driven-sync-baseline.test.js',
   'instance-generation-freshness.test.js',
   // L'état métier d'un projet est vivant, pas figé à l'appairage.
   'project-live-business-sync.test.js',

@@ -1,6 +1,7 @@
 # Synchronisation événementielle temps réel — audit et feuille de route
 
-> **Statut : L0 ✅ · L1 ✅ · L2 ✅ — L3 à L17 restent à faire.**
+> **Statut : L0 ✅ · L1 ✅ · L2 ✅ · L4 ✅ — les deux sens sont désormais
+> événementiels.**
 >
 > Ce document est le constat, pas la promesse. Chaque affirmation renvoie au
 > fichier qui la porte, et les chiffres viennent d'une exécution réelle —
@@ -14,7 +15,8 @@
 | **L0** | ✅ | Reproduction et instrumentation. La cause isolée : `logo`/`favicon` refusés par un schéma fermé. |
 | **L1** | ✅ | Le descripteur média entre au contrat de `PROJECT_PRESENTATION`, est persisté et exposé. Payload d'une instance réelle : **accepté en 352–562 ms**. |
 | **L2** | ✅ | Un refus n'est plus un ACK : il est classé, conservé, publié au Panel, et **réaffirmé jusqu'à convergence sans aucun geste**. |
-| L3 → L17 | ⏸ | Voir §T. |
+| **L4** | ✅ | Le Panel LIVRE au lieu d'attendre. `saveCompany` → journal → push immédiat. **T0→T5 médiane 35 ms, pire 103 ms** ; la sauvegarde rend la main en 20 ms devant un projet à 5 s. |
+| L3, L5 → L17 | ⏸ | Voir §T. |
 
 ---
 
@@ -627,7 +629,74 @@ ne publie pas `rejectedCount`, et son silence ne prouve rien.
   par test d'architecture que `flush` soit recâblé sur `runSyncCycle`.
 - **Dépendances** : L0. **Risque** : nul.
 
-### L4 — Panel → SB Auto immédiat
+### L4 — Panel → SB Auto immédiat ✅ LIVRÉ
+
+**Aucun endpoint, aucun contrat, aucun modèle nouveau.** Les deux bouts
+existaient et n'avaient jamais été reliés : il manquait un appelant.
+
+| Fichier | Rôle |
+|---|---|
+| `services/sync/syncDelivery.service.js` | **le dispatcher** — audience, garde d'environnement, concurrence bornée, timeout court, classification, traces |
+| `services/sync/syncCore.js` `emitChange` | **une ligne** : `scheduleDelivery(entry)` après `PanelSyncJournalEntry.create` |
+| `tests/architecture.test.js` | le dispatcher rejoint la table FERMÉE des détenteurs du client de pont |
+
+**Le point de branchement est générique par construction.** `emitChange` est le
+seul endroit où naît une écriture destinée à un projet : entreprise, API
+intégrée, et tout type futur passent par là sans recâblage. Un
+`pushProject(...)` recopié après chaque producteur se serait dégradé au premier
+oubli — et cet oubli aurait été silencieux, la donnée arrivant simplement trente
+secondes plus tard.
+
+| Propriété | Valeur | Mesure |
+|---|---|---|
+| latence T0→T5 | médiane **35 ms**, p95 **96 ms** | 10 enregistrements consécutifs |
+| sauvegarde non bloquante | **20 ms** devant un projet à 5 s | transport instrumenté |
+| concurrence | **6** simultanées, jamais dépassée | 53 destinataires, 3 traînards |
+| timeout | **4 s** (contre 10 s par défaut du client) | — |
+| rafale A→D | **112 ms** jusqu'à D | 4 saves d'affilée |
+
+**Le journal reste la source de vérité.** Le push est un accélérateur, et rien
+d'autre : projet éteint, Panel interrompu avant la tentative, transport en
+erreur — l'écriture reste au journal, le tirage la reprend, et l'utilisateur
+n'a jamais rien vu. Éprouvé port fermé, transport en panne, et double
+livraison.
+
+**Trois tests existants ont dû être INVERSÉS, pas affaiblis.** Ils encodaient la
+doctrine d'avant — « publier ne force pas le projet », « avant le rattrapage
+l'instance n'est pas à jour ». Leur prémisse n'était pas une garantie : c'était
+la conséquence de l'absence de livraison. Ils provoquent désormais une panne
+RÉELLE (port fermé, base coupée) là où ils comptaient sur une lenteur, ce qui
+rend chacun strictement plus fort qu'avant.
+
+**Ce que L4 ne couvre pas, et pourquoi** — voir §L4bis.
+
+### L4bis — Ce que le transport porte, et ce que le produit ne projette pas encore
+
+Le dispatcher est générique ; le catalogue métier, lui, ne l'est pas encore.
+L'état réel, sans extrapolation :
+
+| Donnée | Panel → projet | État |
+|---|---|---|
+| entreprise développeur, branding, contacts, **médias** | `DEV_COMPANY` | ✅ **livré immédiatement** |
+| configuration d'API intégrée | `INTEGRATED_API_CONFIG` (nominatif) | ✅ **livré immédiatement** |
+| **contrat / protection contractuelle** | *aucun `emitChange`* | ⚠️ **passe par un autre canal** |
+| **utilisateurs / équipe** | *aucune projection descendante* | ⚠️ **n'existe pas** |
+
+**Contrat et protection** ne transitent pas par le journal : le Panel les pilote
+par **invocation d'opération** (`contractActions.service.js` →
+`POST /operations/:id/invoke`), un appel synchrone et déjà immédiat. C'est une
+**commande**, pas une projection, et la distinction est saine — l'autorité de
+`SiteStatus` reste chez le projet. Un test `CONTRACT_CHANGE_PUSHES_IMMEDIATELY`
+au sens de L4 n'aurait donc rien à observer : il n'y a pas d'entrée de journal à
+livrer. Ce qui manque est l'inverse — la projection de l'état RÉSULTANT du
+projet vers le Panel — et c'est le lot **L8**.
+
+**Utilisateurs** : `TEAM_MEMBER` circule projet → Panel uniquement. Il n'existe
+aucune projection d'utilisateurs du Panel vers un projet. Le transport est prêt
+à la porter le jour où le produit la définira ; l'inventer dans L4 aurait été
+fabriquer un contrat métier sous couvert d'infrastructure.
+
+### L4 — spécification d'origine (conservée)
 
 - **Objectif** : supprimer le sondage descendant du chemin nominal.
 - **Fichiers** : `Panel/backend/src/services/sync/syncCore.service.js`

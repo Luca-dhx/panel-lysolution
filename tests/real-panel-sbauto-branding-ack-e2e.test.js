@@ -160,20 +160,41 @@ section('LA CHAÎNE COMPLÈTE — Panel version N → pull → application → i
   check(`la découverte d’appairage a posé la version en vigueur (${nMoins1})`,
     avant.company?.version === nMoins1);
 
+  /**
+   * ── LE PROJET EST COUPÉ DU RÉSEAU — pour que « en retard » soit un FAIT ───
+   *
+   * ══ CE QUE CE BLOC SUPPOSAIT, ET QUI N'EST PLUS VRAI ═════════════════════
+   *
+   * Il publiait puis vérifiait que l'instance n'était PAS à jour, « avant le
+   * rattrapage ». Ce retard n'était pas provoqué : il découlait du fait que le
+   * Panel n'appelait personne. Depuis le lot L4, enregistrer LIVRE — une
+   * instance qui écoute est à jour en quelques dizaines de millisecondes, et
+   * la prémisse s'effondre.
+   *
+   * Or ce que ce test doit éprouver reste entier : que le Panel sache DIRE
+   * qu'une instance est en retard, qu'il vise juste, et que le tirage
+   * l'applique réellement. On provoque donc le retard pour de bon — port
+   * fermé — au lieu de compter sur une lenteur du produit.
+   */
+  await alpha.goOffline();
+
   // ── LE PANEL PUBLIE N ───────────────────────────────────────────────────
   const publie = await societe.saveCompany(companyId, { identity: { name: 'L.Y Solution SAS' } }, ACTEUR);
   const N = publie.version;
   check(`une modification réelle publie la version ${N}`, N === nMoins1 + 1);
 
-  // Avant que le projet ne tire : il déclare encore N-1. Le Panel ne préjuge pas.
+  // L'instance était injoignable : elle déclare encore N-1, et le Panel le
+  // constate sans rien préjuger.
+  await alpha.goOnline();
   await decouvrir(projectId);
   let d = await diffusion();
-  check('avant le rattrapage, l’instance n’est PAS à jour', etatDe(d, projectId).state !== 'APPLIED');
+  check('une instance injoignable au moment de la livraison n’est PAS à jour',
+    etatDe(d, projectId).state !== 'APPLIED');
   check('…elle déclare la version précédente',
     etatDe(d, projectId).appliedVersion === nMoins1);
   check('…et elle est visée par une rediffusion', d.pendingProjectIds.includes(projectId));
 
-  // ── LE PROJET TIRE, RÉELLEMENT ──────────────────────────────────────────
+  // ── LE PROJET TIRE, RÉELLEMENT — c'est la RÉPARATION ────────────────────
   const tirage = await alpha.pull();
   check('le vrai syncPull applique exactement une écriture', tirage.applied === 1);
 
@@ -228,12 +249,20 @@ section('ISOLATION D’AUDIENCE — une écriture nominative ne franchit pas la 
   const beta_id = await appairer(beta);
   const N = (await ficheDe()).publishedVersion;
 
-  // Bêta vient d'être appairée : elle a reçu N par la découverte d'appairage.
-  // On la fait donc RETARDER pour de bon — en publiant N+1 qu'elle ne tirera
-  // pas encore, pendant qu'alpha, elle, la tirera.
+  /**
+   * Bêta vient d'être appairée : elle a reçu N par la découverte d'appairage.
+   * On la fait RETARDER pour de bon — port fermé pendant la publication de
+   * N+1, pendant qu'alpha, elle, reste joignable.
+   *
+   * Couper le réseau est devenu NÉCESSAIRE : depuis le lot L4, le Panel livre
+   * dès l'enregistrement. Une instance qui écoute n'est jamais en retard, et
+   * « bêta est en retard » ne serait plus qu'un vœu.
+   */
+  await beta.goOffline();
   const publie = await societe.saveCompany(companyId, { identity: { tagline: 'Studio logiciel' } }, ACTEUR);
   const suivante = publie.version;
   check(`le Panel publie la version ${suivante}`, suivante === N + 1);
+  await beta.goOnline();
 
   await alpha.pull();
   await decouvrir(alpha.projectId);
@@ -321,13 +350,26 @@ section('IDEMPOTENCE — tirer deux fois la même synchronisation ne change rien
 section('ÉCHEC D’APPLICATION — un tirage réussi ne vaut pas une application');
 {
   const N = (await ficheDe()).publishedVersion;
+
+  /**
+   * PANNE RÉELLE, ET POSÉE AVANT LA PUBLICATION.
+   *
+   * La base du projet est coupée : le vrai applicateur s'exécute, et c'est sa
+   * persistance qui échoue — rien n'est simulé.
+   *
+   * Elle est coupée AVANT le `saveCompany` depuis le lot L4 : le Panel livre
+   * désormais dès l'enregistrement, et une base encore vivante à cet instant
+   * ferait appliquer la version par la LIVRAISON avant même que le tirage
+   * n'entre en scène. Ce que ce bloc éprouve — « un échange réussi ne vaut pas
+   * une application » — vaut d'ailleurs pour les deux chemins, et les deux
+   * échouent ici de la même façon.
+   */
+  await beta.severDatabase();
+
   const publie = await societe.saveCompany(companyId, { identity: { description: 'Édition et exploitation.' } }, ACTEUR);
   const suivante = publie.version;
   check(`le Panel publie la version ${suivante}`, suivante === N + 1);
 
-  // PANNE RÉELLE : la base du projet est coupée. Le vrai applicateur s'exécute,
-  // et c'est sa persistance qui échoue — rien n'est simulé.
-  await beta.severDatabase();
   const tirage = await beta.pull();
   check('le tirage HTTP réussit', typeof tirage.applied === 'number');
   check('…mais rien n’est appliqué', tirage.applied === 0);

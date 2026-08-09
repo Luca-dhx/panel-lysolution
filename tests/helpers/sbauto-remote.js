@@ -108,6 +108,9 @@ export async function startSbAutoInstance({
     outboxDump() { return send('outboxDump'); },
     /** L’état de santé publié au Panel : en attente, refusées, plus ancien refus. */
     outboxHealth() { return send('outboxHealth'); },
+    /** Coupe / rétablit la surface HTTP — une panne réseau RÉELLE. */
+    goOffline() { return send('goOffline'); },
+    goOnline() { return send('goOnline'); },
     /** Donne un logo à l’entreprise — la configuration de toute production. */
     setCompanyLogo(args) { return send('setCompanyLogo', args); },
     /** La projection telle que le projet la construit, avant tout transport. */
