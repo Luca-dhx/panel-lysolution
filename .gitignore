@@ -16,3 +16,11 @@ deploy/deploy.config.json
 # le déploiement : les fichiers vivent hors des releases et leur survivent.
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Médias servis par le RUNTIME, à la racine du dépôt.
+#
+# `backend/uploads/` était déjà ignoré, mais pas celui-ci : selon la
+# configuration de chemin, le service écrit ici. Les suites de recette qui
+# importent une image y déposaient donc des fichiers qu'un `git add -A`
+# aurait embarqués dans l'historique — des données, jamais du code.
+uploads/

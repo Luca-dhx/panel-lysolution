@@ -1047,3 +1047,85 @@ Un correctif de moteur se porte donc **dans les deux dépôts** — jamais avec 
 - il ne réaffiche jamais un code d'appairage ni un jeton ;
 - il ne se connecte à aucun serveur de projet pour constater un état ;
 - il n'invente pas un environnement, une identité ou une adresse.
+
+---
+
+## Médias : la politique d'import, et la limite qui manquait
+
+> **UNE politique par type de média. UN plafond de transport. UNE ligne dans le
+> vhost.** Les trois vivaient séparément, et ne se sont jamais rencontrées.
+
+### Le défaut, tel qu'il s'est produit
+
+Remplacer un logo rendait `413 Payload Too Large` sur une instance déployée, et
+`MulterError: File too large` sur le Panel. Deux symptômes, **deux causes
+différentes** :
+
+| Couche | Limite avant | Qui refusait |
+|---|---|---|
+| frontend | aucune | — |
+| `multer` | 12 Mo, en dur | le Panel (fichier > 12 Mo) |
+| **vhost Nginx** | **jamais émis → défaut 1 Mo** | **l'instance déployée** |
+
+`client_max_body_size` n'était écrit nulle part. Nginx appliquait donc 1 Mo,
+alors que l'application acceptait 12 Mo : **un écart de 12×**. Un logo de 3 Mo
+passait en local et repartait en 413 une fois déployé — et le refus venait du
+serveur web, donc sans code métier, sans message utile, sans trace applicative.
+
+### Ce qui décide désormais
+
+```
+mediaPolicy.js          par type : octets acceptés, largeur, format de sortie
+   │
+   ├─► multer            plafond = le maximum de la table
+   ├─► validateImage     refus PAR TYPE, sur les octets décodés
+   └─► project.profile   HTTP_MAX_BODY_MB → client_max_body_size du vhost
+```
+
+`multer` coupe le flux **avant** que le corps ne soit lu : à cet instant, le
+type de média est encore inconnu. On laisse donc entrer jusqu'au plafond, puis
+on refuse par type — avec la bonne limite dans le message. L'inverse produirait
+une coupure muette sur un fichier parfaitement légitime pour son usage.
+
+### Le format se lit dans les octets
+
+`file.mimetype` est **déclaré** par le navigateur d'après l'extension : il ne
+mesure rien. Un fichier renommé le franchissait, et `sharp` échouait ensuite en
+exception non typée — rendue à l'écran comme une panne. On décode donc
+l'en-tête : ce que `sharp` lit est une image, ce qu'il ne lit pas n'en est pas
+une. Les **dimensions** sont bornées séparément : une image de 40 Ko peut
+déclarer 60 000 px de côté et réclamer des gigaoctets à la décompression.
+
+### Un refus attendu n'est pas une panne
+
+| Code | HTTP | Quand |
+|---|---|---|
+| `MEDIA_TOO_LARGE` | **413** | au-delà de la limite du type — la limite est dans `details.maxBytes` |
+| `MEDIA_TYPE_UNSUPPORTED` | 415 | format d'image non pris en charge |
+| `MEDIA_INVALID` | 400 | illisible, vide, corrompu, ou pas une image |
+| `MEDIA_DIMENSIONS_EXCEEDED` | 400 | trop de pixels de côté |
+
+Aucun ne s'affiche « Erreur interne ». Un utilisateur ne peut rien faire d'une
+panne ; il peut réduire une image — encore faut-il lui dire de combien.
+
+### Remplacer un logo ne le perd jamais
+
+L'ordre est **importer, puis remplacer la référence** — jamais supprimer
+d'abord. Un import qui échoue laisse donc le logo en place, ce qui compte
+d'autant plus depuis qu'on refuse proprement les fichiers trop gros.
+
+### Enregistré ≠ publié
+
+Un média enregistré sur une instance **sans destination active** reste
+parfaitement valide : il est stocké, décrit, daté. Il n'est simplement servi
+par aucune adresse publique — et l'écran le dit. Faire dépendre l'enregistrement
+d'une publication interdirait de configurer une instance avant sa première mise
+en ligne, c'est-à-dire dans l'ordre naturel des choses.
+
+### Le contrôle qui manquait
+
+`MEDIA_UPLOAD_LIMITS_DO_NOT_DIVERGE` compare la politique au profil de
+déploiement, **et rend le vhost pour y chercher la directive**. Une constante
+bien définie mais jamais écrite dans la configuration est exactement la
+situation qu'on répare : il ne suffit pas qu'elle existe, il faut qu'elle
+arrive jusqu'à Nginx.

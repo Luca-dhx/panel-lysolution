@@ -71,6 +71,9 @@ const TESTS = [
   'deployment-rollback.test.js',
   'deployment-deprovision.test.js',
   'deployment-ports.test.js',
+  // LOT B — politique d'import des médias, limites alignées, refus typés.
+  'media-upload-limits.test.js',
+  'media-upload-validation.test.js',
   'media-descriptor.test.js',
   'media-cache-versioning.test.js',
   'media-canonical-save.test.js',

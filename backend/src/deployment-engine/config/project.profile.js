@@ -128,6 +128,24 @@ export function serviceName(host) {
 }
 
 /** Préfixe des dossiers temporaires locaux de build. */
+/**
+ * TAILLE MAXIMALE D'UN CORPS DE REQUÊTE, en mégaoctets — pour Nginx.
+ *
+ * ══ LE DÉFAUT QUE CETTE CONSTANTE FERME ═════════════════════════════════════
+ *
+ * Le générateur de vhost n'émettait PAS `client_max_body_size`. Nginx applique
+ * alors son défaut : 1 Mo. L'application, elle, acceptait 12 Mo.
+ *
+ * Un logo de 3 Mo passait donc en local (Express seul) et repartait en 413
+ * derrière Nginx — le meme fichier, accepte ici, refuse la. Le refus venait du
+ * serveur web : il n'atteignait jamais Node, donc aucun code metier, aucun
+ * message utile, aucune trace applicative.
+ *
+ * La valeur DOIT rester >= au plafond de la politique media (voir
+ * `mediaPolicy.js`), marge multipart comprise. Un test de derive le verifie.
+ */
+export const HTTP_MAX_BODY_MB = 20;
+
 export const BUILD_STAGING_PREFIX = `${PROJECT_SLUG}-build-`;
 
 export default {
@@ -143,4 +161,5 @@ export default {
   REQUIRED_REMOTE_ENV,
   serviceName,
   BUILD_STAGING_PREFIX,
+  HTTP_MAX_BODY_MB,
 };

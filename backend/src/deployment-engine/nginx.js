@@ -21,7 +21,7 @@
  * Le certificat TLS est référencé selon le cas (wildcard partagé pour un
  * sous-domaine géré, ou certificat dédié Let's Encrypt) — voir certbot.js.
  */
-import { API_SUBDOMAIN, APPS } from './config/project.profile.js';
+import { API_SUBDOMAIN, APPS, HTTP_MAX_BODY_MB } from './config/project.profile.js';
 
 /** Chemin du fichier de conf sites-available pour un hôte. */
 export function nginxConfigPath(host) {
@@ -293,7 +293,13 @@ export function renderNginxConfig(target, opts) {
     server_name ${site.host};
 
     ssl_certificate ${site.cert.fullchain};
-    ssl_certificate_key ${site.cert.privkey};`;
+    ssl_certificate_key ${site.cert.privkey};
+
+    # TAILLE MAXIMALE D'UN ENVOI — sans cette ligne, Nginx applique 1 Mo.
+    # L'application en accepte davantage : un import de logo repartait donc en
+    # 413 sans jamais atteindre le backend, donc sans code metier ni message.
+    # La valeur vient du profil ; un test de derive la compare a la politique.
+    client_max_body_size ${HTTP_MAX_BODY_MB}m;`;
 
     if (site.kind === 'proxy') {
       return `# --- ${site.id} (reverse proxy pur vers le backend interne) ---
@@ -358,6 +364,11 @@ export function renderNginxHttpOnly(target, opts) {
     listen 80;
     listen [::]:80;
     server_name ${site.host};
+
+    # Meme plafond qu'en HTTPS : ce vhost sert AVANT le certificat, et il
+    # proxifie deja /api. Une limite differente ferait dependre l'acceptation
+    # d'un import de l'avancement du certificat.
+    client_max_body_size ${HTTP_MAX_BODY_MB}m;
 
     location /.well-known/acme-challenge/ { root /var/www/certbot; }`;
 

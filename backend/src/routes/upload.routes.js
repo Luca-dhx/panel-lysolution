@@ -3,6 +3,9 @@ import multer from 'multer';
 import { requirePanelDev } from '../middlewares/panelAuth.middleware.js';
 import { processImage, deleteImage } from '../services/upload/upload.service.js';
 import { resolveMediaAuthority, relayToAuthority } from '../services/upload/mediaAuthority.js';
+import { validateImage } from '../services/upload/mediaValidation.js';
+import { MAX_INPUT_BYTES, humanBytes, policyFor } from '../services/upload/mediaPolicy.js';
+import ApiError from '../utils/ApiError.js';
 
 /**
  * MÉDIAS DU PANEL — import et retrait.
@@ -22,19 +25,59 @@ import { resolveMediaAuthority, relayToAuthority } from '../services/upload/medi
  * signature, donc rien n'est à provisionner, et aucun secret n'approche le
  * navigateur : il ne parle qu'à son propre backend.
  */
+/**
+ * LA BORNE VIENT DE LA POLITIQUE — plus jamais d'un nombre écrit ici.
+ *
+ * `multer` coupe le flux AVANT que le corps ne soit lu : on ne sait pas encore
+ * de quel rôle il s'agit. On laisse donc entrer jusqu'au plafond de la table,
+ * puis `validateImage` refuse par RÔLE, avec la bonne limite dans le message.
+ *
+ * Le filtre MIME ne porte aucune sécurité : `file.mimetype` est DÉCLARÉ par le
+ * navigateur d'après l'extension. Le vrai contrôle lit les octets.
+ */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024 },
+  limits: { fileSize: MAX_INPUT_BYTES },
   fileFilter(req, file, cb) {
     if (!String(file.mimetype || '').startsWith('image/')) {
-      const err = new Error('Seules les images sont autorisées.');
-      err.status = 400;
-      err.code = 'PANEL_UPLOAD_NOT_AN_IMAGE';
-      return cb(err);
+      return cb(ApiError.badRequest(
+        'PANEL_MEDIA_TYPE_UNSUPPORTED',
+        'Seules les images sont autorisées.',
+      ));
     }
     cb(null, true);
   },
 });
+
+/**
+ * TRADUIT LES REFUS DE `multer` EN ERREURS MÉTIER.
+ *
+ * ══ CE QUI S'AFFICHAIT AVANT ════════════════════════════════════════════════
+ *
+ *     Erreur interne.
+ *     MulterError: File too large
+ *
+ * Un rejet PRÉVU se présentait comme une panne du serveur, sans dire la limite
+ * ni quoi faire. Un utilisateur ne peut rien faire d'une panne ; il peut
+ * réduire une image — encore faut-il lui dire de combien.
+ */
+function traduireErreursUpload(err, req, res, next) {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return next(new ApiError(
+        413,
+        'PANEL_MEDIA_TOO_LARGE',
+        `Cette image dépasse la taille maximale acceptée (${humanBytes(MAX_INPUT_BYTES)}).`,
+        { maxBytes: MAX_INPUT_BYTES },
+      ));
+    }
+    return next(ApiError.badRequest(
+      'PANEL_MEDIA_INVALID',
+      `Envoi de fichier invalide (${err.code}).`,
+    ));
+  }
+  return next(err);
+}
 
 const router = Router();
 // Écriture réservée aux DEV, comme la fiche d'entreprise : ces médias
@@ -56,7 +99,7 @@ async function rendreAmont(res, amont) {
     .send(texte);
 }
 
-router.post('/image', upload.single('file'), async (req, res, next) => {
+router.post('/image', upload.single('file'), traduireErreursUpload, async (req, res, next) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: { code: 'PANEL_UPLOAD_EMPTY', message: 'Aucun fichier reçu.' } });
@@ -101,7 +144,18 @@ router.post('/image', upload.single('file'), async (req, res, next) => {
      */
     const role = String(req.query.role || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || null;
 
-    const result = await processImage(req.file.buffer, { prefix, role });
+    /**
+     * VALIDATION AVANT ÉCRITURE — chez l'AUTORITÉ, après le relais.
+     *
+     * Une instance cliente ne décide pas seule de ce que l'autorité acceptera :
+     * deux versions du Panel pourraient sinon diverger sur ce qu'est un média
+     * valide, et le refus dépendrait de l'instance par laquelle on passe.
+     */
+    await validateImage(req.file.buffer, { role });
+
+    // La politique décide de la SORTIE — plus aucun appelant ne choisit.
+    const { maxWidth } = policyFor(role);
+    const result = await processImage(req.file.buffer, { prefix, role, maxWidth });
     return res.status(201).json(result);
   } catch (err) {
     return next(err);
