@@ -14,6 +14,7 @@ import {
 } from '../registry/projectDestination.service.js';
 import { registryStore } from '../registry/registryStore.js';
 import { scheduleDelivery } from './syncDelivery.service.js';
+import { assertNoProviderSecrets } from '../../bridge/providerSecretGuard.js';
 import logger from '../../utils/logger.js';
 import {
   ACK_STATUS,
@@ -269,6 +270,25 @@ export async function emitChange({
   audience = null,
   writeId = newBridgeId(),
 }) {
+  /**
+   * ── LA FRONTIÈRE — AVANT LE JOURNAL, ET C'EST L'ORDRE QUI COMPTE ──────────
+   *
+   * Ce point est l'unique naissance d'une écriture destinée à un projet. Y
+   * poser la garde la rend valable pour TOUT — entreprise, contrat, médias, et
+   * les types qui viendront —, exactement comme la livraison immédiate juste
+   * en dessous.
+   *
+   * AVANT `create` : une charge utile refusée ne doit laisser aucune trace
+   * dans le journal. Le journal est durable et rejouable ; y écrire un secret
+   * puis refuser de le livrer laisserait la fuite au repos, prête à repartir
+   * au premier rattrapage.
+   *
+   * Elle LÈVE plutôt qu'elle ne filtre. Retirer silencieusement un champ
+   * produirait une écriture amputée que personne n'aurait demandée, et le
+   * bogue serait découvert côté projet, des semaines plus tard.
+   */
+  assertNoProviderSecrets(payload, { label: `${entityType}.payload` });
+
   const entry = {
     seq: await nextJournalSeq(),
     originProjectId,

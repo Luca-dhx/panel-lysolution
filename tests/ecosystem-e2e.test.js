@@ -275,8 +275,19 @@ check('…le projet connaît désormais le nom du Panel',
 check('le projet a reçu l’ENTREPRISE dès l’appairage',
   paired.json?.data?.discovered?.company === 'L.Y Solution');
 check('…dans sa version publiée', paired.json.data.discovered.companyVersion === 1);
-check('…mais AUCUNE API : elle ne lui est pas encore accordée',
-  paired.json.data.discovered.integratedApis.length === 0);
+/**
+ * ── L4 : PLUS AUCUNE API INTÉGRÉE N'EST JOINTE À L'APPAIRAGE ────────────────
+ *
+ * La découverte transportait, en clair, les identifiants des fournisseurs
+ * accordés au projet. Elle ne les transporte plus : un Panel à jour n'en envoie
+ * pas, et un Panel antérieur qui en enverrait se verrait refusé.
+ *
+ * Le projet compte donc ce qu'il a REFUSÉ, et non ce qu'il aurait reçu — zéro
+ * ici, puisque ce Panel n'envoie rien.
+ */
+check('…et AUCUNE API intégrée n’est jointe : le pont ne transporte plus de clés',
+  paired.json.data.discovered.integratedApisRefused === 0
+  && paired.json.data.discovered.integratedApis === undefined);
 
 const afterPairing = await http('GET', `${PANEL_URL}/api/projects/${projectId}`, { headers: AUTH });
 check('le Panel voit le projet APPAIRÉ',
@@ -344,14 +355,22 @@ await http('POST', `${projectProc.baseUrl}/api/panel-connection/sync-now`, {
 const projectStatus = await http('GET', `${projectProc.baseUrl}/api/panel-connection/status`, {
   headers: projectProc.auth,
 });
-const receivedApi = projectStatus.json?.data?.integratedApis?.find((a) => a.key === 'stripe');
-check('le projet a REÇU l’API par synchronisation', Boolean(receivedApi));
-check('…en mode TEST, celui de SON environnement', receivedApi?.mode === 'TEST');
-check('…restreinte à la seule clé accordée',
-  receivedApi?.credentialKeys?.join() === 'publishableKey');
-check('…et la clé SECRÈTE, non accordée, n’a jamais été livrée',
-  !receivedApi?.credentialKeys?.includes('secretKey'));
-check('l’état du projet n’expose aucune valeur de secret',
+/**
+ * ── L4 : L'AUTORISATION EST ENREGISTRÉE, MAIS RIEN N'EST LIVRÉ ──────────────
+ *
+ * Ce bloc affirmait l'inverse : le projet RECEVAIT l'API, avec ses clés, en
+ * mode TEST, restreinte à celles qui lui étaient accordées. C'était le
+ * comportement d'avant — et c'était la fuite.
+ *
+ * Le grant survit : c'est une AUTORISATION, et elle deviendra un droit
+ * d'invoquer une capacité (lot L3). Ce qui a disparu, c'est la livraison.
+ */
+check('l’état du projet ne porte plus AUCUNE API fournie par le Panel',
+  projectStatus.json?.data?.integratedApis === undefined);
+check('…et le Panel a bien conservé l’autorisation, elle',
+  (await http('GET', `${PANEL_URL}/api/company/integrated-apis/projects/${projectId}`, { headers: AUTH }))
+    .json?.data?.items?.some((g) => g.key === 'stripe'));
+check('AUCUNE valeur de secret n’apparaît dans l’état du projet',
   !JSON.stringify(projectStatus.json).includes('pk_test_e2e_public')
   && !JSON.stringify(projectStatus.json).includes('sk_test_e2e_secret'));
 
@@ -439,8 +458,9 @@ const reDiscovery = await http('POST', `${PANEL_URL}/api/executions`, {
 });
 check('le Panel CONSTATE la convergence en version 2',
   reDiscovery.json?.data?.result?.result?.appliedConfiguration?.companyVersion === 2);
-check('…et voit l’API intégrée reçue',
-  reDiscovery.json.data.result.result.appliedConfiguration.integratedApiKeys.join() === 'stripe');
+check('…et constate que le projet n’a appliqué AUCUNE API intégrée (L4)',
+  reDiscovery.json.data.result.result.appliedConfiguration.integratedApiCount === 0
+  && reDiscovery.json.data.result.result.appliedConfiguration.integratedApiKeys.length === 0);
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('LOT 6 — Idempotence : resynchroniser ne réapplique rien');

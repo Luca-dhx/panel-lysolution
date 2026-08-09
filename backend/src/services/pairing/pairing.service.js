@@ -334,13 +334,28 @@ export async function bootstrap(dto) {
  * sans lui, son premier pull rejouerait la configuration qu'il vient de
  * recevoir. Ce n'est pas incorrect — la synchronisation est idempotente —
  * mais c'est du travail inutile et un journal trompeur.
+ *
+ * ── CE QUI N'Y EST PLUS : `integratedApis` (lot L4) ─────────────────────────
+ *
+ * Cette réponse transportait, en clair, les identifiants des fournisseurs
+ * auxquels le projet était autorisé. Elle était le PREMIER chemin de fuite :
+ * un projet repartait de son appairage avec les clés Stripe, Brevo et Yousign
+ * de l'entreprise, qu'il rangeait dans sa propre base — et qu'aucun de ses
+ * modules ne lisait.
+ *
+ * Le champ reste OPTIONNEL dans `bootstrapResponseSchema` : un projet d'une
+ * version antérieure ne le voit simplement pas arriver, et n'en souffre pas.
+ * Il conserve ses identifiants locaux, qui sont ceux qu'il utilisait déjà.
+ *
+ * La garde de `emitChange` interdit désormais qu'un secret reparte par le
+ * journal ; celle-ci ferme la porte de l'appairage.
  */
 async function buildDiscoveryPayload(record) {
+  void record;
   try {
-    const [{ getActiveCompany, getPublishedConfiguration }, { apisForProject }, { currentCursor }] =
+    const [{ getActiveCompany, getPublishedConfiguration }, { currentCursor }] =
       await Promise.all([
         import('../company/company.service.js'),
-        import('../company/integratedApi.service.js'),
         import('../sync/syncCore.service.js'),
       ]);
 
@@ -349,7 +364,6 @@ async function buildDiscoveryPayload(record) {
 
     return {
       company: published?.payload ?? null,
-      integratedApis: await apisForProject(record),
       syncCursor: await currentCursor(),
     };
   } catch (err) {

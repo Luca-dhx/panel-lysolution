@@ -83,6 +83,14 @@ export const EVENT_TYPES = Object.freeze({
   COMPANY_PUBLISHED: 'COMPANY_PUBLISHED',
   INTEGRATED_API_GRANTED: 'INTEGRATED_API_GRANTED',
   INTEGRATED_API_REVOKED: 'INTEGRATED_API_REVOKED',
+  /**
+   * RETIRÉ EN L4 — plus aucune écriture ne l'émet.
+   *
+   * Il datait de l'époque où enregistrer une clé la rediffusait aux projets.
+   * Cette diffusion n'existe plus. Le type reste au catalogue parce que des
+   * chronologies en production le portent : le retirer rendrait illisibles des
+   * événements déjà écrits, pour un gain nul.
+   */
   INTEGRATED_API_PUBLISHED: 'INTEGRATED_API_PUBLISHED',
   PROJECT_DISCOVERED: 'PROJECT_DISCOVERED',
   // L1 — plan de contrôle IntegratedAPI. Ces événements ne concernent aucun

@@ -95,7 +95,7 @@ const projectBridgeRoutes = (await import(SB('src/routes/projectBridge.routes.js
  */
 const uiLiveRoutes = (await import(SB('src/routes/uiLive.routes.js'))).default;
 const { errorHandler } = await import(SB('src/middlewares/error.middleware.js'));
-const { PanelCompanyConfiguration, PanelProvidedApi } = await import(
+const { PanelCompanyConfiguration } = await import(
   SB('src/models/PanelConfiguration.model.js')
 );
 const ProjectMedia = (await import(SB('src/models/ProjectMedia.model.js'))).default;
@@ -210,10 +210,16 @@ async function wire() {
       DEV_COMPANY: panelConfiguration.applyCompanyChange,
       INTEGRATED_API_CONFIG: panelConfiguration.applyIntegratedApiChange,
     },
+    /**
+     * Depuis L4, `integratedApis` n'est plus appliqué : le projet REFUSE tout
+     * identifiant fournisseur venu du pont. Le harnais câble exactement ce que
+     * `config/bootstrap.js` câble — sans quoi il testerait autre chose que le
+     * produit.
+     */
     discoveryApplier: async ({ company, integratedApis }) => {
       if (company) await panelConfiguration.applyCompanyProfile(company, 'BOOTSTRAP');
       for (const api of integratedApis ?? []) {
-        await panelConfiguration.applyIntegratedApi(api);
+        panelConfiguration.refuseIntegratedApi(api);
       }
     },
   });
@@ -252,7 +258,8 @@ const COMMANDS = {
     // d'écriture observable dans le test d'échec d'application.
     mongoose.set('bufferCommands', false);
     await PanelCompanyConfiguration.deleteMany({});
-    await PanelProvidedApi.deleteMany({});
+    // La purge L4 des identifiants hérités — comme au démarrage réel.
+    await panelConfiguration.purgePanelProvidedApis();
     await wire();
     port = await serve();
     return { port, env: config.env, dbName: config.dbName, projectName: config.projectName };
@@ -363,6 +370,34 @@ const COMMANDS = {
   /** Le document brut — pour comparer un avant et un après, champ par champ. */
   async raw() {
     return PanelCompanyConfiguration.findOne({ key: 'SINGLETON' }).lean();
+  },
+
+  /**
+   * TOUTE LA BASE DE L'INSTANCE, collection par collection.
+   *
+   * ══ POURQUOI UN VIDAGE COMPLET, ET PAS UNE LECTURE CIBLÉE ═════════════════
+   *
+   * Chercher une clé fuitée là où on l'attend ne prouve rien : une fuite, par
+   * définition, atterrit là où personne ne regarde. Le seul constat qui vaille
+   * est « cette chaîne n'existe NULLE PART dans la base du projet ».
+   *
+   * Lu par le pilote natif — pas par un modèle mongoose, qui ne montrerait que
+   * les collections encore déclarées. Une collection orpheline (celle d'un
+   * modèle supprimé, justement) doit apparaître ici.
+   */
+  async dbDump() {
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    const dump = {};
+    for (const { name } of collections) {
+      dump[name] = await mongoose.connection.db.collection(name).find({}).limit(500).toArray();
+    }
+    return dump;
+  },
+
+  /** Les NOMS des collections réellement présentes — pour constater une purge. */
+  async collectionNames() {
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    return collections.map((c) => c.name).sort();
   },
 
   /** L'IDENTITÉ TELLE QUE LE PANEL LA LIRA — construite par le vrai service. */

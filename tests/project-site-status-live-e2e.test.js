@@ -197,6 +197,28 @@ section('SITE_STATUS_CAUSE_LIVE — une maintenance n’est PAS un fait contract
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('SITE_STATUS_NO_HEARTBEAT_DEPENDENCY');
 {
+  /**
+   * ── ON ATTEND LE SILENCE AVANT DE MESURER ─────────────────────────────────
+   *
+   * La section précédente vient de faire voyager deux projections (suspension
+   * puis levée). Si l'une est encore en vol quand on relève `avant`, elle
+   * atterrit pendant les battements — et l'on accuse le battement d'avoir
+   * avancé la fraîcheur métier, alors qu'il n'y est pour rien.
+   *
+   * Le test mesurait donc une COURSE, pas une propriété : il passait tant que
+   * la vidange était plus rapide que la lecture, et le moindre changement de
+   * latence ailleurs le faisait basculer. On draine explicitement, puis on
+   * exige que la fraîcheur soit STABLE avant de commencer.
+   */
+  await A.syncNow();
+  await attendre(async () => (await A.outboxPending()) === 0, 10_000);
+  const stable = await attendre(async () => {
+    const a = (await fiche(A.projectId)).runtime.lastBusinessSyncAt;
+    await new Promise((r) => { setTimeout(r, 150); });
+    return (await fiche(A.projectId)).runtime.lastBusinessSyncAt === a;
+  }, 10_000);
+  check('la file est vidée et la fraîcheur métier stabilisée', stable.atteint);
+
   const avant = await fiche(A.projectId);
   for (let i = 0; i < 3; i += 1) await A.heartbeat();
   const apres = await fiche(A.projectId);

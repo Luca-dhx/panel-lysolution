@@ -24,13 +24,15 @@ import { randomUUID, createHash } from 'node:crypto';
 import PanelIntegratedApi from '../../models/PanelIntegratedApi.model.js';
 import ApiError from '../../utils/ApiError.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
-import { encryptSecret, decryptSecret } from '../../utils/panelCrypto.js';
-import { getProjectOrThrow, listProjects } from '../registry/projectRegistry.service.js';
-import { emitChange } from '../sync/syncCore.service.js';
+// `decryptSecret` n'est plus importé : depuis L4, ce service CHIFFRE, il ne
+// déchiffre plus. Le seul déchiffrement du Panel vit dans le plan de contrôle
+// (`services/integratedApi/credentialVault.js`), et ne sort pas de la machine.
+import { encryptSecret } from '../../utils/panelCrypto.js';
+import { getProjectOrThrow } from '../registry/projectRegistry.service.js';
+// `emitChange` n'est plus importé : ce service n'écrit plus rien sur le pont.
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { getActiveCompanyOrThrow } from './company.service.js';
 
-const API_ENTITY = 'INTEGRATED_API_CONFIG';
 const KEY_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /* -------------------------------------------------------------------------- */
@@ -170,9 +172,9 @@ export async function setCredentials(apiId, mode, { values = {}, remove = [] }, 
     },
   });
 
-  // Les projets qui consomment cette API doivent recevoir la nouvelle clé —
-  // sinon ils continueraient d'appeler le fournisseur avec l'ancienne.
-  await republishToGrantees(apiId);
+  // L4 — PLUS AUCUNE REDIFFUSION. Une clé enregistrée ici reste ici. Les
+  // projets ne l'attendent pas : ils utilisent encore leurs identifiants
+  // locaux, et le feront jusqu'à leur migration provider.
   return describeApi(await getApiOrThrow(apiId));
 }
 
@@ -195,18 +197,15 @@ export async function updateApi(apiId, patch, actor = {}) {
   await PanelIntegratedApi.updateOne({ apiId }, {
     $set: { ...update, updatedAt: nowIso(), updatedBy: actor.userId ?? null },
   });
-  await republishToGrantees(apiId);
   void api;
   return describeApi(await getApiOrThrow(apiId));
 }
 
 export async function deleteApi(apiId) {
   const api = await getApiOrThrow(apiId);
-  // Révoquer avant de supprimer : les projets doivent apprendre que l'accès
-  // disparaît, sinon ils garderaient une clé morte indéfiniment.
-  for (const grant of api.grants ?? []) {
-    await emitRevocation(api, grant.projectId);
-  }
+  // L4 — plus de tombstone à émettre : rien n'a été publié, donc rien à
+  // révoquer sur le fil. Les projets qui détenaient d'anciennes clés les
+  // purgent eux-mêmes au démarrage (migration `purgePanelProvidedApis`).
   await PanelIntegratedApi.deleteOne({ apiId });
   return { deleted: true, revoked: (api.grants ?? []).length };
 }
@@ -247,7 +246,6 @@ export async function grantAccess(apiId, projectId, { keys = [] } = {}, actor = 
     $set: { updatedAt: nowIso() },
   });
 
-  await publishToProject(await getApiOrThrow(apiId), project);
   await recordEvent({
     projectId,
     type: EVENT_TYPES.INTEGRATED_API_GRANTED,
@@ -268,7 +266,6 @@ export async function revokeAccess(apiId, projectId) {
     $pull: { grants: { projectId } },
     $set: { updatedAt: nowIso() },
   });
-  await emitRevocation(api, projectId);
   await recordEvent({
     projectId,
     type: EVENT_TYPES.INTEGRATED_API_REVOKED,
@@ -280,110 +277,36 @@ export async function revokeAccess(apiId, projectId) {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  DIFFUSION                                                                 */
+/*  DIFFUSION — SUPPRIMÉE (lot L4)                                            */
 /* -------------------------------------------------------------------------- */
 
-/**
- * CE QU'UN PROJET REÇOIT — la seule fonction du Panel qui déchiffre des
- * secrets pour les envoyer ailleurs. Elle est volontairement courte et
- * unique : c'est le point à relire quand on doute de l'étanchéité.
+/*
+ * ── CE QUI VIVAIT ICI, ET POURQUOI IL N'Y EST PLUS ──────────────────────────
  *
- * Le mode est celui du PROJET. Un projet en TEST ne peut pas recevoir les
- * identifiants PROD, même si l'API est en mode PROD côté Panel.
+ * Quatre fonctions formaient le seul chemin du Panel qui déchiffrait des
+ * secrets pour les envoyer ailleurs :
+ *
+ *   buildApiPayloadFor()   déchiffrait les identifiants du mode du projet
+ *   publishToProject()     les poussait sur le pont, nommément
+ *   republishToGrantees()  rediffusait à chaque changement de clé
+ *   emitRevocation()       posait le tombstone correspondant
+ *
+ * L'audit L1 a montré que le projet les recevait, les rechiffrait, les
+ * rangeait dans `PanelProvidedApi` — et que RIEN ne les lisait. Un risque
+ * réel pour un bénéfice nul.
+ *
+ * Elles ne sont pas commentées « au cas où » : elles sont supprimées, et la
+ * garde `assertNoProviderSecrets` de `syncCore.emitChange` empêche désormais
+ * de les réécrire par inadvertance.
+ *
+ * ── CE QUI RESTE, ET QUI N'EST PAS UNE FUITE ────────────────────────────────
+ *
+ * `grants[]` demeure : c'est une AUTORISATION, pas une clé. Elle dit quel
+ * projet aura le droit d'invoquer quelle capacité (L3). La détruire ici
+ * effacerait une configuration saisie à la main, pour un gain nul.
+ *
+ * `grantsForProject()` demeure aussi : elle ne rend que des noms.
  */
-export function buildApiPayloadFor(api, project) {
-  const grant = (api.grants ?? []).find((g) => g.projectId === project.projectId);
-  if (!grant) return null;
-
-  const projectMode = project.runtime?.environment === 'PROD' ? 'PROD' : 'TEST';
-  const set = api.credentials?.[projectMode] ?? {};
-  const stored = toObject(set.values);
-
-  // Restriction par clé : vide = tout ce que le mode contient.
-  const allowedNames = grant.keys?.length > 0
-    ? grant.keys.filter((name) => stored[name] !== undefined)
-    : Object.keys(stored);
-
-  const credentials = {};
-  for (const name of allowedNames) credentials[name] = decryptSecret(stored[name]);
-
-  return {
-    apiId: api.apiId,
-    key: api.key,
-    label: api.label,
-    provider: api.provider,
-    category: api.category,
-    enabled: api.enabled,
-    // Le mode EFFECTIVEMENT servi, pour que le projet puisse le vérifier et
-    // refuser s'il ne correspond pas au sien.
-    mode: projectMode,
-    settings: api.settings ?? {},
-    credentials,
-    updatedAt: api.updatedAt,
-  };
-}
-
-/** Émet la configuration d'une API vers UN projet nommé. */
-async function publishToProject(api, project) {
-  const payload = buildApiPayloadFor(api, project);
-  if (payload === null) return false;
-  await emitChange({
-    entityType: API_ENTITY,
-    // L'identité de l'entité est celle de l'API, pas du couple API×projet :
-    // le contrat exige un UUID, et le destinataire est déjà porté par
-    // `audience`. Un projet ne voit jamais que sa propre version.
-    entityId: api.apiId,
-    payload,
-    // NOMINATIF — c'est ce qui rend l'autorisation effective.
-    audience: project.projectId,
-  });
-  return true;
-}
-
-/** Tombstone : l'accès disparaît, le projet doit oublier la clé. */
-async function emitRevocation(api, projectId) {
-  await emitChange({
-    entityType: API_ENTITY,
-    entityId: api.apiId,
-    deleted: true,
-    payload: null,
-    audience: projectId,
-  });
-}
-
-/** Rediffuse une API à tous ses bénéficiaires — après un changement de clé. */
-export async function republishToGrantees(apiId) {
-  const api = await getApiOrThrow(apiId);
-  const projects = await listProjects();
-  let published = 0;
-  for (const grant of api.grants ?? []) {
-    const project = projects.find((p) => p.projectId === grant.projectId);
-    if (!project || project.pairing?.status !== 'PAIRED') continue;
-    if (await publishToProject(api, project)) published += 1;
-  }
-  if (published > 0) {
-    await recordEvent({
-      projectId: null,
-      type: EVENT_TYPES.INTEGRATED_API_PUBLISHED,
-      source: 'PANEL',
-      summary: `API « ${api.label} » rediffusée à ${published} projet(s).`,
-      data: { apiId, key: api.key, published },
-    });
-  }
-  return published;
-}
-
-/**
- * Toutes les APIs auxquelles un projet a droit — utilisé à l'appairage pour
- * qu'il parte avec sa configuration complète, sans attendre un premier pull.
- */
-export async function apisForProject(project) {
-  const apis = await PanelIntegratedApi.find({
-    'grants.projectId': project.projectId,
-    enabled: true,
-  }).lean();
-  return apis.map((api) => buildApiPayloadFor(api, project)).filter(Boolean);
-}
 
 /** Les autorisations d'un projet, sans aucun secret — pour l'écran projet. */
 export async function grantsForProject(projectId) {
@@ -412,6 +335,5 @@ function toObject(value) {
 
 export default {
   listApis, getApiOrThrow, describeApi, createApi, updateApi, deleteApi,
-  setCredentials, grantAccess, revokeAccess, republishToGrantees,
-  apisForProject, grantsForProject, buildApiPayloadFor,
+  setCredentials, grantAccess, revokeAccess, grantsForProject,
 };

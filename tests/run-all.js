@@ -35,6 +35,9 @@ const TESTS = [
   'integrated-api-encryption.test.js',
   'integrated-api-control-plane.test.js',
   'integrated-api-http-security.test.js',
+  // L4 — la frontière : aucun identifiant fournisseur ne franchit le pont.
+  // L'invariant est dérivé du registre, donc il survit au provider suivant.
+  'bridge-provider-secret-boundary.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',
@@ -42,6 +45,9 @@ const TESTS = [
   'developer-branding-instance-ack-e2e.test.js',
   // Cross-dépôt : un vrai SB Auto, dans son processus, tire et applique.
   'real-panel-sbauto-branding-ack-e2e.test.js',
+  // L4 — LA PREUVE : quatre sentinelles dans le coffre du Panel, et zéro
+  // occurrence dans la base, l'identité et les écrans d'un projet réel.
+  'provider-secret-sentinel-e2e.test.js',
   // Un enregistrement, et la page « Aide » du projet suit — sans second geste.
   'panel-company-save-to-help-e2e.test.js',
   // L4 — le Panel LIVRE au lieu d'attendre que le projet tire ; le journal

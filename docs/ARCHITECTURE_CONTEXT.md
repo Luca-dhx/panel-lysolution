@@ -1360,14 +1360,38 @@ Le **plan de contrôle** du Panel — `/api/integrated-apis`, écran
   identifiants, depuis sa propre page Manager. Rien n'a changé pour lui.
 - **Les capacités sont déclarées, pas invocables** (`capabilitiesInvocable:
   false`). La passerelle est le lot L3.
-- **L'ancien coffre reste en service.** `PanelIntegratedApi` déchiffre encore
-  des secrets et les pousse aux projets appairés sur le pont ; son écran vit à
-  `/integrated-apis/legacy` et porte un avertissement. Le débrancher est le lot
-  L4 — et il est peu risqué, puisque côté projet ces secrets sont persistés
-  mais **lus par aucun code**.
 - **La doctrine `activeMode` de SB Auto est intacte.** Un DEV peut toujours y
   choisir Stripe PROD sur une instance TEST. C'est le lot L2, et il exige
   d'abord un inventaire du parc réel.
+
+### AUCUN SECRET FOURNISSEUR NE TRAVERSE LE PONT (lot L4, livré)
+
+C'est l'invariant le plus important du système, et il est tenu par le code,
+pas par la discipline.
+
+```
+secrets du plan de contrôle   →  restent dans le Panel
+secrets legacy des projets    →  restent dans le projet, jusqu'à sa migration
+le pont                       →  données métier, capacités, état — rien d'autre
+```
+
+`assertNoProviderSecrets()` est posée à l'**unique** point d'émission
+(`syncCore.emitChange`), **avant** l'écriture au journal : une charge refusée
+ne laisse aucune trace durable. Elle **lève** plutôt qu'elle ne filtre — retirer
+un champ en silence produirait une écriture amputée que personne n'a demandée.
+
+Elle ne s'appuie pas sur une liste de mots : son vocabulaire est dérivé de
+`credentialRoles.secret` du registre. Un fournisseur futur est couvert d'office ;
+`publishableKey`, déclarée publique, continue de passer.
+
+**L'ancien coffre** (`PanelIntegratedApi`) subsiste comme registre
+d'autorisations — il ne déchiffre plus rien et n'émet plus rien. Son écran vit à
+`/integrated-apis/legacy`. Côté projet, `PanelProvidedApi` a été **supprimé** et
+sa collection est purgée au démarrage.
+
+**Fenêtre de transition** : un Panel antérieur à L4 peut encore émettre des
+identifiants ; le projet les **refuse** sans casser le reste du lot. Conditions
+de retrait de cette tolérance : voir §14 de la roadmap.
 
 ### La distinction qui tient la doctrine
 

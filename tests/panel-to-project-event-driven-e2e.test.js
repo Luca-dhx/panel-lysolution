@@ -358,10 +358,14 @@ section('PUSH_AUDIENCE_IS_STRICT — une écriture nominative ne touche qu’une
 section('LE DISPATCHER EST GÉNÉRIQUE — un second type passe sans rien recâbler');
 {
   /**
-   * `INTEGRATED_API_CONFIG` est le SECOND type que le Panel émet aujourd'hui,
-   * et il est NOMINATIF. Aucune ligne de L4 ne le mentionne : s'il est livré,
-   * c'est que le dispatcher transporte des entrées de journal et non des cas
-   * particuliers.
+   * `INTEGRATED_API_CONFIG` est un type NOMINATIF du vocabulaire du pont.
+   * Aucune ligne du dispatcher ne le mentionne : s'il est livré, c'est qu'il
+   * transporte des entrées de journal et non des cas particuliers.
+   *
+   * Depuis le lot L4 du plan de contrôle IntegratedAPI, plus AUCUN producteur
+   * du Panel ne l'émet — la charge utile ci-dessous est fabriquée par ce test
+   * seul, et ne contient volontairement aucun identifiant : la garde
+   * `assertNoProviderSecrets` refuserait l'émission.
    */
   const { emitChange } = await import('../backend/src/services/sync/syncCore.service.js');
   const vus = [];

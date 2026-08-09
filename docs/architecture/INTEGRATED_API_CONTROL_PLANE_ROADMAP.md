@@ -1,14 +1,24 @@
 # IntegratedAPI — Panel comme plan de contrôle des intégrations
 
-> **Statut : L1 LIVRÉ. Aucun provider migré.**
+> **Statut : L1 et L4 LIVRÉS. Aucun provider migré.**
 >
 > | | |
 > |---|---|
 > | Plan de contrôle Panel | **✅ opérationnel** — registre, coffre, validation, écran |
+> | Diffusion de secrets sur le pont | **✅ SUPPRIMÉE** — garde structurelle en place |
 > | Runtime métier des projets | **inchangé** — SB Auto appelle toujours les fournisseurs directement |
 > | Migration des providers | **non commencée** |
-> | Diffusion de secrets sur le pont | **toujours active** — L4 la coupera |
 > | Doctrine `activeMode` côté projet | **toujours en place** — L2 la révoquera |
+>
+> ### La doctrine, désormais tenue par le code
+>
+> ```
+> PROVIDER SECRETS NEVER CROSS THE PANEL ↔ PROJECT BRIDGE
+>
+>   secrets du plan de contrôle   →  restent dans le Panel
+>   secrets legacy des projets    →  restent dans le projet, jusqu'à sa migration
+>   le pont                       →  données métier, capacités, état — rien d'autre
+> ```
 >
 > Ce document décrit ce qui EXISTE (prouvé par le code, référence à l'appui),
 > ce qui est VISÉ, et la route entre les deux. Les sections §1 à §12 décrivent
@@ -919,12 +929,11 @@ Panel, dans les deux jeux, sans qu'aucun projet ne bouge.
 
 ---
 
-### L4 — Arrêt de la diffusion de secrets · **lot de sécurité**
+### L4 — Arrêt de la diffusion de secrets · ✅ **LIVRÉ**
 
-- **Objectif** — plus aucun secret ne traverse le pont. Peut être livré **très
-  tôt** : rien ne consomme ces secrets (§1.1).
-- **Dépendances** — L1 *(livré)*. Indépendant de L2 et L3 — c'est le prochain
-  lot recommandé.
+- **Objectif** — plus aucun secret ne traverse le pont.
+- **Dépendances** — L1. Livré juste après, avant L2 et L3, parce qu'il fermait
+  une exposition réelle et ne dépendait d'aucune décision produit.
 
 **Chaîne de propagation — inventaire EXHAUSTIF relevé pendant L1.**
 C'est la liste de travail de L4 ; aucun de ces fichiers n'a été modifié.
@@ -962,18 +971,72 @@ lecteur des secrets reçus, et il n'est appelé par aucun code. Les supprimer ne
 casse aucun chemin en service.
 
 **Migration** — purger `PanelProvidedApi.credentials` au premier boot suivant.
-- **Tests** — **aucune charge utile de pont ne contient de valeur de
-  credential** (test de non-fuite, à écrire en premier) · un projet appairé
-  reçoit la liste de ses capacités, pas de clés · purge des
-  `PanelProvidedApi.credentials` existantes au premier boot.
-- **Migration** — les `PanelProvidedApi` existantes sont **purgées** (leurs
-  credentials sont inutiles et dangereux).
-- **Rollback** — possible, mais on ne remet pas une fuite en place. En pratique :
-  sans retour.
-- **Risque** — **faible fonctionnellement** (personne ne lit ces secrets),
-  **fort en valeur de sécurité**.
-- **GO** — le test de non-fuite passe ; les bases des projets ne contiennent
-  plus aucun credential venu du Panel.
+**Ce qui a été livré**
+
+*Panel — la source*
+
+| Changement | Fichier |
+|---|---|
+| **La frontière**, dérivée du registre | [`bridge/providerSecretGuard.js`](../../backend/src/bridge/providerSecretGuard.js) *(nouveau)* |
+| Garde posée à l'unique point d'émission, **avant** le journal | [`services/sync/syncCore.service.js`](../../backend/src/services/sync/syncCore.service.js) |
+| `integratedApis` retiré de la réponse d'appairage | [`services/pairing/pairing.service.js`](../../backend/src/services/pairing/pairing.service.js) |
+| `buildApiPayloadFor` · `publishToProject` · `republishToGrantees` · `emitRevocation` · `apisForProject` **supprimées** ; `decryptSecret` n'y est plus importé | [`services/company/integratedApi.service.js`](../../backend/src/services/company/integratedApi.service.js) |
+| `INTEGRATED_API_PUBLISHED` marqué retiré (conservé : des chronologies le portent) | [`models/PanelSupervision.model.js`](../../backend/src/models/PanelSupervision.model.js) |
+
+*SB Auto — la destination*
+
+| Changement | Fichier |
+|---|---|
+| Modèle `PanelProvidedApi` **supprimé** | `models/PanelConfiguration.model.js` |
+| `getProvidedApiCredentials()` **supprimée** (le lecteur déchiffrant sans appelant) | `services/panelConfiguration/panelConfiguration.service.js` |
+| `listProvidedApis()` supprimée ; le handler devient `refuseIntegratedApi()` | idem |
+| `purgePanelProvidedApis()` — purge idempotente au démarrage | idem + `config/bootstrap.js` |
+| `integratedApis` retiré de `/panel-connection/status` ; l'appairage rend `integratedApisRefused` | `controllers/panelBridge.controller.js`, `manager/src/types/index.ts` |
+
+**La garde survit au fournisseur suivant.** Elle ne lit pas une liste de mots :
+elle dérive son vocabulaire de `credentialRoles.secret` du registre. Un
+cinquième fournisseur déclarant `{ code: 'privateToken', secret: true }` est
+couvert sans qu'on touche à la frontière — et `publishableKey`, déclarée
+`secret: false`, continue de passer. Un filet supplémentaire reconnaît les
+clés à leur **forme** (`sk_live_…`, `whsec_…`, `xkeysib-…`), au cas où l'une
+voyagerait sous un nom innocent.
+
+**Rolling deployment** — voir §14 ci-dessous.
+
+- **Migration** — la collection `panelprovidedapis` est **purgée au démarrage**
+  du projet. Elle ne dépend d'aucun Panel : une instance hors ligne se nettoie
+  elle-même.
+- **Rollback** — aucun. On ne remet pas une fuite en place.
+- **Risque constaté** — **nul fonctionnellement** : l'audit avait établi que
+  ces secrets n'étaient lus par aucun code, et les suites des deux dépôts le
+  confirment.
+- **GO atteint** — quatre sentinelles dans le coffre du Panel, **zéro
+  occurrence** dans le journal de synchronisation, dans toute la base d'un
+  projet réel, dans son identité et dans ses écrans.
+
+**Tests** — 2 suites, 76 assertions :
+`bridge-provider-secret-boundary` (la frontière, dont l'invariant générique) ·
+`provider-secret-sentinel-e2e` (la preuve, avec une instance SB Auto réelle).
+
+#### §14 — La fenêtre de transition, et quand la refermer
+
+Le vocabulaire du pont conserve `INTEGRATED_API_CONFIG`. C'est délibéré : le
+retirer serait un changement de **contrat**, mirroité dans les deux dépôts et
+dans les spécifications OpenAPI — un lot à lui seul, et surtout un lot qui
+casserait le déploiement progressif.
+
+| Combinaison | Comportement | Pourquoi |
+|---|---|---|
+| **Panel L4 → projet L4** | Aucune entité émise, rien à refuser. | Le cas nominal. |
+| **Panel L4 → projet antérieur** | Le champ `integratedApis` de l'appairage est `optional` : le projet ne le voit pas arriver et continue avec ses identifiants **locaux**, qui n'ont pas bougé. | Aucune rupture. |
+| **Panel antérieur → projet L4** | L'entité arrive, le projet la **REFUSE** : un avertissement nomme le fournisseur, rien n'est persisté, et l'écriture est acquittée. | Faire échouer le lot bloquerait l'entreprise, les contrats et les médias qui voyagent avec. |
+| **Panel antérieur → projet antérieur** | Comportement d'avant L4, inchangé. | Rien n'a été déployé. |
+
+**Quand retirer la tolérance** — quand plus aucune instance de Panel antérieure
+à L4 ne tourne, ET que le journal des projets n'a plus produit d'avertissement
+`CREDENTIALS_REFUSED` sur un cycle de déploiement complet. Le retrait se fera
+avec la suppression de `INTEGRATED_API_CONFIG` du vocabulaire — donc dans un lot
+de contrat, pas en passant.
 
 ---
 

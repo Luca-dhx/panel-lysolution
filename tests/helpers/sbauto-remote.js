@@ -92,6 +92,9 @@ export async function startSbAutoInstance({
     pull(args) { return send('pull', args); },
     state() { return send('state'); },
     raw() { return send('raw'); },
+    /** TOUTE la base de l'instance — le seul moyen de prouver une absence. */
+    dbDump() { return send('dbDump'); },
+    collectionNames() { return send('collectionNames'); },
     identity() { return send('identity'); },
     /** Ce que la page « Aide » affichera — via son vrai contrôleur. */
     help() { return send('help'); },
