@@ -14,7 +14,10 @@
 // Le laisser filtrer dans `panelprojects` créerait une quatrième copie des
 // URLs — exactement la multiplication de sources qu'on supprime.
 import PanelProject from '../../models/PanelProject.model.js';
-import { PanelProjectPresentation } from '../../models/PanelProjectProjection.model.js';
+import {
+  PanelProjectPresentation,
+  PanelProjectSiteStatus,
+} from '../../models/PanelProjectProjection.model.js';
 import PanelProjectDestination, { DESTINATION_STATUS } from '../../models/PanelProjectDestination.model.js';
 import { projectEnvironmentOf } from './projectDestination.service.js';
 
@@ -99,6 +102,29 @@ function presentationOf(projection) {
   };
 }
 
+/**
+ * L'ÉTAT DU SITE TEL QUE LE PROJET L'A DÉCLARÉ — jamais recalculé ici.
+ *
+ * `null` se lit « jamais reçu depuis le projet », et c'est une réponse : elle
+ * vaut mieux qu'un « actif » supposé. Le Panel n'a aucun moyen de connaître
+ * les contrats vivants ni les suspensions techniques d'une instance ; en
+ * déduire l'accessibilité serait inventer.
+ */
+function siteStatusOf(projection) {
+  if (!projection) return null;
+  return {
+    accessible: projection.accessible ?? null,
+    status: projection.status ?? null,
+    suspensionSource: projection.suspensionSource ?? 'NONE',
+    reason: projection.reason ?? null,
+    suspendedAt: projection.suspendedAt ?? null,
+    contractProtectionEnabled: projection.contractProtectionEnabled ?? null,
+    technicalSuspension: projection.technicalSuspension ?? null,
+    modifiedAt: projection.sourceModifiedAt ?? null,
+    receivedAt: projection.receivedAt ?? null,
+  };
+}
+
 /** Décore UNE fiche avec sa destination active. */
 async function withNetwork(record) {
   if (!record) return null;
@@ -108,11 +134,15 @@ async function withNetwork(record) {
   // jamais être trouvée.
   const environment = projectEnvironmentOf(record);
   if (!environment) {
-    const seule = await PanelProjectPresentation.findOne({ projectId: record.projectId }).lean();
+    const [seule, siteSeul] = await Promise.all([
+      PanelProjectPresentation.findOne({ projectId: record.projectId }).lean(),
+      PanelProjectSiteStatus.findOne({ projectId: record.projectId }).lean(),
+    ]);
     return {
       ...record,
       activeNetwork: networkOf(null),
       activePresentation: presentationOf(seule),
+      activeSiteStatus: siteStatusOf(siteSeul),
     };
   }
   const destination = await PanelProjectDestination.findOne({
@@ -120,13 +150,15 @@ async function withNetwork(record) {
     environment,
     status: DESTINATION_STATUS.ACTIVE,
   }).lean();
-  const presentation = await PanelProjectPresentation.findOne({
-    projectId: record.projectId,
-  }).lean();
+  const [presentation, site] = await Promise.all([
+    PanelProjectPresentation.findOne({ projectId: record.projectId }).lean(),
+    PanelProjectSiteStatus.findOne({ projectId: record.projectId }).lean(),
+  ]);
   return {
     ...record,
     activeNetwork: networkOf(destination),
     activePresentation: presentationOf(presentation),
+    activeSiteStatus: siteStatusOf(site),
   };
 }
 
@@ -149,10 +181,16 @@ async function withNetworkAll(records) {
     projectId: { $in: records.map((r) => r.projectId) },
   }).lean();
   const parProjet = new Map(presentations.map((p) => [p.projectId, p]));
+  // Même discipline pour l'état du site : UNE requête pour tout le parc.
+  const sites = await PanelProjectSiteStatus.find({
+    projectId: { $in: records.map((r) => r.projectId) },
+  }).lean();
+  const parSite = new Map(sites.map((s) => [s.projectId, s]));
   return records.map((r) => ({
     ...r,
     activeNetwork: networkOf(par.get(`${r.projectId}|${projectEnvironmentOf(r) ?? ''}`) ?? null),
     activePresentation: presentationOf(parProjet.get(r.projectId) ?? null),
+    activeSiteStatus: siteStatusOf(parSite.get(r.projectId) ?? null),
   }));
 }
 
@@ -164,7 +202,9 @@ async function withNetworkAll(records) {
  * celle-là, puisque plus rien ne la recalculerait.
  */
 function forStorage(record) {
-  const { _id, activeNetwork, activePresentation, ...data } = record;
+  const {
+    _id, activeNetwork, activePresentation, activeSiteStatus, ...data
+  } = record;
   return data;
 }
 

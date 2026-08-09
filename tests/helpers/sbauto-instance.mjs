@@ -169,8 +169,16 @@ async function wire() {
   installSyncTriggers();
 
   bridgeRuntime.configureInitialProjections(async () => {
-    await projectSync.projectNow('PROJECT_PRESENTATION');
-    await projectSync.projectNow('CONTRACT');
+    /**
+     * `reconcileAll` — EXACTEMENT ce que `config/bootstrap.js` appelle.
+     *
+     * Ce harnais énumérait les projections à la main. C'est la divergence de
+     * câblage qui avait déjà coûté cher au lot L0 : le jour où une projection
+     * s'ajoute, le harnais ne la connaît pas, le test reste vert, et le
+     * produit se tait.
+     */
+    await projectSync.reconcileAll();
+    await teamSync.reconcileTeam();
     const issue = await runPushCycle();
     return { delivered: (issue?.delivered ?? 0) > 0 };
   });
@@ -431,6 +439,45 @@ const COMMANDS = {
     company.logos = { ...(company.logos ?? {}), header: url };
     await company.save();
     return { logo: company.logos.header };
+  },
+
+  /**
+   * BASCULE LA PROTECTION DEPUIS LE MANAGER — le vrai chemin métier.
+   *
+   * `setContractProtection` est l'entonnoir : il écrit le réglage, journalise
+   * l'audit, puis RÉCONCILIE le statut. C'est aussi ce qu'appelle l'opération
+   * de pont invoquée par le Panel — les deux commandes aboutissent au même
+   * endroit, et doivent donc produire la même projection.
+   */
+  async setProtection({ enabled }) {
+    const { setContractProtection } = await import(SB('src/services/siteEnforcement.service.js'));
+    const site = await setContractProtection({
+      enabled, actor: { _id: null, role: 'DEV', origin: 'MANAGER' },
+    });
+    return { status: site.status, suspensionSource: site.suspensionSource };
+  },
+
+  /** Suspension TECHNIQUE — la cause qui n'a RIEN à voir avec un contrat. */
+  async setTechnical({ active, reason }) {
+    const { setTechnicalSuspension } = await import(SB('src/services/siteEnforcement.service.js'));
+    const site = await setTechnicalSuspension({
+      active, reason: reason ?? 'Maintenance', actorEmail: 'dev@test',
+      actor: { _id: null, role: 'DEV' },
+    });
+    return { status: site.status, suspensionSource: site.suspensionSource };
+  },
+
+  /** L'état du site tel que le PROJET le tient — pour comparer aux deux bouts. */
+  async siteState() {
+    const { getSingleton } = await import(SB('src/utils/singleton.js'));
+    const SiteStatus = (await import(SB('src/models/SiteStatus.model.js'))).default;
+    const s = await getSingleton(SiteStatus);
+    return {
+      status: s.status,
+      suspensionSource: s.suspensionSource,
+      contractProtectionEnabled: Boolean(s.contractProtectionEnabled),
+      technicalSuspension: Boolean(s.technicalSuspension?.active),
+    };
   },
 
   /** LA PROJECTION TELLE QUE LE PROJET LA CONSTRUIT — avant tout transport. */

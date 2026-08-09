@@ -38,6 +38,9 @@ const TESTS = [
   // L4 — le Panel LIVRE au lieu d'attendre que le projet tire ; le journal
   // durable reste la source de vérité, et le tirage la réparation.
   'panel-to-project-event-driven-e2e.test.js',
+  // L8 — l'état du site devient une projection vivante ; plus aucune lecture
+  // métier directe depuis un écran du Panel.
+  'project-site-status-live-e2e.test.js',
   // L1/L2 — le contrat de présentation avec médias, et le sort d'un refus.
   'project-presentation-media-contract-e2e.test.js',
   'payload-drift.check.mjs',

@@ -504,6 +504,7 @@ components:
                   - EVENT
                   - MEETING
                   - PROJECT_PRESENTATION
+                  - PROJECT_SITE_STATUS
             operations:
               type: array
               items: { type: string }
@@ -905,6 +906,7 @@ components:
             - EVENT
             - MEETING
             - PROJECT_PRESENTATION
+            - PROJECT_SITE_STATUS
         entityId:
           type: string
           format: uuid
@@ -917,6 +919,10 @@ components:
           description: >
             Contenu du document, dont le schéma dépend de entityType. null si
             deleted=true. Aucun secret en clair.
+
+            PROJECT_SITE_STATUS : voir ProjectSiteStatusPayload. Agrégat
+            DISTINCT de CONTRACT — une suspension technique n'est pas un fait
+            contractuel, et les confondre rendrait la cause illisible.
 
             PROJECT_PRESENTATION : voir ProjectPresentationPayload. Ce schéma
             est FERMÉ côté Panel — une clé inconnue fait REFUSER l'écriture
@@ -1027,6 +1033,55 @@ components:
             website: { type: string, minLength: 1 }
             manager: { type: string, minLength: 1 }
             backend: { type: string, minLength: 1 }
+
+    ProjectSiteStatusPayload:
+      type: object
+      additionalProperties: false
+      description: >
+        Payload de l'entityType PROJECT_SITE_STATUS — « ce site est-il
+        accessible, et sinon pourquoi ? ». Pousse par le PROJET, qui est seul a
+        connaitre ses contrats vivants et ses suspensions techniques.
+
+        AGREGAT DISTINCT DE CONTRACT, et il doit le rester. L'accessibilite a
+        DEUX causes independantes : une suspension TECHNIQUE (maintenance,
+        decidee par un operateur) et une cause CONTRACTUELLE (aucun contrat
+        vivant alors que la protection est active). Les ranger sous le contrat
+        ferait afficher « probleme de contrat » devant une maintenance, et
+        rendrait la fiche incapable de dire pourquoi un site est coupe.
+
+        LE VERDICT ET SA CAUSE VOYAGENT ENSEMBLE : `accessible` resume,
+        `suspensionSource` explique. Publier le seul resume forcerait le
+        destinataire a deviner la cause. `NONE` est une reponse a part entiere.
+
+        Le destinataire ne RECALCULE jamais : ni le verdict, ni la cause.
+      required: [accessible, status, suspensionSource, contractProtectionEnabled, technicalSuspension]
+      properties:
+        accessible:
+          type: boolean
+          description: Le verdict, tel que le projet le rend.
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED]
+        suspensionSource:
+          type: string
+          enum: [NONE, TECHNICAL, CONTRACT]
+          description: La cause, nommee par sa source. NONE = rien ne suspend ce site.
+        reason:
+          type: string
+          minLength: 1
+          description: Motif LISIBLE, tel que le projet le formule. Jamais reconstruit.
+        suspendedAt:
+          type: string
+          format: date-time
+          nullable: true
+        contractProtectionEnabled:
+          type: boolean
+          description: >
+            Le REGLAGE, pas une consequence : il reste vrai meme quand il ne
+            produit aucun effet (site protege dont le contrat est honore).
+        technicalSuspension:
+          type: boolean
+          description: La cause technique, publiee a part — elle prime sur tout le reste.
 
     SyncPushRequest:
       type: object

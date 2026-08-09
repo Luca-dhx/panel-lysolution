@@ -164,6 +164,16 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
   // ne la porte qu'au (re)chargement ; cette entite la fait remonter a
   // CHAQUE modification, sans action humaine.
   'PROJECT_PRESENTATION',
+  /**
+   * >= 1.4.x — ETAT D'ACCESSIBILITE DU SITE, pousse par le projet.
+   *
+   * AGREGAT DISTINCT DE `CONTRACT`, et il doit le rester. Une suspension
+   * TECHNIQUE (maintenance) n'a aucun rapport avec un contrat : la
+   * transporter sous l'etiquette contractuelle ferait afficher « probleme de
+   * contrat » devant une operation de maintenance, et inversement. Le statut
+   * du site est DERIVE des deux causes, mais il n'appartient a aucune.
+   */
+  'PROJECT_SITE_STATUS',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
@@ -176,6 +186,7 @@ export const APPLIED_ENTITY_TYPES = Object.freeze([
   'PROJECT_PRESENTATION',
   'CONTRACT',
   'TEAM_MEMBER',
+  'PROJECT_SITE_STATUS',
 ]);
 
 export const EMITTERS = Object.freeze({ PANEL: 'PANEL', PROJECT: 'PROJECT' });
@@ -539,6 +550,41 @@ export const projectPresentationPayloadSchema = z
  *
  * Ni `lastLoginAt` ni statut actif : le modèle source ne les porte pas.
  */
+/**
+ * PROJECT_SITE_STATUS — « ce site est-il accessible, et sinon pourquoi ? »
+ *
+ * ══ POURQUOI CE N'EST PAS UN CHAMP DU CONTRAT ═══════════════════════════════
+ *
+ * L'accessibilité a DEUX causes indépendantes : une suspension TECHNIQUE
+ * (maintenance, décidée par un opérateur) et une cause CONTRACTUELLE (aucun
+ * contrat vivant alors que la protection est active). Ranger cela sous
+ * `CONTRACT` ferait afficher « problème de contrat » devant une maintenance —
+ * et rendrait la fiche incapable de dire pourquoi un site est coupé.
+ *
+ * ══ LE VERDICT ET SA CAUSE VOYAGENT ENSEMBLE ════════════════════════════════
+ *
+ * `accessible` résume ; `suspensionSource` explique. Publier le seul résumé
+ * forcerait le Panel à deviner la cause, et il devinerait faux un jour sur
+ * deux. `NONE` est une réponse à part entière : « rien ne suspend ce site ».
+ *
+ * `contractProtectionEnabled` est un RÉGLAGE, pas une conséquence : il reste
+ * vrai même quand il ne produit aucun effet (site protégé, contrat honoré).
+ * C'est lui que la carte du Panel donne à basculer.
+ */
+export const siteStatusPayloadSchema = z
+  .object({
+    accessible: z.boolean(),
+    status: z.enum(['ACTIVE', 'SUSPENDED']),
+    suspensionSource: z.enum(['NONE', 'TECHNICAL', 'CONTRACT']),
+    /** Motif LISIBLE, tel que le projet le formule. Jamais reconstruit ici. */
+    reason: z.string().min(1).optional(),
+    suspendedAt: isoDate.nullable().optional(),
+    contractProtectionEnabled: z.boolean(),
+    /** La cause technique, publiée à part : elle prime sur tout le reste. */
+    technicalSuspension: z.boolean(),
+  })
+  .strict();
+
 export const teamMemberPayloadSchema = z
   .object({
     sourceUserId: z.string().min(1),

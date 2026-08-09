@@ -1,7 +1,8 @@
 # Synchronisation événementielle temps réel — audit et feuille de route
 
-> **Statut : L0 ✅ · L1 ✅ · L2 ✅ · L4 ✅ — les deux sens sont désormais
-> événementiels.**
+> **Statut : L0 ✅ · L1 ✅ · L2 ✅ · L4 ✅ · L8 ✅ — les deux sens sont
+> événementiels, et le dernier état métier lu à distance est devenu une
+> projection.**
 >
 > Ce document est le constat, pas la promesse. Chaque affirmation renvoie au
 > fichier qui la porte, et les chiffres viennent d'une exécution réelle —
@@ -16,7 +17,8 @@
 | **L1** | ✅ | Le descripteur média entre au contrat de `PROJECT_PRESENTATION`, est persisté et exposé. Payload d'une instance réelle : **accepté en 352–562 ms**. |
 | **L2** | ✅ | Un refus n'est plus un ACK : il est classé, conservé, publié au Panel, et **réaffirmé jusqu'à convergence sans aucun geste**. |
 | **L4** | ✅ | Le Panel LIVRE au lieu d'attendre. `saveCompany` → journal → push immédiat. **T0→T5 médiane 35 ms, pire 103 ms** ; la sauvegarde rend la main en 20 ms devant un projet à 5 s. |
-| L3, L5 → L17 | ⏸ | Voir §T. |
+| **L8** | ✅ | `PROJECT_SITE_STATUS` : l'accessibilité du site et la protection contractuelle deviennent une projection. Le **troisième motif** (lecture métier synchrone depuis un écran) disparaît du produit. Aller-retour commande Panel → projet → Panel : **622 ms**. |
+| L3, L5 → L7, L9 → L17 | ⏸ | Voir §T. |
 
 ---
 
@@ -728,7 +730,66 @@ logo, sur les deux sens. **Dépend de L1.**
 ### L7 — Users / team
 `USER_CHANGE_IS_LIVE`. Rien à construire : vérifier et figer. **Dépend de L3.**
 
-### L8 — Contract / protection
+### L8 — Contract / protection ✅ LIVRÉ
+
+**Ce que l'audit a démontré avant toute ligne de code**
+
+`SiteStatus` n'avait ni hook, ni projection, ni projecteur, ni modèle côté
+Panel. La carte du Panel appelait le PROJET **en direct**, à chaque affichage
+(`api.getContractOperations`). Ce n'était ni une commande, ni une projection :
+un **troisième motif architectural**, et le seul du produit.
+
+La documentation affirmait pourtant que la protection venait « de la projection
+de cette instance ». **C'était faux** — la phrase est corrigée.
+
+**Le catalogue retenu : un seul type nouveau**
+
+| | |
+|---|---|
+| `PROJECT_SITE_STATUS` | agrégat `SiteStatus`, **SNAPSHOT** |
+| champs | `accessible`, `status`, `suspensionSource`, `reason`, `suspendedAt`, `contractProtectionEnabled`, `technicalSuspension` |
+| déclencheur | `post('save')` du modèle → `SITE_STATUS` → `scheduleProjection` |
+| pourquoi PAS dans `CONTRACT` | une suspension **technique** n'est pas un fait contractuel |
+| pourquoi PAS `CONTRACT_PROTECTION_TOGGLED` | micro-événement ; le snapshot résultant suffit |
+
+**Le point de branchement existait déjà.** Les **3 seuls** `site.save()` du
+dépôt vivent dans `siteEnforcement.service.js`, et les **9 chemins** de mutation
+convergent vers `reconcileSiteStatus()`. Aucune centralisation à construire.
+
+**L'invariant, éprouvé de bout en bout**
+
+```
+commande Panel → mutation projet → reconcileSiteStatus → persistance
+→ PROJECT_SITE_STATUS → outbox durable → push immédiat → projecteur Panel
+→ projection persistée → interrupteur
+```
+
+L'interrupteur **n'adopte jamais** la réponse de la commande — pas même la
+valeur « constatée » qu'elle rapporte. Tant qu'il la croyait, il affichait un
+état que rien n'avait persisté et qu'un rechargement contredisait.
+
+| Mesure | ms |
+|---|---|
+| projection livrée dès l'appairage | 52 |
+| protection basculée depuis le Manager | 434 |
+| **aller-retour complet commande Panel** | **622** |
+| suspension technique | 555 |
+
+Le plancher est la fenêtre de regroupement de 500 ms — délibérée, et conservée :
+un formulaire qui écrit trois champs ne doit produire qu'une photographie. La
+cible « médiane < 250 ms » de la spécification est donc **incompatible** avec
+cette protection ; ce qui compte est acquis — plus aucun cycle de 30 s.
+
+**Le troisième motif a disparu, et l'audit le prouve.** Tous les écrans ont été
+passés en revue : il ne restait que celui-ci. La sonde d'URL du wizard
+s'exécute avant qu'un projet existe (découverte) ; le catalogue d'opérations
+répond à « que puis-je DEMANDER maintenant ? » — une **capacité**, pas un état.
+
+**TEAM_MEMBER : rien à inventer.** L'audit montre qu'il est déjà projeté,
+déclenché par les hooks de `User`, exposé par `loadProjectTeam` et **rendu**
+par `<TeamCard>` sur la fiche. Complet de bout en bout.
+
+### L8 — spécification d'origine (conservée)
 `CONTRACT_CHANGE_IS_LIVE` (existe presque) + **nouvelle projection de
 `siteStatus`/protection** projet → Panel (§P). **Dépend de L1, L5.**
 

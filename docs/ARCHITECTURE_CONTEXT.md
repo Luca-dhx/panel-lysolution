@@ -853,7 +853,78 @@ chaque origine servie.
 
 ---
 
-## 8. Protection contractuelle
+## 8. Protection contractuelle — et la lecture directe qui a disparu
+
+> **Cette page a longtemps affirmé que l'état du site venait « de la projection
+> de cette instance ». C'était faux.** Aucune projection n'existait : ni type
+> d'entité, ni déclencheur, ni projecteur, ni modèle. La carte du Panel
+> interrogeait le PROJET en direct, à chaque affichage, par
+> `GET /operations`.
+
+### Le troisième motif, et pourquoi il devait disparaître
+
+Le Panel avait deux façons de parler à un projet — une **commande** (« fais
+ceci ») et une **projection** (« voici mon état »). L'accessibilité du site en
+utilisait une troisième : une **lecture métier synchrone depuis un écran**.
+C'était le seul endroit du produit, et il coûtait trois choses :
+
+- projet éteint → « état inconnu », alors que la dernière valeur reçue, datée,
+  répondait parfaitement à la question ;
+- rien n'était persisté, donc rien n'était daté ni comparable au reste de la
+  fiche ;
+- une commande du Panel ne pouvait qu'afficher **ce qu'elle venait de
+  demander** — supposer le résultat au lieu de le constater.
+
+`PROJECT_SITE_STATUS` remplace tout cela. Un audit de tous les écrans confirme
+qu'il n'en reste **aucun autre** : la sonde d'URL du wizard s'exécute avant
+qu'un projet existe, et le catalogue d'opérations répond à « que puis-je
+DEMANDER maintenant ? » — une **capacité**, pas un état.
+
+### Deux agrégats, et ils ne fusionnent jamais
+
+```
+CONTRACT              PROJECT_SITE_STATUS
+le contrat courant    « ce site est-il accessible, et sinon pourquoi ? »
+son document          accessible · status
+ses tarifs            suspensionSource : NONE · TECHNICAL · CONTRACT
+son historique        contractProtectionEnabled (le RÉGLAGE)
+```
+
+Une suspension **TECHNIQUE** (maintenance) n'a aucun rapport avec un contrat.
+Les ranger ensemble ferait afficher « problème de contrat » devant une
+opération de maintenance — et rendrait la fiche incapable de dire pourquoi un
+site est coupé. Le verdict et sa **cause** voyagent donc ensemble, dans leur
+propre agrégat.
+
+### L'aller-retour complet, sans état optimiste
+
+```
+Panel · interrupteur Protection
+  └─ commande  contract.set_protection      (invocation d'opération)
+       └─ projet : setContractProtection
+            └─ reconcileSiteStatus  ← l'entonnoir : les 3 `site.save()` du
+                 └─ persistance        dépôt vivent dans ce seul service
+                      └─ post('save') → PROJECT_SITE_STATUS
+                           └─ outbox durable → push immédiat
+                                └─ projecteur Panel → projection persistée
+                                     └─ l'interrupteur bouge
+```
+
+**L'interrupteur ne bouge JAMAIS sur la réponse de la commande** — pas même sur
+la valeur « constatée » qu'elle rapporte. Il attend la projection. Tant que
+l'écran croyait la commande, il pouvait afficher un état que rien n'avait
+persisté, et qu'un rechargement contredisait.
+
+Mesuré : **434–622 ms** de bout en bout, fenêtre de regroupement de 500 ms
+comprise. Aucun cycle de 30 s n'intervient.
+
+→ `backend/src/services/sync/projectors.js` (`applyProjectSiteStatus`)
+→ `SB Auto 06/backend/src/services/siteEnforcement.service.js`
+→ `tests/project-site-status-live-e2e.test.js`
+
+---
+
+## 8bis. La table de vérité de la protection
 
 Source unique : `SiteStatus.contractProtectionEnabled`, **côté projet**. Le
 Panel ne la détient pas ; il la demande par le pont et relit l'état.
@@ -895,7 +966,7 @@ Panel ne la détient pas ; il la demande par le pont et relit l'état.
 | fraîcheur métier | `runtime.lastBusinessSyncAt` — réception **observée** par le Panel |
 | modification annoncée | `sourceModifiedAt` de la projection |
 | contrat | `PanelProjectContract` de cette instance |
-| protection / suspension | `siteStatus` de la projection de cette instance |
+| protection / suspension | `PanelProjectSiteStatus` — la projection `PROJECT_SITE_STATUS` de cette instance |
 | équipe | `PanelProjectMember` (projectId, entityId) |
 | média du Panel | descripteur `authority: PANEL` |
 | média du projet | descripteur `authority: PROJECT` |

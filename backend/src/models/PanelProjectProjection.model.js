@@ -80,6 +80,38 @@ const presentationSchema = new mongoose.Schema(
   { minimize: false, versionKey: false },
 );
 
+/**
+ * ÉTAT D'ACCESSIBILITÉ DU SITE — un enregistrement par instance.
+ *
+ * ── CE QUE SA SEULE EXISTENCE CHANGE ────────────────────────────────────────
+ * Cet état n'était persisté NULLE PART côté Panel : la carte l'obtenait en
+ * interrogeant le projet en direct, à chaque affichage. Un projet éteint
+ * rendait donc l'information « inconnue », alors que la dernière valeur reçue
+ * — datée — aurait parfaitement répondu à la question posée.
+ *
+ * AGRÉGAT SÉPARÉ de `PanelProjectContract`, et il doit le rester : une
+ * suspension technique n'est pas un fait contractuel.
+ */
+const siteStatusSchema = new mongoose.Schema(
+  {
+    projectId: { type: String, required: true, unique: true, index: true },
+    /** Le verdict, tel que le projet le rend. Jamais recalculé ici. */
+    accessible: { type: Boolean, default: true },
+    status: { type: String, default: 'ACTIVE' },
+    /** NONE · TECHNICAL · CONTRACT — la cause, nommée par sa source. */
+    suspensionSource: { type: String, default: 'NONE' },
+    reason: { type: String, default: null },
+    suspendedAt: { type: String, default: null },
+    /** Le RÉGLAGE, vrai même lorsqu'il ne produit aucun effet. */
+    contractProtectionEnabled: { type: Boolean, default: false },
+    technicalSuspension: { type: Boolean, default: false },
+    sourceModifiedAt: { type: String, required: true },
+    ...SOURCE_FIELDS,
+    receivedAt: { type: String, required: true },
+  },
+  { minimize: false, versionKey: false },
+);
+
 const amountSchema = new mongoose.Schema(
   {
     amountIncludingTax: { type: Number, default: null },
@@ -211,10 +243,20 @@ memberSchema.index({ projectId: 1, entityId: 1 }, { unique: true });
 
 export const PanelProjectMember = mongoose.model('PanelProjectMember', memberSchema);
 
+export const PanelProjectSiteStatus = mongoose.model(
+  'PanelProjectSiteStatus',
+  siteStatusSchema,
+);
+
 export const PanelProjectPresentation = mongoose.model(
   'PanelProjectPresentation',
   presentationSchema,
 );
 export const PanelProjectContract = mongoose.model('PanelProjectContract', contractSchema);
 
-export default { PanelProjectPresentation, PanelProjectContract, PanelProjectMember };
+export default {
+  PanelProjectPresentation,
+  PanelProjectContract,
+  PanelProjectMember,
+  PanelProjectSiteStatus,
+};

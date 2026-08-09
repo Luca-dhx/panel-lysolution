@@ -585,6 +585,7 @@ components:
                   - EVENT
                   - MEETING
                   - PROJECT_PRESENTATION
+                  - PROJECT_SITE_STATUS
             operations:
               type: array
               items: { type: string }
@@ -720,6 +721,7 @@ components:
             - EVENT
             - MEETING
             - PROJECT_PRESENTATION
+            - PROJECT_SITE_STATUS
         entityId: { type: string, format: uuid }
         deleted: { type: boolean }
         payload: { nullable: true }

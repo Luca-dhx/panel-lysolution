@@ -490,6 +490,37 @@ export function toPublicProject(record, now = Date.now(), projections = {}, dest
       presentation: projections.presentation ?? null,
       contract: projections.contract ?? null,
       /**
+       * L'ÉTAT DU SITE — un agrégat À PART, et la fin d'une lecture directe.
+       *
+       * ══ CE QUE L'ÉCRAN FAISAIT AVANT ═══════════════════════════════════
+       *
+       * La carte du Panel appelait le PROJET en direct, à chaque affichage,
+       * pour connaître la protection et l'accessibilité. Ce n'était ni une
+       * commande, ni une projection : une troisième façon de faire, qui
+       * rendait l'information « inconnue » dès que le projet était éteint et
+       * ne laissait aucune trace de ce qui avait été constaté.
+       *
+       * C'est désormais une projection comme les autres : reçue, persistée,
+       * datée — et consultable quand le projet ne répond plus.
+       *
+       * `null` = jamais reçue. Le Panel ne suppose PAS « accessible » : il ne
+       * connaît ni les contrats vivants de l'instance, ni ses suspensions
+       * techniques.
+       */
+      siteStatus: projections.siteStatus
+        ? {
+          accessible: projections.siteStatus.accessible,
+          status: projections.siteStatus.status,
+          suspensionSource: projections.siteStatus.suspensionSource,
+          reason: projections.siteStatus.reason ?? null,
+          suspendedAt: projections.siteStatus.suspendedAt ?? null,
+          contractProtectionEnabled: projections.siteStatus.contractProtectionEnabled,
+          technicalSuspension: projections.siteStatus.technicalSuspension,
+          modifiedAt: projections.siteStatus.sourceModifiedAt ?? null,
+          receivedAt: projections.siteStatus.receivedAt ?? null,
+        }
+        : null,
+      /**
        * FRAÎCHEUR — d'où viennent ces projections, et sont-elles encore de ce
        * monde ? Un projet redéployé de PROD vers TEST garde son `projectId`,
        * mais tout le reste a changé : les données reçues sous PROD ne
@@ -510,12 +541,12 @@ function describeFreshness(record, projections, destinationHost) {
   const { environment, generation, destinationKnown } = currentGeneration(record, destinationHost);
   // La photographie la plus récemment reçue, quelle que soit l'entité : c'est
   // elle qui date la dernière synchronisation complète du projet.
-  const recues = [projections.presentation, projections.contract]
+  const recues = [projections.presentation, projections.contract, projections.siteStatus]
     .filter(Boolean)
     .map((p) => p.receivedAt)
     .filter(Boolean)
     .sort();
-  const source = projections.contract ?? projections.presentation ?? null;
+  const source = projections.contract ?? projections.presentation ?? projections.siteStatus ?? null;
   const projectionEnvironment = source?.sourceEnvironment ?? null;
   const projectionGeneration = source?.sourceGeneration ?? null;
 
@@ -578,16 +609,20 @@ export async function loadProjectTeam(projectId) {
 }
 
 export async function loadBusinessProjections(projectIds) {
-  const { PanelProjectContract, PanelProjectPresentation } = await import(
+  const { PanelProjectContract, PanelProjectPresentation, PanelProjectSiteStatus } = await import(
     '../../models/PanelProjectProjection.model.js'
   );
-  const [presentations, contracts] = await Promise.all([
+  const [presentations, contracts, sites] = await Promise.all([
     PanelProjectPresentation.find({ projectId: { $in: projectIds } }).lean(),
     PanelProjectContract.find({ projectId: { $in: projectIds } }).lean(),
+    PanelProjectSiteStatus.find({ projectId: { $in: projectIds } }).lean(),
   ]);
-  const byId = new Map(projectIds.map((id) => [id, { presentation: null, contract: null }]));
+  const byId = new Map(projectIds.map(
+    (id) => [id, { presentation: null, contract: null, siteStatus: null }],
+  ));
   for (const p of presentations) if (byId.has(p.projectId)) byId.get(p.projectId).presentation = p;
   for (const c of contracts) if (byId.has(c.projectId)) byId.get(c.projectId).contract = c;
+  for (const s of sites) if (byId.has(s.projectId)) byId.get(s.projectId).siteStatus = s;
   return byId;
 }
 

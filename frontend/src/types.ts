@@ -100,6 +100,18 @@ export interface PublicProject {
   business: {
     presentation: BusinessPresentation | null;
     contract: BusinessContract | null;
+    /**
+     * ÉTAT D'ACCESSIBILITÉ DU SITE — projeté par le projet, jamais déduit.
+     *
+     * `null` se lit « jamais reçu depuis ce projet ». Le Panel ne suppose PAS
+     * « accessible » : il ne connaît ni les contrats vivants de l'instance, ni
+     * ses suspensions techniques.
+     *
+     * Ce bloc remplace une lecture directe que la carte faisait sur le projet
+     * à chaque affichage — la seule du Panel, et la seule qui rendait une
+     * information métier indisponible dès que le projet ne répondait pas.
+     */
+    siteStatus: BusinessSiteStatus | null;
     /** Présente sur la FICHE seulement — la liste ne l'affiche pas. */
     team?: TeamMember[];
     /** Génération de la source : dit si ces projections sont encore actuelles. */
@@ -189,12 +201,39 @@ export interface ContractOperation {
 }
 
 /**
- * PROTECTION CONTRACTUELLE telle que le PROJET la rend.
+ * CE QUE LA COMMANDE `set_protection` RAPPORTE — un accusé, pas un état.
  *
- * Le Panel n'en détient aucune copie : cette valeur est relue à chaque
- * ouverture de la fiche. C'est ce qui garantit qu'elle ne peut pas diverger de
- * celle qu'affiche le Manager du site.
+ * ── CE QU'IL NE FAUT PLUS EN FAIRE ──────────────────────────────────────────
+ * L'écran affichait cette réponse. Elle décrit pourtant l'instant d'une
+ * commande, n'est persistée nulle part, et un rechargement de page la
+ * contredisait. L'état affiché vient désormais de `BusinessSiteStatus` — la
+ * projection que le projet réémet après avoir réconcilié.
+ *
+ * Ce type reste utile pour TYPER la réponse de la commande, et pour le
+ * diagnostic. Jamais pour peindre l'interrupteur.
  */
+/**
+ * L'ÉTAT DU SITE, tel que le projet l'a DÉCLARÉ.
+ *
+ * `accessible` est le verdict ; `suspensionSource` en donne la cause, et les
+ * deux causes possibles restent distinctes : une maintenance TECHNIQUE n'est
+ * pas un fait contractuel. `contractProtectionEnabled` est le RÉGLAGE, vrai
+ * même lorsqu'il ne produit aucun effet.
+ */
+export interface BusinessSiteStatus {
+  accessible: boolean | null;
+  status: string | null;
+  suspensionSource: 'NONE' | 'TECHNICAL' | 'CONTRACT' | string;
+  reason: string | null;
+  suspendedAt: string | null;
+  contractProtectionEnabled: boolean | null;
+  technicalSuspension: boolean | null;
+  /** Quand le PROJET a produit cette photographie. */
+  modifiedAt: string | null;
+  /** Quand le PANEL l'a reçue — ce qu'une lecture directe ne savait pas dire. */
+  receivedAt: string | null;
+}
+
 export interface ContractProtection {
   enabled: boolean;
   siteStatus: string;

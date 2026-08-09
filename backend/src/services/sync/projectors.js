@@ -23,6 +23,7 @@ import {
   contractPayloadSchema,
   nowIso,
   projectPresentationPayloadSchema,
+  siteStatusPayloadSchema,
   teamMemberPayloadSchema,
 } from '../../bridge/bridgeContract.js';
 import { PanelDiagnostic } from '../../models/PanelSyncState.model.js';
@@ -31,6 +32,7 @@ import {
   PanelProjectContract,
   PanelProjectMember,
   PanelProjectPresentation,
+  PanelProjectSiteStatus,
 } from '../../models/PanelProjectProjection.model.js';
 
 /** Code d'accusé d'un payload non conforme — stable, lisible par le projet. */
@@ -236,12 +238,51 @@ async function applyTeamMember({ projectId, change, stamp }) {
   }
 }
 
+/**
+ * PROJECT_SITE_STATUS — « ce site est-il accessible, et sinon pourquoi ? »
+ *
+ * Un seul enregistrement par instance : c'est un ÉTAT, pas un journal. Le
+ * Panel ne recalcule RIEN — ni le verdict, ni la cause. Les deux viennent du
+ * projet, qui est seul à connaître ses contrats vivants et ses suspensions
+ * techniques. En déduire quoi que ce soit ici rouvrirait précisément l'écart
+ * que cette projection ferme.
+ *
+ * Un tombstone efface la ligne : « je ne sais plus » est une réponse, un
+ * ancien statut affiché comme courant n'en est pas une.
+ */
+async function applyProjectSiteStatus({ projectId, change, stamp }) {
+  if (change.deleted) {
+    await PanelProjectSiteStatus.deleteOne({ projectId });
+    return;
+  }
+  const s = parsePayload(siteStatusPayloadSchema, change.payload, 'PROJECT_SITE_STATUS');
+  await PanelProjectSiteStatus.updateOne(
+    { projectId },
+    {
+      $set: {
+        projectId,
+        accessible: s.accessible,
+        status: s.status,
+        suspensionSource: s.suspensionSource,
+        reason: s.reason ?? null,
+        suspendedAt: s.suspendedAt ?? null,
+        contractProtectionEnabled: s.contractProtectionEnabled,
+        technicalSuspension: s.technicalSuspension,
+        sourceModifiedAt: change.modifiedAt,
+        ...stamp,
+      },
+    },
+    { upsert: true },
+  );
+}
+
 /** Table FERMÉE — le cœur n'applique que ce qui y figure. */
 export const PROJECTORS = Object.freeze({
   DIAGNOSTIC: applyDiagnostic,
   PROJECT_PRESENTATION: applyProjectPresentation,
   CONTRACT: applyContract,
   TEAM_MEMBER: applyTeamMember,
+  PROJECT_SITE_STATUS: applyProjectSiteStatus,
 });
 
 /** Types réellement appliqués — dérivés de la table, jamais réécrits à côté. */
@@ -294,6 +335,7 @@ export function isBusinessEntity(entityType) {
 export const PROJECTION_PRESENT = Object.freeze({
   PROJECT_PRESENTATION: ({ projectId }) => PanelProjectPresentation.exists({ projectId }),
   CONTRACT: ({ projectId }) => PanelProjectContract.exists({ projectId }),
+  PROJECT_SITE_STATUS: ({ projectId }) => PanelProjectSiteStatus.exists({ projectId }),
   // Une collection : la présence se juge SUR LA LIGNE, pas sur le projet.
   TEAM_MEMBER: ({ projectId, change }) =>
     PanelProjectMember.exists({ projectId, entityId: change.entityId }),

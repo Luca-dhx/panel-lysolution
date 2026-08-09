@@ -111,6 +111,11 @@ export async function startSbAutoInstance({
     /** Coupe / rétablit la surface HTTP — une panne réseau RÉELLE. */
     goOffline() { return send('goOffline'); },
     goOnline() { return send('goOnline'); },
+    /** Bascule la protection / la suspension technique depuis le Manager. */
+    setProtection(args) { return send('setProtection', args); },
+    setTechnical(args) { return send('setTechnical', args); },
+    /** L’état du site tel que le PROJET le tient. */
+    siteState() { return send('siteState'); },
     /** Donne un logo à l’entreprise — la configuration de toute production. */
     setCompanyLogo(args) { return send('setCompanyLogo', args); },
     /** La projection telle que le projet la construit, avant tout transport. */

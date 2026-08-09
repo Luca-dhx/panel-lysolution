@@ -25,7 +25,7 @@ import {
 import { getContractDocumentPresentation } from '@/lib/contractDocument';
 import type { ContractDocumentPresentation } from '@/lib/contractDocument';
 import type {
-  BusinessContract, ContractOperation, ContractProtection, PreviousContract, PublicProject,
+  BusinessContract, ContractOperation, PreviousContract, PublicProject,
 } from '@/types';
 
 const CANCEL_NOW = 'contract.cancel_now';
@@ -41,34 +41,63 @@ const CANCEL_NOW = 'contract.cancel_now';
  * en a besoin. Il vit donc dans sa propre carte, toujours rendue.
  *
  * ── AUCUNE MISE À JOUR OPTIMISTE ────────────────────────────────────────────
- * L'interrupteur ne bouge QUE sur l'état rendu par le projet après
+ * L'interrupteur ne bouge QUE sur l'état que le projet a RÉÉMIS après
  * réconciliation. En cas d'échec, il revient exactement où il était : un
  * interrupteur qui affiche « activé » alors que le projet a refusé serait pire
  * qu'un message d'erreur.
+ *
+ * ── ET IL NE LIT PLUS LE PROJET EN DIRECT ───────────────────────────────────
+ *
+ * ══ LE TROISIÈME MOTIF, ET POURQUOI IL A DISPARU ═══════════════════════════
+ *
+ * Cette carte interrogeait le PROJET à chaque affichage pour connaître l'état
+ * de la protection. Ce n'était ni une commande, ni une projection : une
+ * troisième façon de faire, et la seule du Panel. Elle coûtait cher —
+ *
+ *   · projet éteint → « état inconnu », alors que la dernière valeur reçue,
+ *     datée, répondait parfaitement à la question posée ;
+ *   · rien n'était persisté, donc rien n'était daté ni comparable ;
+ *   · un aller-retour réseau à chaque montage de la carte ;
+ *   · et la fraîcheur métier de la fiche ignorait complètement le site.
+ *
+ * L'état vient désormais de `project.business.siteStatus` : une projection
+ * poussée par le projet, persistée par le Panel, exactement comme le nom de
+ * l'entreprise ou le contrat. Le catalogue d'opérations, lui, reste interrogé
+ * en direct — mais il répond à « que puis-je DEMANDER à ce projet
+ * maintenant ? », qui est une CAPACITÉ, pas un état métier.
  */
 function ContractProtectionCard({
   project,
-  protection,
-  reachable,
   onChanged,
 }: {
   project: PublicProject;
-  protection: ContractProtection | null;
-  reachable: boolean;
-  onChanged: (next: ContractProtection | null) => void;
+  onChanged: () => void;
 }) {
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
   const relie = project.pairing.status === 'PAIRED';
+  /** L'état PROJETÉ par le projet — persisté, daté, lisible hors ligne. */
+  const site = project.business?.siteStatus ?? null;
 
   const basculer = async (next: boolean) => {
     setErreur(null);
     setEnCours(true);
     try {
-      const r = await api.setContractProtection(project.projectId, next);
-      // On adopte ce que le PROJET a constaté, jamais ce qu'on a demandé.
-      onChanged(r.contractProtection);
+      /**
+       * LA COMMANDE PART, ET C'EST TOUT CE QU'ELLE FAIT.
+       *
+       * On n'adopte PAS sa réponse comme état d'affichage — pas même la
+       * valeur « constatée » qu'elle rapporte. Le projet réémet sa projection
+       * juste après avoir réconcilié ; c'est elle qui fera bouger cet
+       * interrupteur, en quelques dizaines de millisecondes.
+       *
+       * La nuance n'est pas cosmétique : tant que l'écran croyait la réponse
+       * de la commande, il pouvait afficher un état que rien n'avait persisté,
+       * et qu'un rechargement contredisait.
+       */
+      await api.setContractProtection(project.projectId, next);
+      onChanged();
     } catch (err) {
       setErreur(errorMessage(err, 'Le projet a refusé le réglage.'));
     } finally {
@@ -82,9 +111,17 @@ function ContractProtectionCard({
         <p className="muted">
           Ce projet n’est pas relié : son réglage de protection ne peut pas être lu.
         </p>
-      ) : !reachable || !protection ? (
+      ) : !site ? (
+        /*
+          « JAMAIS REÇU » N'EST PAS « INJOIGNABLE ».
+
+          L'ancienne carte disait « projet injoignable » dès que l'appel direct
+          échouait. C'était souvent faux — et surtout inutile : ce qu'on veut
+          savoir est si le projet a DÉJÀ déclaré son état, pas s'il répond à
+          cette seconde précise.
+        */
         <p className="muted">
-          Projet injoignable : l’état de la protection contractuelle est inconnu pour l’instant.
+          Aucun état de site reçu de ce projet pour l’instant.
         </p>
       ) : (
         <>
@@ -92,16 +129,16 @@ function ContractProtectionCard({
             <input
               type="checkbox"
               role="switch"
-              checked={protection.enabled}
+              checked={Boolean(site.contractProtectionEnabled)}
               disabled={enCours}
               onChange={(e) => void basculer(e.target.checked)}
             />
-            <span>{protection.enabled ? 'Activée' : 'Désactivée'}</span>
+            <span>{site.contractProtectionEnabled ? 'Activée' : 'Désactivée'}</span>
           </label>
 
           {/* Le texte d'aide DIT la règle, il ne l'alarme pas. */}
           <p className="muted">
-            {protection.enabled
+            {site.contractProtectionEnabled
               ? 'Suspend automatiquement le site lorsqu’aucun contrat actif n’est présent.'
               : 'L’état du contrat n’affecte pas l’accès au site.'}
           </p>
@@ -110,14 +147,26 @@ function ContractProtectionCard({
             La conséquence CONSTATÉE, et seulement quand elle a lieu. On ne
             déduit pas « suspendu » de « protection activée » : le projet peut
             avoir un contrat honoré, ou être suspendu pour une autre cause.
+
+            Les deux causes restent NOMMÉES séparément — une maintenance
+            technique n'est pas un problème de contrat, et l'inverse non plus.
           */}
-          {protection.suspendedByProtection ? (
+          {site.suspensionSource === 'CONTRACT' ? (
             <p className="badge badge-warn">Site suspendu par la protection contractuelle</p>
-          ) : protection.suspensionSource && protection.suspensionSource !== 'NONE' ? (
+          ) : site.suspensionSource === 'TECHNICAL' ? (
             <p className="muted">
-              Site suspendu pour une autre cause ({protection.suspensionSource.toLowerCase()}) :
-              ce réglage ne la lève pas.
+              Site suspendu pour maintenance technique
+              {site.reason ? ` : ${site.reason}` : ''} — ce réglage ne la lève pas.
             </p>
+          ) : null}
+
+          {/*
+            DEPUIS QUAND ON LE SAIT. C'est ce que la lecture directe ne pouvait
+            pas dire : elle rendait un instantané sans date, impossible à
+            situer par rapport au reste de la fiche.
+          */}
+          {site.receivedAt ? (
+            <p className="muted">Reçu du projet le {formatDateTime(site.receivedAt)}</p>
           ) : null}
 
           {enCours ? <p className="muted">Transmission au projet…</p> : null}
@@ -232,7 +281,6 @@ export function ContractCard({
   const [operations, setOperations] = useState<ContractOperation[]>([]);
   const [reachable, setReachable] = useState(true);
   const [environment, setEnvironment] = useState<string | null>(null);
-  const [protection, setProtection] = useState<ContractProtection | null>(null);
   const [demande, setDemande] = useState<ContractOperation | null>(null);
   const [motif, setMotif] = useState('');
   const [confirme, setConfirme] = useState(false);
@@ -242,13 +290,18 @@ export function ContractCard({
   const [telechargement, setTelechargement] = useState(false);
 
   /**
-   * Le catalogue est interrogé MÊME SANS CONTRAT.
+   * LE CATALOGUE — une CAPACITÉ, pas un état métier.
    *
-   * Il ne portait que des résiliations, d'où le court-circuit historique. Il
-   * porte désormais aussi l'état de la protection contractuelle — un réglage
-   * qui existe indépendamment de tout contrat, et dont l'absence de contrat est
-   * précisément le cas d'usage. Continuer à sauter l'appel aurait laissé la
-   * carte vide là où elle compte le plus.
+   * ══ CE QUE CET APPEL NE RAPPORTE PLUS ═══════════════════════════════════
+   *
+   * Il rapportait aussi l'état de la protection contractuelle, et c'était le
+   * seul endroit du Panel où un écran lisait un ÉTAT MÉTIER directement chez
+   * un projet. Cet état est désormais une projection (`business.siteStatus`) :
+   * poussée, persistée, datée, et consultable quand le projet est éteint.
+   *
+   * Ce qui reste ici répond à une autre question — « que puis-je DEMANDER à ce
+   * projet en ce moment ? ». Une capacité se constate au moment où l'on veut
+   * s'en servir ; la mémoriser n'aurait aucun sens, et la projeter non plus.
    */
   useEffect(() => {
     let annule = false;
@@ -258,20 +311,20 @@ export function ContractCard({
         setOperations(data.operations);
         setReachable(data.reachable);
         setEnvironment(data.environment);
-        setProtection(data.contractProtection);
       })
       .catch(() => { if (!annule) setReachable(false); });
     return () => { annule = true; };
   }, [project.projectId, contract?.sourceContractId]);
 
-  /** Rendue dans les TROIS branches ci-dessous — jamais escamotée. */
+  /**
+   * Rendue dans les TROIS branches ci-dessous — jamais escamotée.
+   *
+   * `onChanged` ne transporte plus d'état : la commande part, le projet
+   * réémet sa projection, et `useLiveQuery` rapporte la nouvelle fiche. Rien
+   * ici n'a besoin de deviner le résultat.
+   */
   const carteProtection = (
-    <ContractProtectionCard
-      project={project}
-      protection={protection}
-      reachable={reachable}
-      onChanged={setProtection}
-    />
+    <ContractProtectionCard project={project} onChanged={() => {}} />
   );
 
   const historique = contract?.previousContracts ?? [];
