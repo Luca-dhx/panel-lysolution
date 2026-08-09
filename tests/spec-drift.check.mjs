@@ -75,4 +75,35 @@ for (const file of FILES) {
   console.error('    recopier la spec maîtresse verbatim, jamais l’inverse (docs/spec/README.md).');
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   LA DOCUMENTATION CANONIQUE — les deux dépôts décrivent LE MÊME système
+
+   `SYNCHRONISATION_PANEL_PROJET.md` existe en deux exemplaires, un par dépôt,
+   parce qu'on doit pouvoir le lire sans avoir l'autre sous la main. Deux
+   exemplaires d'un même texte finissent toujours par diverger — et la
+   divergence est alors invisible : chacun lit le sien, chacun a raison chez
+   lui, et les deux équipes travaillent sur deux architectures.
+
+   Le contrôle est le même que pour les specs : octet pour octet.
+   ══════════════════════════════════════════════════════════════════════════ */
+{
+  const nom = 'SYNCHRONISATION_PANEL_PROJET.md';
+  const cotePanel = path.join(panelRoot, 'docs', nom);
+  const coteProjet = path.join(referenceDir, '..', '..', nom);
+
+  if (!fs.existsSync(cotePanel) || !fs.existsSync(coteProjet)) {
+    console.error(`[spec-drift] ✗ ${nom} : exemplaire manquant`
+      + ` (Panel ${fs.existsSync(cotePanel)}, projet ${fs.existsSync(coteProjet)}).`);
+    failures += 1;
+  } else if (normalize(fs.readFileSync(cotePanel, 'utf8'))
+    === normalize(fs.readFileSync(coteProjet, 'utf8'))) {
+    console.log(`[spec-drift] ✓ ${nom} : les deux dépôts racontent la même architecture.`);
+  } else {
+    console.error(`[spec-drift] ✗ ${nom} : les deux exemplaires ONT DIVERGÉ.`);
+    console.error('  → Chacun lira le sien, et les deux équipes travailleront');
+    console.error('    sur deux architectures différentes sans jamais s’en apercevoir.');
+    failures += 1;
+  }
+}
+
 process.exit(failures === 0 ? 0 : 1);

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 // Harnais de test commun — même philosophie que le projet modèle : runners
 // node autonomes, compteur pass/fail, aucun framework.
 // IMPORTANT : appeler setTestEnv() AVANT tout import dynamique du backend
@@ -87,9 +89,19 @@ export async function rejectsWith(fn, code) {
 }
 
 // Serveur Express éphémère + client fetch minimal.
-export async function startServer(app) {
+/**
+ * Démarre le serveur du Panel sur un port LIBRE — ou sur un port IMPOSÉ.
+ *
+ * ── POURQUOI LE PORT IMPOSÉ EXISTE ────────────────────────────────────────
+ *
+ * Un projet appairé mémorise l'ADRESSE de son Panel. Éprouver « le Panel
+ * revient » en le relançant sur un autre port n'éprouverait rien : le projet
+ * parlerait à une adresse morte, et l'on prendrait une panne d'appairage pour
+ * une panne de convergence. Le retour se fait donc sur LE MÊME port.
+ */
+export async function startServer(app, { port = 0 } = {}) {
   const server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(port, () => resolve(s));
   });
   const base = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, path, { headers = {}, body } = {}) => {
@@ -108,4 +120,46 @@ export async function startServer(app) {
   };
   const close = () => new Promise((resolve) => server.close(resolve));
   return { base, call, close };
+}
+
+/**
+ * LES MÉDIAS ÉCRITS PAR UNE RECETTE NE SURVIVENT PAS À LA RECETTE.
+ *
+ * ══ CE QUE CE GARDE-FOU FERME ═══════════════════════════════════════════════
+ *
+ * Les suites qui éprouvent le pipeline d'import écrivent de VRAIS fichiers dans
+ * `uploads/` — c'est justement ce qui rend la preuve valable : aucun étage n'est
+ * doublé. Mais elles n'en retiraient aucun. Trente-cinq `.webp` s'étaient
+ * accumulés dans le dossier que le runtime SERT, laissés par des exécutions
+ * successives.
+ *
+ * Ils n'ont jamais pu être commités (`uploads/` est ignoré depuis le lot B),
+ * donc le dépôt n'a rien risqué. Mais un dossier de médias qui grossit à chaque
+ * `npm test` finit par ressembler à des données de production, et c'est
+ * exactement le genre de résidu qu'on ne distingue plus le jour où il compte.
+ *
+ * On ne supprime QUE ce que la recette a créé : l'inventaire est pris avant,
+ * comparé après. Un fichier antérieur — un vrai média local — n'est jamais
+ * touché.
+ */
+export function guardUploads(dossier = path.resolve(process.cwd(), 'uploads')) {
+  const avant = new Set(fs.existsSync(dossier) ? fs.readdirSync(dossier) : []);
+  return {
+    /** Retire les fichiers apparus depuis l'inventaire. Ne lève jamais. */
+    cleanup() {
+      if (!fs.existsSync(dossier)) return { removed: 0 };
+      let removed = 0;
+      for (const nom of fs.readdirSync(dossier)) {
+        if (avant.has(nom)) continue;
+        try {
+          fs.rmSync(path.join(dossier, nom), { force: true });
+          removed += 1;
+        } catch {
+          // Un fichier verrouillé n'est pas une raison de faire échouer une
+          // suite verte : le nettoyage est une hygiène, pas une assertion.
+        }
+      }
+      return { removed };
+    },
+  };
 }

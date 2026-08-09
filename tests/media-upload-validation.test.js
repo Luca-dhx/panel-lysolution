@@ -14,9 +14,13 @@
  * en ont.
  */
 import {
+  guardUploads,
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
+
+/** Inventaire du dossier d'imports AVANT la recette — voir `guardUploads`. */
+const gardeUploads = guardUploads();
 
 setTestEnv();
 await startMemoryMongo();
@@ -257,4 +261,14 @@ section('MEDIA_LOCAL_WITHOUT_DESTINATION — enregistrable même sans publicatio
 
 await close();
 await stopMemoryMongo();
+/**
+ * LES FICHIERS ÉCRITS PAR CETTE RECETTE NE LUI SURVIVENT PAS.
+ *
+ * Le pipeline complet a réellement écrit dans `uploads/` — c'est ce qui rend la
+ * preuve valable. Les laisser derrière ferait grossir à chaque exécution le
+ * dossier que le runtime SERT, jusqu'à ne plus distinguer un résidu de recette
+ * d'un média réel.
+ */
+console.log(`  (nettoyage : ${gardeUploads.cleanup().removed} fichier(s) de recette retiré(s))`);
+
 finish();

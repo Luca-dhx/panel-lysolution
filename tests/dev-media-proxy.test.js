@@ -17,7 +17,10 @@
 // Mesuré avant le correctif :  GET :5273/uploads/logo…  → 200 text/html   560 o
 // Mesuré après               :  GET :5273/uploads/logo…  → 200 image/webp 22228 o
 // Et un fichier absent redevient un vrai 404, au lieu d'un 200 trompeur.
-import { check, section, finish } from './helpers/harness.js';
+import { check, section, finish, guardUploads } from './helpers/harness.js';
+
+/** Inventaire du dossier d'imports AVANT la recette — voir `guardUploads`. */
+const gardeUploads = guardUploads();
 
 const fs = await import('node:fs/promises');
 const path = await import('node:path');
@@ -98,5 +101,8 @@ section('3. L’URL rendue par l’API reste relative');
   check('…depuis le résolveur réseau canonique',
     /resolveBackendUrl\(\)/.test(service));
 }
+
+// Voir `guardUploads` : une recette ne laisse pas ses médias derrière elle.
+console.log(`  (nettoyage : ${gardeUploads.cleanup().removed} fichier(s) de recette retiré(s))`);
 
 finish();

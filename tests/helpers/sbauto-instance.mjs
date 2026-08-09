@@ -408,6 +408,53 @@ const COMMANDS = {
   },
 
   /**
+   * AJOUTE UN MEMBRE D'ÉQUIPE — par le VRAI chemin, `User.create()`.
+   *
+   * Le hook `post('save')` du modèle annonce l'arrivée, `syncTriggers` la
+   * transforme en projection `TEAM_MEMBER`, l'outbox la met en file. Aucune de
+   * ces étapes n'est appelée à la main : c'est exactement ce qu'un
+   * administrateur produit en créant un compte depuis le Manager.
+   */
+  async addTeamMember({ email, name, role = 'ADMIN' }) {
+    const { User } = await import(SB('src/models/User.model.js'));
+    const user = await User.create({
+      email, name, role, password: 'MotDePasseDeRecette123!',
+    });
+    return { userId: user._id.toString(), email: user.email, name: user.name };
+  },
+
+  /**
+   * CRÉE UN CONTRAT ACTIF — par `Contract.create()`, comme le service.
+   *
+   * On n'emprunte pas le parcours complet d'activation (Stripe, Yousign) : ce
+   * fichier éprouve la SYNCHRONISATION, pas la facturation. Ce qui compte est
+   * qu'une écriture ordinaire sur le modèle produise une projection, et c'est
+   * le hook du modèle qui le décide — pas le service appelant.
+   */
+  async createContract({ reference = 'CTR-E2E-1', status = 'ACTIVE' } = {}) {
+    const Contract = (await import(SB('src/models/Contract.model.js'))).default
+      ?? (await import(SB('src/models/Contract.model.js'))).Contract;
+    const contrat = await Contract.create({
+      reference,
+      status,
+      environment: config.env,
+      pricing: {
+        subscription: {
+          enabled: true,
+          amountExcludingTax: 9900,
+          taxRate: 20,
+          taxAmount: 1980,
+          amountIncludingTax: 11880,
+          currency: 'EUR',
+          interval: 'MONTH',
+        },
+      },
+      stripe: { subscription: { currentPeriodEnd: new Date(Date.now() + 30 * 864e5) } },
+    });
+    return { contractId: contrat._id.toString(), reference: contrat.reference, status: contrat.status };
+  },
+
+  /**
    * DÉMARRE L'ORDONNANCEUR RÉEL — celui de `config/bootstrap.js`.
    *
    * ══ POURQUOI CETTE COMMANDE EXISTE ════════════════════════════════════════

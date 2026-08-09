@@ -164,6 +164,145 @@ for (const cas of CONFIGURATIONS) {
   console.error('               → corriger le SCHÉMA et la SPEC, jamais l\'émetteur seul.');
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  LES AUTRES FRONTIÈRES — même méthode, mêmes conséquences                   */
+/*                                                                            */
+/*  Ce fichier n'éprouvait que `PROJECT_PRESENTATION`, parce que c'est là que  */
+/*  le défaut avait été trouvé. Or la leçon n'était pas « ce payload-là est    */
+/*  fragile » : c'était « personne ne compare l'ÉMETTEUR au SCHÉMA du          */
+/*  DESTINATAIRE ». Trois frontières restaient donc dans l'angle mort exact    */
+/*  que ce contrôle avait été créé pour fermer.                                */
+/*                                                                            */
+/*  Un refus y coûterait la même chose : l'entrée sort de la file, plus rien   */
+/*  ne la rejoue, et le Panel affiche indéfiniment une valeur périmée sans     */
+/*  qu'aucun écran ne le signale.                                             */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+const {
+  contractPayloadSchema, siteStatusPayloadSchema, teamMemberPayloadSchema,
+} = await import(
+  pathToFileURL(path.join(panelRoot, 'backend/src/bridge/bridgeContract.js')).href
+);
+
+const Contract = (await import(SB('src/models/Contract.model.js'))).default
+  ?? (await import(SB('src/models/Contract.model.js'))).Contract;
+const { SiteStatus } = await import(SB('src/models/SiteStatus.model.js'));
+const { User } = await import(SB('src/models/User.model.js'));
+const teamSync = await import(SB('src/services/projectBridge/teamSync.service.js'));
+
+/**
+ * Éprouve UNE projection contre LE schéma qui l'accepte ou la refuse.
+ *
+ * ── UN TOMBSTONE N'EST PAS UN PAYLOAD VIDE ────────────────────────────────
+ *
+ * « Aucun contrat » ne se projette pas comme un objet aux champs absents : il
+ * se projette comme un EFFACEMENT — `deleted: true`, `payload: null`. Soumettre
+ * cette forme au schéma d'objet reviendrait à exiger du produit qu'il publie un
+ * contrat inexistant.
+ *
+ * On vérifie donc l'autre invariant, qui est le vrai : un tombstone est ENTIER.
+ * Une moitié — `deleted` sans `payload: null`, ou l'inverse — ferait écrire au
+ * Panel un état vide en croyant appliquer une donnée.
+ */
+function eprouver(titre, projection, schema) {
+  if (projection.deleted === true || projection.payload === null) {
+    const entier = projection.deleted === true && projection.payload === null;
+    if (entier) {
+      console.log(`[payload-drift] ✓ ${titre} — EFFACEMENT (tombstone entier)`);
+    } else {
+      echecs += 1;
+      console.error(`[payload-drift] ✗ ${titre} — tombstone À MOITIÉ : `
+        + `deleted=${projection.deleted}, payload=${JSON.stringify(projection.payload)}`);
+    }
+    return;
+  }
+  const parsed = schema.safeParse(projection.payload);
+  if (parsed.success) {
+    console.log(`[payload-drift] ✓ ${titre} — ${Object.keys(projection.payload ?? {}).join(', ')}`);
+    return;
+  }
+  echecs += 1;
+  console.error(`[payload-drift] ✗ ${titre}`);
+  console.error(`               clés émises : ${Object.keys(projection.payload ?? {}).join(', ')}`);
+  for (const issue of parsed.error.errors) {
+    console.error(`               · ${issue.path.join('.') || '(racine)'} : ${issue.message}`);
+  }
+  console.error('               → l\'émetteur publie ce que le destinataire refuse.');
+}
+
+/* ── CONTRAT ─────────────────────────────────────────────────────────────── */
+{
+  // Aucun contrat : le Panel doit tout de même recevoir une photographie
+  // valide — c'est l'état d'un projet qui vient d'être appairé.
+  eprouver('contrat : aucun (projet neuf)',
+    await projectSync.buildContractProjection(), contractPayloadSchema);
+
+  /**
+   * UN CONTRAT VIVANT, avec sa tarification et son document — les champs qui
+   * n'existent QU'EN PRODUCTION. Une fixture nue reproduirait exactement
+   * l'angle mort que ce fichier est censé fermer.
+   */
+  await Contract.create({
+    reference: 'CTR-DRIFT-1',
+    status: 'ACTIVE',
+    environment: 'TEST',
+    pricing: {
+      launchFee: { enabled: true, amountExcludingTax: 90000, taxRate: 20, taxAmount: 18000, amountIncludingTax: 108000, currency: 'EUR' },
+      subscription: { enabled: true, amountExcludingTax: 9900, taxRate: 20, taxAmount: 1980, amountIncludingTax: 11880, currency: 'EUR', interval: 'MONTH' },
+    },
+    stripe: { subscription: { subscriptionId: 'sub_drift', currentPeriodEnd: new Date(Date.now() + 30 * 864e5) } },
+    document: { originalFilename: 'contrat.pdf', originalUploadedAt: new Date() },
+  });
+  eprouver('contrat : ACTIF, tarifé, avec document',
+    await projectSync.buildContractProjection(), contractPayloadSchema);
+
+  // Et un contrat TERMINÉ : la projection publie alors une date de fin, donc
+  // une forme différente. Deux états, deux formes, deux contrôles.
+  await Contract.updateMany({}, { $set: { status: 'ENDED', 'stripe.subscription.endedAt': new Date() } });
+  eprouver('contrat : TERMINÉ (historique publié)',
+    await projectSync.buildContractProjection(), contractPayloadSchema);
+}
+
+/* ── ÉTAT DU SITE ────────────────────────────────────────────────────────── */
+{
+  eprouver('état du site : par défaut',
+    await projectSync.buildSiteStatusProjection(), siteStatusPayloadSchema);
+
+  const site = await getSingleton(SiteStatus);
+  site.set({
+    status: 'SUSPENDED',
+    suspensionSource: 'TECHNICAL',
+    suspensionReason: 'Maintenance planifiée',
+    contractProtectionEnabled: true,
+  });
+  await site.save();
+  eprouver('état du site : SUSPENDU pour cause technique, protection active',
+    await projectSync.buildSiteStatusProjection(), siteStatusPayloadSchema);
+}
+
+/* ── MEMBRE D'ÉQUIPE ─────────────────────────────────────────────────────── */
+{
+  const membre = await User.create({
+    email: 'equipe@garage.fr', name: 'Camille Dupont', role: 'ADMIN', password: 'motdepasse-drift',
+  });
+  eprouver('membre d’équipe : fiche complète',
+    teamSync.buildMemberProjection(membre), teamMemberPayloadSchema);
+
+  /**
+   * ET SON TOMBSTONE. Un départ n'est pas une absence de projection : c'est
+   * une projection qui dit « cette personne n'est plus là ». Si le schéma la
+   * refusait, un membre parti resterait affiché indéfiniment côté Panel.
+   */
+  const pierre = teamSync.buildMemberTombstone(teamSync.memberEntityId(membre._id));
+  const tombstoneAccepte = pierre.payload === null || pierre.deleted === true;
+  if (tombstoneAccepte) {
+    console.log('[payload-drift] ✓ membre d’équipe : départ (tombstone, payload nul)');
+  } else {
+    echecs += 1;
+    console.error('[payload-drift] ✗ membre d’équipe : le départ ne se présente pas comme un tombstone');
+  }
+}
+
 await disconnectDatabase();
 await mongo.stop();
 

@@ -48,6 +48,9 @@ const TESTS = [
   // L1/L2 — le contrat de présentation avec médias, et le sort d'un refus.
   'project-presentation-media-contract-e2e.test.js',
   'payload-drift.check.mjs',
+  // LA RECETTE CANONIQUE — les deux sens, l'offline, le refus, le flux perdu et
+  // les latences, dans un seul fichier. Les autres prouvent chacun leur moitié.
+  'event-driven-system-e2e.test.js',
   // L0 — latences de référence et non-régression de la poussée immédiate.
   'event-driven-sync-baseline.test.js',
   'instance-generation-freshness.test.js',

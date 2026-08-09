@@ -98,6 +98,10 @@ export async function startSbAutoInstance({
     applyForeign(args) { return send('applyForeign', args); },
     /** Renomme l’entreprise par le VRAI chemin métier — Company.save(). */
     renameCompany(args) { return send('renameCompany', args); },
+    /** Crée un compte — la projection TEAM_MEMBER naît du hook du modèle. */
+    addTeamMember(args) { return send('addTeamMember', args); },
+    /** Crée un contrat — la projection CONTRACT naît du hook du modèle. */
+    createContract(args) { return send('createContract', args); },
     /** Un cycle de synchronisation réel : vidange d’outbox puis rattrapage. */
     syncNow() { return send('syncNow'); },
     /** L’ordonnanceur RÉEL — celui du bootstrap, cadences comprises. */

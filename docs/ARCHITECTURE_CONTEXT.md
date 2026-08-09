@@ -1306,3 +1306,51 @@ après login, et suit un changement de favicon.
 → `backend/src/services/company/publicBranding.service.js`
 → `frontend/src/lib/publicBranding.ts`
 → `tests/panel-public-branding.test.js`
+
+---
+
+## SYNCHRONISATION PANEL ↔ PROJET — le document canonique
+
+L'architecture complète de la synchronisation vit dans **un seul document**,
+identique dans les deux dépôts et vérifié octet pour octet par `spec-drift` :
+
+> **[`docs/SYNCHRONISATION_PANEL_PROJET.md`](SYNCHRONISATION_PANEL_PROJET.md)**
+
+Il couvre la cardinalité (`1 fiche = 1 instance = 1 appairage = 1 destination`),
+les deux sens de synchronisation maillon par maillon, la distinction entre
+synchronisation MÉTIER et invalidation d'INTERFACE, les trois horodatages qu'on
+ne doit jamais confondre (`lastHeartbeatAt`, `lastBusinessSyncAt`,
+`sourceModifiedAt`), commande ≠ projection confirmée, connexion ≠ vitrine, les
+médias, la classification des incidents, l'ordre d'extinction, et un **playbook
+de diagnostic** qui permet de localiser une panne sans deviner.
+
+Ne pas décrire ces mécanismes ailleurs : deux descriptions d'un même système
+divergent toujours, et la divergence est invisible — chacun lit la sienne.
+
+---
+
+## INTEGRATED API — un CADRAGE, pas un état livré
+
+Attention à ne pas lire le document suivant comme le reste de celui-ci : il
+décrit une architecture **visée**, pas implémentée.
+
+> **[`docs/architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md`](architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md)**
+
+**Ce qui est vrai aujourd'hui**, et que le code porte :
+
+- `PanelIntegratedApi` est un **coffre de clés** qui déchiffre des secrets et
+  les **pousse vers les projets autorisés** sur le pont
+  (`services/company/integratedApi.service.js`). Ce n'est pas un plan de
+  contrôle.
+- Le Panel **n'appelle aucun fournisseur** : aucune dépendance Stripe, Brevo ou
+  Yousign dans `backend/package.json`, aucune route de webhook.
+- Les intégrations réellement exploitées (Stripe, Brevo, Yousign, Hostinger)
+  vivent **dans SB Auto**, configurées depuis son Manager, avec un mode
+  fournisseur choisi à la main, indépendant de l'`ENV`.
+- Côté projet, les credentials reçus du Panel sont persistés puis **lus par
+  aucun code**.
+
+**Ce que le document propose** — Panel comme plan de contrôle, capacités métier
+à la place des clés, `environment = config.env` sans exception, registre de
+webhooks centralisé — n'est **ni décidé ni commencé**. Il attend cinq décisions
+produit (§17) et un GO sur son premier lot.
