@@ -34,6 +34,18 @@ const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
 
 const layout = lire('frontend/src/components/Layout.tsx');
 const branding = lire('frontend/src/lib/usePanelBranding.ts');
+/**
+ * LA SOURCE A DÉMÉNAGÉ — et les règles avec elle.
+ *
+ * Le nom, le logo, le favicon et le thème arrivaient par TROIS appels
+ * authentifiés distincts. L'écran de connexion, lui, ne pouvait rien en tirer :
+ * il recevait un 401 avant d'exister. Une seule surface PUBLIQUE les sert
+ * désormais, et c'est elle qui porte la résolution d'adresse.
+ *
+ * Ce que ce fichier vérifiait reste vrai — on le vérifie simplement là où la
+ * règle vit maintenant.
+ */
+const source = lire('frontend/src/lib/publicBranding.ts');
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('LA RÈGLE DE REPLI — trois cas, et le troisième n’est pas « Panel null »');
@@ -73,14 +85,16 @@ section('L’ÉCRAN — le logo REMPLACE le titre, il ne s’y ajoute pas');
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('UNE SEULE SOURCE DE MARQUE, ET AUCUNE ADRESSE FABRIQUÉE');
 {
-  check('la marque vient de la fiche entreprise', /company\.current\(\)/.test(branding));
-  check('…par l’aperçu que le SERVEUR a résolu',
-    /media\?\.\['branding\.logo'\]/.test(branding));
-  check('…avec l’URL publiée en repli', /branding\?\.logoUrl/.test(branding));
+  check('la marque vient d’UNE surface publique unique',
+    /loadPublicBranding/.test(branding) && /api\/public\/branding/.test(source));
+  check('…et le SERVEUR reste celui qui résout l’adresse du média',
+    /branding\.logo/.test(lire('backend/src/services/company/publicBranding.service.js')));
+  check('…avec l’URL publiée en repli',
+    /branding\?\.logoUrl/.test(lire('backend/src/services/company/publicBranding.service.js')));
   check('aucune adresse composée à la main dans le module',
-    !/`\$\{[^}]*\}\/uploads/.test(branding));
+    !/`\$\{[^}]*\}\/uploads/.test(source));
   check('un chemin de stockage nu n’est jamais affiché',
-    /\^https\?:/.test(branding));
+    /\^https\?:/.test(source));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -96,10 +110,17 @@ section('LE « LOGO SOMBRE » NE REVIENT PAS PAR LA BANDE');
 section('LE FAVICON N’EST PAS TOUCHÉ');
 {
   const favicon = lire('frontend/src/lib/useFavicon.ts');
-  check('le favicon garde son propre module', favicon.includes('branding.favicon'));
-  check('…et la marque ne s’en mêle pas', !branding.includes('branding.favicon'));
-  check('les deux lisent la même fiche, sans se dupliquer',
-    favicon.includes('company.current()') && branding.includes('company.current()'));
+  check('le favicon garde son propre point d’entrée', favicon.includes('useFaviconLoader'));
+  check('…et la marque ne le repose pas elle-même', !branding.includes('applyFavicon'));
+  /**
+   * L'ATTENTE EST PLUS FORTE QU'AVANT.
+   *
+   * Elle exigeait que les deux modules appellent la même fiche. Ils appellent
+   * désormais la même FONCTION, qui n'émet qu'une requête : il n'y a plus deux
+   * lectures à garder cohérentes, il n'y en a qu'une.
+   */
+  check('les deux passent par le MÊME chargement, sans se dupliquer',
+    favicon.includes('loadPublicBranding') && branding.includes('loadPublicBranding'));
 }
 
 finish();

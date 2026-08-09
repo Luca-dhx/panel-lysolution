@@ -11,6 +11,7 @@ import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import eventsRoutes from './routes/events.routes.js';
 import themeRoutes from './routes/theme.routes.js';
+import publicRoutes from './routes/public.routes.js';
 import networkRoutes from './routes/network.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
@@ -52,6 +53,20 @@ export function createApp() {
   app.use('/bridge/v1', bridgeRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectsRoutes);
+  /**
+   * SURFACE PUBLIQUE — l'identite visuelle, avant toute session.
+   *
+   * ══ ELLE DOIT ETRE MONTEE AVANT `/api` ════════════════════════════════════
+   *
+   * `eventsRoutes` est monte sur `/api` TOUT ENTIER, et sa premiere ligne est
+   * `router.use(requirePanelUser)`. Un middleware de routeur s'execute AVANT
+   * que les chemins ne soient compares : monte apres lui, `/api/public`
+   * repondait donc 401 — la garde d'un autre routeur, appliquee a une surface
+   * qui n'en veut pas.
+   *
+   * L'ordre n'est pas cosmetique ici : il EST la garantie.
+   */
+  app.use('/api/public', publicRoutes);
   app.use('/api', eventsRoutes);
   app.use('/api/theme', themeRoutes);
   app.use('/api/system-configuration', networkRoutes);

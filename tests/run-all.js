@@ -29,6 +29,8 @@ const TESTS = [
   'project-connections.test.js',
   'panel-instance-environment.test.js',
   'panel-branding.test.js',
+  // LOT F — l'identité visuelle du Panel, avant toute session.
+  'panel-public-branding.test.js',
   'developer-branding-propagation.test.js',
   'developer-branding-instance-ack-e2e.test.js',
   // Cross-dépôt : un vrai SB Auto, dans son processus, tire et applique.

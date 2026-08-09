@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { loadPublicBranding } from '@/lib/publicBranding';
 
 /**
  * THÈME DU PANEL — appliqué en écrivant quatre variables CSS.
@@ -59,16 +60,24 @@ export function contrastRatio(a: string, b: string): number {
 
 export const MIN_CONTRAST = 4.5;
 
-/** Charge le thème enregistré et l'applique. Utilisé une fois, au démarrage. */
+/**
+ * Charge la marque du Panel et l'applique. Utilisé une fois, au démarrage.
+ *
+ * ══ POURQUOI CE N'EST PLUS `GET /api/theme` ═════════════════════════════════
+ *
+ * Cette route est derrière `requirePanelUser`. Ce chargeur partant dès le
+ * montage de l'application — donc AVANT le login — recevait un 401 que le
+ * `.catch` avalait : l'écran de connexion ne pouvait STRUCTURELLEMENT pas se
+ * thémer, et personne ne le voyait.
+ *
+ * Le thème vient désormais de `/api/public/branding`, avec le nom, le logo et
+ * le favicon : une seule requête là où il y en avait trois, et elle fonctionne
+ * des deux côtés de l'authentification. `/api/theme` reste la surface
+ * d'ÉCRITURE, réservée aux comptes DEV.
+ */
 export function useThemeLoader(): void {
   useEffect(() => {
-    let annule = false;
-    api.getTheme()
-      .then((data) => { if (!annule) applyTheme(data.theme); })
-      // Un thème indisponible n'empêche pas de travailler : les défauts CSS
-      // sont déjà en place, l'application reste lisible.
-      .catch(() => {});
-    return () => { annule = true; };
+    void loadPublicBranding();
   }, []);
 }
 

@@ -1650,3 +1650,27 @@ textarea:focus {
   white-space: nowrap;
   border: 0;
 }
+
+/*
+  LOGO DE L'AGENCE SUR L'ÉCRAN DE CONNEXION.
+
+  Borné en HAUTEUR plutôt qu'en largeur : les logos vont du carré au bandeau
+  très allongé, et contraindre la largeur écraserait les seconds. `max-width`
+  reste là comme garde-fou, pour qu'aucun logo ne déborde de la carte sur un
+  écran de 320 px.
+
+  `object-fit: contain` : jamais de recadrage — une marque déformée est pire
+  qu'une marque absente.
+
+  La hauteur est FIXE et réservée d'avance : le logo arrive du cache avant le
+  premier rendu, mais sur une première visite il arrive du réseau. Sans borne,
+  la carte sauterait à ce moment-là.
+*/
+.login-logo {
+  display: block;
+  max-height: 56px;
+  max-width: 100%;
+  width: auto;
+  margin: 0 auto 0.75rem;
+  object-fit: contain;
+}

@@ -1206,3 +1206,103 @@ la couleur.
 
 → `frontend/src/lib/useSwitchIntent.ts` · `frontend/src/components/Switch.tsx`
 → `tests/protection-switch-ux.test.js` · `tests/vitrine-vs-connexion.test.js`
+
+---
+
+## Branding public : ce que l'écran de connexion a le droit de savoir
+
+> **BRANDING PUBLIC ≠ DONNÉES PUBLIQUES DU PANEL.** La route publique n'expose
+> qu'un sous-ensemble explicitement whitelisté, nécessaire à l'identité visuelle
+> avant authentification.
+
+### Pourquoi le login ne pouvait PAS se thémer
+
+Les trois données qui peignent le Panel — nom, logo, thème — vivaient derrière
+`requirePanelUser`. `useThemeLoader()` partait pourtant dès le montage de
+l'application, donc **avant** le login : il recevait un `401` que le
+`.catch(() => {})` avalait. L'écran restait sur les couleurs par défaut, avec
+un titre **« Panel L.Y Solution » écrit en dur** — une marque qui ne peut pas
+être livrée à une autre agence.
+
+### La surface publique, et sa liste blanche
+
+`GET /api/public/branding` — sans session :
+
+```json
+{ "companyName": …, "logoUrl": …, "faviconUrl": …, "theme": { "colors", "radius", "typography" } }
+```
+
+Ce n'est **pas** une version non authentifiée de `/api/company` : le service
+construit la réponse **champ par champ**. Contacts, signataire, références,
+équipe, versions publiées, état de diffusion aux projets restent derrière la
+session. Une liste blanche se relit ; une liste noire s'oublie le jour où un
+champ s'ajoute.
+
+`PUBLIC_BRANDING_KEYS` est exporté et **comparé par un test** : la garantie ne
+repose pas sur la relecture d'un objet littéral. Un second test cherche
+`token`, `secret`, `password`, `credential`, `bridge`, `ssh`, `mongo`, `jwt`,
+`pairing`… dans la réponse — par les MOTS, pour que le jour où un champ
+inattendu s'ajoute, son nom le trahisse.
+
+### Un piège de montage, et il valait la peine d'être écrit
+
+`app.use('/api', eventsRoutes)` monte un routeur dont la première ligne est
+`router.use(requirePanelUser)`. Un middleware de routeur s'exécute **avant** que
+les chemins ne soient comparés : montée après lui, `/api/public` répondait 401 —
+la garde d'un autre routeur appliquée à une surface qui n'en veut pas.
+
+**L'ordre de montage n'est pas cosmétique ici : il EST la garantie.**
+
+### Une source, un cache, un applicateur
+
+Le nom, le logo, le favicon et le thème arrivaient par **trois** appels
+authentifiés distincts. Ils décrivent la même chose : une seule requête publique
+les remplace.
+
+```
+main.tsx  applyCachedBranding()   ← SYNCHRONE, avant que React ne monte
+             thème + favicon peints depuis la dernière valeur connue
+React monte  déjà thémé, sans flash
+App          loadPublicBranding() ← le réseau, qui écrase
+```
+
+Le cache sert le **premier rendu** ; il n'est **jamais** l'autorité. La réponse
+l'écrase, y compris pour **retirer** un logo qui n'existe plus. Ce sont des
+valeurs publiques et lentes à changer : les mettre en cache n'expose rien de
+plus que l'écran lui-même. En cas de panne, on garde ce qu'on savait plutôt que
+de faire clignoter la marque vers « Panel ».
+
+Aucune reprise automatique : une identité visuelle ne justifie pas de marteler
+un serveur en difficulté. Le prochain chargement suffira.
+
+### Le repli, identique partout
+
+| | |
+|---|---|
+| logo exploitable | le logo |
+| pas de logo, nom connu | « Panel *entreprise* » |
+| rien de configuré | « Panel » |
+
+`panelTitleFor` est défini **une** fois, avec la source publique, et réexporté.
+Deux définitions de la même règle finiraient par diverger — et deux écrans qui
+nomment le produit différemment donnent l'impression de deux produits.
+
+Une adresse non absolue n'est jamais affichée : `/uploads/…` ne s'affiche que
+par chance, quand le Panel sert lui-même ses fichiers. On préfère le repli
+textuel à une image cassée.
+
+### Le thème reste protégé en ÉCRITURE
+
+Ouvrir la lecture n'ouvre rien d'autre. `GET/PUT /api/theme` demeurent derrière
+la session, l'écriture réservée aux comptes DEV — vérifié par test.
+
+### Le favicon n'a qu'une primitive
+
+`applyFavicon` vit dans `publicBranding.ts`, et nulle part ailleurs. Deux
+endroits qui posent le `<link rel="icon">` finissent par se contredire : l'un
+pose l'ancien après que l'autre a posé le nouveau. Il fonctionne avant login,
+après login, et suit un changement de favicon.
+
+→ `backend/src/services/company/publicBranding.service.js`
+→ `frontend/src/lib/publicBranding.ts`
+→ `tests/panel-public-branding.test.js`

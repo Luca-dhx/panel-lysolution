@@ -21,7 +21,7 @@
  * doit rester lisible sur le fond de la barre.
  */
 import { useEffect, useState } from 'react';
-import { company } from '@/lib/api';
+import { lireCacheBranding, loadPublicBranding } from '@/lib/publicBranding';
 
 export interface PanelBranding {
   /** Adresse du logo, résolue par le serveur. `null` = aucun logo exploitable. */
@@ -33,30 +33,29 @@ export interface PanelBranding {
 }
 
 /**
- * LE LIBELLÉ DE REPLI — fonction PURE, testable sans monter React.
+ * LE LIBELLÉ DE REPLI — défini UNE fois, avec la source publique.
  *
- * Trois cas, et un seul est ambigu si on ne l'écrit pas : une agence dont on
- * connaît le nom mérite de le voir ; une installation neuve, pas encore
- * configurée, doit dire « Panel » et non « Panel null ».
+ * Réexporté ici pour les importateurs existants. Deux définitions de la même
+ * règle finiraient par diverger, et deux écrans nommeraient le produit
+ * différemment — ce qui donne l'impression de deux produits.
  */
-export function panelTitleFor(companyName: string | null | undefined): string {
-  const nom = String(companyName ?? '').trim();
-  return nom ? `Panel ${nom}` : 'Panel';
-}
+export { panelTitleFor } from '@/lib/publicBranding';
 
 /**
- * Une adresse d'image AFFICHABLE — absolue, jamais un chemin de stockage nu.
+ * LA RÈGLE D'ADRESSE A DÉMÉNAGÉ elle aussi, dans `lib/publicBranding.ts`.
  *
  * `/uploads/…` ne s'affiche que par chance, quand le Panel sert lui-même ses
- * fichiers. On préfère le repli textuel à une image cassée.
+ * fichiers : on préfère le repli textuel à une image cassée. La règle est
+ * appliquée à la SOURCE, une fois, plutôt que par chaque consommateur.
  */
-function logoAffichable(url: string | null | undefined): string | null {
-  const brut = String(url ?? '').trim();
-  return /^https?:\/\//i.test(brut) ? brut : null;
-}
 
 /**
- * LA DERNIÈRE MARQUE CONNUE — pour peindre AVANT le premier aller-retour.
+ * LE CACHE A DÉMÉNAGÉ dans `lib/publicBranding.ts`, avec la source qu'il sert.
+ *
+ * Il y peint désormais AVANT que React ne monte, et couvre aussi le thème et le
+ * favicon. Le garder ici en aurait fait un second cache de la même marque.
+ *
+ * ── CE QU'IL ÉTAIT, ET POURQUOI IL RESTE LÉGITIME ──────────────────────────
  *
  * ══ LE DÉFAUT QUE CE CACHE FERME ════════════════════════════════════════════
  *
@@ -80,32 +79,6 @@ function logoAffichable(url: string | null | undefined): string | null {
  * suivant. En cas de panne de la fiche, on garde ce qu'on savait plutôt que
  * de faire clignoter la marque vers « Panel ».
  */
-const CACHE_KEY = 'panel.branding';
-
-function lireCache(): { logoUrl: string | null; companyName: string | null } | null {
-  try {
-    const brut = window.localStorage.getItem(CACHE_KEY);
-    if (!brut) return null;
-    const v = JSON.parse(brut);
-    // On revalide la forme : une valeur corrompue ne doit pas casser l'écran.
-    return {
-      logoUrl: logoAffichable(v?.logoUrl),
-      companyName: typeof v?.companyName === 'string' ? v.companyName : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function ecrireCache(valeur: { logoUrl: string | null; companyName: string | null }): void {
-  try {
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify(valeur));
-  } catch {
-    // Stockage indisponible (navigation privée, quota) : le cache est un
-    // confort, jamais une dépendance. On continue sans lui.
-  }
-}
-
 export function usePanelBranding(): PanelBranding {
   /**
    * L'ÉTAT INITIAL EST DÉJÀ LA DERNIÈRE MARQUE CONNUE — pas un vide.
@@ -115,44 +88,46 @@ export function usePanelBranding(): PanelBranding {
    * pas encore un constat.
    */
   const [branding, setBranding] = useState<PanelBranding>(() => {
-    const cache = lireCache();
+    const cache = lireCacheBranding();
     return {
-      logoUrl: cache?.logoUrl ?? null,
-      companyName: cache?.companyName ?? null,
+      logoUrl: cache.logoUrl,
+      companyName: cache.companyName,
       loading: true,
     };
   });
 
   useEffect(() => {
     let annule = false;
-    company.current()
-      .then((state) => {
-        if (annule) return;
-        /**
-         * L'aperçu résolu par le SERVEUR d'abord — lui seul sait si le média
-         * est servi par une destination active. L'URL publiée ensuite, pour
-         * une fiche antérieure au descripteur.
-         */
-        const frais = {
-          logoUrl: logoAffichable(state.media?.['branding.logo']?.url)
-            ?? logoAffichable(state.company?.branding?.logoUrl),
-          companyName: state.company?.identity?.name?.trim() || null,
-        };
-        // La réponse fait autorité : elle écrase le cache, y compris pour
-        // retirer un logo qui n'existe plus.
-        ecrireCache(frais);
-        setBranding({ ...frais, loading: false });
-      })
+    /**
+     * ── UNE SEULE SOURCE, ET ELLE EST PUBLIQUE ────────────────────────────
+     *
+     * Ce hook lisait `GET /api/company` — une surface AUTHENTIFIÉE. La barre
+     * latérale ne s'affiche qu'après login, cela fonctionnait donc ; mais
+     * l'écran de connexion, lui, ne pouvait rien en tirer, et le titre y était
+     * écrit en dur.
+     *
+     * La marque vient désormais de `/api/public/branding` : la MÊME fiche
+     * entreprise, restreinte à ce qui est public par nature. Un seul appel
+     * sert les deux côtés de l'authentification, et personne n'a deux vérités
+     * à réconcilier.
+     */
+    void loadPublicBranding().then((frais) => {
+      if (annule || !frais) return;
+      setBranding({
+        logoUrl: frais.logoUrl,
+        companyName: frais.companyName,
+        loading: false,
+      });
+    }).finally(() => {
       /**
-       * Fiche indisponible : on GARDE ce qu'on avait peint. Retomber sur
+       * Marque indisponible : on GARDE ce qu'on avait peint. Retomber sur
        * « Panel » ferait clignoter la marque à chaque hoquet du réseau, alors
        * que la dernière valeur connue reste la meilleure réponse disponible.
        */
-      .catch(() => { if (!annule) setBranding((p) => ({ ...p, loading: false })); });
+      if (!annule) setBranding((b) => ({ ...b, loading: false }));
+    });
     return () => { annule = true; };
   }, []);
 
   return branding;
 }
-
-export default usePanelBranding;

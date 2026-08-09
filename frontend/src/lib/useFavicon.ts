@@ -26,44 +26,27 @@
  * navigateur reste, ce qui vaut mieux qu'un lien mort.
  */
 import { useEffect } from 'react';
-import { company } from '@/lib/api';
-
-/** Pose (ou remplace) le `<link rel="icon">` du document. */
-function applyFavicon(href: string): void {
-  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  if (!link) {
-    link = document.createElement('link');
-    link.rel = 'icon';
-    document.head.appendChild(link);
-  }
-  // Remplacer le favicon change sa clé d'objet, donc son adresse : aucune
-  // ancienne icône ne peut réapparaître depuis le cache, et aucun paramètre
-  // anti-cache n'est nécessaire.
-  if (link.href !== href) link.href = href;
-}
+import { loadPublicBranding } from '@/lib/publicBranding';
 
 export function useFaviconLoader(): void {
+  /**
+   * ── PLUS AUCUNE REQUÊTE PROPRE ────────────────────────────────────────────
+   *
+   * Ce chargeur appelait `GET /api/company` — une surface AUTHENTIFIÉE — pour
+   * la seule adresse du favicon. Trois conséquences : un appel de plus au
+   * montage, un favicon absent avant login, et une seconde primitive de pose
+   * du `<link rel="icon">` à maintenir.
+   *
+   * Le favicon arrive désormais avec le reste de la marque
+   * (`/api/public/branding`), et `applyFavicon` est la SEULE primitive qui
+   * touche le document — appelée depuis le cache avant le premier rendu, puis
+   * depuis la réponse réseau.
+   *
+   * Ce hook subsiste pour ne pas disperser l'ordre d'amorçage dans `App` : il
+   * déclenche le même chargement, idempotent, que `useThemeLoader`.
+   */
   useEffect(() => {
-    let annule = false;
-    company.current()
-      .then((state) => {
-        if (annule) return;
-        /**
-         * L'aperçu résolu par le serveur d'abord — c'est lui qui sait si le
-         * média est SERVI par une destination active. L'URL publiée ensuite,
-         * pour une fiche antérieure au descripteur. Un chemin de stockage nu
-         * (`/uploads/…`) n'est pas retenu : il ne s'affiche que par chance,
-         * quand le Panel sert lui-même ses fichiers.
-         */
-        const href = state.media?.['branding.favicon']?.url
-          ?? state.company?.branding?.faviconUrl
-          ?? null;
-        if (href) applyFavicon(href);
-      })
-      // Une fiche indisponible n'empêche pas de travailler : on garde l'icône
-      // par défaut plutôt que d'afficher une image cassée.
-      .catch(() => {});
-    return () => { annule = true; };
+    void loadPublicBranding();
   }, []);
 }
 
