@@ -168,11 +168,33 @@ section('9. PREUVE COMPORTEMENTALE : dépôt dirty en PROD → rien n’existe')
     connectTestDatabase, setTestEnv, startMemoryMongo, startServer, stopMemoryMongo,
   } = await import('./helpers/harness.js');
 
-  // Le dépôt est rendu DÉTERMINISTEMENT non commité : un fichier non suivi
-  // suffit, et il est retiré quoi qu'il arrive. Sans cela, le test dépendrait
-  // de l'état de travail du poste — vert par hasard sur un dépôt propre.
-  const probeFile = path.join(PROJECT_ROOT, `.deploy-gate-probe-${process.pid}.tmp`);
-  fs.writeFileSync(probeFile, 'sonde de test — supprimée automatiquement\n');
+  /**
+   * LE DÉPÔT EST RENDU NON COMMITÉ — par une modification que git VOIT.
+   *
+   * ══ POURQUOI LA SONDE PRÉCÉDENTE NE MARCHAIT PAS ══════════════════════════
+   *
+   * Elle créait un fichier NON SUIVI nommé `.deploy-gate-probe-<pid>.tmp`. Or
+   * `.gitignore:7` ignore exactement ce motif — la règle existe pour qu'un
+   * reste de sonde ne soit jamais committé, et elle fait très bien son
+   * travail : `git status` ne l'a JAMAIS vue.
+   *
+   * Le dépôt restait donc propre, `runLocalPreflight` répondait « rien à
+   * signaler », et onze assertions tombaient en cascade. Le test ne passait que
+   * lorsqu'un travail en cours rendait l'arbre sale PAR AILLEURS — c'est-à-dire
+   * par accident, et jamais sur un dépôt propre.
+   *
+   * ══ CE QU'ON FAIT À LA PLACE ══════════════════════════════════════════════
+   *
+   * On modifie un fichier SUIVI, et on le restaure à l'octet près dans le
+   * `finally`. Une modification de fichier suivi ne peut pas être ignorée : par
+   * construction, elle est toujours visible. La règle de `.gitignore` reste
+   * intacte, et la garantie éprouvée devient réelle plutôt qu'accidentelle.
+   */
+  const probeFile = path.join(PROJECT_ROOT, 'README.md');
+  const probeOriginal = fs.readFileSync(probeFile, 'utf8');
+  fs.writeFileSync(probeFile, `${probeOriginal}
+<!-- sonde de recette -->
+`);
 
   try {
     setTestEnv();
@@ -212,8 +234,8 @@ section('9. PREUVE COMPORTEMENTALE : dépôt dirty en PROD → rien n’existe')
     check('…avec le code attendu', res.json?.code === 'PANEL_DEPLOY_LOCAL_PREREQUISITES_FAILED');
     check('…un message explicite', /Source Git non commitée/.test(res.json?.message ?? ''));
     check('…la liste des fichiers fautifs', (res.json?.details?.files ?? []).length > 0);
-    check('…dont le fichier sonde', (res.json?.details?.files ?? [])
-      .some((f) => f.path.includes('.deploy-gate-probe-')));
+    check('…dont le fichier modifié par la sonde', (res.json?.details?.files ?? [])
+      .some((f) => f.path.includes('README.md')));
     check('…et l’aveu que le pipeline n’a pas tourné', res.json?.details?.pipelineExecuted === false);
 
     // ── LE CŒUR DE LA PREUVE : rien n’a été créé ───────────────────────────
@@ -240,7 +262,8 @@ section('9. PREUVE COMPORTEMENTALE : dépôt dirty en PROD → rien n’existe')
     await close();
     await stopMemoryMongo();
   } finally {
-    fs.rmSync(probeFile, { force: true });
+    // RESTAURATION À L'OCTET PRÈS — un test ne laisse jamais le dépôt modifié.
+    fs.writeFileSync(probeFile, probeOriginal);
   }
 }
 
