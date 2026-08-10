@@ -1,22 +1,33 @@
-// API INTÉGRÉES — Phase 4, LOT 4.
+// API INTÉGRÉES — ANCIEN COFFRE (Phase 4, LOT 4 — vidé de sa fonction en L4).
 //
-// Le Panel est le coffre des accès tiers de l'entreprise. Cet écran l'ouvre
-// sans jamais montrer ce qu'il contient.
+// ── CE QUI RESTE VIVANT ICI, ET RIEN D'AUTRE ────────────────────────────────
 //
-// ── CE QUE L'ÉCRAN NE PEUT PAS AFFICHER ─────────────────────────────────────
-// Aucune valeur d'identifiant, jamais — l'API n'en renvoie pas. Ce qui est
-// montré : le NOM des clés renseignées, et une EMPREINTE courte de chacune.
-// L'empreinte suffit à répondre à la seule question utile sans lire le
-// secret : « ai-je bien remplacé cette clé ? ».
+// Une seule chose : les AUTORISATIONS. « Ce projet a le droit d'utiliser cette
+// intégration » est une donnée saisie à la main, sans équivalent ailleurs, et
+// que le lot L3 transformera en droit d'invoquer une capacité. La détruire
+// coûterait une configuration ; la garder ne coûte rien.
 //
-// ── LE MODE SUIT LE PROJET ──────────────────────────────────────────────────
-// Un projet en TEST reçoit les identifiants TEST, quoi qu'affiche cet écran.
-// L'interface le rappelle à chaque autorisation, parce que c'est exactement
-// la confusion qui met une clé de production dans un site de recette.
+// ── CE QUI EST MORT, ET POURQUOI L'ÉCRAN LE DIT ─────────────────────────────
+//
+// Les IDENTIFIANTS de ce coffre ne sont lus par AUCUN code depuis le lot L4 :
+// leur unique consommateur était la diffusion vers les projets, supprimée avec
+// la garde de la frontière. Le service les chiffre encore à l'écriture, mais
+// plus rien ne les déchiffre.
+//
+// Le formulaire de saisie a donc été retiré. Laisser un champ qui accepte une
+// vraie clé Stripe pour la ranger dans un cul-de-sac est pire qu'un champ
+// absent : personne ne peut deviner que le geste n'a aucun effet.
+//
+// ── LE MONDE FOURNISSEUR NE SE CHOISIT PLUS (lot L2) ────────────────────────
+//
+// Cet écran affichait « Mode côté Panel ». Ce mode ne routait déjà plus rien
+// depuis L4 ; depuis L2 la notion elle-même a disparu — l'environnement de
+// l'instance impose celui des fournisseurs, et aucune interface ne le choisit.
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
+import { RuntimeEnvironmentNotice } from '@/components/RuntimeEnvironmentNotice';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { company as api, errorMessage } from '@/lib/api';
 import { useProjects } from '@/lib/useProjects';
@@ -71,25 +82,14 @@ export function IntegratedApisPage() {
         </p>
       </header>
 
-      {/*
-        Cet écran survit à L1 parce qu'il pilote un chemin ENCORE EN SERVICE :
-        les identifiants qu'il diffuse partent réellement vers les projets
-        appairés. Le débrancher avant L4 couperait ce chemin sans remplacement.
-        Il ne doit plus servir à configurer un nouveau fournisseur.
-      */}
       <p className="mode-notice mode-reel">
-        <strong>Ancien coffre — en cours de remplacement.</strong> Cet écran
-        diffuse encore des identifiants aux projets appairés. Pour configurer un
-        fournisseur, utilisez désormais le{' '}
-        <Link to="/integrated-apis">plan de contrôle</Link>, qui ne transmet
-        aucun secret. Le retrait de cette page est planifié (lot L4).
+        <strong>Ancien coffre — il ne sert plus qu’aux autorisations.</strong>{' '}
+        Depuis le lot L4, cet écran ne diffuse plus aucun identifiant : la garde
+        du pont l’interdit. Le coffre vivant est le{' '}
+        <Link to="/integrated-apis">plan de contrôle</Link>.
       </p>
 
-      <p className="mode-notice mode-simulation">
-        Les valeurs des identifiants ne sortent jamais de cette interface :
-        l’API n’en renvoie pas. Seuls le nom des clés et une empreinte courte
-        sont affichés.
-      </p>
+      <RuntimeEnvironmentNotice />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
       {notice ? <div className="alert alert-success">{notice}</div> : null}
@@ -125,13 +125,8 @@ function ApiCard({ api: item, projects, busy, run }: {
   busy: boolean;
   run: (fn: () => Promise<string>) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<'TEST' | 'PROD'>('TEST');
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [newKey, setNewKey] = useState('');
   const [grantProject, setGrantProject] = useState('');
-  const [grantKeys, setGrantKeys] = useState<string[]>([]);
 
-  const set = item.credentials[mode];
   const granted = new Set(item.grants.map((g) => g.projectId));
   const available = projects.filter((p) => !granted.has(p.projectId));
 
@@ -141,91 +136,44 @@ function ApiCard({ api: item, projects, busy, run }: {
         items={[
           ['Identifiant', <code>{item.key}</code>],
           ['Catégorie', item.category],
-          ['Mode côté Panel', item.mode],
           ['Actif', item.enabled ? 'oui' : 'non'],
           ['TEST configuré', item.credentials.TEST.configured ? `${item.credentials.TEST.keys.length} clé(s)` : <span className="muted">non</span>],
           ['PROD configuré', item.credentials.PROD.configured ? `${item.credentials.PROD.keys.length} clé(s)` : <span className="muted">non</span>],
         ]}
       />
 
-      {/* — Identifiants ————————————————————————————————— */}
-      <Disclosure title="Identifiants">
-        <div className="filter-row">
-          <ThemedFilter
-            label="Mode"
-            value={mode}
-            onChange={(v) => { setMode(v as 'TEST' | 'PROD'); setValues({}); }}
-            options={[
-              { value: 'TEST', label: 'TEST' },
-              { value: 'PROD', label: 'PROD' },
-            ]}
-          />
-        </div>
+      {/* — Identifiants : INERTES depuis L4 ————————————————— */}
+      <Disclosure title={`Identifiants historiques (${item.credentials.TEST.keys.length + item.credentials.PROD.keys.length})`}>
+        <p className="mode-notice mode-reel">
+          <strong>Ces identifiants ne sont lus par aucun code.</strong> Le lot L4
+          a supprimé leur seul consommateur — la diffusion vers les projets. Ce
+          service les chiffre encore à l’écriture, mais plus rien ne les
+          déchiffre : une clé saisie ici partirait dans un cul-de-sac.
+        </p>
+        <p className="muted read-only-note">
+          Le coffre vivant est le{' '}
+          <Link to="/integrated-apis">plan de contrôle</Link>. Le formulaire de
+          saisie a été retiré d’ici pour ne plus inviter un geste sans effet ;
+          la route correspondante subsiste, inchangée, pour la compatibilité.
+        </p>
 
-        {set.keys.length === 0 ? (
-          <p className="muted">Aucune clé renseignée pour le mode {mode}.</p>
+        {item.credentials.TEST.keys.length + item.credentials.PROD.keys.length === 0 ? (
+          <p className="muted">Aucune clé historique sur cette entrée.</p>
         ) : (
           <ul className="credential-list">
-            {set.keys.map((name) => (
-              <li key={name}>
-                <span className="credential-name">{name}</span>
-                <code className="credential-fingerprint">{set.fingerprints[name]}</code>
-                <input
-                  type="password"
-                  placeholder="laisser vide pour conserver"
-                  value={values[name] ?? ''}
-                  onChange={(e) => setValues({ ...values, [name]: e.target.value })}
-                />
-                <button
-                  type="button" className="btn btn-small" disabled={busy}
-                  onClick={() => run(async () => {
-                    await api.setCredentials(item.apiId, mode, {}, [name]);
-                    return `Clé « ${name} » retirée du mode ${mode}.`;
-                  })}
-                >
-                  Retirer
-                </button>
-              </li>
-            ))}
+            {(['TEST', 'PROD'] as const).flatMap((jeu) =>
+              item.credentials[jeu].keys.map((name) => (
+                <li key={`${jeu}-${name}`}>
+                  <span className="credential-name">{jeu} · {name}</span>
+                  <code className="credential-fingerprint">
+                    {item.credentials[jeu].fingerprints[name]}
+                  </code>
+                  <span className="muted">inerte</span>
+                </li>
+              )),
+            )}
           </ul>
         )}
-
-        <div className="filter-row">
-          <label className="field">
-            <span className="field-label">Ajouter une clé</span>
-            <input type="text" value={newKey} placeholder="ex. secretKey" onChange={(e) => setNewKey(e.target.value)} />
-          </label>
-          {newKey ? (
-            <label className="field">
-              <span className="field-label">Valeur</span>
-              <input
-                type="password"
-                value={values[newKey] ?? ''}
-                onChange={(e) => setValues({ ...values, [newKey]: e.target.value })}
-              />
-            </label>
-          ) : null}
-        </div>
-
-        <div className="action-buttons">
-          <button
-            type="button" className="btn" disabled={busy || Object.keys(values).length === 0}
-            onClick={() => run(async () => {
-              const filled = Object.fromEntries(Object.entries(values).filter(([, v]) => v !== ''));
-              await api.setCredentials(item.apiId, mode, filled);
-              setValues({});
-              setNewKey('');
-              return `${Object.keys(filled).length} identifiant(s) enregistré(s) en ${mode}, et rediffusé(s) aux projets autorisés.`;
-            })}
-          >
-            Enregistrer les identifiants
-          </button>
-        </div>
-        <p className="muted read-only-note">
-          Une valeur laissée vide CONSERVE la clé existante. Pour la supprimer,
-          utilisez « Retirer » — sans quoi un formulaire qui masque les secrets
-          les effacerait à chaque enregistrement.
-        </p>
       </Disclosure>
 
       {/* — Autorisations ————————————————————————————————— */}
@@ -270,33 +218,22 @@ function ApiCard({ api: item, projects, busy, run }: {
                 }))}
               />
             </div>
-            {set.keys.length > 0 ? (
-              <fieldset className="key-selection">
-                <legend className="field-label">Clés accordées (aucune cochée = toutes)</legend>
-                {set.keys.map((name) => (
-                  <label key={name} className="key-option">
-                    <input
-                      type="checkbox"
-                      checked={grantKeys.includes(name)}
-                      onChange={(e) => setGrantKeys(
-                        e.target.checked
-                          ? [...grantKeys, name]
-                          : grantKeys.filter((k) => k !== name),
-                      )}
-                    />
-                    {name}
-                  </label>
-                ))}
-              </fieldset>
-            ) : null}
+            {/*
+              ─── SUPPRIMÉ : LA RESTRICTION PAR CLÉ ────────────────────────
+              Elle permettait de n'accorder qu'une partie des identifiants —
+              utile tant que le Panel les DIFFUSAIT. Depuis L4 il n'en diffuse
+              aucun : restreindre un envoi qui n'a plus lieu n'a plus d'objet.
+
+              L'autorisation, elle, survit : elle deviendra un droit d'invoquer
+              une capacité (lot L3). Le champ `keys` reste au modèle, vide.
+            */}
             <div className="action-buttons">
               <button
                 type="button" className="btn" disabled={busy || !grantProject}
                 onClick={() => run(async () => {
-                  await api.grant(item.apiId, grantProject, grantKeys);
+                  await api.grant(item.apiId, grantProject, []);
                   const name = available.find((p) => p.projectId === grantProject)?.projectName;
                   setGrantProject('');
-                  setGrantKeys([]);
                   return `Accès accordé à « ${name} ». Il recevra les identifiants du mode correspondant à SON environnement.`;
                 })}
               >
