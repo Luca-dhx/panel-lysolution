@@ -13,6 +13,7 @@ import { migratePanelMedia } from './services/upload/mediaDescriptor.service.js'
 import { reconcileDestinations } from './services/registry/projectDestination.service.js';
 import { seedIntegratedApiCredentialSets } from './services/integratedApi/seed.js';
 import { reconcileAllProviderWebhooks } from './services/webhooks/webhookReconciler.js';
+import { seedPlatformTemplates } from './services/email/panelEmailTemplate.service.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -179,6 +180,22 @@ async function start() {
   });
   if (coffre?.created) {
     logger.info(`Plan de contrôle IntegratedAPI : ${coffre.created} jeu(x) d’identifiants amorcé(s).`);
+  }
+
+  /**
+   * MODÈLES D'E-MAIL DE LA PLATEFORME (L8.3) — amorçage idempotent.
+   *
+   * Non bloquant : un Panel dont les modèles ne sont pas amorcés démarre quand
+   * même. Le résolveur retombe alors sur le défaut du REGISTRE, qui est
+   * exactement ce que ce seed aurait écrit — un e-mail attendu n'est donc
+   * jamais perdu parce qu'une migration n'a pas tourné.
+   */
+  const modeles = await seedPlatformTemplates().catch((err) => {
+    logger.warn(`Amorçage des modèles d’e-mail impossible : ${err.message}`);
+    return null;
+  });
+  if (modeles?.created) {
+    logger.info(`Modèles d’e-mail : ${modeles.created} amorcé(s) pour la plateforme.`);
   }
 
   const backend = await resolveBackendUrl();

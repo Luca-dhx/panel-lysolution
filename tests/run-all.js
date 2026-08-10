@@ -56,6 +56,10 @@ const TESTS = [
   // par le pont, la passerelle et le coffre du Panel. La clé locale du projet
   // n'est plus jamais lue, et rien ne retombe dessus.
   'brevo-verify-migration-e2e.test.js',
+  // L8.3 — les trois briques que L8.2 avait nommées comme bloquantes :
+  // l'autorité de contenu du Panel, les identités expéditrices par projet, et
+  // l'idempotence que Brevo n'offre pas.
+  'brevo-send-template-foundation.test.js',
   // L3 — la passerelle de capacités : le projet demande un VERBE, le Panel
   // résout le fournisseur, le monde, le droit et la clé. Trois suites, parce
   // qu'elles ne peuvent pas vivre dans le même processus :
