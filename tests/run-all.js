@@ -52,6 +52,10 @@ const TESTS = [
   // le fournisseur expose vraiment, et ne supprime que ce qu'il prouve avoir
   // créé. Le secret ne sort du coffre par aucune porte.
   'webhook-control-plane.test.js',
+  // L8.2 — la MIGRATION Brevo, par l'écran réel : le bouton du Manager passe
+  // par le pont, la passerelle et le coffre du Panel. La clé locale du projet
+  // n'est plus jamais lue, et rien ne retombe dessus.
+  'brevo-verify-migration-e2e.test.js',
   // L3 — la passerelle de capacités : le projet demande un VERBE, le Panel
   // résout le fournisseur, le monde, le droit et la clé. Trois suites, parce
   // qu'elles ne peuvent pas vivre dans le même processus :

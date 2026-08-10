@@ -100,7 +100,21 @@ const recipientSchema = z.object({
  * les brancherait. Un refus explicite tue l'idée à la racine.
  */
 const emailSenderVerifyInput = z.object({
-  recipient: recipientSchema,
+  /**
+   * FACULTATIF — et c'est la sémantique réellement servie qui le veut.
+   *
+   * L'adaptateur LIT le compte chez Brevo (`GET /v3/account`) : il n'envoie
+   * rien, donc personne ne reçoit rien, donc il n'y a pas de destinataire. Le
+   * rendre obligatoire forçait l'appelant à inventer une adresse pour un appel
+   * qui ne l'utilise pas — et le diagnostic de connexion du Manager, qui n'en
+   * a aucune sous la main, aurait échoué sur une validation d'entrée en
+   * laissant croire que la connexion, elle, était en cause.
+   *
+   * Il reste accepté et VALIDÉ quand il est fourni : le jour où cette capacité
+   * enverra réellement un message de contrôle (contrat L8 §« sender.verify »),
+   * l'entrée n'aura pas à changer de forme.
+   */
+  recipient: recipientSchema.optional(),
   /**
    * Clé d'idempotence FOURNIE PAR LE PROJET. Il est le seul à savoir que deux
    * clics sont la même intention ; le Panel ne peut que le constater trop tard.

@@ -1586,6 +1586,70 @@ destinataires, suivi de livraison.
 
 - **Risque** — **moyen** (dégrade la notification, jamais un état métier).
 
+#### L8.2 — Migration du runtime : `email.sender.verify` · ✅ **LIVRÉ**
+
+Première capacité Brevo **réellement basculée**. Détail :
+[BREVO_CONTROL_PLANE.md](BREVO_CONTROL_PLANE.md) §9.
+
+- **Ce qui a basculé** — le diagnostic « Connexion Brevo » du Manager. Il
+  n'interroge plus Brevo avec la clé du projet : il demande
+  `email.sender.verify` au Panel, qui choisit le monde, ouvre son coffre et
+  parle au fournisseur.
+- **Ce qui n'a PAS bougé** — `email.send_template` reste sur le chemin local du
+  projet. Voir « le partage temporaire » ci-dessous.
+- **Aucun repli** — si le Panel est injoignable, non appairé, ou si l'octroi
+  manque, le diagnostic est **indisponible**. Il ne retombe pas sur la clé
+  locale : un repli afficherait « connexion réussie » en ayant éprouvé une clé
+  qui ne sert plus à rien, pendant que la vraie reste inconnue. Deux autorités,
+  et c'est toujours la mauvaise qui répond.
+- **Le pilote local a été RETIRÉ, pas contourné** — `testBrevo` local,
+  `safeProviderMessage`, `describeBrevoPlan` sont supprimés du projet, et une
+  garde statique vérifie qu'aucun `api-key` Brevo ne subsiste dans le testeur
+  de connexion. Tant que le code existe, quelqu'un le rebranche « le temps de
+  dépanner ».
+- **L'état local n'est plus estampillé** — un test délégué n'écrit plus
+  `verified: true` sur le credential du projet. Ce serait un mensonge daté :
+  une clé déclarée prouvée que personne n'a essayée, et qu'un opérateur
+  garderait sur cette foi. L'état reste **intact** — ni confirmé, ni infirmé.
+- **Preuve** — `tests/brevo-verify-migration-e2e.test.js` (41 assertions) :
+  vrai Panel, vraie instance SB Auto, vrai appairage, appel HTTP sur **la route
+  du Manager** avec un vrai jeton DEV, faux Brevo qui note quelle clé arrive.
+  Trois sentinelles : clé Panel TEST, clé Panel PROD, clé legacy du projet.
+  Seule la première atteint le fournisseur, jamais les deux autres.
+
+##### Le partage temporaire, et pourquoi il est assumé
+
+| Geste | Autorité | Raison |
+|---|---|---|
+| « Connexion Brevo » (diagnostic) | **Panel** | lecture pure, rejouable, sans destinataire — aucun utilisateur ne perd de message si elle se trompe |
+| Envoi transactionnel (`send_template`) | **projet** | exige le magasin de modèles et d'identités expéditrices du Panel, qui n'existe pas encore |
+
+Ce partage est visible à l'écran : la carte Brevo du Manager dit que la clé
+appartient à la plateforme, et le bouton s'appelle « Connexion plateforme
+Brevo ». Un libellé resté générique aurait laissé croire qu'il testait le
+credential affiché juste au-dessus.
+
+##### Ce qui reste avant `email.send_template`
+
+`capabilityRegistry` la déclare `migrated: false`, et ce n'est pas un oubli de
+calendrier : trois briques manquent, chacune structurante.
+
+1. **Magasin de modèles du Panel.** L8 a tranché `TEMPLATE_AUTHORITIES.PANEL` :
+   le contenu vit chez nous, versionné, et `templateId` est interdit dans le
+   corps envoyé à Brevo. Or les cinq modèles du parc vivent aujourd'hui dans
+   `EmailTemplate` / `EmailTemplateVersion` **côté projet**, avec un éditeur.
+   Déplacer l'autorité sans déplacer l'éditeur retirerait une fonction à
+   l'exploitant — « migrer sans perte fonctionnelle » l'interdit.
+2. **Magasin d'identités expéditrices par projet.** `brevoSenderIdentity.js`
+   fixe le contrat (forme, validation, portée) et **ne persiste rien** :
+   `lookup` est injecté. Le stockage reste à écrire.
+3. **Registre d'idempotence des envois.** Brevo n'offre aucune clé
+   d'idempotence sur `/smtp/email` : la déduplication est entièrement la nôtre,
+   sur `operationId`, avec un index unique côté Panel.
+
+Tant que ces trois briques n'existent pas, `email.send_template` refuse par
+`CAPABILITY_NOT_AVAILABLE` — un refus honnête, pas un chemin à moitié branché.
+
 ---
 
 ### L9 — Migration du provider #4 : **Hostinger**

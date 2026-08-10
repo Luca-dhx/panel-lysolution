@@ -354,6 +354,75 @@ paramètres et des fonctions de comparaison — toutes fournies par
 
 ---
 
+## 9 bis. Migration du runtime — état au 2026-08-10 (L8.2)
+
+### Ce qui est basculé
+
+`email.sender.verify` est **servi par le Panel**. Le diagnostic « Connexion
+Brevo » du Manager passe désormais par
+`capabilityClient.invokeCapability('email.sender.verify')` → pont →
+passerelle L3 → coffre L1 → Brevo.
+
+| | Avant | Après |
+|---|---|---|
+| clé utilisée | celle du projet, en base locale | celle du **Panel**, chiffrée |
+| monde | `mode` demandé par l'écran | celui de **l'instance de Panel** (L2) |
+| appel réseau depuis le projet | `GET /v3/account` | **aucun** |
+| repli si Panel absent | — | **aucun**, par décision |
+| `verified` local après test | estampillé | **laissé intact** |
+
+### Divergence assumée avec le contrat §« sender.verify »
+
+Ce document décrit `email.sender.verify` comme un **envoi réel** de contrôle
+(`POST /smtp/email`, sortie `ACCEPTED | UNKNOWN`, `providerMessageId`). L3 l'a
+implémentée en **lecture seule** (`GET /v3/account`, sortie `reachable` +
+`accountLabel`).
+
+C'est la sémantique en lecture qui est servie aujourd'hui, et L8.2 l'a
+conservée délibérément :
+
+- elle correspond exactement à l'écran migré — le diagnostic de **connexion**,
+  pas l'envoi de test de la page « Configuration e-mail » ;
+- elle n'a pas de destinataire, donc pas de donnée personnelle en entrée, donc
+  pas d'e-mail réel envoyé à chaque clic sur un bouton de diagnostic ;
+- son rejeu est gratuit, ce qui la rendait éligible comme **première**
+  migration — un envoi ne l'aurait pas été.
+
+`recipient` est devenu **facultatif** dans le schéma d'entrée pour cette raison,
+tout en restant validé s'il est fourni : le jour où un envoi de contrôle sera
+servi, l'entrée n'aura pas à changer de forme.
+
+**Conséquence à retenir** : l'« envoi de test » de la page Configuration e-mail
+reste **local**. Il relève de `email.send_template`, pas de cette capacité.
+
+### Ce qui n'est pas basculé, et ce qu'il faudrait
+
+`email.send_template` reste `migrated: false`. Trois briques manquent —
+magasin de modèles du Panel, magasin d'identités expéditrices par projet,
+registre d'idempotence sur `operationId`. Détail et justification :
+[INTEGRATED_API_CONTROL_PLANE_ROADMAP.md](INTEGRATED_API_CONTROL_PLANE_ROADMAP.md)
+§L8.2.
+
+### Inventaire des appels Brevo locaux restants
+
+| Fichier | Classement | Motif |
+|---|---|---|
+| `services/providerConnectionTest.service.js` | **MIGRATED** | le pilote local est supprimé, pas contourné |
+| `services/brevo/brevoEmail.service.js` | **STILL_REQUIRED** | transport de `/smtp/email` — bascule avec `send_template` |
+| `services/email/emailDelivery.service.js` | **STILL_REQUIRED** | pipeline d'envoi métier |
+| `services/emailConfiguration.service.js` | **STILL_REQUIRED** | envoi de test du Manager — même dépendance |
+| `services/email/brevoOperational.service.js` | **STILL_REQUIRED** | garde opérationnelle du driver |
+| `services/brevo/brevoWebhookConfig.service.js` | **DIAGNOSTIC** | webhooks du projet, coexistants par décision (L5 §« Migration ») |
+| `utils/emailDebug.js` | **DIAGNOSTIC** | journal, aucun appel sortant |
+
+Aucun **DEAD** ne subsiste : ce qui est devenu mort dans ce lot a été retiré.
+
+Les credentials Brevo du projet restent en place et **ne sont pas** marqués
+`LEGACY_UNUSED` : le critère est « plus aucun appel métier local », et l'envoi
+en est encore un.
+
+---
+
 ## 10. Communication Center
 
 **Elle n'existe pas.** Recherche sur les deux dépôts (`communication center`,

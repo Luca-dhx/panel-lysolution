@@ -94,6 +94,15 @@ const projectBridgeRoutes = (await import(SB('src/routes/projectBridge.routes.js
  * production n'expose pas de la même façon.
  */
 const uiLiveRoutes = (await import(SB('src/routes/uiLive.routes.js'))).default;
+/**
+ * LES ROUTES DU MANAGER pour les intégrations — montées telles quelles.
+ *
+ * Elles portent leurs propres gardes (`authenticate`, `authorize(DEV)`). Les
+ * monter ici permet à un test d'actionner LE BOUTON, avec un vrai jeton, au
+ * lieu d'appeler le service derrière — ce qui laisserait la garde d'accès et
+ * le contrôleur hors de la preuve.
+ */
+const integratedApiRoutes = (await import(SB('src/routes/integratedApi.routes.js'))).default;
 const { errorHandler } = await import(SB('src/middlewares/error.middleware.js'));
 const { PanelCompanyConfiguration } = await import(
   SB('src/models/PanelConfiguration.model.js')
@@ -231,6 +240,7 @@ function serve(portVoulu = 0) {
   app.use(express.json());
   app.use('/api/project-bridge/v1', projectBridgeRoutes);
   app.use('/api/live', uiLiveRoutes);
+  app.use('/api/integrated-apis', integratedApiRoutes);
   app.use(errorHandler);
   return new Promise((resolve) => {
     server = app.listen(portVoulu, '127.0.0.1', () => resolve(server.address().port));
