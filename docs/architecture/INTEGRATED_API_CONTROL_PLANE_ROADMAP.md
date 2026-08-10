@@ -877,6 +877,80 @@ Panel, dans les deux jeux, sans qu'aucun projet ne bouge.
 
 ---
 
+### L1.5 — Inventaire du parc réel · ✅ **LIVRÉ** (audit, read-only)
+
+Prérequis de L2 : on ne révoque pas une doctrine sans savoir ce que la nouvelle
+casserait. Photographie prise le **2026-08-10** sur le cluster réel, sans
+aucune écriture.
+
+**Outil** —
+[`backend/scripts/audit-integrated-api-environment-readiness.mjs`](../../backend/scripts/audit-integrated-api-environment-readiness.mjs).
+Lecture seule vérifiable (`find`, `countDocuments`, `distinct`,
+`listCollections`, `listDatabases` — rien d'autre), n'importe aucun modèle
+mongoose (donc aucun hook, aucune migration, aucun seed), ne déchiffre aucun
+credential, sort en **0 même s'il trouve des écarts**. Rejouable avant L2 et
+après chaque migration.
+
+**Le parc, en une ligne : un Panel, une instance, tous deux en TEST.**
+
+| | Hôte | ENV | État |
+|---|---|---|---|
+| Panel | `panel.ly-solution.com` | **TEST** | vivant (`/health` : `env: TEST`, base connectée) |
+| Panel PROD | — | — | **n'existe pas** : la base `panel_prod` est absente du cluster |
+| Instance | `api.demo-sbauto06.ly-solution.com` | **TEST** | vivante, appairée, battement continu |
+| Ancien Panel | `panel.lycarz.com` | — | **410 Gone** — déclassé |
+| Ancienne instance | `api.demo-sbauto.lycarz.com` | — | injoignable — déclassée |
+
+**Matrice** — 8 couples instance × fournisseur, **0 bloquant** :
+
+| Base | Vie | ENV | Fournisseur | activeMode | TEST | PROD | Écart | Bloquant |
+|---|---|---|---|---|---|---|---|---|
+| `sbauto06_test` | LIVE | TEST | STRIPE | TEST | 3 | — | CLEAN | non |
+| `sbauto06_test` | LIVE | TEST | YOUSIGN | TEST | 2 | — | CLEAN | non |
+| `sbauto06_test` | LIVE | TEST | BREVO | TEST | 2 | — | CLEAN | non |
+| `sbauto06_test` | LIVE | TEST | HOSTINGER | TEST | 1 | — | N/A global | non |
+| `sbauto06_prod` | DORMANT | PROD | STRIPE | **TEST** | 3 | — | LEGACY_MISMATCH | non |
+| `sbauto06_prod` | DORMANT | PROD | YOUSIGN | **TEST** | 2 | — | LEGACY_MISMATCH | non |
+| `sbauto06_prod` | DORMANT | PROD | BREVO | TEST | 1 | — | PROVIDER_NOT_CONFIGURED | non |
+| `sbauto06_prod` | DORMANT | PROD | HOSTINGER | TEST | — | — | N/A global | non |
+
+**Le seul vrai croisement du parc est historique, et il est daté.** La base
+`sbauto06_prod` a servi un déploiement PROD sur `demo-sbauto.lycarz.com`,
+remplacé le **2026-08-04** par un déploiement TEST sur le même hôte. Elle porte
+2 contrats en `environment: PROD` et **un paiement `providerMode: TEST`,
+`environment: PROD`, statut PAID, du 2026-07-16** : la preuve, dans les données,
+que la combinaison « application PROD × Stripe TEST » a réellement été utilisée
+— exactement le cas légitime que la décision **D2** doit remplacer avant L2.
+
+Plus aucune instance ne sert cette base (dernière écriture : 2026-08-04). Ses
+écarts sont donc **rapportés mais non bloquants** : ils redeviendraient vrais si
+on la ressuscitait, et le script continuera de le dire.
+
+**Aucune instance inconnue.** Le cluster porte trois bases hors parc déclaré :
+`sample_mflix` (jeu de démonstration Atlas), `test` (vide, une collection),
+`sbauto06_control` (plan de contrôle des déploiements du projet — 3 cibles, 20
+releases, cohérent avec l'historique ci-dessus). Aucune ne porte d'IntegratedAPI.
+
+**Ce que L2 casserait aujourd'hui : rien.** La seule instance vivante est en
+TEST, avec `activeMode = TEST` sur les quatre fournisseurs et les identifiants
+TEST présents et vérifiés. La règle `runtime ENV = provider ENV` lui est déjà
+appliquée de fait.
+
+**Le plan de contrôle du Panel est vide (7 jeux `EMPTY`) — et ce n'est pas un
+blocage pour L2.** L2 ne déplace aucun appel : il retire le choix manuel, les
+projets continuent d'utiliser leurs identifiants locaux. Le remplissage du
+coffre du Panel conditionne **L6**, pas L2.
+
+**Constat incident, hors périmètre.** La fiche du Panel annonce
+`runtime.publicBackendUrl = https://api.demo-sbauto.lycarz.com` — l'ancienne
+adresse, désormais injoignable — alors que la destination active est
+`demo-sbauto06.ly-solution.com` depuis le 2026-08-09. Le battement passe (il est
+sortant), mais une livraison descendante viserait une adresse morte ;
+`lastBusinessSyncAt` n'a plus avancé depuis le déménagement. À traiter dans le
+périmètre déploiement, pas ici.
+
+---
+
 ### L2 — Doctrine d'environnement · **lot de rupture**
 
 - **Objectif** — supprimer le choix manuel de mode. `environment = config.env`,
