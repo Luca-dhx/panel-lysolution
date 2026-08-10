@@ -41,6 +41,9 @@ const TESTS = [
   // L1.75 — l'ouverture commerciale : « cette action réelle est-elle
   // autorisée ? », posée séparément de « quel monde fournisseur ? ».
   'commercial-readiness.test.js',
+  // L3.1 — le geste qui manquait : ouvrir, refermer, et la jonction avec la
+  // passerelle. L'environnement est relevé avant/après : il ne bouge pas.
+  'commercial-readiness-runtime.test.js',
   // L8 — la connaissance Brevo : deux vocabulaires d'événements pour un seul
   // sens, quatre champs de date pour deux unités, et cinq objets qu'on
   // confondait. Enregistré ici en L5.1 — il était livré mais jamais exécuté.

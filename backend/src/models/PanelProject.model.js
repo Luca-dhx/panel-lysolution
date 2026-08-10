@@ -185,6 +185,19 @@ const panelProjectSchema = new mongoose.Schema(
     },
 
     /**
+     * QUI A OUVERT, QUAND, ET POURQUOI (lot L3.1).
+     *
+     * Une ouverture commerciale autorise des opérations financières réelles.
+     * L'état seul ne dit pas qui en répond : ces trois champs rendent la
+     * décision imputable, et la chronologie du projet en porte l'écho.
+     *
+     * Nuls tant que personne n'a tranché — comme `commercialState` lui-même.
+     */
+    commercialStateUpdatedAt: { type: String, default: null },
+    commercialStateUpdatedBy: { type: String, default: null },
+    commercialStateReason: { type: String, default: null },
+
+    /**
      * CAPACITÉS ACCORDÉES À CE PROJET — l'unique autorité d'autorisation (L3).
      *
      * ══ CE QUI REMPLACE QUOI ════════════════════════════════════════════════

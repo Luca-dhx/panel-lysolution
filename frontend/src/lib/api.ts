@@ -22,7 +22,8 @@ import type {
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
-  CapabilityGrantsView, CapabilityView, CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
+  CapabilityGrantsView, CapabilityView, CommercialReadinessView, CommercialState,
+  CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
   ValidatedCredentialSet, WebhookStateView,
 } from '@/types.integratedApi';
 import type {
@@ -669,6 +670,26 @@ export const integratedApis = {
     request<CapabilityGrantsView>(`/api/projects/${projectId}/capability-grants`, {
       method: 'PUT',
       body: { capabilities },
+    }),
+
+  /**
+   * OUVERTURE COMMERCIALE (L3.1) — « cette instance a-t-elle le droit d'agir
+   * pour de vrai ? ». Lecture ouverte : constater qu'une instance n'est pas
+   * ouverte est un diagnostic, pas un secret.
+   */
+  commercialReadiness: (projectId: string) =>
+    request<CommercialReadinessView>(`/api/projects/${projectId}/commercial-readiness`),
+
+  /**
+   * OUVRE ou REFERME. Réservée aux comptes DEV.
+   *
+   * Le corps porte l'ÉTAT VISÉ, jamais un verbe : un client qui rejoue sa
+   * requête doit arriver au même endroit, pas à l'état inverse.
+   */
+  setCommercialReadiness: (projectId: string, state: CommercialState, reason?: string) =>
+    request<CommercialReadinessView>(`/api/projects/${projectId}/commercial-readiness`, {
+      method: 'PUT',
+      body: { state, ...(reason ? { reason } : {}) },
     }),
 
   get: (provider: string) => request<ProviderView>(`/api/integrated-apis/${provider}`),

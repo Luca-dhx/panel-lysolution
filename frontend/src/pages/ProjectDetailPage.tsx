@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
+import { CommercialReadinessCard } from '@/components/CommercialReadinessCard';
 import { Disclosure } from '@/components/supervision';
 import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
@@ -259,6 +260,7 @@ function OverviewTab({
   link: { label: string; tone: 'ok' | 'warn' | 'error' | 'neutral' };
   fraicheur: ReturnType<typeof getProjectDataFreshness>;
 }) {
+  const isDev = useIsDev();
   const site = vitrineState(project);
   const causeSuspension = vitrineSuspensionReason(project);
   const siteStatus = project.business?.siteStatus ?? null;
@@ -425,6 +427,18 @@ function OverviewTab({
           </div>
         </dl>
       </Card>
+
+      {/*
+        ── L'OUVERTURE COMMERCIALE EST UN FAIT DE LA FICHE, PAS UN DÉTAIL DEV ──
+        Elle a d'abord été posée dans l'onglet développeur, à côté de
+        l'environnement. C'était une erreur de lecture : « cette instance
+        peut-elle encaisser ? » est la question d'un gestionnaire, pas d'un
+        technicien — et c'est exactement pourquoi l'API en ouvre la LECTURE à
+        tout compte du Panel et n'en réserve que le GESTE aux DEV. La carte
+        rend les deux badges côte à côte, jamais fondus : une production non
+        ouverte n'est pas une recette.
+      */}
+      <CommercialReadinessCard projectId={project.projectId} canEdit={isDev} />
 
       {contacts ? (
         <Card title="Contacts">

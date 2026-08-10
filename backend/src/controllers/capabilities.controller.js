@@ -10,6 +10,8 @@
 // Il fait trois choses : lire le code dans l'URL, passer la fiche AUTHENTIFIÉE
 // (jamais le corps) à la passerelle, et rendre l'enveloppe.
 import { ok } from '../utils/apiResponse.js';
+import { describeCommercialReadiness, setCommercialReadiness } from '../services/capabilities/commercialReadiness.service.js';
+import { getProjectOrThrow } from '../services/registry/projectRegistry.service.js';
 import { assertNoProviderSecrets } from '../bridge/providerSecretGuard.js';
 import { invokeCapability } from '../services/capabilities/capabilityGateway.service.js';
 import { getCapabilityGrants, setCapabilityGrants } from '../services/capabilities/capabilityGrants.js';
@@ -80,4 +82,35 @@ export async function putGrants(req, res) {
   ));
 }
 
-export default { invoke, catalogue, grants, putGrants };
+/* -------------------------------------------------------------------------- */
+/*  OUVERTURE COMMERCIALE (L3.1)                                              */
+/* -------------------------------------------------------------------------- */
+
+/** GET — l'état, les contrôles, et ce que la pré-ouverture interdit. */
+export async function commercialReadiness(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  return ok(res, describeCommercialReadiness(record));
+}
+
+/**
+ * PUT — OUVRIR ou REFERMER. DEV uniquement (monté ainsi).
+ *
+ * Le corps porte l'ÉTAT VISÉ, pas un verbe : « ouvre » et « ferme » se
+ * ressemblent trop dans un journal, et un client qui rejoue une requête doit
+ * arriver au même endroit — pas à l'état inverse.
+ */
+export async function putCommercialReadiness(req, res) {
+  const state = String(req.body?.state ?? '').toUpperCase();
+  return ok(res, await setCommercialReadiness(req.params.projectId, state, {
+    actor: {
+      userId: req.panelUser?.userId ?? null,
+      userEmail: req.panelUser?.email ?? null,
+    },
+    reason: req.body?.reason ?? null,
+  }));
+}
+
+export default {
+  invoke, catalogue, grants, putGrants,
+  commercialReadiness, putCommercialReadiness,
+};

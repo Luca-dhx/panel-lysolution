@@ -1085,10 +1085,27 @@ données qu'aucun code n'écrit, ni un écran qui afficherait une constante. Le
 parc ne compte **aucune instance PROD vivante** — la notion n'a personne à
 protéger aujourd'hui.
 
-Elle sera stockée **côté instance** (autorité locale, pour que l'enforcement
-survive à une panne du Panel) et projetée vers le Panel comme `SITE_STATUS`,
-quand la première instance de production existera. Son seul appelant prévu est
-la passerelle de capacités (L3).
+> ⚠️ **CETTE ANNONCE ÉTAIT FAUSSE — corrigée en L3.1.**
+>
+> Elle disait : « stockée **côté instance** (autorité locale, pour que
+> l'enforcement survive à une panne du Panel) et projetée vers le Panel ».
+>
+> L3 a tranché l'inverse, et l'argument est plus fort :
+>
+> 1. **L'enforcement a changé de camp.** La passerelle de capacités vit dans le
+>    Panel. Si le Panel est indisponible, la capacité n'est pas exécutée du
+>    tout : il n'y a rien à faire respecter localement.
+> 2. **Et surtout : un projet ne doit pas pouvoir DÉCLARER son propre droit de
+>    dépenser.** Sous l'autorité locale + projection, le Panel arbitrerait sur
+>    une valeur envoyée par le projet — exactement ce que la doctrine
+>    d'environnement interdit depuis L2. Un projet compromis, ou simplement mal
+>    déployé, s'ouvrirait lui-même.
+>
+> **Autorité retenue : le Panel** (`PanelProject.commercialState`). L'instance
+> ne la connaît pas et n'a pas à la connaître : elle demande une capacité, le
+> Panel décide. Voir §L3.1.
+
+Son seul appelant est la passerelle de capacités (L3).
 
 #### UX cible (conçue, non implémentée)
 
@@ -1191,6 +1208,173 @@ faisait croire encore en service. Corrigé. Invariant ajouté :
   existant).
 - **GO** — une capacité de lecture (`billing.invoice.list`) fonctionne de bout
   en bout depuis SB Auto TEST, journalisée, sans secret transmis.
+
+---
+
+### L3.1 — Le geste d'ouverture commerciale · ✅ **LIVRÉ**
+
+L1.75 a défini la doctrine. L3 a branché la passerelle dessus. Mais **personne
+n'écrivait jamais l'état** : le champ existait, la passerelle le lisait, il
+valait éternellement `null` — donc `PREOPENING`, donc refus. Une porte fermée
+dont on n'avait pas fabriqué la clé.
+
+#### A. L'autorité — une inversion assumée de la note L1.75
+
+L1.75 annonçait « stocké côté instance, projeté vers le Panel », au nom de
+l'autonomie. Cet argument ne tient plus depuis L3 :
+
+1. **L'enforcement a changé de camp.** La passerelle vit dans le Panel. Panel
+   indisponible = capacité non exécutée : il n'y a rien à faire respecter
+   localement.
+2. **Un projet ne doit pas pouvoir DÉCLARER son propre droit de dépenser.** Sous
+   autorité locale + projection, le Panel arbitrerait sur une valeur envoyée par
+   le projet — exactement ce que la doctrine d'environnement interdit depuis L2.
+   Un projet compromis, ou simplement mal déployé, s'ouvrirait lui-même.
+
+**Autorité : le Panel.** L'instance ne connaît pas son état d'ouverture ; elle
+demande un verbe, le Panel décide. Conséquence directe sur les phases d'UX :
+**il n'y a pas de bouton d'ouverture dans le Manager**, et il ne peut pas y en
+avoir — ce serait le projet demandant sa propre ouverture. L'instance apprend la
+réponse au seul moment où elle compte : `CAPABILITY_BLOCKED_PREOPENING`, au
+refus, avec son motif.
+
+**Conséquence sur la projection.** Il n'y a rien à projeter : la valeur naît
+déjà dans la base du Panel. `lastBusinessSyncAt` n'est donc pas concerné — il
+observe une réception métier venue du projet, et aucune n'a lieu ici. Fabriquer
+une projection aurait créé, dans l'instance, une copie périmée d'une valeur que
+personne n'y lit.
+
+#### B. La persistance — quatre champs, une écriture ciblée
+
+`PanelProject.commercialState` (créé en L3, jamais écrit) rejoint
+`commercialStateUpdatedAt / UpdatedBy / Reason`. `registryStore.setCommercialState()`
+écrit **ces quatre champs et rien d'autre** : `save()` réécrit la fiche entière
+depuis un instantané lu plus tôt, et écraserait ce qu'un battement de cœur ou une
+projection vient de poser entre la lecture et la décision.
+
+`null` se lit « jamais décidée » et se résout vers `PREOPENING`. La vue
+distingue les deux (`neverDecided`) : « personne n'a tranché » et « quelqu'un a
+choisi la pré-ouverture » se réparent différemment.
+
+#### C. Les transitions — deux, et aucune automatique
+
+```
+PREOPENING → LIVE        geste DEV, contrôles exigés, confirmation
+LIVE → PREOPENING        geste DEV, aucun contrôle exigé — frein d'urgence
+```
+
+Rien n'ouvre une instance tout seul : ni un contrat signé, ni un déploiement
+réussi, ni un fournisseur validé. Réaffirmer un état est **idempotent** et ne
+produit aucune trace — une chronologie remplie de « toujours ouvert » se lit
+moins bien qu'une chronologie des changements. Chaque changement produit
+`COMMERCIAL_OPENED` / `COMMERCIAL_CLOSED` avec acteur, état précédent, état
+suivant, motif, et l'environnement **rappelé** — jamais modifié.
+
+#### D. Les contrôles — trois, et pas vingt-cinq
+
+`describeReadinessChecks()` est **séparé** de l'état : l'état reste un champ
+simple.
+
+| Contrôle | Pourquoi il rendrait l'ouverture absurde |
+|---|---|
+| `PAIRED` | aucune instance appairée : il n'y a rien à ouvrir |
+| `ENVIRONMENT_KNOWN` | une instance dont on ignore le monde ne peut être qualifiée |
+| `REACHABLE_DESTINATION` | sans destination active, elle n'est joignable par personne |
+
+Tout le reste — Stripe mal configuré, contrat absent — se manifeste **à
+l'action**, avec un message précis, par la passerelle. L'anticiper ici dirait
+« impossible d'ouvrir » là où la vérité est « ouvrable, mais Stripe n'est pas
+prêt ». La vingt-cinquième condition bloque un jour une ouverture légitime pour
+un motif que personne ne comprend, après quoi on ajoute une dérogation — et le
+contrôle ne veut plus rien dire.
+
+Les contrôles gardent **l'ouverture seulement**. Exiger la bonne santé pour
+cesser de facturer serait exactement le mauvais sens.
+
+#### E. TEST/PROD — le champ existe dans les deux mondes
+
+Décision explicite : `commercialState` a un sens en TEST, et il y garde le même.
+Il ne sélectionne aucun monde, dans aucun sens :
+
+```
+TEST + PREOPENING → provider TEST, capacité financière bloquée
+TEST + LIVE       → provider TEST                       (jamais PROD)
+PROD + PREOPENING → provider PROD, capacité financière bloquée (jamais TEST)
+PROD + LIVE       → provider PROD
+```
+
+Preuve mécanique : `resolveIntegratedApiEnvironment.toString()` ne contient ni
+`commercial`, ni `preopening`, ni `live`, ni `activeMode`.
+
+#### F. L'API et les écrans
+
+```
+GET /api/projects/:id/commercial-readiness   tout compte du Panel
+PUT /api/projects/:id/commercial-readiness   requirePanelDev
+```
+
+Lecture ouverte : « cette instance est-elle ouverte ? » est la deuxième question
+quand un paiement est refusé, et ce n'est pas un secret. `PUT` et non `POST` :
+le corps porte l'**état visé**, pas un verbe — un rejeu arrive au même endroit,
+jamais à l'état inverse.
+
+La carte vit sur l'onglet **Vue d'ensemble** de la fiche, pas dans l'onglet
+développeur : « cette instance peut-elle encaisser ? » est la question d'un
+gestionnaire. Deux badges, jamais fondus :
+
+```
+Environnement technique : PRODUCTION
+Ouverture commerciale   : PRÉ-OUVERTURE
+```
+
+Le bouton dit **« Ouvrir commercialement »**, jamais « Passer en PROD » :
+l'environnement ne se choisit pas (L2), et suggérer le contraire ressusciterait
+la doctrine révoquée. Confirmation explicite, motif facultatif conservé dans la
+chronologie. La lecture est vivante (`useLiveQuery`, 7 s) — un second DEV, page
+ouverte pendant qu'un premier ouvre l'instance, ne reste pas devant une valeur
+périmée.
+
+#### G. La preuve
+
+75 assertions (`tests/commercial-readiness-runtime.test.js`), en **`ENV=PROD`**,
+sur les vrais services et le **vrai routeur** : un service appelé directement n'a
+ni garde d'accès, ni contrôleur — or c'est là que l'ouverture peut fuir. Le
+défaut trouvé par cette exigence était réel : **le contrôleur existait, les
+routes n'étaient pas montées.**
+
+```
+ADMIN lit → 200 · ADMIN ouvre → 403 · rien écrit
+PROD + PREOPENING + billing.checkout.create → BLOCKED · adapter calls = 0
+PUT DEV { state: LIVE } → 200 → fiche LIVE
+même capacité → CAPABILITY_NOT_AVAILABLE (étape ultérieure), plus BLOCKED
+PUT DEV { state: PREOPENING } → la passerelle refuse de nouveau, 0 appel
+fiche non appairée → 409 PANEL_COMMERCIAL_READINESS_INCOMPLETE, contrôles nommés
+environnement : PROD avant, PROD après
+```
+
+`signature.request.create` (LEGAL_WRITE, Yousign) est bloquée en pré-ouverture et
+autorisée LIVE — **aucune capacité Yousign n'est migrée ici**, seule la jonction
+de politique est prouvée.
+
+Invariant retourné : là où la mission demandait `PANEL_OBSERVES_PROJECTED_STATE`,
+c'est `PANEL_IS_AUTHORITY` qui est verrouillé — aucune surface tournée vers le
+projet (`bridge.routes.js`, `public.routes.js`) n'accepte cet état, et le
+contexte d'invocation ne le lit que sur la fiche du Panel.
+
+- **Fichiers** — `services/capabilities/commercialReadiness.service.js` *(nouveau)* ·
+  `controllers/capabilities.controller.js` · `routes/projects.routes.js` ·
+  `models/PanelProject.model.js` · `models/PanelSupervision.model.js` ·
+  `services/registry/registryStore.js` ·
+  `frontend/src/components/CommercialReadinessCard.tsx` *(nouveau)* ·
+  `frontend/src/pages/ProjectDetailPage.tsx` · `frontend/src/lib/api.ts` ·
+  `frontend/src/types.integratedApi.ts`
+- **Migration** — additive. Aucune fiche existante n'est touchée : `null` était
+  déjà lu `PREOPENING`.
+- **Rollback** — démonter les deux routes. La passerelle retombe sur le défaut
+  fermé, qui est le comportement d'avant L3.1.
+- **Risque** — **faible** en écriture (quatre champs, DEV, additif) ; **élevé en
+  conséquence** — c'est le geste qui autorise l'argent réel. D'où la trace
+  imputable et la confirmation explicite.
 
 ---
 

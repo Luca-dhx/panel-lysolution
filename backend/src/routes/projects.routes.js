@@ -19,7 +19,9 @@ import {
   revokePairing,
   setContractProtectionHandler,
 } from '../controllers/projects.controller.js';
-import { grants, putGrants } from '../controllers/capabilities.controller.js';
+import {
+  commercialReadiness, grants, putCommercialReadiness, putGrants,
+} from '../controllers/capabilities.controller.js';
 
 const router = Router();
 
@@ -87,5 +89,29 @@ router.delete('/destinations/:destinationId', requirePanelDev, asyncHandler(dele
  */
 router.get('/:projectId/capability-grants', asyncHandler(grants));
 router.put('/:projectId/capability-grants', requirePanelDev, asyncHandler(putGrants));
+
+/**
+ * ── OUVERTURE COMMERCIALE (L3.1) ────────────────────────────────────────────
+ *
+ * LECTURE pour tout compte du Panel. « Cette instance est-elle ouverte ? » est
+ * la deuxième question quand un paiement est refusé, juste après « a-t-elle le
+ * droit de demander ce verbe ? ». La cacher aux ADMIN les obligerait à demander
+ * à un DEV pour lire un fait qui n'est pas un secret.
+ *
+ * ÉCRITURE réservée aux DEV, et c'est le geste le plus lourd de cette surface :
+ * il autorise des opérations financières et de signature RÉELLES. Le contrôle
+ * ne peut vivre que là — le projet, lui, authentifie le PONT et non l'humain,
+ * et il ne doit de toute façon jamais pouvoir déclarer son propre droit de
+ * dépenser (voir `commercialReadiness.service.js`).
+ *
+ * PUT et non POST : le corps porte l'ÉTAT VISÉ, pas un verbe. Un client qui
+ * rejoue sa requête arrive au même endroit, jamais à l'état inverse.
+ */
+router.get('/:projectId/commercial-readiness', asyncHandler(commercialReadiness));
+router.put(
+  '/:projectId/commercial-readiness',
+  requirePanelDev,
+  asyncHandler(putCommercialReadiness),
+);
 
 export default router;

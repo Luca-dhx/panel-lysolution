@@ -289,6 +289,28 @@ export const registryStore = {
     );
   },
 
+  /**
+   * OUVERTURE COMMERCIALE — écriture CIBLÉE (lot L3.1).
+   *
+   * `save()` réécrit la fiche entière depuis un instantané lu plus tôt : s'en
+   * servir ici écraserait ce qu'un battement de cœur ou une projection vient de
+   * poser entre la lecture et la décision. Quatre champs, et rien d'autre.
+   */
+  async setCommercialState(projectId, { state, at, by = null, reason = null }) {
+    await PanelProject.updateOne(
+      { projectId },
+      {
+        $set: {
+          commercialState: state,
+          commercialStateUpdatedAt: at,
+          commercialStateUpdatedBy: by,
+          commercialStateReason: reason,
+          updatedAt: at,
+        },
+      },
+    );
+  },
+
   async remove(projectId) {
     const result = await PanelProject.deleteOne({ projectId });
     return result.deletedCount > 0;

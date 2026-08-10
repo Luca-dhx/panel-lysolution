@@ -224,3 +224,39 @@ export interface CapabilityGrantsView {
   granted: string[];
   capabilities: GrantedCapabilityView[];
 }
+
+/* -------------------------------------------------------------------------- */
+/*  OUVERTURE COMMERCIALE (L3.1)                                              */
+/* -------------------------------------------------------------------------- */
+
+export type CommercialState = 'PREOPENING' | 'LIVE';
+
+export interface CommercialReadinessCheck {
+  code: string;
+  label: string;
+  passed: boolean;
+  detail: string | null;
+}
+
+/**
+ * L'ouverture commerciale d'une instance — à côté de son environnement, jamais
+ * fusionnée avec lui.
+ *
+ * `neverDecided` distingue « personne n'a tranché » de « quelqu'un a choisi la
+ * pré-ouverture » : les deux se lisent PREOPENING, mais ne se réparent pas de
+ * la même façon.
+ */
+export interface CommercialReadinessView {
+  projectId: string | null;
+  projectName: string | null;
+  /** L'environnement TECHNIQUE. Affiché à côté, jamais confondu. */
+  environment: IntegratedApiEnvironment | null;
+  state: CommercialState;
+  neverDecided: boolean;
+  decidedAt: string | null;
+  decidedBy: string | null;
+  decisionReason: string | null;
+  checks: CommercialReadinessCheck[];
+  readyToGoLive: boolean;
+  blockedInPreopening: Array<{ capability: string; effect: string }>;
+}

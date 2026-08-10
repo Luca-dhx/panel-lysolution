@@ -115,6 +115,15 @@ export const EVENT_TYPES = Object.freeze({
   CAPABILITY_GRANTS_UPDATED: 'CAPABILITY_GRANTS_UPDATED',
   CAPABILITY_INVOKED: 'CAPABILITY_INVOKED',
   CAPABILITY_REFUSED: 'CAPABILITY_REFUSED',
+  /**
+   * L3.1 — l'ouverture commerciale d'une instance.
+   *
+   * Ce sont les deux seuls événements du catalogue qui autorisent, ou
+   * retirent, le droit de dépenser de l'argent réel. Ils portent l'acteur et
+   * le motif : une ouverture doit rester imputable longtemps après.
+   */
+  COMMERCIAL_OPENED: 'COMMERCIAL_OPENED',
+  COMMERCIAL_CLOSED: 'COMMERCIAL_CLOSED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };
