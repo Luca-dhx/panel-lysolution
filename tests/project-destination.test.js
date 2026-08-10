@@ -259,6 +259,73 @@ section('RÉSOLVEUR UNIQUE — toutes les vues lisent la même chose');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+section('PROJECT_RUNTIME_URL_CONVERGES_AFTER_DESTINATION_CHANGE');
+{
+  /**
+   * L'INVENTAIRE DU PARC (lot L1.5) A SOULEVÉ LE DOUTE, CE BLOC LE TRANCHE.
+   *
+   * En base, « Demo SB Auto » portait encore
+   * `runtime.publicBackendUrl = https://api.demo-sbauto.lycarz.com` — une
+   * adresse qui ne répond plus — alors que sa destination active était passée à
+   * `demo-sbauto06.ly-solution.com`. La question était : le Panel LIVRE-t-il
+   * encore à l'ancien hôte ?
+   *
+   * Réponse : non. `runtime.publicBackendUrl` est une PHOTOGRAPHIE d'appairage,
+   * volontairement figée et volontairement ignorée ; la destination ACTIVE est
+   * l'autorité, et elle avait convergé. Ce bloc le prouve sur le chemin de
+   * LIVRAISON lui-même, celui qui pousse une écriture vers un projet — pas
+   * seulement sur l'affichage.
+   */
+  const ANCIEN_HOTE = 'demo-sbauto.lycarz.com';
+  const NOUVEAU_HOTE = 'demo-sbauto06.ly-solution.com';
+
+  await PanelProject.create({
+    projectId: 'p-converge', projectKey: 'converge', projectName: 'Demo SB Auto',
+    createdAt: '2026-08-01T00:00:00.000Z', updatedAt: '2026-08-09T19:28:51.572Z',
+    pairing: { status: 'PAIRED', pairedAt: '2026-08-04T17:37:22.545Z' },
+    // Le champ FIGÉ, tel qu'il est réellement en production.
+    runtime: { environment: 'TEST', publicBackendUrl: `https://api.${ANCIEN_HOTE}` },
+    manifest: { network: { primaryDomain: ANCIEN_HOTE, urls: urlsDe(ANCIEN_HOTE) } },
+    manifestSource: 'BRIDGE', manifestUpdatedAt: '2026-08-04T17:37:22.545Z',
+  });
+
+  const avant = await registryStore.getById('p-converge');
+  await destinations.announceDestination({
+    record: avant, urls: urlsDe(ANCIEN_HOTE), source: 'PRESENTATION',
+  });
+  const pendant = await registryStore.getById('p-converge');
+  check('avant le déménagement, la livraison vise l’ancien hôte',
+    destinations.outboundBaseUrl(pendant) === `https://api.${ANCIEN_HOTE}`);
+
+  // LE DÉMÉNAGEMENT — le mécanisme normal, celui que le projet déclenche en
+  // publiant sa présentation. Aucune écriture Mongo à la main.
+  await destinations.announceDestination({
+    record: pendant, urls: urlsDe(NOUVEAU_HOTE), source: 'PRESENTATION',
+  });
+  const apres = await registryStore.getById('p-converge');
+
+  check('la livraison descendante vise désormais le NOUVEL hôte',
+    destinations.outboundBaseUrl(apres) === `https://api.${NOUVEAU_HOTE}`);
+  check('…alors que le champ d’appairage n’a pas bougé',
+    apres.runtime.publicBackendUrl === `https://api.${ANCIEN_HOTE}`);
+  check('…et qu’il n’est donc JAMAIS l’adresse retenue',
+    destinations.outboundBaseUrl(apres) !== apres.runtime.publicBackendUrl);
+
+  const toutes = await destinations.listDestinations('p-converge');
+  const active = toutes.find((d) => d.status === 'ACTIVE');
+  const retiree = toutes.find((d) => d.status === 'RETIRED');
+  check('une seule destination reste ACTIVE', toutes.filter((d) => d.status === 'ACTIVE').length === 1);
+  check('…c’est la nouvelle', active?.host === NOUVEAU_HOTE);
+  check('…et l’ancienne est RETIRED, pas supprimée', retiree?.host === ANCIEN_HOTE);
+
+  // LE MÊME CONSTAT, SUR LE CHEMIN RÉEL DE LA LIVRAISON.
+  const livraison = await import('../backend/src/services/sync/syncDelivery.service.js');
+  check('le service de livraison lit la destination active, jamais le champ figé',
+    /outboundBaseUrl\(/.test(livraison.deliverToProject.toString())
+    && !/publicBackendUrl/.test(livraison.deliverToProject.toString()));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 section('GÉNÉRATION — un déménagement rend les anciennes projections périmées');
 {
   const record = {

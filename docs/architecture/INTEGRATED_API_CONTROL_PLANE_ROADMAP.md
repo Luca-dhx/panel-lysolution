@@ -941,13 +941,180 @@ blocage pour L2.** L2 ne déplace aucun appel : il retire le choix manuel, les
 projets continuent d'utiliser leurs identifiants locaux. Le remplissage du
 coffre du Panel conditionne **L6**, pas L2.
 
-**Constat incident, hors périmètre.** La fiche du Panel annonce
-`runtime.publicBackendUrl = https://api.demo-sbauto.lycarz.com` — l'ancienne
-adresse, désormais injoignable — alors que la destination active est
-`demo-sbauto06.ly-solution.com` depuis le 2026-08-09. Le battement passe (il est
-sortant), mais une livraison descendante viserait une adresse morte ;
-`lastBusinessSyncAt` n'a plus avancé depuis le déménagement. À traiter dans le
-périmètre déploiement, pas ici.
+**Constat incident — RECTIFIÉ par le lot L1.75.** La fiche du Panel annonce
+`runtime.publicBackendUrl = https://api.demo-sbauto.lycarz.com`, une adresse
+injoignable. Ce rapport en concluait qu'une livraison descendante viserait un
+hôte mort : **c'était faux.** Vérification faite en L1.75, la destination avait
+convergé (ACTIVE = `demo-sbauto06.ly-solution.com`, ancienne RETIRED le
+2026-08-06) et `outboundBaseUrl()` lit la destination active, jamais ce champ.
+`runtime.publicBackendUrl` est une photographie d'appairage, volontairement
+figée et volontairement ignorée. Le seul lecteur résiduel — la détection de
+doublon du `ProjectWizard` — a été corrigé en L1.75.
+
+---
+
+### L1.75 — Ouverture commerciale · ✅ **LIVRÉ** (primitive + doctrine)
+
+Réponse à la décision **D2**, ouverte depuis l'audit et rendue concrète par
+l'inventaire L1.5.
+
+#### Le besoin, et sa preuve
+
+`sbauto06_prod` contient un `Payment` **PAID · environment PROD · providerMode
+TEST · 2026-07-16**. Une instance techniquement en production avait été validée
+de bout en bout avec un Stripe de test. C'était utile — personne ne veut débiter
+une vraie carte pour vérifier qu'un déploiement fonctionne — et ce n'était
+possible que parce qu'`activeMode` laissait choisir le monde à la main.
+
+L2 supprimera ce choix. Sans remplaçant, il supprimerait aussi la capacité.
+
+#### La doctrine
+
+```
+ENVIRONNEMENT TECHNIQUE   ≠   OUVERTURE COMMERCIALE
+      environment.js              commercialReadiness.js
+   « quel monde fournisseur ? »   « l'action réelle est-elle autorisée ? »
+
+PREOPENING ≠ TEST
+PREOPENING NEVER SELECTS PROVIDER SANDBOX
+```
+
+Une instance en pré-ouverture **est** en PROD : elle utiliserait les
+identifiants PROD. On lui refuse simplement de capturer de l'argent. Confondre
+les deux recréerait `activeMode` sous un autre nom.
+
+#### Deux états, pas trois — et l'argument est un interblocage
+
+`SUSPENDED` a été écarté. `SiteStatus` porte déjà la suspension, avec ses deux
+sources (`TECHNICAL`, `CONTRACT`). Surtout : `SiteStatus` passe à `SUSPENDED`
+avec la source `CONTRACT` précisément quand aucun contrat n'est honoré, et l'on
+en sort **en payant**. Un `SUSPENDED` commercial qui refléterait cet état
+bloquerait le paiement censé le lever — le site ne pourrait plus jamais revenir.
+
+Une machine à états répond à une question. « Le site doit-il être servi ? » a
+déjà la sienne.
+
+#### Ce qui a été écarté, et pourquoi
+
+**`Contract.status` ne peut pas porter l'ouverture** : la transition
+`INACTIVE → ACTIVE` exige de payer les frais de lancement. Une porte doit
+précéder l'action qu'elle garde ; ici elle en serait le résultat. Circulaire.
+
+#### La politique — table code-first fermée
+
+La décision ne se prend pas capacité par capacité, au jugé : elle découle de la
+**nature de l'effet**.
+
+| Capacité | Effet | Pré-ouverture |
+|---|---|---|
+| `billing.invoice.list` | READ_ONLY | ✅ |
+| `billing.subscription.reconcile` | READ_ONLY | ✅ |
+| `billing.customer.ensure` | REVERSIBLE_EXTERNAL_WRITE | ✅ |
+| `billing.checkout.create` | **FINANCIAL_WRITE** | ❌ |
+| `billing.subscription.cancel_at_period_end` | **FINANCIAL_WRITE** | ❌ |
+| `billing.refund` | **FINANCIAL_WRITE** | ❌ |
+| `signature.request.create` | **LEGAL_WRITE** | ❌ |
+| `signature.document.download` | READ_ONLY | ✅ |
+| `email.sender.verify` | CONFIGURATION | ✅ |
+| `email.send_template` | COMMUNICATION_WRITE | ✅ |
+| `dns.record.ensure` | INFRASTRUCTURE_WRITE | ✅ |
+
+Deux effets seulement sont interdits — ceux qui **engagent quelqu'un d'autre que
+nous** : l'argent d'un client, et sa signature.
+
+**La pré-ouverture n'est pas une coupure réseau.** Une instance qu'on ne peut ni
+déployer, ni configurer, ni dont l'administrateur ne peut recevoir sa
+réinitialisation de mot de passe serait contournée — et la pré-ouverture
+deviendrait décorative. D'où `COMMUNICATION_WRITE` et `INFRASTRUCTURE_WRITE`
+autorisés.
+
+**Conséquence assumée** : `signature.request.create` étant bloquée, le parcours
+d'activation d'un contrat n'est pas praticable en pré-ouverture. C'est cohérent —
+on ouvre, **puis** on contractualise.
+
+#### « Tester une production » — le parcours retenu
+
+| | Option | Verdict |
+|---|---|---|
+| **A** | PROD + PREOPENING → simulation, aucun appel fournisseur | **Retenue** comme filet. Le stub existe déjà (`stripe.stub.js`, `STRIPE_PROVIDER=stub`). |
+| **B** | Instance TEST miroir → parcours complet en Stripe TEST | **Recommandée** comme parcours principal : c'est le seul qui exerce le chemin réel de bout en bout. |
+| **C** | PROD + PREOPENING → Stripe TEST | **Rejetée.** Elle réintroduit `ENV PROD × provider TEST`, c'est-à-dire exactement ce que L2 supprime. |
+
+Recommandation : **B pour valider le parcours, A pour protéger la production.**
+
+#### Transition PREOPENING → LIVE
+
+L'état ne devient pas un sac de conditions. Les prérequis sont des **contrôles
+séparés**, dérivés de ce qui existe déjà (`getProviderReadiness`, destination
+active, entreprise configurée, webhook réconcilié). L'état reste un fait
+déclaré ; les contrôles ne font que le recommander ou l'avertir.
+
+Retour `LIVE → PREOPENING` : à autoriser, réservé au DEV, avec confirmation —
+c'est un frein d'urgence, pas un réglage.
+
+#### Contrat avec L2 — deux décisions indépendantes
+
+```
+environmentResolver.resolve()            →  PROD
+commercialPolicy.canExecute('billing.checkout.create')
+                                         →  BLOCKED_PREOPENING
+```
+
+La seconde ne modifie **jamais** le résultat de la première. Vérifié par test :
+la résolution du monde est relue après le refus et vaut toujours `PROD`.
+
+Comportement futur, fail closed :
+
+```
+ENV=PROD · PREOPENING · billing.capture   →  COMMERCIAL_PREOPENING, aucun appel
+ENV=PROD · LIVE · credential PROD absente →  INTEGRATED_API_NOT_CONFIGURED
+                                             JAMAIS de repli sur TEST
+```
+
+#### Ce qui est livré, et ce qui ne l'est pas
+
+**Livré** —
+[`services/integratedApi/commercialReadiness.js`](../../backend/src/services/integratedApi/commercialReadiness.js) :
+vocabulaire fermé, table de politique, `canExecute()`. Plus 71 assertions
+d'invariants.
+
+**Volontairement NON livré** — aucune persistance, ni côté Panel ni côté projet ;
+aucun écran ; aucun branchement fournisseur. Même règle qu'au lot L1
+(`IntegratedApiRuntime : NOT_NEEDED_L1`) : on ne crée pas une structure de
+données qu'aucun code n'écrit, ni un écran qui afficherait une constante. Le
+parc ne compte **aucune instance PROD vivante** — la notion n'a personne à
+protéger aujourd'hui.
+
+Elle sera stockée **côté instance** (autorité locale, pour que l'enforcement
+survive à une panne du Panel) et projetée vers le Panel comme `SITE_STATUS`,
+quand la première instance de production existera. Son seul appelant prévu est
+la passerelle de capacités (L3).
+
+#### UX cible (conçue, non implémentée)
+
+Deux badges, jamais fusionnés :
+
+```
+Environnement technique : PRODUCTION
+Ouverture commerciale   : PRÉ-OUVERTURE
+```
+
+Jamais « TEST » pour désigner une pré-ouverture. Modification réservée au DEV,
+confirmation explicite pour passer LIVE, acteur et date journalisés.
+
+#### Correction incidente — l'URL figée
+
+L'inventaire L1.5 signalait que la fiche du Panel annonçait encore
+`api.demo-sbauto.lycarz.com`. **Vérification faite : la livraison n'était pas en
+cause.** La destination avait convergé (ACTIVE = `demo-sbauto06.ly-solution.com`,
+ancienne RETIRED le 2026-08-06), et `outboundBaseUrl()` lit la destination
+active, jamais le champ d'appairage — corrigé et documenté de longue date.
+
+Restait **un seul lecteur** du champ figé : la détection de doublon du
+`ProjectWizard`, qui se trompait deux fois — la nouvelle adresse d'un projet
+déjà déclaré ne déclenchait aucun avertissement, et l'ancienne, morte, le
+faisait croire encore en service. Corrigé. Invariant ajouté :
+`PROJECT_RUNTIME_URL_CONVERGES_AFTER_DESTINATION_CHANGE`.
 
 ---
 

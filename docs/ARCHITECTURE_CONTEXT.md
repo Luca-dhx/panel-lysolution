@@ -1400,3 +1400,33 @@ provisionnement, sans quoi l'autre instance ne pourrait jamais être préparée.
 Exécuter une action en PROD depuis le Panel TEST est **refusé**, toujours. Deux
 fonctions séparées portent ces deux règles (`assertAdministrableEnvironment`
 et `assertEnvironmentServed`), et un test affirme les deux côte à côte.
+
+### ENVIRONNEMENT ≠ OUVERTURE COMMERCIALE (lot L1.75)
+
+Deux questions distinctes, deux modules, et la seconde ne répond jamais à la
+première.
+
+| | Répond à | Valeurs |
+|---|---|---|
+| `services/integratedApi/environment.js` | **Quel monde fournisseur ?** | `TEST` · `PROD` |
+| `services/integratedApi/commercialReadiness.js` | **L'action réelle est-elle autorisée ?** | `PREOPENING` · `LIVE` |
+
+```
+PREOPENING ≠ TEST
+PREOPENING NEVER SELECTS PROVIDER SANDBOX
+```
+
+Une instance en pré-ouverture **est** en production : elle utiliserait les
+identifiants PROD. On lui refuse seulement de capturer de l'argent ou de
+demander une signature — les deux effets qui engagent quelqu'un d'autre que
+nous. Tout le reste (déploiement, DNS, e-mails, lectures, création de client)
+reste permis : une instance qu'on ne peut pas configurer serait contournée.
+
+**Deux états, pas trois.** La suspension appartient à `SiteStatus`. Un
+`SUSPENDED` commercial serait un interblocage : `SiteStatus` suspend quand aucun
+contrat n'est honoré, et l'on en sort **en payant**.
+
+**Rien n'est encore persisté** — pas de champ, pas d'écran, pas de branchement
+fournisseur. La primitive existe et est testée ; son stockage viendra avec la
+première instance de production, et son unique appelant sera la passerelle de
+capacités (L3).

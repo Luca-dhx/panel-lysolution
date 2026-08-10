@@ -38,6 +38,9 @@ const TESTS = [
   // L4 — la frontière : aucun identifiant fournisseur ne franchit le pont.
   // L'invariant est dérivé du registre, donc il survit au provider suivant.
   'bridge-provider-secret-boundary.test.js',
+  // L1.75 — l'ouverture commerciale : « cette action réelle est-elle
+  // autorisée ? », posée séparément de « quel monde fournisseur ? ».
+  'commercial-readiness.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',

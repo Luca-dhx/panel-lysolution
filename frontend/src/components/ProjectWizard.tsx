@@ -35,6 +35,7 @@ import { Link } from 'react-router-dom';
 import { CopyField } from '@/components/ui';
 import { api, errorMessage, probeProject } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { projectTechnicalUrls } from '@/lib/projectPresentation';
 import type { ProbeResult } from '@/types.company';
 import type { PublicProject } from '@/types';
 
@@ -191,8 +192,23 @@ export function ProjectWizard({
   const boite = useRef<HTMLDivElement | null>(null);
 
   const normalisee = urlNormalisee(url);
+  /**
+   * LE DOUBLON SE CHERCHE SUR LA DESTINATION ACTIVE, pas sur l'adresse
+   * d'appairage.
+   *
+   * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────────
+   * Cette comparaison lisait `runtime.publicBackendUrl`, posée au bootstrap et
+   * jamais revue — le dernier endroit de l'interface à le faire. Après un
+   * déménagement, elle se trompait DEUX FOIS : saisir la nouvelle adresse d'un
+   * projet déjà déclaré ne déclenchait aucun avertissement, et saisir l'ancienne
+   * — morte — le faisait croire encore en service.
+   *
+   * Constaté sur « Demo SB Auto », passé de `demo-sbauto.lycarz.com` à
+   * `demo-sbauto06.ly-solution.com` : la destination avait convergé partout
+   * ailleurs, ici seul le champ figé subsistait.
+   */
   const dejaDeclare = normalisee
-    ? projects.find((p) => p.runtime.publicBackendUrl === normalisee) ?? null
+    ? projects.find((p) => projectTechnicalUrls(p).backend === normalisee) ?? null
     : null;
   const projetCree = cree ? projects.find((p) => p.projectId === cree.projectId) ?? null : null;
   const expire = cree ? new Date(cree.expireLe).getTime() < Date.now() : false;
