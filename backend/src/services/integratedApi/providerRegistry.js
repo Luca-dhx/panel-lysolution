@@ -314,7 +314,14 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     supportsWebhookReconciliation: false,
     documentation: 'https://developers.hostinger.com',
     console: 'https://hpanel.hostinger.com/profile/api',
-    capabilities: Object.freeze(['dns.record.ensure']),
+    /**
+     * Les trois verbes, dans l'ordre où le moteur de déploiement les emploie :
+     * il PLANIFIE avec les deux lectures, puis MUTE. Le lot L9 n'en déclarait
+     * qu'un — l'audit avait supposé que le Panel serait son propre appelant, ce
+     * qui était faux : le consommateur réel est un projet, et il a besoin des
+     * trois.
+     */
+    capabilities: Object.freeze(['dns.zone.resolve', 'dns.records.read', 'dns.record.ensure']),
     credentialRoles: Object.freeze([
       role('apiToken', 'Jeton d’API', {
         secret: true,

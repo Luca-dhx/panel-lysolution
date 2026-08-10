@@ -428,30 +428,162 @@ section('9. DEPLOYMENT_ENGINE_REMAINS_AUTHORITY — l’adaptateur ne planifie p
 }
 
 /* ========================================================================== */
-section('10. La politique commerciale connaît les trois verbes');
+section('10. PREOPENING_ALLOWS_INFRASTRUCTURE_PREPARATION — câblé, et dérivé');
 /* ========================================================================== */
 {
-  // L'écriture est DÉJÀ dans la table de L1.75 : la politique la connaît.
-  const ecriture = commercial.canExecute({ capability: 'dns.record.ensure', commercialState: 'PREOPENING' });
-  check('dns.record.ensure : la politique le connaît',
-    ecriture.decision !== commercial.DECISION.UNKNOWN_CAPABILITY);
-  // Déployer est précisément ce qu'on fait AVANT d'ouvrir : rien n'est bloqué.
-  check('dns.record.ensure : autorisé en pré-ouverture', ecriture.decision === commercial.DECISION.ALLOWED);
-  check('…et son effet reste INFRASTRUCTURE_WRITE',
+  /**
+   * ── L'INVARIANT N'EST PAS UNE EXCEPTION HOSTINGER ───────────────────────────
+   *
+   * Rien n'a été ajouté à la politique pour laisser passer le DNS. La table de
+   * L1.75 n'interdit en pré-ouverture que deux effets — `FINANCIAL_WRITE` et
+   * `LEGAL_WRITE` — ceux qui engagent quelqu'un d'AUTRE que nous. Une écriture
+   * d'infrastructure n'engage personne : elle prépare l'instance.
+   *
+   * C'est la doctrine énoncée en L1.75 : « la pré-ouverture n'est pas une
+   * coupure réseau ». Une instance qu'on ne pourrait pas déployer serait
+   * contournée, et la pré-ouverture deviendrait décorative.
+   *
+   * On le vérifie donc PAR DÉRIVATION — l'effet n'est pas dans la liste
+   * interdite — et pas par une ligne d'exception qu'on aurait écrite pour
+   * obtenir le résultat voulu.
+   */
+  for (const code of capabilities.HOSTINGER_CAPABILITY_CODES) {
+    const verdict = commercial.canExecute({ capability: code, commercialState: 'PREOPENING' });
+    check(`${code} : la politique le connaît`,
+      verdict.decision !== commercial.DECISION.UNKNOWN_CAPABILITY);
+    check(`${code} : autorisé en pré-ouverture`, verdict.decision === commercial.DECISION.ALLOWED);
+  }
+
+  check('les deux lectures sont READ_ONLY dans la table officielle',
+    commercial.CAPABILITY_EFFECTS['dns.zone.resolve'] === commercial.EFFECT.READ_ONLY
+    && commercial.CAPABILITY_EFFECTS['dns.records.read'] === commercial.EFFECT.READ_ONLY);
+  check('…et l’écriture reste INFRASTRUCTURE_WRITE',
     commercial.CAPABILITY_EFFECTS['dns.record.ensure'] === commercial.EFFECT.INFRASTRUCTURE_WRITE);
 
-  /**
-   * Les deux LECTURES ne sont pas encore dans la table de L1.75 : ce fichier
-   * était écrit par un autre lot pendant la session. Elles portent un effet
-   * PROPOSÉ, et ce qu'on éprouve ici, c'est qu'il ne diverge pas — le jour où
-   * les deux coexisteront, `validateHostingerCapabilities` le dirait.
-   */
-  for (const code of ['dns.zone.resolve', 'dns.records.read']) {
-    check(`${code} : effet proposé READ_ONLY`,
-      capabilities.HOSTINGER_CAPABILITIES[code].effectNature === commercial.EFFECT.READ_ONLY);
-    check(`${code} : pas encore au registre de politique (câblage attendu)`,
-      commercial.CAPABILITY_EFFECTS[code] === undefined);
+  const interdits = commercial.capabilitiesBlockedInPreopening().map((b) => b.capability);
+  check('aucun verbe DNS ne figure parmi les capacités bloquées',
+    capabilities.HOSTINGER_CAPABILITY_CODES.every((c) => !interdits.includes(c)));
+
+  // La table `PROPOSED_EFFECTS` de L9 devait disparaître au câblage. Elle a
+  // disparu : une seconde table d'effets pourrait un jour masquer un oubli de
+  // la table officielle, c'est-à-dire la dérive que l'alignement doit voir.
+  const fs = await import('node:fs');
+  const source = fs.readFileSync(
+    new URL('../backend/src/services/integratedApi/hostinger/hostingerCapabilities.js', import.meta.url),
+    'utf8',
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  check('aucune table d’effets locale ne subsiste', !/PROPOSED_EFFECTS\s*=/.test(source));
+}
+
+/* ========================================================================== */
+section('11. CÂBLAGE L9.1 — les trois verbes sont réellement servis');
+/* ========================================================================== */
+{
+  const registre = await import('../backend/src/services/capabilities/capabilityRegistry.js');
+  const providerAdapters = await import('../backend/src/services/capabilities/providerAdapters.js');
+
+  for (const code of capabilities.HOSTINGER_CAPABILITY_CODES) {
+    const definition = registre.getCapabilityDefinition(code);
+    check(`${code} : au registre de la passerelle`, Boolean(definition));
+    check(`${code} : déclaré MIGRÉ`, definition?.migrated === true);
+    check(`${code} : un adaptateur l’exécute`, providerAdapters.hasAdapter(code));
+    check(`${code} : exige la preuve d’appartenance`, definition?.requiresResourceOwnership === true);
+    check(`${code} : reste PANEL_GLOBAL`, definition?.scope === 'PANEL_GLOBAL');
   }
+
+  /**
+   * L'écriture ne doit PAS être `SAFE_RETRY`. L'entrée locale qui existait au
+   * registre avant L9.1 l'annonçait ainsi — Hostinger n'expose aucune clé
+   * d'idempotence sur `PUT /zones/{zone}`, et un rejeu après un silence écrase
+   * une correction humaine survenue entre-temps.
+   */
+  check('dns.record.ensure : UNKNOWN_ON_TIMEOUT, jamais SAFE_RETRY',
+    registre.getCapabilityDefinition('dns.record.ensure').idempotency === 'UNKNOWN_ON_TIMEOUT');
+
+  check('l’alignement du registre est vert', registre.assertRegistryAlignment().length === 0);
+  check('…et celui des adaptateurs aussi',
+    providerAdapters.assertAdapterAlignment(registre.listCapabilityDefinitions()).length === 0);
+
+  // BIDIRECTIONNEL : le registre L1 annonce les trois, et rien de plus.
+  const annoncees = providerRegistry.getProviderDefinition('HOSTINGER').capabilities;
+  check('le registre L1 annonce les TROIS verbes',
+    capabilities.HOSTINGER_CAPABILITY_CODES.every((c) => annoncees.includes(c)));
+  check('…et aucun verbe fantôme', annoncees.length === capabilities.HOSTINGER_CAPABILITY_CODES.length);
+}
+
+/* ========================================================================== */
+section('12. OWNERSHIP — normalisation, frontières, et aucun startsWith');
+/* ========================================================================== */
+{
+  /**
+   * Le contrôle d'appartenance est la seule chose qui empêche un jeton global de
+   * devenir une autorisation globale. On l'éprouve donc sur les formes qu'un
+   * nom d'hôte prend réellement dans la nature, pas seulement sur le cas facile.
+   */
+  const PROJ = 'p-own';
+  await destination(PROJ, 'garage-own.fr');
+
+  const cas = [
+    // [nom demandé, attendu, ce qu'on éprouve]
+    ['garage-own.fr', true, 'l’hôte exact'],
+    ['manager.garage-own.fr', true, 'un sous-domaine'],
+    ['a.b.garage-own.fr', true, 'un sous-domaine profond'],
+    ['GARAGE-OWN.FR', true, 'les majuscules sont normalisées'],
+    ['Manager.Garage-Own.FR', true, '…y compris sur un sous-domaine'],
+    ['garage-own.fr.', true, 'le point final absolu est normalisé'],
+    ['notgarage-own.fr', false, 'un voisin qui COMMENCE autrement'],
+    ['garage-own.fr.evil.com', false, 'un domaine qui CONTIENT le nôtre'],
+    ['garage-own.frx', false, 'un suffixe collé — la frontière de label tient'],
+    ['xgarage-own.fr', false, 'un préfixe collé'],
+    ['garage-ownxfr', false, 'sans point : pas un sous-domaine'],
+  ];
+
+  for (const [nom, attendu, propos] of cas) {
+    const verdict = await ownership.describeHostnameOwnership(PROJ, nom);
+    check(`${propos} → ${attendu ? 'accepté' : 'refusé'} (${nom})`, verdict.allowed === attendu);
+  }
+
+  /**
+   * IDN — le module ne traite PAS l'Unicode, et c'est un refus, pas un oubli.
+   *
+   * Un nom en Unicode brut est rejeté comme inexploitable : la comparaison se
+   * fait sur des octets, et laisser passer deux écritures d'un même nom
+   * ouvrirait la porte aux homographes. La forme punycode, elle, est de l'ASCII
+   * exact et se compare sans ambiguïté — c'est celle que le DNS transporte.
+   */
+  const unicode = await ownership.describeHostnameOwnership(PROJ, 'garage-ôwn.fr');
+  check('un nom Unicode brut est refusé, pas deviné',
+    unicode.allowed === false && unicode.code === ownership.OWNERSHIP_CODES.INVALID_HOSTNAME);
+
+  await destination('p-idn', 'xn--garage-wn-e1a.fr');
+  const puny = await ownership.describeHostnameOwnership('p-idn', 'XN--GARAGE-WN-E1A.FR');
+  check('la forme punycode, elle, se compare exactement', puny.allowed === true);
+  const punyVoisin = await ownership.describeHostnameOwnership('p-idn', 'xn--garage-wn-e1b.fr');
+  check('…et un punycode voisin ne passe pas', punyVoisin.allowed === false);
+
+  /**
+   * LA PREUVE STRUCTURELLE : aucune comparaison par préfixe.
+   *
+   * `startsWith` sur un nom d'hôte est la faille classique — `example.com.evil`
+   * y « commence par » `example.com`. `includes` en est la variante pire encore.
+   * On interdit les deux dans ce module, pour que la relecture d'un futur
+   * correctif ne les réintroduise pas par commodité.
+   */
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(
+    new URL('../backend/src/services/capabilities/resourceOwnership.js', import.meta.url),
+    'utf8',
+  ).replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+  check('aucun startsWith dans le contrôle d’appartenance', !/\.startsWith\(/.test(src));
+  check('…ni includes sur un nom d’hôte', !/host[A-Za-z]*\.includes\(/.test(src));
+  check('la couverture se fait sur une frontière de label',
+    /endsWith\(`\.\$\{root\}`\)/.test(src));
+
+  // Le schéma d'entrée, lui, refuse le point final au lieu de le normaliser :
+  // fail closed. On le pin pour que le comportement soit un choix, pas un hasard.
+  const parsed = capabilities.HOSTINGER_CAPABILITIES['dns.zone.resolve']
+    .inputSchema.safeParse({ hostname: 'garage-own.fr.', operationId: 'op-12345678' });
+  check('le contrat d’entrée refuse le point final (fail closed)', parsed.success === false);
 }
 
 await stopMemoryMongo();

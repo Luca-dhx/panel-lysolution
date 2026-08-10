@@ -1652,12 +1652,63 @@ Tant que ces trois briques n'existent pas, `email.send_template` refuse par
 
 ---
 
-### L9 — Migration du provider #4 : **Hostinger**
+### L9 — Migration du provider #4 : **Hostinger** · ✅ **LIVRÉ**
 
-Le seul consommateur est le moteur de déploiement du Panel lui-même (§9.1) :
-c'est en réalité une **implémentation**, pas une migration.
+> Document dédié : [HOSTINGER_CONTROL_PLANE.md](HOSTINGER_CONTROL_PLANE.md).
 
-- **Risque** — **faible.**
+**L'annonce ci-dessous était fausse, et l'audit L9 l'a établi :**
+
+> ~~Le seul consommateur est le moteur de déploiement du Panel lui-même (§9.1) :
+> c'est en réalité une **implémentation**, pas une migration.~~
+
+Le Panel n'injecte **aucun** `dnsProvider` — sa phase DNS existe mais n'est
+câblée nulle part. Le seul appelant réel d'Hostinger est le contrôleur de
+déploiement de **SB Auto**, avec la clé **du projet**. L9 est donc une vraie
+migration — et la seule qui retire réellement un credential d'un projet.
+
+#### L9 — fondation
+
+Trois verbes (`dns.zone.resolve`, `dns.records.read`, `dns.record.ensure`),
+leur transport, leurs adaptateurs, et le contrôle d'appartenance :
+
+```
+UN CREDENTIAL GLOBAL N'EST PAS UN ACCÈS GLOBAL.
+```
+
+Le compte Hostinger du Panel détient le portefeuille de **tous** les clients.
+Sans ce contrôle, centraliser aurait **aggravé** la situation d'origine, où
+chaque projet détenait au moins une clé n'ouvrant que son propre compte.
+L'appartenance vient de `PanelProjectDestination` — la relation canonique
+`projectId → hôte`, que le projet ne peut pas écrire lui-même.
+
+#### L9.1 — câblage et bascule · ✅ **LIVRÉ**
+
+- **Les trois verbes sont servis** — au registre de la passerelle, adaptateurs
+  branchés, alignement **bidirectionnel** (registre ↔ catalogue L9 ↔ registre
+  L1 ↔ table d'effets). L'entrée locale `dns.record.ensure` qui préexistait a
+  été retirée : elle annonçait `SAFE_RETRY` sur une écriture qu'aucune clé
+  d'idempotence ne protège.
+- **Le repli est devenu une liste blanche** — seul « ce Panel ignore le verbe »
+  autorise encore la clé locale. Un délai dépassé, une panne, un refus ferment
+  le chemin. L'ancienne liste noire laissait tout le reste retomber sur le
+  secret qu'on est précisément en train de retirer.
+- **Le diagnostic suit le chemin réel** — le bouton « Tester Hostinger » du
+  Manager passe par la capacité dès qu'un Panel est appairé, et n'estampille
+  plus la clé locale. Même doctrine qu'en L8.2.
+- **Preuve** — `hostinger-control-plane.test.js` (118 assertions) et
+  `hostinger-dns-cutover-e2e.test.js` (62 assertions, chaîne réelle de bout en
+  bout, `PUT` laissé sans réponse compris).
+- **Incident de recette corrigé au passage** — la suite L9 existait mais
+  **n'était inscrite dans aucun runner** : la suite complète annonçait « tout
+  vert » sans l'avoir jouée. Même incident qu'au lot L8.
+
+- **Reste ouvert** — la fenêtre de déploiement progressif, et donc la clé
+  `apiToken` du projet. `NO_LOCAL_HOSTINGER_RUNTIME_CALL_AFTER_CUTOVER` n'est
+  pas encore vrai : trois sorties locales subsistent, nommées, et un test
+  échoue si une quatrième apparaît.
+- **Risque** — **faible** en écriture (aucune orchestration déplacée) ;
+  **réel en exploitation** — un projet sans octroi ni destination `ACTIVE` perd
+  son DNS automatique, et le rapport le dit.
 
 ---
 

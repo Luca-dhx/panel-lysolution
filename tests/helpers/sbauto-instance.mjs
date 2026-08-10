@@ -258,6 +258,14 @@ async function uploadsSnapshot() {
 
 const bridge = () => bridgeRuntime.getPanelBridge();
 
+/**
+ * Le `DnsProvider` retenu par la dernière résolution — celui que le moteur de
+ * déploiement recevrait. Il vit ICI, dans le processus de l'instance : un
+ * provider ne traverse pas l'IPC, et le sérialiser en ferait une copie qui
+ * n'appellerait plus rien.
+ */
+let dnsProviderRetenu = null;
+
 /* ══════════════════════════════════════════════════════════════════════════
    4. LES COMMANDES — chacune appelle un service, aucune n'écrit à sa place.
    ══════════════════════════════════════════════════════════════════════════ */
@@ -313,6 +321,66 @@ const COMMANDS = {
         panelDetails: err?.details?.panelDetails ?? null,
       };
     }
+  },
+
+  /**
+   * LE CHEMIN DNS D'UN DÉPLOIEMENT — celui que le contrôleur emprunte (L9.1).
+   *
+   * ══ POURQUOI PAS `invokeCapability` DIRECTEMENT ═════════════════════════
+   *
+   * Parce que ce n'est pas ce que le déploiement fait. Entre lui et la
+   * passerelle il y a `resolveDnsProvider` — qui ÉPROUVE la voie du Panel avant
+   * de la retenir et décide s'il a le droit de retomber sur une clé locale — et
+   * `CapabilityDnsProvider`, qui traduit l'interface du moteur en verbes. Les
+   * court-circuiter laisserait hors de la preuve les deux seuls endroits où un
+   * secret local peut reprendre la main.
+   *
+   * Rend le CHEMIN retenu et son motif. Le provider lui-même ne traverse pas
+   * l'IPC : il reste dans ce processus, et `dnsSequence` s'en sert.
+   */
+  async resolveDns({ siteHost, runId = 'run-e2e' }) {
+    const { resolveDnsProvider } = await import(SB('src/integrations/hostinger/dnsProviderResolution.js'));
+    const { invokeCapability, capabilitiesAvailable } = await import(
+      SB('src/services/panelBridge/capabilityClient.js')
+    );
+    const resolved = await resolveDnsProvider({
+      siteHost,
+      runId,
+      invoke: capabilitiesAvailable() ? invokeCapability : null,
+    });
+    dnsProviderRetenu = resolved.provider;
+    return {
+      path: resolved.path,
+      reason: resolved.reason,
+      available: resolved.available,
+      providerName: resolved.provider?.name ?? null,
+      /** Une clé locale a-t-elle été sortie du coffre du projet ? */
+      apiTokenPresent: typeof resolved.apiToken === 'string' && resolved.apiToken.length > 0,
+    };
+  },
+
+  /**
+   * LA SÉQUENCE DU MOTEUR, DANS SON ORDRE — planifier, puis muter.
+   *
+   * `findBestZone` → `listRecords` → `ensureRecord`. C'est l'ordre du pipeline
+   * de déploiement, et c'est lui qui permet de constater un conflit sans avoir
+   * rien touché. On appelle le provider RETENU par `resolveDns`, celui que le
+   * moteur aurait reçu — pas une instance fabriquée pour l'occasion.
+   */
+  async dnsSequence({ zone, name, type = 'A', content, ttl }) {
+    if (!dnsProviderRetenu) return { error: 'AUCUN_PROVIDER_RETENU' };
+    const etapes = [];
+    const executer = async (etape, fn) => {
+      try {
+        etapes.push({ etape, ok: true, data: await fn() });
+      } catch (err) {
+        etapes.push({ etape, ok: false, code: err?.code ?? null, capabilityCode: err?.capabilityCode ?? null, retryable: err?.retryable === true, message: err?.message ?? '' });
+      }
+    };
+    await executer('findBestZone', () => dnsProviderRetenu.findBestZone(`${name}.${zone}`));
+    await executer('listRecords', () => dnsProviderRetenu.listRecords(zone));
+    await executer('ensureRecord', () => dnsProviderRetenu.ensureRecord({ zone, name, type, content, ttl }));
+    return { etapes };
   },
 
   /** LE VRAI RATTRAPAGE — curseur, anti-écho, idempotence, handlers. */

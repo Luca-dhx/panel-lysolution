@@ -34,26 +34,19 @@ import { getProviderDefinition } from '../providerRegistry.js';
 import { CAPABILITY_EFFECTS, EFFECT } from '../commercialReadiness.js';
 
 /**
- * EFFETS PROPOSÉS — le temps que le câblage atteigne la table de L1.75.
+ * ── LA TABLE `PROPOSED_EFFECTS` A DISPARU (L9.1) ────────────────────────────
  *
- * ── POURQUOI CETTE TABLE EXISTE, ET POURQUOI ELLE DOIT DISPARAÎTRE ──────────
+ * Elle a existé le temps d'un lot. L9 ne pouvait pas écrire dans
+ * `commercialReadiness.js` — le fichier portait le travail non committé d'un
+ * autre chantier — et proposait donc ses trois effets localement, en se laissant
+ * écraser par la table officielle dès qu'elle connaîtrait les codes.
  *
- * `commercialReadiness.CAPABILITY_EFFECTS` est la SEULE autorité : c'est elle
- * que la politique interroge pour décider si une action réelle est permise. Les
- * deux lectures de L9 n'y figurent pas encore — le fichier et le registre des
- * capacités étaient écrits par un autre lot pendant toute la session, et les
- * modifier aurait committé son travail.
- *
- * Cette table est donc une PROPOSITION, pas une seconde vérité : dès qu'un code
- * apparaît dans la table de L1.75, c'est elle qui l'emporte, et
- * `validateHostingerCapabilities()` échoue si les deux divergent. Au câblage,
- * ces trois lignes déménagent et cette constante disparaît.
+ * Le câblage a eu lieu : les trois codes sont dans `CAPABILITY_EFFECTS`, et
+ * c'est la SEULE autorité. Garder la proposition « au cas où » aurait laissé
+ * une seconde table capable de fournir un effet à une capacité que la politique
+ * officielle aurait, elle, oubliée — c'est-à-dire de masquer exactement la
+ * dérive que le contrôle d'alignement doit voir.
  */
-const PROPOSED_EFFECTS = Object.freeze({
-  'dns.zone.resolve': EFFECT.READ_ONLY,
-  'dns.records.read': EFFECT.READ_ONLY,
-  'dns.record.ensure': EFFECT.INFRASTRUCTURE_WRITE,
-});
 
 /** Permission de la famille. `dns:write` existe déjà au registre L3. */
 export const HOSTINGER_PERMISSIONS = Object.freeze({
@@ -144,11 +137,10 @@ const recordEnsureOutput = z.object({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Même fabrique que le registre L3, à une nuance près : `effectNature` vient de
- * la table de L1.75 QUAND ELLE LE CONNAÎT, et de la proposition ci-dessus
- * sinon. L'ordre n'est pas cosmétique — c'est lui qui garantit que la table
- * officielle l'emporte toujours, et qu'aucune valeur locale ne survit à son
- * arrivée.
+ * Même fabrique que le registre L3 : `effectNature` est LU dans la table de
+ * L1.75, jamais recopié. Une capacité dont l'effet manque là-bas sort d'ici
+ * avec `null`, et `validateHostingerCapabilities()` le refuse — un effet absent
+ * rendrait la capacité invisible à la politique commerciale.
  */
 function capability(code, options) {
   const definition = getProviderDefinition('HOSTINGER');
@@ -156,7 +148,7 @@ function capability(code, options) {
     code,
     provider: 'HOSTINGER',
     scope: definition?.scope ?? null,
-    effectNature: CAPABILITY_EFFECTS[code] ?? PROPOSED_EFFECTS[code] ?? null,
+    effectNature: CAPABILITY_EFFECTS[code] ?? null,
     label: options.label,
     migrated: true,
     inputSchema: options.inputSchema,
@@ -225,17 +217,19 @@ export function validateHostingerCapabilities() {
   for (const [code, definition] of Object.entries(HOSTINGER_CAPABILITIES)) {
     if (definition.code !== code) problems.push(`code incohérent : « ${code} ».`);
     if (definition.provider !== 'HOSTINGER') problems.push(`${code} : fournisseur inattendu.`);
-    if (!definition.effectNature) {
-      problems.push(`${code} : aucun effet déclaré — la politique ne le verrait pas.`);
-    }
     /**
-     * LA DÉRIVE QUI COMPTE : si L1.75 connaît déjà le code, sa valeur fait foi
-     * et la proposition doit s'y conformer. Deux effets divergents pour une
-     * même capacité, c'est une politique qui dit oui et une autre qui dit non.
+     * LA DÉRIVE QUI COMPTE : un effet absent de la table de L1.75.
+     *
+     * La politique commerciale interroge cette table par code. Un code qu'elle
+     * ignore reçoit `UNKNOWN_CAPABILITY` — refus, donc fail closed — mais le
+     * symptôme serait « le DNS ne marche plus » sans que rien ne désigne la
+     * cause. On le fait échouer ici, au démarrage, là où c'est lisible.
      */
-    const officiel = CAPABILITY_EFFECTS[code];
-    if (officiel && officiel !== definition.effectNature) {
-      problems.push(`${code} : effet proposé « ${definition.effectNature} » ≠ table L1.75 « ${officiel} ».`);
+    if (!definition.effectNature) {
+      problems.push(`${code} : aucun effet déclaré dans commercialReadiness — la politique ne le verrait pas.`);
+    }
+    if (definition.effectNature && !Object.values(EFFECT).includes(definition.effectNature)) {
+      problems.push(`${code} : effet inconnu « ${definition.effectNature} ».`);
     }
     // PANEL_GLOBAL : c'est l'invariant du lot. Une portée par environnement
     // ferait chercher un jeu TEST qui n'existe pas, et refuserait tout.

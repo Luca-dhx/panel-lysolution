@@ -32,6 +32,7 @@ import {
   TRANSPORT_CODES,
   OUTCOMES as TRANSPORT_OUTCOMES,
 } from '../integratedApi/brevo/brevoTransport.js';
+import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
@@ -149,6 +150,18 @@ async function brevoSenderVerify({ credentials, definition, fetchImpl }) {
  */
 const ADAPTERS = Object.freeze({
   'email.sender.verify': brevoSenderVerify,
+  /**
+   * HOSTINGER — trois verbes DNS, définis par le lot qui connaît le fournisseur.
+   *
+   * Ils ne sont pas écrits ici pour la même raison que le transport Brevo n'y
+   * est pas réécrit : chaque adaptateur TRADUIT SES PROPRES ERREURS. Le
+   * traducteur générique ci-dessus ne connaît que Brevo — une
+   * `HostingerTransportError` y tomberait dans la branche « erreur non typée »
+   * et ressortirait en `PROVIDER_UNAVAILABLE`, c'est-à-dire en « rien ne s'est
+   * passé ». Sur une écriture DNS interrompue, c'est faux, et c'est exactement
+   * l'affirmation qui pousse à rejouer.
+   */
+  ...HOSTINGER_ADAPTERS,
 });
 
 export function hasAdapter(code) {

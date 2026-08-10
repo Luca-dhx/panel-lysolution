@@ -112,10 +112,27 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   check('aucune capacité ne s’ajoute à chaud',
     Object.keys(registry.CAPABILITY_DEFINITIONS).length === avant);
 
-  // UNE seule est servie : le lot migre une capacité, pas un fournisseur.
-  check('une seule capacité migrée, et c’est la lecture Brevo',
-    registry.listMigratedCapabilities().length === 1
-    && registry.listMigratedCapabilities()[0].code === VERIFY);
+  /**
+   * L'INVENTAIRE DES CAPACITÉS SERVIES — nommé, donc surveillé.
+   *
+   * Cette ligne disait « une seule, et c'est la lecture Brevo ». C'était vrai
+   * au lot L3 et c'est devenu faux au lot L9.1, qui en a migré trois autres.
+   * Compter n'était pas le bon contrôle : un compte à jour ne dit pas LESQUELLES
+   * sont servies, et une capacité migrée par erreur passerait inaperçue tant
+   * qu'une autre serait retirée le même jour.
+   *
+   * On énumère donc. Toute migration future fait rougir cette ligne — c'est
+   * exactement ce qu'on veut d'un chemin qui atteint un fournisseur réel.
+   */
+  const SERVIES = [
+    // L8.2 — la lecture Brevo, première capacité réellement basculée.
+    VERIFY,
+    // L9.1 — les trois verbes DNS d'un déploiement.
+    'dns.zone.resolve', 'dns.records.read', 'dns.record.ensure',
+  ].sort();
+  check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
+    JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
+    === JSON.stringify(SERVIES));
   check('email.send_template reste NON migrée',
     registry.getCapabilityDefinition(SEND).migrated === false);
   check('les six capacités Stripe restent NON migrées',

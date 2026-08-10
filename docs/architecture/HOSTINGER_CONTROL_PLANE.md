@@ -1,11 +1,17 @@
 # Hostinger — plan de contrôle
 
-> **Lot L9.** Le DNS d'un déploiement passe par le Panel : le projet demande un
-> verbe, le Panel prouve que le nom lui appartient, puis écrit avec **sa** clé.
+> **Lots L9 (fondation) et L9.1 (câblage).** Le DNS d'un déploiement passe par
+> le Panel : le projet demande un verbe, le Panel prouve que le nom lui
+> appartient, puis écrit avec **sa** clé.
 >
-> **État : fondation complète, câblage final bloqué.** Les trois capacités, leur
-> transport, leurs adaptateurs et le contrôle d'appartenance sont écrits et
-> testés ; leur inscription au registre attend la fin du lot L3.1 (§10).
+> **État : câblé et servi.** Les trois capacités sont au registre de la
+> passerelle, adaptateurs branchés, alignement bidirectionnel vert. Un E2E
+> traverse la chaîne complète — instance réelle → pont → passerelle → coffre
+> chiffré → faux Hostinger HTTP — sans qu'aucune clé locale ne soit lue.
+>
+> Reste ouverte **une seule** fenêtre : le repli vers la clé du projet quand le
+> Panel ne connaît pas encore le verbe (déploiement progressif). Sa condition de
+> retrait est au §7.
 
 ---
 
@@ -180,8 +186,8 @@ celui qui gagnerait dépendrait de la configuration du jour.
 
 ```
 PANEL   capacité dns.*        ← tenté d'abord, éprouvé avant d'être retenu
-LOCAL   clé du projet         ← repli, SEULEMENT si le Panel ne sait pas faire
-NONE    aucun DNS automatique
+LOCAL   clé du projet         ← repli, UNIQUEMENT « ce Panel ignore le verbe »
+NONE    aucun DNS automatique ← tout le reste
 ```
 
 `resolveDnsProvider` éprouve la voie du Panel (`verifyCredentials` résout la
@@ -189,65 +195,96 @@ zone : un aller-retour réel qui répond à « le Panel peut-il administrer CE n
 pour CE projet ? ») avant de la retenir. La retenir sans l'éprouver ferait
 échouer le déploiement au milieu de la phase DNS, là où l'échec coûte le plus.
 
-**Un refus du Panel n'autorise aucun repli.** `CAPABILITY_NOT_GRANTED`,
-`BLOCKED_PREOPENING`, `PROJECT_SCOPE_MISMATCH` et `INPUT_INVALID` signifient que
-le Panel sait faire et a dit non ; contourner ce « non » avec une clé locale
-annulerait exactement le contrôle qu'on vient d'installer.
+### Le repli est une LISTE BLANCHE (corrigé en L9.1)
 
-**Chaque repli est bruyant** : un `deployment.warning DNS_PATH_LOCAL` porte le
-chemin et son motif. Un repli silencieux vers une clé locale est la pire des
-situations — on croit avoir centralisé, et un secret continue de vivre dans le
-projet.
+La première version raisonnait à l'envers : elle nommait les refus interdisant
+le repli, et **tout le reste** retombait sur la clé locale. Un délai dépassé, un
+Panel injoignable, une erreur inattendue rouvraient donc silencieusement
+l'ancienne voie. Une liste noire oublie toujours un cas, et l'oubli va toujours
+dans le sens permissif.
+
+| Code rendu par le Panel | Repli | Pourquoi |
+|---|---|---|
+| `CAPABILITY_UNKNOWN` · `CAPABILITY_NOT_AVAILABLE` | **oui** | ce Panel ne sait pas encore faire — déploiement progressif |
+| `CAPABILITY_NOT_GRANTED` · `BLOCKED_PREOPENING` · `PROJECT_SCOPE_MISMATCH` · `INPUT_INVALID` | non | il sait faire, et il a dit non |
+| `CAPABILITY_TIMEOUT` | non | l'écriture a **peut-être** eu lieu ; la rejouer ailleurs la doublerait |
+| `PROVIDER_UNAVAILABLE` · `PANEL_UNREACHABLE` · inattendu | non | on ne contourne pas une panne avec un secret qu'on retire |
+
+Le code d'origine survit à la traduction en `HostingerError`
+(`err.capabilityCode`) : sans lui, l'arbitrage se ferait sur
+`HOSTINGER_AUTH_FAILED`, qui ne distingue pas un refus d'une ignorance.
+
+### Condition de retrait de la fenêtre
+
+Elle n'a pas de date, elle a un **fait observable** : le Panel portant le
+câblage L9.1 est déployé, et un déploiement réel est passé par
+`PANEL_CAPABILITY`. Cela se lit dans le rapport de déploiement — **l'absence**
+d'une ligne `DNS_PATH_LOCAL` est la preuve. Ce jour-là disparaissent ensemble :
+la liste blanche, `withLocal()`, la branche locale du diagnostic, la clé
+`apiToken` du projet et sa saisie.
+
+**Chaque repli est bruyant** : `deployment.warning DNS_PATH_LOCAL` quand une clé
+locale a servi, `DNS_PATH_NONE` quand aucun DNS automatique n'a eu lieu. Les
+deux ne se réparent pas de la même façon, et seul le premier est une régression
+de centralisation.
+
+### Prérequis d'exploitation
+
+La bascule n'est pas seulement du code : la fiche du projet doit porter
+**l'octroi des trois capacités** (`dns.zone.resolve`, `dns.records.read`,
+`dns.record.ensure`) et une **destination `ACTIVE`** couvrant l'hôte déployé.
+Sans octroi, le chemin se ferme — il ne retombe pas sur la clé locale, et c'est
+voulu.
 
 ---
 
-## 8. Câblage restant
+## 8. Câblage — **fait** (L9.1)
 
-Quatre lignes, dans deux fichiers actuellement écrits par le lot L3.1 :
+Les six lignes annoncées ont été posées, après relecture. Cinq étaient encore
+nécessaires ; une était devenue fausse.
 
-```js
-// backend/src/services/capabilities/capabilityRegistry.js
-import { HOSTINGER_CAPABILITIES } from '../integratedApi/hostinger/hostingerCapabilities.js';
-// …dans CAPABILITY_DEFINITIONS, en remplacement de l'entrée `dns.record.ensure` :
-...HOSTINGER_CAPABILITIES,
+| # | Fichier | Ligne | Verdict à la relecture |
+|---|---|---|---|
+| 1-2 | `capabilityRegistry.js` | import + `...HOSTINGER_CAPABILITIES` | **nécessaire** |
+| 3-4 | `providerAdapters.js` | import + `...HOSTINGER_ADAPTERS` | **nécessaire** |
+| 5-6 | `commercialReadiness.js` | deux effets `READ_ONLY` | **nécessaire** |
 
-// backend/src/services/capabilities/providerAdapters.js
-import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
-// …dans ADAPTERS :
-...HOSTINGER_ADAPTERS,
-```
+**Ce que la relecture a changé.** Le plan disait « en remplacement de l'entrée
+`dns.record.ensure` ». Cette entrée locale n'était pas seulement redondante,
+elle était **fausse sur deux points** : elle annonçait `SAFE_RETRY` — alors que
+Hostinger n'expose aucune clé d'idempotence sur `PUT /zones/{zone}` — et sa note
+affirmait « aucun projet ne l'invoquera », alors que le seul appelant réel du
+parc est justement un projet. Les deux erreurs viennent de la même cause : la
+capacité avait été décrite depuis le Panel, sans lire le code qui l'appelle.
 
-Et deux entrées d'effet, dans un troisième :
+**Trois lignes non prévues** se sont ajoutées, et elles comptent :
 
-```js
-// backend/src/services/integratedApi/commercialReadiness.js — CAPABILITY_EFFECTS
-'dns.zone.resolve': EFFECT.READ_ONLY,
-'dns.records.read': EFFECT.READ_ONLY,
-```
+- `providerRegistry.js` — HOSTINGER n'annonçait qu'**un** verbe. Le contrôle
+  d'alignement ne voit pas cette asymétrie (il vérifie que ce qui est annoncé
+  existe, pas l'inverse) : elle serait restée invisible.
+- `capabilityRegistry.assertRegistryAlignment()` — symétrie Hostinger dans les
+  **deux sens**, sur le modèle de Brevo, plus l'exigence que toute capacité
+  Hostinger porte `requiresResourceOwnership`.
+- `run-all.js` — `hostinger-control-plane.test.js` **n'y était pas inscrit**.
+  La suite complète annonçait « tout vert » sans jamais l'exécuter.
 
-En attendant, `hostingerCapabilities.js` porte une table `PROPOSED_EFFECTS`.
-Ce n'est **pas** une seconde vérité : la table de L1.75 l'emporte dès qu'elle
-connaît un code, et `validateHostingerCapabilities()` échoue si les deux
-divergent. Les trois lignes déménagent au câblage, et la constante disparaît.
+`PROPOSED_EFFECTS` a disparu, comme prévu. Un test structurel refuse sa
+réapparition : une seconde table d'effets pourrait fournir un effet à une
+capacité que la table officielle aurait oubliée — c'est-à-dire masquer
+exactement la dérive que l'alignement doit voir.
 
-> Le premier essai posait ces deux entrées directement dans
-> `commercialReadiness.js`. Elles ont dû être retirées : le contrôle
-> d'alignement de L3 est **bidirectionnel** — un effet déclaré sans capacité au
+> Le premier essai de L9 posait les deux effets directement dans
+> `commercialReadiness.js`. Ils avaient dû être retirés : le contrôle
+> d'alignement est **bidirectionnel** — un effet déclaré sans capacité au
 > registre est une politique orpheline — et le registre, contesté, ne pouvait
-> pas suivre. Deux suites passaient au rouge pour une raison qui n'était pas un
-> défaut.
-
-Les définitions ont **exactement** la forme que produit la fabrique du registre,
-plus un champ `requiresResourceOwnership` que la fabrique existante ignore.
-
-Une fois câblé, la bascule est automatique : SB Auto tente déjà la capacité à
-chaque déploiement et retombe en journalisant `PANEL_UNAVAILABLE:CAPABILITY_UNKNOWN`.
+> pas suivre. Les six lignes devaient donc arriver **ensemble**, et c'est ce
+> qui a été fait.
 
 ---
 
 ## 9. Tests
 
-`tests/hostinger-control-plane.test.js` — **78 assertions**, aucun réseau.
+`tests/hostinger-control-plane.test.js` — **118 assertions**, aucun réseau.
 
 | Invariant | Prouvé par |
 |---|---|
@@ -259,22 +296,43 @@ chaque déploiement et retombe en journalisant `PANEL_UNAVAILABLE:CAPABILITY_UNK
 | `TIMEOUT_SAFE` | lecture `FAILED` / écriture `UNKNOWN` ; aucun retry sur `PUT` |
 | `WRITE_AUDITED` | un seul enregistrement envoyé, TTL et corrélat conservés |
 | `DEPLOYMENT_ENGINE_REMAINS_AUTHORITY` | ni conflit, ni `dryRun`, ni import du moteur |
+| `PREOPENING_ALLOWS_INFRASTRUCTURE_PREPARATION` | dérivé de L1.75 — l'effet n'est pas dans la liste interdite |
+
+**Appartenance** — éprouvée sur les formes qu'un nom prend vraiment : hôte
+exact, sous-domaine, sous-domaine profond, majuscules, point final absolu,
+voisin par préfixe, domaine qui *contient* le nôtre, suffixe collé, punycode
+exact et punycode voisin. Un nom Unicode brut est **refusé**, pas deviné : la
+comparaison est faite sur des octets, et accepter deux écritures d'un même nom
+ouvrirait la porte aux homographes. Contrôle structurel : aucun `startsWith`,
+aucun `includes` sur un nom d'hôte.
+
+`tests/hostinger-dns-cutover-e2e.test.js` — **62 assertions**, chaîne réelle :
+instance SB Auto dans son processus → `resolveDnsProvider` → pont HTTP →
+passerelle → coffre chiffré → faux Hostinger HTTP. Y compris un `PUT` laissé
+**sans réponse** : une seule écriture part, elle n'est pas rejouée, et la clé
+locale ne reprend pas la main.
 
 ---
 
 ## 10. Réserves
 
-1. **Le câblage final est bloqué par L3.1.** `capabilityRegistry.js`,
-   `providerAdapters.js` — et six autres fichiers de la surface des capacités —
-   portaient du travail non committé d'un autre lot pendant toute la session.
-   Les stager aurait committé le travail d'autrui. Les quatre lignes sont au §8.
-2. **Aucun credential n'a été retiré.** Le cutover de la Phase 7 exige que la
-   capacité serve réellement en production ; il appartient au lot qui suivra le
-   câblage. `apiToken` reste dans le coffre du projet, et son UI de saisie aussi.
-3. **`PENDING` exclu de l'appartenance** : un premier déploiement vers un domaine
-   jamais annoncé retombera sur le chemin local, en le journalisant. C'est le
-   comportement voulu tant qu'une destination n'est pas arbitrée côté Panel.
-4. **`ttlApplied` n'est plus relu.** L'ancien provider relisait la zone après
+1. **La fenêtre de repli reste ouverte** — `CAPABILITY_UNKNOWN` /
+   `NOT_AVAILABLE` uniquement, le temps que le Panel câblé soit déployé.
+   `NO_LOCAL_HOSTINGER_RUNTIME_CALL_AFTER_CUTOVER` n'est donc **pas encore
+   vrai** : trois sorties locales subsistent, nommées et surveillées par un test
+   qui échoue si une quatrième apparaît. Condition de retrait au §7.
+2. **Aucun credential n'a été supprimé.** `apiToken` reste dans le coffre du
+   projet et sa saisie reste à l'écran — mais le bouton « Tester » n'éprouve
+   plus cette clé dès qu'un Panel est appairé : il passe par la capacité, et
+   n'estampille donc plus le credential local (même doctrine qu'en L8.2).
+3. **L'octroi est un prérequis d'exploitation**, pas un défaut : une fiche sans
+   les trois capacités accordées ferme le chemin DNS. C'est visible dans le
+   rapport (`DNS_PATH_NONE`, motif `PANEL_REFUSED:CAPABILITY_NOT_GRANTED`).
+4. **`PENDING` exclu de l'appartenance** : un premier déploiement vers un domaine
+   jamais annoncé n'a pas de droit DNS côté Panel. C'est le comportement voulu
+   tant qu'une destination n'est pas arbitrée — sinon l'annonce, qui vient du
+   projet, deviendrait la preuve de son propre droit.
+5. **`ttlApplied` n'est plus relu.** L'ancien provider relisait la zone après
    écriture pour connaître le TTL réellement appliqué. On rend le TTL demandé :
    une relecture double le coût d'un déploiement pour une information
    d'affichage.

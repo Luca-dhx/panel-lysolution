@@ -32,6 +32,10 @@ import { z } from 'zod';
 import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
 import { CAPABILITY_EFFECTS, EFFECT } from '../integratedApi/commercialReadiness.js';
 import { BREVO_CAPABILITY_CODES } from '../integratedApi/brevo/brevoCapabilities.js';
+import {
+  HOSTINGER_CAPABILITIES,
+  HOSTINGER_CAPABILITY_CODES,
+} from '../integratedApi/hostinger/hostingerCapabilities.js';
 
 /* -------------------------------------------------------------------------- */
 /*  IDEMPOTENCE                                                               */
@@ -312,20 +316,24 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     migrationNote: 'L7. Hôtes d’API à revérifier après le rebranding Youtrust.',
   }),
 
-  /* ── Hostinger — audité, pas migré (L9) ─────────────────────────────────── */
+  /* ── Hostinger — les trois verbes du DNS, servis (L9.1) ─────────────────── */
 
-  'dns.record.ensure': capability('dns.record.ensure', {
-    provider: 'HOSTINGER',
-    label: 'Garantir un enregistrement DNS',
-    migrated: false,
-    timeoutMs: 30_000,
-    // Poser deux fois le même enregistrement aboutit au même état.
-    idempotency: IDEMPOTENCY.SAFE_RETRY,
-    requiredPermissions: [PERMISSIONS.DNS_WRITE],
-    migrationNote:
-      'L9. Le seul consommateur est le moteur de déploiement du Panel lui-même : '
-      + 'c’est une implémentation, pas une migration — aucun projet ne l’invoquera.',
-  }),
+  /**
+   * LE CATALOGUE VIENT DE L9, LA PASSERELLE LE SERT — même patron que Brevo.
+   *
+   * Il y avait ici une définition locale de `dns.record.ensure`, écrite avant
+   * l'audit L9 et fausse sur deux points : elle annonçait `SAFE_RETRY` là où
+   * Hostinger n'expose aucune clé d'idempotence sur `PUT /zones/{zone}` — un
+   * rejeu après un silence écrase une correction humaine — et sa note disait
+   * « aucun projet ne l'invoquera », alors que le seul appelant réel du parc
+   * est justement un projet. Les deux erreurs venaient de la même cause : la
+   * capacité était décrite depuis le Panel, sans avoir lu le code qui l'appelle.
+   *
+   * `HOSTINGER_CAPABILITIES` porte en plus `requiresResourceOwnership` — un
+   * champ que la fabrique d'ici ignore et que l'adaptateur lit : un jeton global
+   * n'est pas une autorisation globale.
+   */
+  ...HOSTINGER_CAPABILITIES,
 });
 
 export const CAPABILITY_CODES = Object.freeze(Object.keys(CAPABILITY_DEFINITIONS));
@@ -448,6 +456,24 @@ export function assertRegistryAlignment() {
   for (const capability of capabilitiesForProvider('BREVO')) {
     if (!BREVO_CAPABILITY_CODES.includes(capability.code)) {
       problems.push(`« ${capability.code} » est déclarée Brevo ici, mais absente du catalogue L8.`);
+    }
+  }
+
+  // Même règle pour le catalogue Hostinger de L9 : il est la source du contrat
+  // DNS, et la symétrie doit tenir dans les DEUX sens. Une capacité Hostinger
+  // qui n'existerait qu'ici serait servie sans appartenance vérifiée — c'est
+  // exactement le pouvoir qu'un jeton global ne doit jamais accorder.
+  for (const code of HOSTINGER_CAPABILITY_CODES) {
+    if (!isKnownCapability(code)) {
+      problems.push(`le catalogue Hostinger (L9) déclare « ${code} » — absent du registre des capacités.`);
+    }
+  }
+  for (const capability of capabilitiesForProvider('HOSTINGER')) {
+    if (!HOSTINGER_CAPABILITY_CODES.includes(capability.code)) {
+      problems.push(`« ${capability.code} » est déclarée Hostinger ici, mais absente du catalogue L9.`);
+    }
+    if (capability.requiresResourceOwnership !== true) {
+      problems.push(`« ${capability.code} » administre une ressource sans exiger la preuve de son appartenance.`);
     }
   }
 

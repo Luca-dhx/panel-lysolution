@@ -69,6 +69,16 @@ const TESTS = [
   'capability-gateway.test.js',
   'capability-preopening.test.js',
   'capability-gateway-e2e.test.js',
+  // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
+  // global de devenir une autorisation globale.
+  //
+  // ⚠️ CETTE SUITE ÉTAIT LIVRÉE ET JAMAIS EXÉCUTÉE. Elle a été écrite au lot
+  // L9 sans être inscrite ici : la suite complète annonçait « tout vert » sans
+  // l'avoir jouée. Même incident qu'au lot L8, et même correction.
+  'hostinger-control-plane.test.js',
+  // L9.1 — la bascule, par le chemin réel : le déploiement d'un projet demande
+  // ses verbes DNS au Panel, qui écrit avec SA clé. Aucun repli local.
+  'hostinger-dns-cutover-e2e.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',

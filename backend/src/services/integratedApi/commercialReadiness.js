@@ -172,6 +172,11 @@ export const CAPABILITY_EFFECTS = Object.freeze({
   'signature.request.create': EFFECT.LEGAL_WRITE,
 
   // ── Hostinger ────────────────────────────────────────────────────────────
+  // Les trois verbes du DNS (L9). Le moteur de déploiement PLANIFIE avec les
+  // deux lectures, puis MUTE avec la troisième — et c'est cet ordre qui permet
+  // de constater un conflit sans avoir rien touché.
+  'dns.zone.resolve': EFFECT.READ_ONLY,
+  'dns.records.read': EFFECT.READ_ONLY,
   // Déployer est précisément ce qu'on fait AVANT d'ouvrir.
   'dns.record.ensure': EFFECT.INFRASTRUCTURE_WRITE,
 });

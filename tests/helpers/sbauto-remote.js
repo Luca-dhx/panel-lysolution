@@ -137,6 +137,13 @@ export async function startSbAutoInstance({
     /** La projection telle que le projet la construit, avant tout transport. */
     buildPresentation() { return send('buildPresentation'); },
     outboxPending() { return send('outboxPending'); },
+    /**
+     * Le CHEMIN DNS retenu pour un déploiement — Panel, clé locale, ou aucun.
+     * Passe par `resolveDnsProvider`, donc par la décision de repli elle-même.
+     */
+    resolveDns(args) { return send('resolveDns', args); },
+    /** La séquence du moteur : findBestZone → listRecords → ensureRecord. */
+    dnsSequence(args) { return send('dnsSequence', args); },
     severDatabase() { return send('severDatabase'); },
     restoreDatabase() { return send('restoreDatabase'); },
     async stop() {
