@@ -7,6 +7,8 @@
 // aux appels sortants.
 import mongoose from 'mongoose';
 
+import { COMMERCIAL_STATE_VALUES } from '../services/integratedApi/commercialReadiness.js';
+
 const pairingSchema = new mongoose.Schema(
   {
     status: { type: String, enum: ['DECLARED', 'PAIRED', 'REVOKED'], required: true },
@@ -148,6 +150,59 @@ const panelProjectSchema = new mongoose.Schema(
     // registre qui n'est pas dérivée du projet — elle ne lui est jamais
     // transmise et n'influence aucun calcul.
     note: { type: String, default: null },
+
+    /**
+     * OUVERTURE COMMERCIALE — « cette instance a-t-elle le droit d'agir pour de
+     * vrai ? ». Vocabulaire et politique : `integratedApi/commercialReadiness.js`.
+     *
+     * ══ POURQUOI ICI, ET NON SUR LE CONTRAT ═════════════════════════════════
+     *
+     * L1.75 a livré la primitive sans persistance, en désignant la passerelle
+     * de capacités comme son seul lecteur prévu. C'est L3 qui la lit, donc L3
+     * qui devait choisir où elle vit. La fiche de projet est le bon endroit :
+     * l'ouverture qualifie une INSTANCE — celle qui invoque — et non un contrat,
+     * qui peut manquer, être multiple, ou être précisément ce qu'on cherche à
+     * signer.
+     *
+     * ══ POURQUOI NULLABLE, ET NON `PREOPENING` PAR DÉFAUT ═══════════════════
+     *
+     * `null` se lit « jamais renseigné », et la passerelle le résout vers
+     * `DEFAULT_COMMERCIAL_STATE` (= PREOPENING), donc vers le refus. Écrire la
+     * valeur par défaut en base ferait croire à une décision prise ; le nul dit
+     * la vérité, et le comportement reste fermé.
+     *
+     * JAMAIS transmis au projet : c'est une décision du Panel sur le projet, pas
+     * une donnée du projet.
+     */
+    commercialState: {
+      type: String,
+      // Vocabulaire IMPORTÉ, jamais recopié : une liste écrite à la main ici
+      // accepterait un jour une valeur que la politique ne reconnaît pas, et
+      // le projet retomberait silencieusement sur le défaut fermé — un refus
+      // parfaitement inexplicable depuis l'écran qui vient de saisir « ouvert ».
+      enum: [...COMMERCIAL_STATE_VALUES, null],
+      default: null,
+    },
+
+    /**
+     * CAPACITÉS ACCORDÉES À CE PROJET — l'unique autorité d'autorisation (L3).
+     *
+     * ══ CE QUI REMPLACE QUOI ════════════════════════════════════════════════
+     *
+     * `PanelIntegratedApi.grants[]` (modèle legacy) disait « ce projet reçoit
+     * ces CLÉS ». L4 a supprimé la diffusion, donc l'octroi ne gouvernait plus
+     * rien. Ici, l'octroi porte sur une INTENTION MÉTIER : le projet ne reçoit
+     * jamais de clé, il obtient le droit de demander une action.
+     *
+     * L'ancien tableau n'est PAS lu par la passerelle — pas même en repli. Deux
+     * systèmes d'autorisation dont l'un est plus permissif finissent toujours
+     * par être interrogés dans le mauvais ordre.
+     *
+     * Vide par défaut : un projet appairé ne peut RIEN tant qu'on ne lui a rien
+     * accordé. Chaque valeur est validée contre le registre code-first à
+     * l'écriture — un code inconnu ne peut pas être stocké.
+     */
+    capabilityGrants: { type: [String], default: [] },
   },
   { minimize: false, versionKey: false },
 );

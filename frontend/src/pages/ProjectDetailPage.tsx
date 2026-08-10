@@ -42,7 +42,8 @@ import type {
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
 } from '@/types';
 import type { Meeting, ProjectEvent } from '@/types.events';
-import { api, errorMessage } from '@/lib/api';
+import { api, integratedApis, errorMessage } from '@/lib/api';
+import type { CapabilityGrantsView } from '@/types.integratedApi';
 import {
   connectionState,
   isBusinessSynchronized,
@@ -605,6 +606,8 @@ function DeveloperTab({
     <>
       <ConnectionSection project={project} />
 
+      <CapabilityGrantsCard projectId={project.projectId} />
+
       {/*
         ── LES QUATRE HORODATAGES NE FUSIONNENT JAMAIS ───────────────────────
         Ils décrivent quatre faits différents, et les confondre a déjà coûté un
@@ -852,6 +855,98 @@ export default ProjectDetailPage;
  * informations. Afficher une colonne vide serait moins honnête que ne pas
  * l'afficher du tout.
  */
+
+/**
+ * LES CAPACITÉS ACCORDÉES À CE PROJET (L3).
+ *
+ * ── CE QUE CETTE CARTE ACCORDE, ET CE QU'ELLE N'ACCORDE PAS ─────────────────
+ *
+ * Elle donne le droit de DEMANDER une action — « envoie cette notification »,
+ * « vérifie que je peux écrire ». Elle ne donne aucune clé : le projet ne
+ * détient rien, il demande, et le Panel exécute avec ses propres identifiants.
+ * C'est toute la différence avec l'ancien écran d'autorisations, qui distribuait
+ * des accès à des credentials.
+ *
+ * ── POURQUOI TOUT LE CATALOGUE, ET PAS SEULEMENT LES OCTROIS ────────────────
+ *
+ * Un écran qui n'affiche que ce qui est accordé ne permet pas d'accorder le
+ * reste : il faudrait connaître les codes par cœur. On rend donc le catalogue
+ * entier, chaque ligne disant si elle est accordée, et si elle servirait
+ * vraiment.
+ */
+function CapabilityGrantsCard({ projectId }: { projectId: string }) {
+  const [view, setView] = useState<CapabilityGrantsView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setView(await integratedApis.grants(projectId));
+      setError(null);
+    } catch (err) {
+      setError(errorMessage(err, 'Octrois indisponibles.'));
+    }
+  }, [projectId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const basculer = async (code: string, accorder: boolean) => {
+    if (!view) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const suivant = accorder
+        ? [...view.granted, code]
+        : view.granted.filter((c) => c !== code);
+      setView(await integratedApis.setGrants(projectId, suivant));
+    } catch (err) {
+      setError(errorMessage(err, 'Octroi refusé.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!view) {
+    return (
+      <Card title="Capacités accordées">
+        {error ? <div className="alert alert-error">{error}</div> : <p className="muted">Chargement…</p>}
+      </Card>
+    );
+  }
+
+  return (
+    <Card title={`Capacités accordées (${view.granted.length})`}>
+      <p className="muted">
+        Ce projet peut <strong>demander</strong> les actions cochées. Il ne
+        reçoit aucune clé : le Panel exécute avec ses propres identifiants, dans
+        l’environnement de cette instance.
+      </p>
+      {error ? <div className="alert alert-error">{error}</div> : null}
+      <ul className="plain-list">
+        {view.capabilities.map((capability) => (
+          <li key={capability.code}>
+            <label>
+              <input
+                type="checkbox"
+                checked={capability.granted}
+                disabled={busy}
+                onChange={(event) => { void basculer(capability.code, event.target.checked); }}
+              />{' '}
+              <code>{capability.code}</code> — {capability.label}
+            </label>
+            {capability.granted && !capability.migrated ? (
+              <div className="muted small">
+                Accordée, mais pas encore servie par le Panel : une invocation
+                répondra « capacité indisponible ». {capability.migrationNote}
+              </div>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 function TeamCard({
   team,
   fraicheur,

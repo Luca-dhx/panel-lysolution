@@ -76,6 +76,7 @@ process.env.HEARTBEAT_INTERVAL_S = '60';
 const { connectDatabase } = await import('../backend/src/config/db.js');
 await connectDatabase();
 const { createApp } = await import('../backend/src/app.js');
+const { CONTRACT_VERSION } = await import('../backend/src/bridge/bridgeContract.js');
 const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
 await seedFromEnv();
 
@@ -226,8 +227,18 @@ const probeAlive = await http('POST', `${PANEL_URL}/api/projects/probe`, {
 });
 check('la sonde reconnaît un ProjectBridge vivant',
   probeAlive.status === 200 && probeAlive.json?.data?.isProjectBridge === true);
-check('…lit sa version de contrat dans l’en-tête',
-  probeAlive.json.data.contractVersion === '1.4.0');
+/**
+ * La version annoncée par le PROJET doit être celle du miroir du Panel.
+ *
+ * Elle était écrite en dur (« 1.4.0 »), et chaque évolution du contrat faisait
+ * échouer ce test pour une raison qui n'était pas un défaut. Or les deux
+ * contrats PARTAGENT délibérément un même numéro — les specs le disent — donc
+ * la seule assertion qui ait du sens est l'égalité avec le miroir, pas avec un
+ * instantané. Un désaccord réel reste détecté ; une évolution voulue ne
+ * réclame plus de retouche ici.
+ */
+check(`…lit sa version de contrat dans l’en-tête (${CONTRACT_VERSION})`,
+  probeAlive.json.data.contractVersion === CONTRACT_VERSION);
 check('…et la juge compatible', probeAlive.json.data.compatible === true);
 check('…en concluant qu’il est prêt pour l’appairage',
   /prêt pour l’appairage/.test(probeAlive.json.data.reason));

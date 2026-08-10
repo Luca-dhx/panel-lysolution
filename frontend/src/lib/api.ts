@@ -22,7 +22,7 @@ import type {
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
-  CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
+  CapabilityGrantsView, CapabilityView, CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
   ValidatedCredentialSet, WebhookStateView,
 } from '@/types.integratedApi';
 import type {
@@ -644,6 +644,32 @@ export const integratedApis = {
 
   /** « Sur quoi puis-je compter, ici, maintenant ? » */
   availability: () => request<{ items: ProviderAvailability[] }>('/api/integrated-apis/availability'),
+
+  /**
+   * Le catalogue des CAPACITÉS (L3) — ce qu'un projet peut demander, et ce qui
+   * est réellement servi. Distinct de `list()` : celui-là décrit des
+   * FOURNISSEURS et leurs clés, celui-ci des VERBES MÉTIER. Les mélanger dans
+   * une même réponse, c'est reperdre la séparation que tout le lot installe.
+   */
+  capabilities: () => request<{ capabilities: CapabilityView[] }>('/api/integrated-apis/capabilities'),
+
+  /**
+   * LES OCTROIS D'UN PROJET (L3) — « que ce projet a-t-il le droit de
+   * demander ? ». Lecture ouverte à tout compte du Panel : c'est la première
+   * question quand un projet dit « ça ne marche pas ».
+   */
+  grants: (projectId: string) =>
+    request<CapabilityGrantsView>(`/api/projects/${projectId}/capability-grants`),
+
+  /**
+   * REMPLACE la liste. Remplacement et non fusion : une autorisation doit se
+   * lire d'un coup d'œil sur l'écran qui l'édite. Réservée aux comptes DEV.
+   */
+  setGrants: (projectId: string, capabilities: string[]) =>
+    request<CapabilityGrantsView>(`/api/projects/${projectId}/capability-grants`, {
+      method: 'PUT',
+      body: { capabilities },
+    }),
 
   get: (provider: string) => request<ProviderView>(`/api/integrated-apis/${provider}`),
 

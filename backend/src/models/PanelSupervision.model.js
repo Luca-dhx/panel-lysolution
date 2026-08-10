@@ -99,6 +99,22 @@ export const EVENT_TYPES = Object.freeze({
   INTEGRATED_API_CREDENTIALS_UPDATED: 'INTEGRATED_API_CREDENTIALS_UPDATED',
   INTEGRATED_API_VALIDATION_SUCCEEDED: 'INTEGRATED_API_VALIDATION_SUCCEEDED',
   INTEGRATED_API_VALIDATION_FAILED: 'INTEGRATED_API_VALIDATION_FAILED',
+  /**
+   * L3 — passerelle de capacités. Trois types, et la séparation compte.
+   *
+   * Un OCTROI est une décision d'opérateur ; une INVOCATION est un fait
+   * d'exploitation ; un REFUS est un fait aussi, mais c'est celui qu'on relit
+   * quand quelque chose ne marche pas. Les fondre en un seul type obligerait à
+   * filtrer sur `data` pour répondre à « pourquoi ce projet n'arrive-t-il pas
+   * à envoyer ? » — la question la plus fréquente qu'on posera à ce journal.
+   *
+   * Aucun de leurs `data` ne porte de secret : provider, environnement, code
+   * de capacité, issue, durée. Jamais de clé, jamais d'entrée métier, jamais
+   * d'adresse.
+   */
+  CAPABILITY_GRANTS_UPDATED: 'CAPABILITY_GRANTS_UPDATED',
+  CAPABILITY_INVOKED: 'CAPABILITY_INVOKED',
+  CAPABILITY_REFUSED: 'CAPABILITY_REFUSED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

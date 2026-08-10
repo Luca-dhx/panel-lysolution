@@ -278,6 +278,33 @@ const COMMANDS = {
     });
   },
 
+  /**
+   * DEMANDE UNE CAPACITÉ — par la VRAIE façade du projet.
+   *
+   * `bridge().invokeCapability` → `HttpPanelClient` → réseau → Panel. Aucun
+   * raccourci : le test n'appelle jamais la passerelle du Panel en direct, il
+   * entre par où entre le projet, avec le bridgeToken que l'appairage lui a
+   * donné. C'est la seule façon de prouver que l'autorité vient bien du jeton.
+   *
+   * Le refus est RENDU, pas levé : le canal IPC ne transporte pas une classe
+   * d'erreur, et un test qui ne verrait qu'un message perdrait le code — or
+   * c'est précisément le code qui est éprouvé ici.
+   */
+  async invokeCapability({ code, input = {} }) {
+    try {
+      const data = await bridge().invokeCapability(code, input);
+      return { ok: true, data };
+    } catch (err) {
+      return {
+        ok: false,
+        code: err?.code ?? null,
+        message: err?.message ?? '',
+        httpStatus: err?.details?.httpStatus ?? null,
+        panelDetails: err?.details?.panelDetails ?? null,
+      };
+    }
+  },
+
   /** LE VRAI RATTRAPAGE — curseur, anti-écho, idempotence, handlers. */
   async pull({ limit = 100 } = {}) {
     return bridge().pullUpdates({ limit });

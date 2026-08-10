@@ -18,6 +18,8 @@
  * compte n'est pas « ça marche », c'est « ça n'expose QUE cela » — et il doit
  * échouer le jour où quelqu'un ajoutera un champ sans y penser.
  */
+import { fileURLToPath } from 'node:url';
+
 import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, startServer, stopMemoryMongo,
@@ -172,7 +174,16 @@ section('LE LOGIN N’ÉCRIT PLUS AUCUNE MARQUE EN DUR');
 {
   const fs = await import('node:fs');
   const path = await import('node:path');
-  const racine = path.resolve('frontend/src');
+  /**
+   * Résolu depuis CE FICHIER, jamais depuis le répertoire courant.
+   *
+   * `path.resolve('frontend/src')` partait de `process.cwd()` — donc de
+   * `Panel/backend` quand la suite est lancée par `npm test`, où ce dossier
+   * n'existe pas. Le test passait à la main depuis la racine et échouait dans
+   * la commande canonique : la pire des deux situations, puisqu'on ne le
+   * découvrait qu'en lisant le journal complet.
+   */
+  const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'src');
 
   const code = (f) => fs.readFileSync(path.join(racine, f), 'utf8')
     .replace(/\/\*[\s\S]*?\*\//g, '')

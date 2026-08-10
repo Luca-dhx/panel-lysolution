@@ -183,3 +183,44 @@ export interface ProviderAvailability {
   /** Toujours `false` en L1 — les capacités sont déclarées, pas invocables. */
   capabilitiesInvocable: boolean;
 }
+
+/**
+ * UNE CAPACITÉ — ce qu'un projet peut DEMANDER (L3).
+ *
+ * À ne pas confondre avec `ProviderView`, qui décrit un FOURNISSEUR et ses
+ * clés. Un fournisseur est un moyen ; une capacité est une intention. L'écran
+ * les montre côte à côte précisément pour que la distinction se voie.
+ */
+export interface CapabilityView {
+  code: string;
+  label: string;
+  provider: string;
+  scope: string | null;
+  /** Nature de l'effet réel — c'est elle que la politique d'ouverture lit. */
+  effectNature: string | null;
+  /** Branchée sur un adaptateur ? `false` = déclarée, pas encore servie. */
+  migrated: boolean;
+  invocable: boolean;
+  idempotency: 'NONE' | 'SAFE_RETRY' | 'UNKNOWN_ON_TIMEOUT' | 'PROVIDER_IDEMPOTENT';
+  timeoutMs: number;
+  requiredPermissions: string[];
+  /** Ce qui retient encore la migration. `null` si elle est faite. */
+  migrationNote: string | null;
+}
+
+/** Une capacité, vue depuis un PROJET : accordée, et réellement effective ? */
+export interface GrantedCapabilityView extends CapabilityView {
+  granted: boolean;
+  /**
+   * Accordée ET servie. La distinction est nécessaire : accorder une capacité
+   * non migrée ne casse rien, mais l'écran doit dire qu'elle refusera quand
+   * même — sinon l'opérateur croit avoir ouvert un chemin qui reste fermé.
+   */
+  effective: boolean;
+}
+
+export interface CapabilityGrantsView {
+  projectId: string;
+  granted: string[];
+  capabilities: GrantedCapabilityView[];
+}

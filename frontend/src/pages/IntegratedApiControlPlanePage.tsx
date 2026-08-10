@@ -28,6 +28,7 @@ import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
 import { integratedApis, webhookControlPlane, errorMessage } from '@/lib/api';
 import type {
+  CapabilityView,
   CredentialRoleDefinition,
   CredentialSetView,
   IntegratedApiEnvironment,
@@ -68,6 +69,29 @@ const DRIFT_LABELS: Record<string, string> = {
   MISSING: 'aucun endpoint ne nous appartient chez le fournisseur',
 };
 
+/**
+ * NATURE DE L'EFFET (L1.75) — ce que la capacité change dans le monde réel.
+ * C'est cette colonne, et elle seule, qui décide de ce qu'une instance en
+ * pré-ouverture a le droit de faire.
+ */
+const EFFECT_LABELS: Record<string, string> = {
+  READ_ONLY: 'lecture seule',
+  CONFIGURATION: 'configuration réversible',
+  REVERSIBLE_EXTERNAL_WRITE: 'écriture réversible chez le fournisseur',
+  FINANCIAL_WRITE: 'argent réel — bloquée avant l’ouverture',
+  LEGAL_WRITE: 'engagement juridique — bloquée avant l’ouverture',
+  COMMUNICATION_WRITE: 'atteint un tiers dans sa boîte',
+  INFRASTRUCTURE_WRITE: 'infrastructure (DNS, hébergement)',
+};
+
+/** Ce qu'on peut se permettre quand une invocation tourne mal. */
+const IDEMPOTENCY_LABELS: Record<string, string> = {
+  NONE: 'sans objet',
+  SAFE_RETRY: 'rejeu sans risque',
+  UNKNOWN_ON_TIMEOUT: 'issue indécidable en cas de silence — arbitrage humain',
+  PROVIDER_IDEMPOTENT: 'déduplication assurée par le fournisseur',
+};
+
 const SCOPE_LABELS: Record<string, string> = {
   PANEL_GLOBAL: 'Global au Panel',
   ENVIRONMENT: 'Par environnement',
@@ -84,6 +108,7 @@ function formatDate(value: string | null): string {
 export function IntegratedApiControlPlanePage() {
   const [providers, setProviders] = useState<ProviderView[]>([]);
   const [webhooks, setWebhooks] = useState<Record<string, WebhookStateView>>({});
+  const [capabilities, setCapabilities] = useState<CapabilityView[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +135,16 @@ export function IntegratedApiControlPlanePage() {
       setWebhooks(Object.fromEntries(items.map((item) => [item.provider, item])));
     } catch {
       setWebhooks({});
+    }
+    /**
+     * Le catalogue des capacités, lui aussi hors du chemin critique : il décrit
+     * ce que les projets peuvent DEMANDER, ce qui n'empêche jamais de lire ni
+     * de corriger les identifiants.
+     */
+    try {
+      setCapabilities((await integratedApis.capabilities()).capabilities);
+    } catch {
+      setCapabilities([]);
     }
   }, []);
 
@@ -152,9 +187,11 @@ export function IntegratedApiControlPlanePage() {
       ) : null}
 
       <p className="muted read-only-note">
-        <strong>Lot L1 — fondation.</strong> Les projets continuent d’utiliser
-        leurs propres intégrations : aucun appel métier ne passe encore par le
-        Panel. Cet écran configure et diagnostique, il n’exécute rien.{' '}
+        <strong>Lot L3 — passerelle de capacités.</strong> Les projets
+        n’appellent plus un fournisseur : ils demandent une capacité, et le
+        Panel résout le monde, le droit et la clé. Une seule est réellement
+        servie à ce jour — les autres restent sur le chemin local du projet.
+        Cet écran configure et diagnostique, il n’invoque rien.{' '}
         L’<Link to="/integrated-apis/legacy">ancien coffre</Link>, qui diffuse
         encore des identifiants aux projets, reste en service jusqu’au lot L4.
       </p>
@@ -173,6 +210,7 @@ export function IntegratedApiControlPlanePage() {
             key={provider.definition.provider}
             provider={provider}
             webhook={webhooks[provider.definition.provider] ?? null}
+            capabilities={capabilities.filter((c) => c.provider === provider.definition.provider)}
             busy={busy}
             run={run}
           />
@@ -182,9 +220,10 @@ export function IntegratedApiControlPlanePage() {
   );
 }
 
-function ProviderCard({ provider, webhook, busy, run }: {
+function ProviderCard({ provider, webhook, capabilities, busy, run }: {
   provider: ProviderView;
   webhook: WebhookStateView | null;
+  capabilities: CapabilityView[];
   busy: boolean;
   run: (fn: () => Promise<string>) => Promise<void>;
 }) {
@@ -203,12 +242,10 @@ function ProviderCard({ provider, webhook, busy, run }: {
               ? <strong>{effectiveEnvironment}</strong>
               : <span className="muted">sans environnement (compte unique)</span>,
           ],
-          [
-            'Capacités déclarées',
-            <span className="muted">{definition.capabilities.join(', ') || '—'} (non invocables en L1)</span>,
-          ],
         ]}
       />
+
+      <CapabilityPanel provider={definition.provider} capabilities={capabilities} />
 
       <WebhookPanel
         provider={definition.provider}
@@ -245,6 +282,59 @@ function ProviderCard({ provider, webhook, busy, run }: {
  * fournisseur connaît déjà, et pouvoir la comparer à ce que son tableau de
  * bord montre est exactement ce qui rend cet écran utile.
  */
+/**
+ * LES CAPACITÉS D'UN FOURNISSEUR (L3) — ce qu'un projet peut DEMANDER.
+ *
+ * ── POURQUOI CE BLOC N'EST PAS UNE LISTE DE NOMS ────────────────────────────
+ *
+ * L'écran affichait « Capacités déclarées : email.send_template,
+ * email.sender.verify ». C'était exact et inutilisable : rien n'y disait
+ * laquelle fonctionne aujourd'hui, ni pourquoi l'autre ne fonctionne pas.
+ * Un opérateur qui accorde une capacité à un projet a besoin de ces deux
+ * réponses avant d'en accorder une qui refusera.
+ *
+ * L'octroi lui-même ne se fait PAS ici : il porte sur un PROJET, pas sur un
+ * fournisseur, et vit donc sur la fiche du projet.
+ */
+function CapabilityPanel({ provider, capabilities }: {
+  provider: string;
+  capabilities: CapabilityView[];
+}) {
+  if (capabilities.length === 0) {
+    return (
+      <Disclosure title="Capacités">
+        <p className="muted">Aucune capacité déclarée pour {provider}.</p>
+      </Disclosure>
+    );
+  }
+
+  const servies = capabilities.filter((c) => c.migrated).length;
+
+  return (
+    <Disclosure title={`Capacités (${servies} servie(s) sur ${capabilities.length})`}>
+      <ul className="plain-list">
+        {capabilities.map((capability) => (
+          <li key={capability.code}>
+            <span className={`tag ${capability.migrated ? 'tag-ok' : 'tag-muted'}`}>
+              {capability.migrated ? 'servie' : 'déclarée'}
+            </span>{' '}
+            <code>{capability.code}</code> — {capability.label}
+            <div className="muted small">
+              Effet : {EFFECT_LABELS[capability.effectNature ?? ''] ?? capability.effectNature ?? 'inconnu'}
+              {' · '}Reprise : {IDEMPOTENCY_LABELS[capability.idempotency] ?? capability.idempotency}
+              {capability.migrationNote ? <><br />{capability.migrationNote}</> : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="muted small">
+        Une capacité « servie » n’est invocable que par un projet à qui elle a
+        été <strong>accordée</strong> — l’octroi se règle sur la fiche du projet.
+      </p>
+    </Disclosure>
+  );
+}
+
 function WebhookPanel({ provider, supported, webhook, busy, run }: {
   provider: string;
   supported: boolean;

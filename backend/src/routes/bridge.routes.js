@@ -14,6 +14,7 @@ import {
   syncPush,
   unpair,
 } from '../controllers/bridge.controller.js';
+import { invoke as invokeCapability } from '../controllers/capabilities.controller.js';
 
 const router = Router();
 
@@ -28,5 +29,13 @@ router.use(asyncHandler(requireBridgeAuth));
 router.post('/heartbeats', asyncHandler(heartbeat));
 router.post('/sync/push', asyncHandler(syncPush));
 router.get('/sync/pull', asyncHandler(syncPull));
+
+/**
+ * PASSERELLE DE CAPACITÉS (contrat 1.5.0) — montée APRÈS `requireBridgeAuth`,
+ * et c'est tout l'enjeu : le `projectId` qui fera autorité vient du jeton,
+ * jamais de l'URL ni du corps. Un montage au-dessus de la garde rendrait la
+ * capacité anonyme, donc adressable par n'importe qui.
+ */
+router.post('/capabilities/:code/invoke', asyncHandler(invokeCapability));
 
 export default router;

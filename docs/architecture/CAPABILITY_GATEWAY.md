@@ -1,0 +1,394 @@
+# Passerelle de capacités
+
+> **Lot L3.** Une seule porte : un projet demande une **intention métier**, le
+> Panel résout le fournisseur, le monde, le droit et la clé, puis exécute.
+>
+> **État : une capacité réellement servie** — `email.sender.verify`. Les dix
+> autres sont déclarées, auditées, et attendent leur lot. Aucun credential
+> projet n'a été supprimé.
+
+---
+
+## 0. L'invariant
+
+```
+LES PROJETS INVOQUENT DES CAPACITÉS.
+ILS NE CONSOMMENT PAS D'IDENTIFIANTS DE FOURNISSEUR.
+```
+
+La chaîne complète, et l'ordre n'est pas négociable :
+
+```
+projet authentifié          ← bridgeToken, jamais la charge utile
+      │
+      ▼
+capacité                    ← un VERBE métier, pas un fournisseur
+      │
+      ▼
+octrois                     ← ce projet a-t-il le droit de le demander ?
+      │
+      ▼
+environnement               ← le runtime de l'instance (L2), jamais un choix
+      │
+      ▼
+politique commerciale       ← l'action réelle est-elle autorisée ? (L1.75)
+      │
+      ▼
+coffre du Panel             ← identifiants chiffrés, déchiffrés au dernier moment
+      │
+      ▼
+adaptateur                  ← le seul code qui connaît le fournisseur
+```
+
+Cinq objets sont régulièrement confondus. Ils sont distincts :
+
+| | Répond à | Vit dans |
+|---|---|---|
+| **capacité** | « quelle intention métier ? » | `capabilityRegistry.js` (code-first) |
+| **fournisseur** | « par quel moyen ? » | `providerRegistry.js` (L1) |
+| **credential** | « avec quel compte ? » | `PanelIntegratedApiCredentialSet` (chiffré) |
+| **webhook** | « qu'en dit le fournisseur, plus tard ? » | `services/webhooks/` (L5) |
+| **projection métier** | « qu'est-ce que le projet en garde ? » | le projet, jamais le Panel |
+
+---
+
+## 1. Le registre
+
+`backend/src/services/capabilities/capabilityRegistry.js` — **code-first**.
+Rien en base ne peut ajouter, retirer ni modifier une capacité.
+
+Onze capacités, une seule servie :
+
+| Code | Fournisseur | Effet (L1.75) | Idempotence | Servie |
+|---|---|---|---|---|
+| `email.sender.verify` | Brevo | CONFIGURATION | `SAFE_RETRY` | **oui** |
+| `email.send_template` | Brevo | COMMUNICATION_WRITE | `UNKNOWN_ON_TIMEOUT` | non — L8 |
+| `billing.invoice.list` | Stripe | READ_ONLY | `SAFE_RETRY` | non — L6 |
+| `billing.subscription.reconcile` | Stripe | READ_ONLY | `SAFE_RETRY` | non — L6 |
+| `billing.customer.ensure` | Stripe | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
+| `billing.checkout.create` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
+| `billing.subscription.cancel_at_period_end` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
+| `billing.refund` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
+| `signature.document.download` | Yousign | READ_ONLY | `SAFE_RETRY` | non — L7 |
+| `signature.request.create` | Yousign | LEGAL_WRITE | `UNKNOWN_ON_TIMEOUT` | non — L7 |
+| `dns.record.ensure` | Hostinger | INFRASTRUCTURE_WRITE | `SAFE_RETRY` | non — L9 |
+
+**Déclarée ≠ servie.** Une capacité non migrée est *connue* : sa politique, son
+effet et son fournisseur sont établis, et l'écran l'annonce. Elle n'est
+simplement branchée sur aucun adaptateur, et son invocation répond
+`CAPABILITY_NOT_AVAILABLE`. Les taire produirait un `CAPABILITY_UNKNOWN`
+mensonger.
+
+### 1.1 Le registre n'invente rien
+
+Il **agrège** trois autorités déjà écrites, sans jamais les recopier :
+
+- `providerRegistry.js` → le fournisseur et sa portée (L1) ;
+- `commercialReadiness.CAPABILITY_EFFECTS` → l'effet réel (L1.75) ;
+- `brevo/brevoCapabilities.js` → le contrat métier Brevo (L8).
+
+`assertRegistryAlignment()` échoue si l'une diverge — une capacité sans effet
+déclaré échapperait à la politique commerciale, et une écriture financière
+passerait en pré-ouverture.
+
+---
+
+## 2. L'ordre des refus
+
+Neuf étapes. Trois choix méritent une justification, parce qu'ils ne sont pas
+interchangeables.
+
+| # | Contrôle | Refus |
+|---|---|---|
+| 1 | La capacité existe-t-elle ? | `CAPABILITY_UNKNOWN` (404) |
+| 2 | Qui parle ? | `CAPABILITY_PROJECT_SCOPE_MISMATCH` (403) |
+| 3 | Quel monde ? | `CAPABILITY_ENVIRONMENT_MISMATCH` (409) |
+| 4 | A-t-il le droit ? | `CAPABILITY_NOT_GRANTED` (403) |
+| 5 | Le commerce est-il ouvert ? | `CAPABILITY_BLOCKED_PREOPENING` (409) |
+| 6 | La capacité est-elle servie ? | `CAPABILITY_NOT_AVAILABLE` (409) |
+| 7 | L'entrée est-elle conforme ? | `CAPABILITY_INPUT_INVALID` (400) |
+| 8 | A-t-on des identifiants ? | `CAPABILITY_CREDENTIALS_MISSING` (409) |
+| 9 | Exécuter | `CAPABILITY_PROVIDER_UNAVAILABLE` (502) · `CAPABILITY_TIMEOUT` (504) |
+
+**La politique commerciale passe avant la disponibilité et avant le coffre.**
+C'est ce qui garantit qu'une écriture financière refusée en pré-ouverture ne
+touche *rien* — pas même le coffre. Si l'on testait d'abord « est-ce migré ? »,
+la preuve « zéro appel fournisseur » reposerait sur l'absence d'adaptateur,
+c'est-à-dire sur un accident de calendrier, et non sur la politique.
+
+**L'entrée est validée avant les identifiants.** Un corps malformé ne doit pas
+faire déchiffrer une clé : le coffre ne s'ouvre que pour un appel qui va partir.
+
+**L'ouverture commerciale ne modifie jamais l'environnement.** Une instance en
+pré-ouverture est en PROD : on lui refuse d'agir, on ne la bascule pas en TEST.
+Confondre les deux recréerait `activeMode` sous un autre nom — exactement ce que
+L2 a supprimé.
+
+---
+
+## 3. Le contexte d'invocation
+
+```
+TOUT CE QUI FAIT AUTORITÉ VIENT DU JETON DE PONT ET DU RUNTIME.
+RIEN NE VIENT DE LA CHARGE UTILE.
+```
+
+| Champ | Source |
+|---|---|
+| `projectId` | `requireBridgeAuth` → hash du bridgeToken |
+| `environment` | `config.env` du Panel (L2), confronté à la fiche |
+| `commercialState` | `PanelProject.commercialState`, défaut fermé |
+| `requestId` | en-tête `x-request-id` du projet, ou généré |
+
+Trois champs de charge utile sont inspectés — `projectId`, `project_id`,
+`projectKey` — parce que trois conventions existent dans le parc. Une valeur
+**divergente** est refusée en 403 ; les ignorer serait accepter qu'un jour l'un
+d'eux soit branché.
+
+Un `projectId` **identique** passe la garde de portée… puis est refusé par le
+schéma strict, comme n'importe quelle clé inconnue : il n'a rien à faire dans le
+corps, puisque le jeton le porte. Deux refus, deux codes, deux gravités — et
+c'est voulu.
+
+---
+
+## 4. Les octrois
+
+```
+AVANT   projet  →  accès à des CLÉS de fournisseur   (PanelIntegratedApi.grants[])
+APRÈS   projet  →  droit d'invoquer une CAPACITÉ      (PanelProject.capabilityGrants[])
+```
+
+La différence n'est pas de vocabulaire. Un octroi de clé donne un pouvoir
+illimité : qui détient la clé Stripe peut rembourser, facturer, lire tous les
+clients. Un octroi de capacité donne un verbe. C'est la seule granularité qui
+permette d'accorder « lister les factures » sans accorder « rembourser ».
+
+**Un seul système.** `PanelIntegratedApi.grants[]` n'est **pas** lu, pas même en
+repli : deux autorisations dont l'une est plus permissive finissent, un jour,
+interrogées dans le mauvais ordre — et c'est toujours la permissive qui gagne.
+L'ancien tableau reste en base (l'effacer détruirait une saisie manuelle pour un
+gain nul), mais il ne gouverne plus rien.
+
+**Fermé par défaut.** Un projet fraîchement appairé n'a aucun octroi.
+
+Surfaces : `GET /api/projects/:projectId/capability-grants` (tout compte du
+Panel — c'est un diagnostic) et `PUT` (DEV uniquement — accorder ouvre un chemin
+vers un fournisseur réel).
+
+---
+
+## 5. Les identifiants
+
+`resolveCredentialsForCapability(context, capability)` est la seule porte.
+
+L'environnement est **dérivé deux fois** et les deux doivent concorder : la
+portée du fournisseur (L1) et le contexte (L2). Un fournisseur `PANEL_GLOBAL`
+rend `null` — lui inventer deux mondes dédoublerait un compte unique.
+
+**Doctrine de disponibilité : `VALID` et empreinte à jour.** Pas seulement
+« rempli ». Trois raisons, par gravité croissante :
+
+- une clé jamais testée peut être une faute de frappe, et l'erreur sortirait
+  alors chez le fournisseur au lieu d'être visible dans l'écran qui l'a saisie ;
+- une clé remplacée après un test réussi n'est plus celle qui a été prouvée ;
+- un jeu `ERROR` signifie « on n'a pas pu savoir » — le cas où il ne faut
+  surtout pas tenter une écriture réelle en aveugle.
+
+Les valeurs déchiffrées sont obtenues et consommées dans la même expression.
+Elles ne sont jamais liées à une variable de portée large, jamais journalisées,
+jamais attachées à une erreur.
+
+---
+
+## 6. Les adaptateurs
+
+Une **table**, pas un `switch`. Une capacité pointe une fonction ; le jour où
+Stripe arrive, on ajoute une ligne et un fichier.
+
+```
+reçoit  →  { definition, context, credentials, input }
+rend    →  la SORTIE MÉTIER, validée par son schéma
+lève    →  CapabilityError, jamais une erreur de fournisseur brute
+```
+
+Le transport Brevo n'est **pas** réécrit : L8 a livré
+`integratedApi/brevo/brevoTransport.js` (délais bornés, erreurs typées, aucun
+secret journalisé). L'adaptateur ne fait que traduire ses refus.
+
+---
+
+## 7. Entrée et sortie
+
+Les deux schémas sont **`strict()`**.
+
+Zod ignore les clés inconnues par défaut : un projet pourrait envoyer
+`{ recipient, environment: 'PROD', apiKey: '…' }` sans que rien ne proteste. Les
+champs seraient inertes — mais leur présence tolérée ferait croire, à qui relit
+le code du projet, qu'ils agissent ; et un jour quelqu'un les brancherait « pour
+faire marcher ce qui était déjà envoyé ». Un refus explicite tue l'idée à la
+racine.
+
+La **sortie** est validée aussi. Ce n'est pas une défiance envers l'adaptateur :
+c'est une garantie sur ce qui sort. Un champ ajouté par inadvertance — un objet
+de réponse fournisseur laissé au passage, un identifiant de compte — fait échouer
+l'appel au lieu de traverser le pont.
+
+Le diagnostic d'entrée **nomme les chemins fautifs, jamais leurs valeurs** : une
+entrée refusée peut contenir une adresse, et un message d'erreur voyage.
+
+---
+
+## 8. Idempotence
+
+Quatre stratégies, **par capacité**. Une stratégie unique serait fausse dans les
+deux sens : appliquée partout, elle interdirait de relire un compte après un
+hoquet réseau ; assouplie partout, elle enverrait deux fois le même e-mail.
+
+| Stratégie | Signification |
+|---|---|
+| `NONE` | l'appel ne change rien |
+| `SAFE_RETRY` | rejouer est sûr, même après un doute |
+| `UNKNOWN_ON_TIMEOUT` | le fournisseur n'offre aucune clé : le silence laisse l'action indécidable |
+| `PROVIDER_IDEMPOTENT` | le fournisseur déduplique (en-tête d'idempotence) |
+
+`operationId` est fourni par le **projet** : lui seul sait que deux clics sont la
+même intention. Le Panel le lui rend, pour qu'il rapproche son journal du nôtre.
+
+---
+
+## 9. Modèle d'échec
+
+Quatre issues, et la troisième est la raison d'être du modèle :
+
+```
+SUCCEEDED   l'action a eu lieu, on en a la preuve
+FAILED      l'action n'a PAS eu lieu, on en a la preuve
+UNKNOWN     on ne sait pas — l'action a PEUT-ÊTRE eu lieu
+BLOCKED     on a refusé d'essayer (droit, ouverture commerciale)
+```
+
+> **Un délai dépassé n'est pas un échec constaté.** La requête a pu aboutir chez
+> le fournisseur et seule la réponse se perdre. Le ranger dans `FAILED`
+> conduirait un appelant à rejouer, donc à doubler une action réelle. D'où
+> `CAPABILITY_TIMEOUT` en **504** et non 502 : le projet doit pouvoir distinguer
+> « il a dit non » de « il n'a rien dit ».
+
+Aucun message de fournisseur n'est relayé. Son statut HTTP l'est — un nombre ne
+fuit rien.
+
+---
+
+## 10. Observabilité
+
+Journal et chronologie portent : capacité, fournisseur, projet, environnement,
+`requestId`, `operationId`, durée, issue, code d'erreur.
+
+Jamais : une entrée métier, une adresse, une sortie, un identifiant de
+credential, une clé. Ce journal doit pouvoir être lu par n'importe quel opérateur
+du Panel sans précaution.
+
+Trois types d'événement, et la séparation compte : `CAPABILITY_GRANTS_UPDATED`
+(décision d'opérateur), `CAPABILITY_INVOKED` (fait d'exploitation),
+`CAPABILITY_REFUSED` (ce qu'on relit quand quelque chose ne marche pas).
+
+L'écriture est **best-effort** : une invocation réussie dont la trace échoue
+reste une invocation réussie, et lever ici ferait croire au projet qu'elle n'a
+pas eu lieu — c'est-à-dire l'inciterait à la rejouer.
+
+---
+
+## 11. La surface de pont
+
+```
+POST /bridge/v1/capabilities/{code}/invoke      contrat 1.5.0
+```
+
+Montée **après** `requireBridgeAuth` : le `projectId` qui fait autorité vient du
+jeton. Un montage au-dessus de la garde rendrait la capacité anonyme, donc
+adressable par n'importe qui.
+
+Le contrat passe de 1.4.0 à **1.5.0** — additif : un projet qui ignore cet
+endpoint reste pleinement conforme, un Panel qui ne le sert pas aussi. La
+compatibilité se joue sur la majeure.
+
+Les refus voyagent avec leur code `CAPABILITY_*`, catalogue **distinct** de
+`BRIDGE_*`. Un webhook de pont et un refus de passerelle ne décrivent pas la
+même chose ; les fondre obligerait un client à deviner lequel il lit. Le client
+du projet préserve ces codes plutôt que de les aplatir en `BRIDGE_INTERNAL`.
+
+---
+
+## 12. Ce qui n'a pas été fait, et pourquoi
+
+**Le Manager de SB Auto n'est pas branché.** L'écran « Tester la connexion » lit
+les identifiants **du projet** : son objet est de valider ce que le projet
+détient. Le router vers le Panel changerait ce qu'il *signifie* — il testerait la
+clé du Panel pendant que le projet continue d'utiliser la sienne à l'exécution.
+L'écran mentirait. Le branchement honnête vient **après** la migration du runtime
+Brevo, pas avant. La capacité est prouvée par l'E2E à la place.
+
+**Aucun credential projet n'a été supprimé.** C'est délibéré : nouvelle capacité
+éprouvée *et* ancien chemin disponible, jusqu'au lot de migration.
+
+---
+
+## 13. Tests
+
+| Suite | Ce qu'elle prouve | Assertions |
+|---|---|---|
+| `capability-gateway` | la mécanique, refus par refus, en TEST | 104 |
+| `capability-preopening` | pré-ouverture sur une instance réellement en **PROD** | 27 |
+| `capability-gateway-e2e` | le bout en bout, par le pont réel | 58 |
+
+L'**E2E** n'appelle jamais un service interne du Panel. Il entre par où entre le
+projet : `PanelBridge.invokeCapability` → `HttpPanelClient` → réseau →
+`/bridge/v1`. Le fournisseur est un vrai serveur HTTP local qui note **quelle clé
+arrive** — la seule façon de constater ce qui sort réellement du coffre.
+
+Ce qui est prouvé :
+
+- un projet TEST atteint la clé TEST ; la clé PROD n'est **jamais** partie ;
+- `environment`, `mode`, `provider`, `baseUrl`, `apiKey` dans la charge utile →
+  refusés ;
+- un `projectId` étranger → 403, un `projectId` redondant → 400 ;
+- sans octroi, **zéro** appel fournisseur ;
+- les sentinelles n'apparaissent ni dans la réponse, ni dans la chronologie du
+  Panel, ni dans **aucune collection** de la base du projet ;
+- en PROD × PREOPENING, les quatre écritures financières et juridiques sont
+  bloquées, **l'environnement reste PROD**, et zéro appel part.
+
+---
+
+## 13 bis. Une régression rencontrée, et ce qu'elle apprend
+
+Ajouter `invokeCapability` à `PANEL_CLIENT_METHODS` a cassé
+`panel-push-liveness.test.js` : ce test construit un faux client à la main, et
+`isPanelClient()` exige désormais l'interface **complète**.
+
+La tentation était d'assouplir la garde — rendre la méthode optionnelle. C'eût
+été la mauvaise correction. Un double partiel accepté aujourd'hui devient, à la
+prochaine évolution du contrat, un test vert devant un client incapable ; et le
+`PanelBridge` aurait levé un `TypeError` en production au lieu d'un refus propre.
+
+Le double a donc été complété. La garde structurelle a fait exactement ce pour
+quoi elle existe : signaler, à la compilation d'un test, qu'un contrat venait de
+grandir.
+
+---
+
+## 14. Réserves
+
+1. **Une seule capacité est servie.** Le lot livre la passerelle, pas les
+   migrations. Stripe (L6), Yousign (L7), Brevo `send_template` (L8) et Hostinger
+   (L9) restent sur le chemin local des projets.
+2. **`PROD project → PROD credentials` n'est prouvé qu'en processus séparé.** Un
+   Panel ne sert qu'un monde par processus ; l'E2E complet en PROD exigerait deux
+   instances de Panel. `capability-preopening` couvre le versant PROD, l'E2E le
+   versant TEST, et l'isolation croisée est prouvée dans les deux sens.
+3. **`commercialState` n'est écrit par aucun geste produit.** Le champ existe et
+   la passerelle le lit ; l'écran qui le bascule appartient au lot qui ouvrira la
+   première instance réelle. Défaut fermé en attendant.
+4. **Les octrois ne sont pas projetés vers le projet.** Un projet ne sait pas ce
+   qu'il a le droit de demander avant de le demander. Une capacité
+   `integrations.describe` le lui dirait — elle n'est pas dans ce lot.

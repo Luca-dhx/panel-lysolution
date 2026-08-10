@@ -59,7 +59,10 @@
     "test:branding": "node ../tests/panel-branding.test.js",
     "test:branding-propagation": "node ../tests/developer-branding-propagation.test.js",
     "test:branding-ack": "node ../tests/developer-branding-instance-ack-e2e.test.js",
-    "test:brevo": "node ../tests/brevo-control-plane.test.js"
+    "test:brevo": "node ../tests/brevo-control-plane.test.js",
+    "test:capability-gateway": "node ../tests/capability-gateway.test.js",
+    "test:capability-preopening": "node ../tests/capability-preopening.test.js",
+    "test:capability-e2e": "node ../tests/capability-gateway-e2e.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -24,7 +24,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.4.0';
+export const CONTRACT_VERSION = '1.5.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -41,6 +41,14 @@ export const PANEL_API_ROUTES = Object.freeze({
   heartbeats: '/bridge/v1/heartbeats',
   syncPush: '/bridge/v1/sync/push',
   syncPull: '/bridge/v1/sync/pull',
+  /**
+   * PASSERELLE DE CAPACITÉS (1.5.0). `{code}` est un paramètre de chemin — le
+   * seul de cette surface, et il porte un VERBE MÉTIER, jamais un fournisseur.
+   * Un chemin par capacité serait plus « REST » et forcerait à modifier le
+   * contrat à chaque migration ; ici, le registre du Panel décide seul de ce
+   * qui existe, et le contrat n'a pas à le savoir.
+   */
+  capabilityInvoke: '/bridge/v1/capabilities/{code}/invoke',
 });
 
 // Chemins exposés par chaque projet (contrat ProjectBridge), consommés par

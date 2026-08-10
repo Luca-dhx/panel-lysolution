@@ -48,8 +48,14 @@ section('Chemins du contrat PanelBridge (servis par le Panel)');
 {
   const inSpec = specPaths(panelSpec, /^ {2}(\/bridge\/v1\/[^\s:]+):\s*$/gm).sort();
   const inMirror = Object.values(contract.PANEL_API_ROUTES).sort();
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 6);
+  // 7 depuis le contrat 1.5.0 : la passerelle de capacités (L3) ajoute
+  // /bridge/v1/capabilities/{code}/invoke. Le nombre est écrit en dur à
+  // dessein — un chemin qui apparaît sans qu'on l'ait voulu doit faire échouer
+  // ce test, pas se fondre dans un comptage dynamique.
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 7);
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
+  check('la passerelle de capacités est au contrat',
+    inMirror.includes('/bridge/v1/capabilities/{code}/invoke'));
 }
 
 section('Chemins du contrat ProjectBridge (consommés par le Panel)');

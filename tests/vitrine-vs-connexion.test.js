@@ -20,6 +20,7 @@
  * Les deux lignes doivent pouvoir se contredire. C'est précisément quand elles
  * se contredisent qu'elles servent à quelque chose.
  */
+import { fileURLToPath } from 'node:url';
 import { check, finish, section } from './helpers/harness.js';
 import { register } from 'node:module';
 
@@ -179,7 +180,16 @@ section('AUCUN ÉCRAN N’APPELLE PLUS L’ANCIEN LIBELLÉ');
 {
   const fs = await import('node:fs');
   const path = await import('node:path');
-  const racine = path.resolve('frontend/src');
+  /**
+   * Résolu depuis CE FICHIER, jamais depuis le répertoire courant.
+   *
+   * `path.resolve('frontend/src')` partait de `process.cwd()` — donc de
+   * `Panel/backend` quand la suite est lancée par `npm test`, où ce dossier
+   * n'existe pas. Le test passait à la main depuis la racine et échouait dans
+   * la commande canonique : la pire des deux situations, puisqu'on ne le
+   * découvrait qu'en lisant le journal complet.
+   */
+  const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'frontend', 'src');
 
   const fichiers = [];
   const parcourir = (d) => {

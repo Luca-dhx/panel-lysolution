@@ -49,6 +49,15 @@ const TESTS = [
   // le fournisseur expose vraiment, et ne supprime que ce qu'il prouve avoir
   // créé. Le secret ne sort du coffre par aucune porte.
   'webhook-control-plane.test.js',
+  // L3 — la passerelle de capacités : le projet demande un VERBE, le Panel
+  // résout le fournisseur, le monde, le droit et la clé. Trois suites, parce
+  // qu'elles ne peuvent pas vivre dans le même processus :
+  //   · la mécanique, refus par refus, en TEST ;
+  //   · la PRÉ-OUVERTURE, qui exige une instance réellement en PROD ;
+  //   · le bout en bout, par le pont réel, avec un fournisseur qui parle HTTP.
+  'capability-gateway.test.js',
+  'capability-preopening.test.js',
+  'capability-gateway-e2e.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',

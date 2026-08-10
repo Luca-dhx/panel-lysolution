@@ -89,6 +89,11 @@ export async function startSbAutoInstance({
 
     pair(args) { return send('pair', args); },
     heartbeat() { return send('heartbeat'); },
+    /**
+     * Demande une capacité au Panel — par la façade RÉELLE du projet.
+     * Rend `{ ok: true, data }` ou `{ ok: false, code, message, httpStatus }`.
+     */
+    invokeCapability(args) { return send('invokeCapability', args); },
     pull(args) { return send('pull', args); },
     state() { return send('state'); },
     raw() { return send('raw'); },

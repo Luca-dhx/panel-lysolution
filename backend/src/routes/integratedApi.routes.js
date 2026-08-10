@@ -28,6 +28,7 @@ import {
   putCredentials,
   validate,
 } from '../controllers/integratedApi.controller.js';
+import { catalogue } from '../controllers/capabilities.controller.js';
 
 const router = Router();
 
@@ -36,6 +37,10 @@ router.use(asyncHandler(requirePanelUser));
 // — Lecture : tout utilisateur authentifié ---------------------------------
 router.get('/', asyncHandler(list));
 router.get('/availability', asyncHandler(availability));
+// AVANT `/:provider`, sinon Express lirait « capabilities » comme un nom de
+// fournisseur et répondrait « fournisseur inconnu » — un 404 parfaitement
+// exact et parfaitement incompréhensible.
+router.get('/capabilities', catalogue);
 router.get('/:provider', asyncHandler(detail));
 
 // — Écriture : DEV uniquement ----------------------------------------------

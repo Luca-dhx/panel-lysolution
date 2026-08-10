@@ -19,6 +19,7 @@ import {
   revokePairing,
   setContractProtectionHandler,
 } from '../controllers/projects.controller.js';
+import { grants, putGrants } from '../controllers/capabilities.controller.js';
 
 const router = Router();
 
@@ -72,5 +73,19 @@ router.delete('/:projectId', requirePanelDev, asyncHandler(remove));
  */
 router.post('/destinations/:destinationId/empty', requirePanelDev, asyncHandler(markDestinationEmptyHandler));
 router.delete('/destinations/:destinationId', requirePanelDev, asyncHandler(deleteDestinationHandler));
+
+/**
+ * ── CAPACITÉS ACCORDÉES (L3) ────────────────────────────────────────────────
+ *
+ * LECTURE pour tout compte du Panel : « que ce projet a-t-il le droit de
+ * demander ? » est un diagnostic d'exploitation, pas un secret — et c'est la
+ * première question quand un projet dit « ça ne marche pas ».
+ *
+ * ÉCRITURE réservée aux DEV : accorder une capacité ouvre un chemin vers un
+ * fournisseur réel, avec les identifiants du Panel. Même doctrine que les
+ * routes du coffre, et pour le même risque.
+ */
+router.get('/:projectId/capability-grants', asyncHandler(grants));
+router.put('/:projectId/capability-grants', requirePanelDev, asyncHandler(putGrants));
 
 export default router;

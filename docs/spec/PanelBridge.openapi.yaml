@@ -46,6 +46,17 @@
 #     contrats partagent un même numéro pour qu'un seul en-tête suffise à
 #     décrire ce que parle un pont.
 #     Compatible 1.0.x, 1.1.x, 1.2.x et 1.3.x.
+#   1.5.0 (L3) — ADDITIF, PASSERELLE DE CAPACITÉS :
+#     POST /bridge/v1/capabilities/{code}/invoke. Le projet demande une
+#     INTENTION MÉTIER ; le Panel résout le fournisseur, l'environnement, le
+#     droit et les identifiants, puis exécute. Le projet ne choisit ni
+#     fournisseur, ni monde, ni credential, et ne reçoit JAMAIS de secret.
+#     Catalogue d'erreurs PROPRE (CAPABILITY_*, cf. CapabilityErrorResponse) :
+#     les refus de cette surface décrivent une décision de la passerelle, pas
+#     un état du pont — les confondre avec BRIDGE_* obligerait un client à
+#     deviner lequel des deux il lit.
+#     Compatible 1.0.x à 1.4.x : un projet qui ignore cet endpoint reste
+#     pleinement conforme, un Panel qui ne le sert pas aussi.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -55,7 +66,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.4.0
+  version: 1.5.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -76,6 +87,13 @@ tags:
       push des écritures locales du projet, pull de rattrapage des écritures
       faites côté Panel. Règles : dernier écrit gagne, identités UUID,
       tombstones, anti-écho, idempotence (11_DONNEES_CENTRALISEES §1.1).
+  - name: capabilities
+    description: >
+      Passerelle de capacités (contrat 1.5.0). Le projet demande une INTENTION
+      MÉTIER — « vérifie que je peux écrire », « envoie cette notification » —
+      et n'apprend jamais quel fournisseur l'exécute. Il ne choisit ni le
+      fournisseur, ni l'environnement, ni le jeu d'identifiants : tout est
+      déduit de son jeton d'appairage et de l'instance de Panel qui répond.
 
 paths:
   /bridge/v1/ping:
@@ -283,6 +301,111 @@ paths:
         '409':
           $ref: '#/components/responses/ContractVersionUnsupported'
 
+  /bridge/v1/capabilities/{code}/invoke:
+    post:
+      operationId: invokeCapability
+      tags: [capabilities]
+      summary: Invoque une capacité métier — le Panel exécute chez le fournisseur.
+      description: >
+        Le projet nomme une CAPACITÉ (verbe métier) et fournit son entrée.
+        Le Panel, dans cet ordre : authentifie l'instance par son bridgeToken,
+        en déduit le projectId, résout l'environnement depuis SON runtime,
+        vérifie l'octroi de la capacité à ce projet, applique la politique
+        d'ouverture commerciale, valide l'entrée contre un schéma STRICT,
+        charge le jeu d'identifiants de son coffre, puis exécute.
+
+        CE QUE LE PROJET NE PEUT PAS FAIRE : choisir un fournisseur, choisir
+        TEST ou PROD, désigner un jeu d'identifiants, appeler une URL de
+        fournisseur, ou faire autorité sur son propre projectId. Un `projectId`
+        présent dans le corps et DIVERGENT du projet authentifié est refusé
+        (CAPABILITY_PROJECT_SCOPE_MISMATCH) ; identique, il est ignoré.
+
+        AUCUN SECRET NE TRAVERSE : ni en entrée, ni en sortie, ni dans un
+        message d'erreur. La réponse est un CONSTAT métier, pas la réponse du
+        fournisseur.
+
+        ISSUE INDÉTERMINÉE : un 504 CAPABILITY_TIMEOUT signifie que le
+        fournisseur n'a pas répondu — l'action a PEUT-ÊTRE eu lieu. Le projet
+        ne doit pas rejouer sans arbitrage pour une capacité dont
+        l'idempotence est UNKNOWN_ON_TIMEOUT.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: code
+          in: path
+          required: true
+          description: >
+            Code de la capacité (registre code-first du Panel), par exemple
+            `email.sender.verify`. Un code inconnu répond 404, jamais un 200
+            silencieux.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CapabilityInvocationRequest'
+      responses:
+        '200':
+          description: Capacité exécutée ; constat métier rendu.
+          headers:
+            X-Bridge-Contract-Version:
+              $ref: '#/components/headers/ContractVersionHeader'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityInvocationEnvelope'
+        '400':
+          description: Entrée non conforme au contrat de la capacité (CAPABILITY_INPUT_INVALID).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: >
+            Capacité non accordée à ce projet (CAPABILITY_NOT_GRANTED), ou
+            demande désignant un autre projet (CAPABILITY_PROJECT_SCOPE_MISMATCH).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+        '404':
+          description: Capacité inconnue du registre (CAPABILITY_UNKNOWN).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+        '409':
+          description: >
+            Version majeure du contrat non supportée
+            (BRIDGE_CONTRACT_VERSION_UNSUPPORTED), ou la passerelle refuse
+            d'exécuter : capacité déclarée mais pas encore servie
+            (CAPABILITY_NOT_AVAILABLE), écriture réelle refusée avant
+            l'ouverture commerciale (CAPABILITY_BLOCKED_PREOPENING),
+            identifiants absents ou non validés (CAPABILITY_CREDENTIALS_MISSING),
+            environnement incohérent (CAPABILITY_ENVIRONMENT_MISMATCH).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+        '502':
+          description: Le fournisseur a refusé ou est indisponible (CAPABILITY_PROVIDER_UNAVAILABLE).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+        '504':
+          description: >
+            Le fournisseur n'a pas répondu (CAPABILITY_TIMEOUT). L'issue est
+            INDÉTERMINÉE : ne pas rejouer une écriture sans arbitrage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilityErrorResponse'
+
 components:
   securitySchemes:
     bridgeToken:
@@ -384,6 +507,104 @@ components:
             - BRIDGE_INTERNAL
         message: { type: string }
         details: { description: Contexte facultatif (objet ou tableau)., nullable: true }
+
+    CapabilityErrorResponse:
+      type: object
+      description: >
+        Refus de la PASSERELLE DE CAPACITÉS (contrat 1.5.0). Catalogue distinct
+        de BRIDGE_* : ces codes décrivent une décision prise sur une invocation
+        — droit, ouverture commerciale, entrée, identifiants, fournisseur — et
+        non un état du pont lui-même. Aucun message de fournisseur n'y est
+        jamais relayé.
+      required: [success, code, message]
+      properties:
+        success: { type: boolean, enum: [false] }
+        code:
+          type: string
+          description: Code stable du catalogue de la passerelle.
+          enum:
+            - CAPABILITY_UNKNOWN
+            - CAPABILITY_NOT_AVAILABLE
+            - CAPABILITY_NOT_GRANTED
+            - CAPABILITY_BLOCKED_PREOPENING
+            - CAPABILITY_PROVIDER_UNAVAILABLE
+            - CAPABILITY_TIMEOUT
+            - CAPABILITY_INPUT_INVALID
+            - CAPABILITY_ENVIRONMENT_MISMATCH
+            - CAPABILITY_CREDENTIALS_MISSING
+            - CAPABILITY_PROJECT_SCOPE_MISMATCH
+        message: { type: string }
+        details:
+          description: >
+            Contexte SANS SECRET : chemins d'entrée fautifs, nature de l'effet
+            refusé, motif d'indisponibilité d'un jeu d'identifiants, statut HTTP
+            du fournisseur. Jamais une valeur saisie, jamais une clé.
+          nullable: true
+
+    CapabilityInvocationRequest:
+      type: object
+      description: >
+        Entrée MÉTIER de la capacité. Sa forme exacte est fixée par le registre
+        code-first du Panel et validée en mode STRICT : toute clé inconnue est
+        refusée. Ce refus est délibéré — un champ toléré parce qu'inerte
+        finirait par être branché.
+
+        Champs INTERDITS quel que soit le contrat de la capacité : `provider`,
+        `environment`, `mode`, `apiKey`, `credentials`, `baseUrl`. Le projet ne
+        choisit ni le monde, ni le fournisseur, ni la clé.
+      properties:
+        operationId:
+          type: string
+          minLength: 8
+          maxLength: 64
+          description: >
+            Clé d'idempotence choisie par le PROJET : lui seul sait que deux
+            clics sont la même intention. Rendue telle quelle dans la réponse
+            pour qu'il rapproche son journal du nôtre.
+      additionalProperties: true
+
+    CapabilityInvocationEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          $ref: '#/components/schemas/CapabilityInvocationResult'
+
+    CapabilityInvocationResult:
+      type: object
+      required: [capability, provider, environment, outcome, result]
+      properties:
+        capability: { type: string, description: Code invoqué. }
+        provider:
+          type: string
+          description: >
+            Fournisseur qui a exécuté. Rendu pour le DIAGNOSTIC — un opérateur
+            doit pouvoir dire où regarder quand ça échoue. Le projet ne doit
+            RIEN en déduire : c'est la capacité qui est son contrat, pas le
+            fournisseur du jour.
+        environment:
+          type: string
+          enum: [TEST, PROD]
+          description: Monde réellement utilisé. Constaté, jamais choisi par le projet.
+        outcome:
+          type: string
+          enum: [SUCCEEDED]
+          description: >
+            Une réponse 200 vaut SUCCEEDED. Les autres issues (FAILED, UNKNOWN,
+            BLOCKED) voyagent en erreur, avec leur code.
+        operationId: { type: string, nullable: true }
+        requestId:
+          type: string
+          description: Corrélation avec le journal du Panel — à citer au support.
+        durationMs: { type: integer }
+        result:
+          type: object
+          description: >
+            CONSTAT MÉTIER de la capacité, validé par son schéma de sortie
+            (strict) avant d'être rendu. Ce n'est jamais la réponse brute du
+            fournisseur.
+          additionalProperties: true
 
     PingResponse:
       type: object

@@ -1146,7 +1146,31 @@ faisait croire encore en service. Corrigé. Invariant ajouté :
 
 ---
 
-### L3 — Passerelle de capacités
+### L3 — Passerelle de capacités  ✅ **LIVRÉ**
+
+> Document dédié : [CAPABILITY_GATEWAY.md](CAPABILITY_GATEWAY.md).
+>
+> **Écart assumé avec le GO prévu ci-dessous.** Le critère annonçait
+> `billing.invoice.list` ; la capacité migrée est `email.sender.verify`. La
+> raison est celle de l'audit L8 §13 : c'est la seule capacité dont l'échec ne
+> prive personne d'une notification attendue et dont le rejeu ne peut produire
+> aucun doublon. Migrer une lecture Stripe d'abord aurait exigé d'ouvrir le
+> chemin Stripe (L6) avant d'avoir éprouvé la passerelle elle-même.
+>
+> Livré : registre code-first de 11 capacités agrégeant L1, L1.75 et L8 · contexte
+> d'invocation dont l'autorité vient du seul bridgeToken · octrois **par
+> capacité** remplaçant conceptuellement `PanelIntegratedApi.grants[]` ·
+> résolution de credentials sur le coffre L1 · contrat d'adaptateur (table, pas
+> de `switch`) · `POST /bridge/v1/capabilities/{code}/invoke` (contrat **1.5.0**,
+> additif) · catalogue d'erreurs `CAPABILITY_*` distinguant `FAILED` de
+> `UNKNOWN` · journal sans secret · UI de diagnostic et d'octroi.
+>
+> Non fait, volontairement : aucune migration de provider métier, aucun
+> credential projet supprimé, Manager de SB Auto laissé sur son chemin local.
+>
+> Preuve : 189 assertions sur trois suites, dont un E2E qui entre par le pont
+> réel avec un fournisseur HTTP local, et une suite qui tourne en `ENV=PROD`
+> pour éprouver la pré-ouverture.
 
 - **Objectif** — un projet peut invoquer une capacité. Aucune n'est encore
   branchée sur un chemin de production.
