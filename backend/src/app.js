@@ -18,6 +18,9 @@ import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
+import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
+import providerWebhooksRoutes from './routes/providerWebhooks.routes.js';
+import { WEBHOOK_ROUTE_ROOT } from './services/webhooks/webhookCallback.js';
 import uploadRoutes from './routes/upload.routes.js';
 import deploymentRoutes from './routes/deployment.routes.js';
 import { healthRouter, versionRouter } from './routes/meta.routes.js';
@@ -28,6 +31,29 @@ export function createApp() {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
   app.use(corsMiddleware);
+
+  /**
+   * WEBHOOKS FOURNISSEUR — MONTÉS AVANT `express.json()`, ET C'EST L'INVARIANT.
+   *
+   * ══ POURQUOI L'ORDRE EST LA GARANTIE ══════════════════════════════════════
+   *
+   * Une signature HMAC porte sur les OCTETS reçus. `express.json()` parse le
+   * corps et le remplace par un objet ; re-sérialiser cet objet produit une
+   * chaîne différente de l'originale dès qu'il y a un espace, un ordre de clés
+   * ou un caractère non-ASCII. La vérification échouerait alors sur des
+   * messages parfaitement authentiques — et l'issue de ce genre d'histoire est
+   * toujours la même : quelqu'un désactive la vérification « en attendant ».
+   *
+   * Monté ici, ce routeur applique son propre `express.raw()` et voit le corps
+   * tel que le fournisseur l'a envoyé. Déplacer cette ligne sous le parseur
+   * JSON casserait silencieusement toute vérification de signature.
+   *
+   * Cette surface est PUBLIQUE et sans session : elle n'est ni sous `/api`
+   * (qui exige un JWT du Panel) ni sous `/bridge` (qui exige un bridgeToken de
+   * projet). Un fournisseur n'a ni l'un ni l'autre.
+   */
+  app.use(WEBHOOK_ROUTE_ROOT, providerWebhooksRoutes);
+
   app.use(express.json({ limit: '1mb' }));
 
   /**
@@ -80,6 +106,10 @@ export function createApp() {
   // fournisseurs — et l'ancien coffre (/api/company/integrated-apis) reste en
   // place, intact, pendant toute la migration.
   app.use('/api/integrated-apis', integratedApiRoutes);
+  // L5 — l'état des webhooks fournisseur. Surface de DIAGNOSTIC : elle décrit
+  // ce que le Panel veut, ce que le fournisseur expose, et l'écart. La
+  // réception, elle, est publique et montée bien plus haut.
+  app.use('/api/webhook-control-plane', webhookControlPlaneRoutes);
   app.use('/api/uploads', uploadRoutes);
   /**
    * Les médias importés sont servis en STATIQUE, et publiquement.

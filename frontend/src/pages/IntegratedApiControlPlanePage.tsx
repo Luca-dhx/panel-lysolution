@@ -21,17 +21,18 @@
 // pourrait jamais provisionner l'autre instance. Mais il dit, en haut et sans
 // ambiguïté, lequel des deux cette instance utilisera réellement. C'est un
 // constat, pas un réglage : il n'y a aucun sélecteur pour en changer.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure } from '@/components/supervision';
-import { integratedApis, errorMessage } from '@/lib/api';
+import { integratedApis, webhookControlPlane, errorMessage } from '@/lib/api';
 import type {
   CredentialRoleDefinition,
   CredentialSetView,
   IntegratedApiEnvironment,
   ProviderView,
+  WebhookStateView,
 } from '@/types.integratedApi';
 
 const STATUS_LABELS: Record<CredentialSetView['status'], { label: string; tone: string }> = {
@@ -40,6 +41,31 @@ const STATUS_LABELS: Record<CredentialSetView['status'], { label: string; tone: 
   VALID: { label: 'Valide', tone: 'ok' },
   INVALID: { label: 'Identifiants refusés', tone: 'danger' },
   ERROR: { label: 'Fournisseur injoignable', tone: 'danger' },
+};
+
+/**
+ * ÉTATS D'UN WEBHOOK (L5).
+ *
+ * `PENDING` est délibérément neutre : un Panel fraîchement installé, dont
+ * personne n'a encore saisi la clé, n'est PAS en panne. Peindre cet état en
+ * rouge apprendrait à ignorer le rouge.
+ */
+const WEBHOOK_STATUS_LABELS: Record<WebhookStateView['status'], { label: string; tone: string }> = {
+  UNSUPPORTED: { label: 'Aucun webhook', tone: 'muted' },
+  PENDING: { label: 'En attente d’un prérequis', tone: 'muted' },
+  RECONCILING: { label: 'Réconciliation interrompue', tone: 'warn' },
+  READY: { label: 'Conforme', tone: 'ok' },
+  DRIFTED: { label: 'Divergent', tone: 'warn' },
+  WARNING: { label: 'À surveiller', tone: 'warn' },
+  ERROR: { label: 'Erreur', tone: 'danger' },
+};
+
+const DRIFT_LABELS: Record<string, string> = {
+  URL: 'l’adresse enregistrée n’est pas la callback canonique',
+  EVENTS: 'des événements souscrits manquent',
+  DISABLED: 'l’endpoint est désactivé chez le fournisseur',
+  DESCRIPTION: 'la description ne porte plus notre marque d’appartenance',
+  MISSING: 'aucun endpoint ne nous appartient chez le fournisseur',
 };
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -57,6 +83,7 @@ function formatDate(value: string | null): string {
 
 export function IntegratedApiControlPlanePage() {
   const [providers, setProviders] = useState<ProviderView[]>([]);
+  const [webhooks, setWebhooks] = useState<Record<string, WebhookStateView>>({});
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +97,19 @@ export function IntegratedApiControlPlanePage() {
       setError(errorMessage(err, 'Plan de contrôle indisponible.'));
     } finally {
       setLoaded(true);
+    }
+    /**
+     * L'état des webhooks est chargé SÉPARÉMENT et sans faire échouer la page.
+     *
+     * Il décrit une frontière avec des tiers ; son indisponibilité ne doit pas
+     * empêcher de lire — ni de corriger — les identifiants, qui sont
+     * justement ce dont il dépend.
+     */
+    try {
+      const { items } = await webhookControlPlane.list();
+      setWebhooks(Object.fromEntries(items.map((item) => [item.provider, item])));
+    } catch {
+      setWebhooks({});
     }
   }, []);
 
@@ -132,6 +172,7 @@ export function IntegratedApiControlPlanePage() {
           <ProviderCard
             key={provider.definition.provider}
             provider={provider}
+            webhook={webhooks[provider.definition.provider] ?? null}
             busy={busy}
             run={run}
           />
@@ -141,8 +182,9 @@ export function IntegratedApiControlPlanePage() {
   );
 }
 
-function ProviderCard({ provider, busy, run }: {
+function ProviderCard({ provider, webhook, busy, run }: {
   provider: ProviderView;
+  webhook: WebhookStateView | null;
   busy: boolean;
   run: (fn: () => Promise<string>) => Promise<void>;
 }) {
@@ -162,16 +204,18 @@ function ProviderCard({ provider, busy, run }: {
               : <span className="muted">sans environnement (compte unique)</span>,
           ],
           [
-            'Webhooks',
-            definition.supportsWebhookReconciliation
-              ? <span className="muted">réconciliables (prévu en L5)</span>
-              : <span className="muted">aucun</span>,
-          ],
-          [
             'Capacités déclarées',
             <span className="muted">{definition.capabilities.join(', ') || '—'} (non invocables en L1)</span>,
           ],
         ]}
+      />
+
+      <WebhookPanel
+        provider={definition.provider}
+        supported={definition.supportsWebhookReconciliation}
+        webhook={webhook}
+        busy={busy}
+        run={run}
       />
 
       {credentialSets.map((set) => (
@@ -186,6 +230,112 @@ function ProviderCard({ provider, busy, run }: {
         />
       ))}
     </Card>
+  );
+}
+
+/**
+ * ÉTAT DU WEBHOOK (L5) — ce que le Panel veut, ce que le fournisseur expose.
+ *
+ * ── CE QUE CE BLOC N'AFFICHE JAMAIS ─────────────────────────────────────────
+ * Aucun secret, aucune empreinte de secret, aucune charge utile d'événement.
+ * Le backend ne les rend pas : cette absence est structurelle, l'écran n'a
+ * rien à filtrer.
+ *
+ * La callback, elle, s'affiche EN CLAIR — c'est une adresse publique que le
+ * fournisseur connaît déjà, et pouvoir la comparer à ce que son tableau de
+ * bord montre est exactement ce qui rend cet écran utile.
+ */
+function WebhookPanel({ provider, supported, webhook, busy, run }: {
+  provider: string;
+  supported: boolean;
+  webhook: WebhookStateView | null;
+  busy: boolean;
+  run: (fn: () => Promise<string>) => Promise<void>;
+}) {
+  if (!supported) {
+    return (
+      <p className="muted read-only-note">
+        <strong>Webhooks — aucun.</strong>{' '}
+        {webhook?.reason
+          ?? 'Ce fournisseur n’expose pas de webhook. Aucun endpoint n’est créé, et aucune liaison vide n’est écrite.'}
+      </p>
+    );
+  }
+
+  if (!webhook) {
+    return <p className="muted read-only-note">État des webhooks indisponible.</p>;
+  }
+
+  const status = WEBHOOK_STATUS_LABELS[webhook.status] ?? { label: webhook.status, tone: 'muted' };
+
+  return (
+    <Disclosure title={`Webhook — ${status.label}`} defaultOpen={webhook.status !== 'READY'}>
+      <p className={`badge badge-${status.tone}`}>{status.label}</p>
+
+      {webhook.interrupted ? (
+        <div className="alert alert-error">
+          Une réconciliation s’est interrompue sans conclure. L’endpoint distant
+          existe peut-être déjà : la prochaine réconciliation le reconnaîtra par
+          sa marque d’appartenance plutôt que d’en créer un second.
+        </div>
+      ) : null}
+
+      {webhook.drift.length ? (
+        <div className="alert alert-error">
+          Divergence entre ce que le Panel veut et ce que le fournisseur expose :{' '}
+          {webhook.drift.map((kind) => DRIFT_LABELS[kind] ?? kind).join(' ; ')}.
+        </div>
+      ) : null}
+
+      <DetailList
+        items={[
+          ['Adresse de rappel', webhook.callbackUrl
+            ? <code>{webhook.callbackUrl}</code>
+            : <span className="muted">aucune adresse publique résolue pour ce Panel</span>],
+          ['Endpoint distant', webhook.remoteWebhookId
+            ? <code>{webhook.remoteWebhookId}</code>
+            : <span className="muted">aucun</span>],
+          ['Vérification des appels', webhook.signatureProves
+            ? <span>signature cryptographique ({webhook.signatureScheme})</span>
+            // La nuance est conservée jusqu'à l'écran : un jeton partagé
+            // authentifie le porteur, il ne prouve pas le contenu reçu.
+            : <span>jeton partagé — l’appelant est authentifié, le contenu n’est pas prouvé</span>],
+          ['Secret de vérification', webhook.secretConfigured
+            ? <span>en place dans le coffre</span>
+            : <span className="muted">absent — les appels entrants seront refusés</span>],
+          ['Événements souscrits', <span className="muted">{webhook.desiredEvents.length}</span>],
+          ['Dernière vérification', formatDate(webhook.lastCheckedAt)],
+          ['Dernière réconciliation', formatDate(webhook.lastReconciledAt)],
+          ['Dernier événement reçu', webhook.lastEventAt
+            ? <span>{formatDate(webhook.lastEventAt)} — <code>{webhook.lastEventType || '—'}</code></span>
+            : <span className="muted">jamais</span>],
+          ['Reçus / rejeux absorbés',
+            <span className="muted">{webhook.eventsReceived ?? 0} / {webhook.duplicatesIgnored ?? 0}</span>],
+          ...(webhook.lastError
+            ? [['Dernier diagnostic',
+              <span><code>{webhook.lastError.code}</code> — {webhook.lastError.message}</span>] as [string, ReactNode]]
+            : []),
+        ]}
+      />
+
+      <button
+        type="button"
+        className="btn"
+        disabled={busy}
+        onClick={() => run(async () => {
+          const rapport = await webhookControlPlane.reconcile(provider) as { status?: string };
+          return `Webhook ${provider} : ${rapport.status ?? 'réconcilié'}.`;
+        })}
+      >
+        Réconcilier
+      </button>
+      <p className="muted read-only-note">
+        Réconcilier ÉCRIT chez le fournisseur : création, mise à jour, ou
+        retrait d’un endpoint <strong>que ce Panel a lui-même créé</strong>. Un
+        endpoint qui ne nous appartient pas n’est jamais touché — le compte peut
+        être partagé avec d’autres systèmes.
+      </p>
+    </Disclosure>
   );
 }
 

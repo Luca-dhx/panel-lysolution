@@ -100,6 +100,64 @@ export interface ValidationOutcome {
 
 export type ValidatedCredentialSet = CredentialSetView & { validation: ValidationOutcome };
 
+/* -------------------------------------------------------------------------- */
+/*  PLAN DE CONTRÔLE WEBHOOK (L5)                                             */
+/* -------------------------------------------------------------------------- */
+
+export type WebhookStatus =
+  | 'UNSUPPORTED'
+  | 'PENDING'
+  | 'RECONCILING'
+  | 'READY'
+  | 'DRIFTED'
+  | 'WARNING'
+  | 'ERROR';
+
+/**
+ * L'état d'un webhook, vu du navigateur.
+ *
+ * Il n'y a PAS de champ portant un secret, ni son masque, ni son empreinte —
+ * `secretConfigured` est un booléen, et c'est tout ce dont un écran a besoin
+ * pour dire « saurais-je vérifier un événement qui arrive maintenant ? ».
+ *
+ * `callbackUrl`, en revanche, s'affiche en clair : c'est une adresse publique
+ * que le fournisseur connaît déjà, et la masquer empêcherait de la comparer à
+ * ce que son tableau de bord montre.
+ */
+export interface WebhookStateView {
+  provider: string;
+  environment: IntegratedApiEnvironment;
+  supported: boolean;
+  status: WebhookStatus;
+  /** Pourquoi ce fournisseur n'a pas de webhook. Rempli si `supported` est faux. */
+  reason?: string | null;
+  /** Une réconciliation antérieure s'est interrompue sans conclure. */
+  interrupted?: boolean;
+  signatureScheme: string;
+  /** Faux pour un jeton partagé : authentifié, jamais prouvé. */
+  signatureProves: boolean;
+  secretDelivery: string;
+  remoteEndpointLimit: number | null;
+  callbackUrl: string;
+  callbackReady?: boolean;
+  callbackSource?: string;
+  desiredUrl?: string;
+  desiredEvents: string[];
+  observedUrl?: string;
+  observedEvents?: string[];
+  remoteWebhookId?: string | null;
+  drift: string[];
+  secretConfigured: boolean;
+  lastCheckedAt: string | null;
+  lastReconciledAt: string | null;
+  lastError: { code: string; message: string; at: string | null } | null;
+  lastEventAt?: string | null;
+  lastEventType?: string | null;
+  eventsReceived?: number;
+  duplicatesIgnored?: number;
+  severity?: string;
+}
+
 export interface ProviderAvailability {
   provider: string;
   label: string;

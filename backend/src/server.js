@@ -12,6 +12,7 @@ import { migratePortRegistry } from './services/deployment/portRegistry.service.
 import { migratePanelMedia } from './services/upload/mediaDescriptor.service.js';
 import { reconcileDestinations } from './services/registry/projectDestination.service.js';
 import { seedIntegratedApiCredentialSets } from './services/integratedApi/seed.js';
+import { reconcileAllProviderWebhooks } from './services/webhooks/webhookReconciler.js';
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
@@ -205,6 +206,36 @@ async function start() {
     logger.success(
       `${config.panelName} — backend démarré (ENV ${config.env}) sur le port ${config.port}`,
     );
+
+    /**
+     * RÉCONCILIATION DES WEBHOOKS (L5) — APRÈS l'ouverture du port, et DÉTACHÉE.
+     *
+     * ── POURQUOI APRÈS ────────────────────────────────────────────────────
+     * Enregistrer une callback avant d'écouter, c'est publier une adresse
+     * morte : un fournisseur qui sonde immédiatement la trouverait fermée, et
+     * certains désactivent un endpoint qui échoue trop souvent.
+     *
+     * ── POURQUOI DÉTACHÉE ─────────────────────────────────────────────────
+     * Un fournisseur momentanément indisponible ne doit PAS retarder ni
+     * empêcher un démarrage. La réconciliation est idempotente : elle
+     * repassera au prochain boot, et rien de ce qu'elle n'a pas fait n'est
+     * perdu. Elle ne lève jamais — c'est une propriété du service, pas une
+     * politesse de ce `catch`.
+     */
+    void reconcileAllProviderWebhooks()
+      .then((rapport) => {
+        for (const warning of rapport.warnings) {
+          logger.warn(
+            `Webhook ${warning.provider} (${rapport.environment}) : ${warning.status}`
+            + `${warning.code ? ` — ${warning.code}` : ''} [${warning.severity}].`,
+          );
+        }
+        const prets = rapport.results.filter((r) => r.status === 'READY').length;
+        logger.info(`Webhooks fournisseur : ${prets} prêt(s), ${rapport.warnings.length} à surveiller.`);
+      })
+      .catch((err) => {
+        logger.warn(`Réconciliation des webhooks impossible : ${err.message}`);
+      });
   });
 
   const shutdown = (signal) => {

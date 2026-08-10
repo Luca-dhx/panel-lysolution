@@ -1281,33 +1281,64 @@ de contrat, pas en passant.
 
 ---
 
-### L5 — Registre et réconciliateur de webhooks
+### L5 — Registre et réconciliateur de webhooks · ✅ **LIVRÉ** (fondation)
 
-- **Objectif** — le Panel possède ses endpoints chez les fournisseurs, et les
-  réconcilie après déploiement.
-- **Dépendances** — L1, L2.
-- **Fichiers probables** — portage de
-  `SB Auto 06/backend/src/services/webhooks/*` vers
-  `Panel/backend/src/services/webhooks/` (registre, contrat de driver,
-  adaptateurs, moteur de synchronisation) ·
-  `backend/src/routes/webhook.routes.js` *(nouveau, monté avant
-  `express.json()`)* · `backend/src/models/PanelIntegratedApiWebhook.model.js` ·
-  crochet dans `deployment-engine/pipeline.js` après le health check.
-- **Modèles** — `IntegratedApiWebhook` (§4.2), `ExternalProviderEvent` (§8.6).
-- **Tests** — signature valide/invalide par provider · idempotence sur rejeu ·
-  réconciliation : no-op / création / URL changée / doublon · **un endpoint
-  inconnu n'est jamais touché** · échec fournisseur →
-  `DEPLOYED_WITH_WARNING`, jamais un déploiement rouge · capture du secret à la
-  création.
-- **Migration** — les endpoints SB Auto restent en place. Deux endpoints
-  coexistent volontairement pendant L6/L7.
+Détail complet : **[WEBHOOK_CONTROL_PLANE.md](WEBHOOK_CONTROL_PLANE.md)**.
+
+- **Objectif** — le Panel possède ses endpoints chez les fournisseurs, sait ce
+  qu'ils exposent réellement, et réconcilie l'écart. **Atteint.**
+- **Dépendances** — L1 (livré). **L2 n'a PAS été requis** : la doctrine
+  d'environnement n'est pas consommée, elle est *appliquée* localement —
+  `assertCallbackEnvironment()` refuse une callback d'un autre monde
+  (`WEBHOOK_CALLBACK_ENVIRONMENT_MISMATCH`, 409). Rien d'`activeMode` n'a été
+  touché : L2 reste entier.
+- **Ce qui a été RÉUTILISÉ plutôt que réécrit** — la doctrine du plan de
+  contrôle de SB Auto (registre code-first, identification par description,
+  dédoublonnage limité au possédé, capture du secret à la création, ordre
+  créer → vérifier → retirer) est **portée**, pas copiée : elle est réécrite
+  sur les primitives du Panel (coffre chiffré, `resolveBackendUrl()`,
+  `runtimeEnvironment()`). **Le dépôt SB Auto n'a pas été modifié.**
+- **Fichiers livrés** — `backend/src/services/webhooks/` (registre, callback,
+  appartenance, pilotes, secrets, signature, réconciliateur, réception,
+  diagnostic) · `routes/providerWebhooks.routes.js` *(public, corps brut, monté
+  avant `express.json()`)* · `routes/webhookControlPlane.routes.js` *(interne)*
+  · `models/PanelIntegratedApiWebhookBinding.model.js` ·
+  `models/PanelProviderWebhookEvent.model.js` · crochet de démarrage dans
+  `server.js`, **après** l'ouverture du port et détaché.
+- **Modèles** — `PanelIntegratedApiWebhookBinding` (désiré vs observé, index
+  unique `(provider, environment)`) et `PanelProviderWebhookEvent` (index
+  unique d'idempotence). Aucun corps d'événement n'est conservé.
+- **Écart assumé avec §8.5** — la route est
+  `/webhooks/providers/<slug>` et non `/webhooks/<provider>` : le préfixe
+  distingue une surface *publique appelée par des tiers* des routes du Panel,
+  et rend le montage avant `express.json()` lisible dans `app.js`.
+- **Écart assumé avec §8.6** — `ExternalProviderEvent` est livré comme
+  **registre de réception**, pas comme passerelle de normalisation. La table
+  `checkout.session.completed → PAYMENT_SUCCEEDED` appartient à L6 : l'écrire
+  ici aurait été faire L6 sous un autre nom.
+- **Appartenance** — au-delà de la description canonique, chaque binding frappe
+  un `ownershipToken` (UUID) **avant** le premier appel de création. Un endpoint
+  n'est supprimable que si ce jeton, ou l'identifiant persisté, le désigne. Un
+  autre Panel partageant le compte est reconnu (`PANEL_PEER`) et **jamais
+  touché** — sans quoi une recette effacerait l'endpoint de la production.
+- **Plafond Stripe** — déclaré (`remoteEndpointLimit: 16`) et vérifié en
+  **préflight** : compte saturé → `WEBHOOK_REMOTE_LIMIT_REACHED`, et **aucune
+  création tentée**. L'index unique garantit *un* endpoint par compte et par
+  monde, quel que soit le nombre de projets — c'est la réponse au risque.
+- **Brevo** — le lot L8 a publié `brevo/brevoEventMapping.js` **pour** L5 ;
+  ce lot le **consomme** (liste d'événements, comparaison canonique, clé
+  d'idempotence composite, réponses « liste vide » déguisées en 404). Aucun
+  fichier métier Brevo n'a été modifié.
+- **Tests** — `tests/webhook-control-plane.test.js`, 180 assertions, aucun
+  appel réseau (`fetchImpl` injecté).
+- **Migration** — les endpoints SB Auto restent en place et continuent de
+  recevoir. Deux endpoints coexistent volontairement pendant L6/L7/L8.
 - **Rollback** — désactiver l'endpoint Panel chez le fournisseur ; SB Auto
-  continue de recevoir.
-- **Risque** — **moyen.** Le plafond Stripe de 16 endpoints doit être vérifié
-  **avant** de créer le nouveau. Prévoir un inventaire des endpoints existants
-  en préflight.
-- **GO** — un événement Stripe de test atteint le Panel, est vérifié,
-  normalisé, journalisé, et l'endpoint SB Auto reçoit toujours le sien.
+  continue de recevoir. Aucun chemin métier n'a bougé.
+- **RESTE À FAIRE pour clore le GO** — un événement Stripe **réel** de test
+  atteignant un Panel déployé (impossible sans compte et sans domaine public en
+  recette). Le chemin complet est éprouvé en simulation fidèle, de la signature
+  jusqu'à l'index d'idempotence, y compris par la vraie route HTTP.
 
 ---
 

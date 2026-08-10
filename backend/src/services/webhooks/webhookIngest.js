@@ -1,0 +1,170 @@
+// RÉCEPTION D'UN ÉVÉNEMENT FOURNISSEUR — vérifier, dédupliquer, journaliser.
+//
+// docs/architecture/WEBHOOK_CONTROL_PLANE.md §« Endpoint entrant ».
+//
+// ── L'ORDRE EST LA SÉCURITÉ ─────────────────────────────────────────────────
+//
+//   1. le SEGMENT d'URL désigne le fournisseur          (sans ambiguïté)
+//   2. l'ENVIRONNEMENT est celui de l'instance          (jamais le corps)
+//   3. le BINDING du plan de contrôle désigne la suite  (jamais le corps)
+//   4. la SIGNATURE est vérifiée sur les octets bruts   (avant tout parse utile)
+//   5. l'IDEMPOTENCE tranche                            (index unique, pas findOne)
+//   6. on JOURNALISE, et on s'arrête là
+//
+// ── CE QUE LE CORPS NE DÉCIDE JAMAIS ────────────────────────────────────────
+//
+// Ni le projet destinataire, ni l'environnement, ni le fournisseur. Un webhook
+// est une entrée NON AUTHENTIFIÉE tant que sa signature n'est pas vérifiée, et
+// même vérifiée, il vient du fournisseur — pas de notre plan de contrôle. Un
+// `projectId` glissé dans une charge utile ne doit désigner personne : c'est
+// exactement le chemin par lequel un tiers ferait router ses événements vers le
+// projet de son choix.
+//
+// Le routage vient du BINDING, c'est-à-dire d'un enregistrement que le Panel a
+// écrit lui-même en réconciliant. Rien d'autre.
+//
+// ── OÙ S'ARRÊTE CE LOT ──────────────────────────────────────────────────────
+//
+// À l'étape 6. Aucune traduction en verbe métier, aucun dispatch vers une
+// capacité, aucun appel à un projet. L5 pose la primitive ; L6/L7/L8 la
+// consommeront. Écrire ici la table `checkout.session.completed →
+// PAYMENT_SUCCEEDED` reviendrait à faire L6 sous un autre nom.
+import logger from '../../utils/logger.js';
+import { nowIso } from '../../bridge/bridgeContract.js';
+import PanelIntegratedApiWebhookBinding from '../../models/PanelIntegratedApiWebhookBinding.model.js';
+import PanelProviderWebhookEvent, {
+  WEBHOOK_EVENT_STATUS,
+} from '../../models/PanelProviderWebhookEvent.model.js';
+import { runtimeEnvironment } from '../integratedApi/environment.js';
+import { capabilityByCallbackSlug } from './webhookRegistry.js';
+import { loadVerificationSecrets } from './webhookSecrets.js';
+import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './webhookSignature.js';
+import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
+
+/** Issues d'une réception. Traduites en statut HTTP par le contrôleur. */
+export const INGEST_OUTCOME = Object.freeze({
+  ACCEPTED: 'ACCEPTED',
+  DUPLICATE: 'DUPLICATE',
+  UNKNOWN_PROVIDER: 'UNKNOWN_PROVIDER',
+  NO_BINDING: 'NO_BINDING',
+  REJECTED: 'REJECTED',
+});
+
+/**
+ * Traite un appel entrant.
+ *
+ * @param {object} args
+ * @param {string} args.slug      segment d'URL — la SEULE désignation du provider
+ * @param {Buffer} args.rawBody   octets reçus, non reparsés
+ * @param {object} args.headers
+ * @returns {Promise<{outcome: string, provider: string|null, duplicate: boolean, code: string|null}>}
+ *
+ * NE LÈVE PAS : un endpoint public qui lève produit une 500, et une 500 fait
+ * rejouer le fournisseur en boucle. Toute issue est une valeur de retour.
+ */
+export async function ingestProviderEvent({ slug, rawBody, headers, environment = runtimeEnvironment() } = {}) {
+  const capability = capabilityByCallbackSlug(slug);
+  if (!capability) {
+    return {
+      outcome: INGEST_OUTCOME.UNKNOWN_PROVIDER,
+      provider: null,
+      duplicate: false,
+      code: WEBHOOK_DIAGNOSTIC.WEBHOOK_PROVIDER_UNKNOWN,
+    };
+  }
+  const provider = capability.provider;
+
+  // ── LE ROUTAGE VIENT DU PLAN DE CONTRÔLE ────────────────────────────────
+  // Pas de binding = le Panel n'a jamais enregistré d'endpoint pour ce couple.
+  // Accepter quand même reviendrait à traiter des événements dont on ne peut
+  // pas dire d'où ils viennent.
+  const binding = await PanelIntegratedApiWebhookBinding.findOne({ provider, environment }).lean();
+  if (!binding) {
+    logger.warn(`[webhooks] ${provider}/${environment} : appel entrant sans binding connu — refusé.`);
+    return {
+      outcome: INGEST_OUTCOME.NO_BINDING,
+      provider,
+      duplicate: false,
+      code: WEBHOOK_DIAGNOSTIC.WEBHOOK_BINDING_UNKNOWN,
+    };
+  }
+
+  // ── VÉRIFICATION, SUR LES OCTETS ────────────────────────────────────────
+  const secrets = await loadVerificationSecrets(provider, environment);
+  const signature = verifyWebhookSignature(capability, { rawBody, headers, secrets });
+  if (!signature.verified) {
+    // Le motif est journalisé, jamais renvoyé : distinguer « mauvaise
+    // signature » de « secret absent » côté appelant renseignerait un attaquant
+    // sur l'état de notre configuration.
+    logger.warn(`[webhooks] ${provider}/${environment} : appel refusé (${signature.reason}).`);
+    return {
+      outcome: INGEST_OUTCOME.REJECTED,
+      provider,
+      duplicate: false,
+      code: WEBHOOK_DIAGNOSTIC.WEBHOOK_SIGNATURE_REJECTED,
+    };
+  }
+
+  const parsed = parseJsonBody(rawBody);
+  const identity = extractEventIdentity(capability, { rawBody, parsed, environment });
+
+  // ── IDEMPOTENCE — c'est l'INDEX qui tranche ─────────────────────────────
+  // Un `findOne` préalable laisserait passer deux livraisons concurrentes du
+  // même événement : toutes deux le trouveraient absent. Seule la contrainte
+  // unique arbitre, et son refus EST la preuve du doublon.
+  let duplicate = false;
+  try {
+    await PanelProviderWebhookEvent.create({
+      provider,
+      environment,
+      providerEventId: identity.providerEventId,
+      bindingId: binding.bindingId,
+      eventType: identity.eventType,
+      payloadHash: identity.payloadHash,
+      signatureVerified: signature.proven,
+      status: WEBHOOK_EVENT_STATUS.RECEIVED,
+      receivedAt: nowIso(),
+    });
+  } catch (err) {
+    if (err?.code === 11000) duplicate = true;
+    else {
+      // Une panne de persistance n'est pas un refus : on ne peut pas garantir
+      // l'unicité, donc on ne confirme pas. Le fournisseur rejouera.
+      logger.error(`[webhooks] ${provider}/${environment} : enregistrement impossible — ${err?.message ?? 'erreur inconnue'}.`);
+      return {
+        outcome: INGEST_OUTCOME.REJECTED,
+        provider,
+        duplicate: false,
+        code: WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_ERROR,
+      };
+    }
+  }
+
+  await PanelIntegratedApiWebhookBinding.updateOne(
+    { bindingId: binding.bindingId },
+    {
+      $set: {
+        lastEventAt: nowIso(),
+        lastEventType: identity.eventType,
+        updatedAt: nowIso(),
+      },
+      $inc: duplicate ? { duplicatesIgnored: 1 } : { eventsReceived: 1 },
+    },
+  );
+
+  // ── FIN DE L5 ───────────────────────────────────────────────────────────
+  // L'événement est vérifié, unique et daté. Le dispatch vers une capacité
+  // projet appartient aux lots provider. Le point d'accroche est ici, et il
+  // est volontairement vide.
+  return {
+    outcome: duplicate ? INGEST_OUTCOME.DUPLICATE : INGEST_OUTCOME.ACCEPTED,
+    provider,
+    environment,
+    duplicate,
+    eventType: identity.eventType,
+    proven: signature.proven,
+    code: null,
+  };
+}
+
+export default { ingestProviderEvent, INGEST_OUTCOME };

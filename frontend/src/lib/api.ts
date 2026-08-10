@@ -23,7 +23,7 @@ import type {
 } from '@/types.company';
 import type {
   CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
-  ValidatedCredentialSet,
+  ValidatedCredentialSet, WebhookStateView,
 } from '@/types.integratedApi';
 import type {
   DeploymentOverview, DeploymentRun, DeploymentTarget, DestinationInspection, PanelSelfInfo,
@@ -676,6 +676,31 @@ export const integratedApis = {
       method: 'POST',
       body: { environment },
     }),
+};
+
+/**
+ * PLAN DE CONTRÔLE WEBHOOK (L5) — état, dérive, et réconciliation.
+ *
+ * `environment` n'est JAMAIS un paramètre : le backend le résout depuis son
+ * propre runtime. Le laisser choisir au navigateur rouvrirait exactement la
+ * porte que la doctrine d'environnement ferme.
+ */
+export const webhookControlPlane = {
+  /** L'état de tous les fournisseurs. Aucun appel distant, aucune écriture. */
+  list: () => request<{ environment: IntegratedApiEnvironment; items: WebhookStateView[] }>(
+    '/api/webhook-control-plane',
+  ),
+
+  get: (provider: string) => request<WebhookStateView>(`/api/webhook-control-plane/${provider}`),
+
+  /**
+   * ÉCRITURE chez le fournisseur — DEV uniquement, côté backend.
+   * Elle crée, met à jour ou retire un endpoint sur un compte réel.
+   */
+  reconcile: (provider?: string) => request<Record<string, unknown>>(
+    provider ? `/api/webhook-control-plane/${provider}/reconcile` : '/api/webhook-control-plane/reconcile',
+    { method: 'POST' },
+  ),
 };
 
 /**

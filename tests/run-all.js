@@ -41,6 +41,10 @@ const TESTS = [
   // L1.75 — l'ouverture commerciale : « cette action réelle est-elle
   // autorisée ? », posée séparément de « quel monde fournisseur ? ».
   'commercial-readiness.test.js',
+  // L5 — la fondation webhook : le Panel possède ses endpoints, sait ce que
+  // le fournisseur expose vraiment, et ne supprime que ce qu'il prouve avoir
+  // créé. Le secret ne sort du coffre par aucune porte.
+  'webhook-control-plane.test.js',
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',
