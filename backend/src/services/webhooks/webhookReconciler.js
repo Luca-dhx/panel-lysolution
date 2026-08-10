@@ -51,7 +51,10 @@ import { descriptionFor, mintOwnershipToken, partitionRemote, mayDelete } from '
 import {
   loadProviderCredentials,
   hasWebhookSecret,
-  storeWebhookSecret,
+  rotateWebhookSecret,
+  purgeExpiredPreviousSecret,
+  isRotationWindowOpen,
+  generateSharedSecret,
   secretToSupplyAtCreation,
 } from './webhookSecrets.js';
 import {
@@ -364,7 +367,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
         outcome.severity = severityFor(provider, outcome.status);
         return outcome;
       }
-      const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider });
+      const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding });
       outcome.created = true;
       outcome.secretCaptured = created.secretCaptured;
       secretPresent = secretPresent || created.secretCaptured;
@@ -384,7 +387,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
             'Endpoint présent, secret de vérification absent : recréation nécessaire, non demandée.',
           );
         }
-        const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider });
+        const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding });
         outcome.created = true;
         outcome.secretCaptured = created.secretCaptured;
         secretPresent = created.secretCaptured;
@@ -393,6 +396,29 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
           outcome.deleted += 1;
         }
         owned = owned.filter((w) => String(w.id) !== String(keeper.id));
+      } else if (!secretPresent && capability.secretDelivery === SECRET_DELIVERY.CALLER_SUPPLIED) {
+        /**
+         * Cas C du §Secrets : c'est NOUS qui posons le jeton.
+         *
+         * L'endpoint n'a donc pas besoin d'être recréé — il suffit de lui
+         * en poser un neuf. Sans cette branche, un jeton Brevo perdu laissait
+         * le binding en WARNING pour toujours, et TOUS les appels entrants
+         * étaient refusés : un webhook vivant chez le fournisseur, sourd chez
+         * nous, et rien pour le réparer.
+         */
+        if (!allowCreate) {
+          return fail(
+            WEBHOOK_DIAGNOSTIC.WEBHOOK_SIGNATURE_CONFIGURATION_INVALID,
+            'Endpoint présent, jeton de vérification absent : rotation nécessaire, non demandée.',
+          );
+        }
+        await rotateSecretOnEndpoint({
+          adapter, ctx, capability, desired, environment, provider, binding, remoteId: keeper.id,
+        });
+        outcome.updated = true;
+        outcome.secretRotated = true;
+        secretPresent = true;
+        await patchBinding(binding.bindingId, { remoteWebhookId: String(keeper.id) });
       } else {
         const drift = computeDrift(keeper, desired, capability);
         if (drift.length) {
@@ -455,10 +481,34 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
         : {}),
     });
 
+    // ── 10. HYGIÈNE — le secret retiré ne survit pas à sa fenêtre ────────
+    //
+    // Un secret qu'on n'accepte plus n'a aucune raison de rester en base. La
+    // purge est ici, dans le passage régulier, plutôt que dans une tâche
+    // planifiée : le réconciliateur passe déjà, et un mécanisme de moins est
+    // un mécanisme de moins à surveiller.
+    const rotated = await PanelIntegratedApiWebhookBinding
+      .findOne({ bindingId: binding.bindingId }).select('secretRotatedAt').lean();
+    const purge = await purgeExpiredPreviousSecret(provider, environment, {
+      rotatedAt: rotated?.secretRotatedAt ?? null,
+    }).catch(() => ({ purged: false }));
+    if (purge.purged) {
+      await patchBinding(binding.bindingId, { secretRotatedAt: null });
+      logger.info(`[webhooks] ${provider}/${environment} : fenêtre de rotation close, secret retiré effacé.`);
+    }
+
+    // ── 11. NOTRE URL RÉPOND-ELLE ? Diagnostic, jamais un verdict ────────
+    const reachability = await probeCallbackReachability(capability, desired.url, ctx.fetchImpl);
+    await patchBinding(binding.bindingId, {
+      callbackReachable: reachability.reachable,
+      callbackCheckedAt: nowIso(),
+    });
+
     outcome.status = status;
     outcome.drift = drift;
     outcome.remoteWebhookId = keeper?.id ?? null;
     outcome.secretConfigured = secretPresent;
+    outcome.callbackReachable = reachability.reachable;
     outcome.severity = severityFor(provider, status);
     return outcome;
   } catch (err) {
@@ -485,15 +535,27 @@ function pickKeeper(owned, desired, capability) {
  * de rendre la main garantit qu'un crash immédiatement après ne laisse jamais
  * un endpoint vivant que nous serions incapables de vérifier.
  */
-async function createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider }) {
+async function createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding }) {
   const supplied = secretToSupplyAtCreation(capability);
   const result = await adapter.create(ctx, { ...desired, environment, secret: supplied });
 
   let secretCaptured = false;
   const secret = result?.secret ?? supplied;
   if (secret) {
-    await storeWebhookSecret(provider, environment, secret);
+    /**
+     * ROTATION, PAS ÉCRASEMENT — même lors d'une recréation.
+     *
+     * L'ancien endpoint n'est retiré qu'APRÈS celui-ci, et les deux portent la
+     * MÊME URL. Entre les deux, des événements signés de l'ANCIEN secret
+     * arrivent donc encore chez nous. Écraser le secret ici les rejetterait
+     * tous ; les faire reculer d'un cran les sauve, pour le temps borné de la
+     * fenêtre.
+     */
+    const outcome = await rotateWebhookSecret(provider, environment, secret);
     secretCaptured = true;
+    if (outcome.rotated && binding?.bindingId) {
+      await patchBinding(binding.bindingId, { secretRotatedAt: outcome.at });
+    }
   }
 
   logger.info(
@@ -501,6 +563,54 @@ async function createOwnedEndpoint({ adapter, ctx, capability, desired, environm
     + `${secretCaptured ? ', secret capturé' : ', AUCUN secret rendu'}.`,
   );
   return { id: result?.id ?? null, secretCaptured };
+}
+
+/**
+ * Pose un jeton NEUF sur un endpoint existant — sans le recréer.
+ *
+ * Réservé aux fournisseurs qui acceptent que nous posions le secret
+ * (`CALLER_SUPPLIED`). L'ordre est imposé par ce qu'on ne veut pas perdre :
+ * le fournisseur accepte d'abord le nouveau jeton, et seulement ensuite le
+ * coffre bascule. Si l'appel distant échoue, rien n'a bougé chez nous et
+ * l'ancien jeton continue de vérifier les appels — l'inverse nous laisserait
+ * avec un secret que le fournisseur n'utilise pas.
+ */
+async function rotateSecretOnEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, remoteId }) {
+  const secret = generateSharedSecret();
+  await adapter.update(ctx, remoteId, { ...desired, environment, secret });
+  const outcome = await rotateWebhookSecret(provider, environment, secret);
+  await patchBinding(binding.bindingId, { secretRotatedAt: outcome.at });
+  logger.info(`[webhooks] ${provider}/${environment} : jeton de webhook renouvelé sur l’endpoint existant.`);
+  return outcome;
+}
+
+/**
+ * NOTRE propre URL publique répond-elle ?
+ *
+ * Aucun des trois fournisseurs n'offre d'API d'événement de test : la seule
+ * sonde possible est la nôtre. Sans elle, « aucun événement reçu » ne se
+ * distingue pas de « le tunnel est tombé », et le diagnostic tourne en rond.
+ *
+ * Volontairement SANS conséquence sur le statut : un réseau qui hoquette n'est
+ * pas une dérive de configuration, et confondre les deux ferait chercher au
+ * mauvais endroit. Ne lève jamais.
+ */
+async function probeCallbackReachability(capability, callbackUrl, fetchImpl) {
+  if (!callbackUrl) return { reachable: null };
+  const impl = fetchImpl ?? globalThis.fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await impl(`${callbackUrl.replace(/\/+$/, '')}/health`, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+    return { reachable: response?.ok === true };
+  } catch {
+    return { reachable: false };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -623,6 +733,15 @@ export async function describeWebhookState(provider, { environment = runtimeEnvi
     drift: binding?.drift ?? [],
     /** Un booléen. Jamais le secret, jamais son masque, jamais son empreinte. */
     secretConfigured: Boolean(binding?.secretConfigured),
+    /**
+     * La fenêtre de rotation est-elle ouverte ? Un booléen et une date — jamais
+     * l'ancien secret, ni sa longueur, ni son empreinte.
+     */
+    secretRotationOpen: isRotationWindowOpen(capability, binding?.secretRotatedAt ?? null),
+    secretRotatedAt: binding?.secretRotatedAt ?? null,
+    /** Notre propre URL répond-elle ? `null` = jamais sondée. */
+    callbackReachable: binding?.callbackReachable ?? null,
+    callbackCheckedAt: binding?.callbackCheckedAt ?? null,
     lastCheckedAt: binding?.lastCheckedAt ?? null,
     lastReconciledAt: binding?.lastReconciledAt ?? null,
     lastError: binding?.lastErrorCode

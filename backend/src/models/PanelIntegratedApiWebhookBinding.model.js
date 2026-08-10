@@ -100,6 +100,28 @@ const webhookBindingSchema = new mongoose.Schema(
      */
     secretConfigured: { type: Boolean, default: false },
 
+    /**
+     * QUAND le secret a été remplacé pour la dernière fois.
+     *
+     * Une DATE, pas un secret : c'est elle qui borne la fenêtre pendant
+     * laquelle l'ancien jeton reste accepté. La stocker ici plutôt que dans le
+     * coffre est délibéré — un horodatage n'est pas une valeur confidentielle,
+     * et le mêler aux secrets obligerait à déchiffrer pour lire une date.
+     */
+    secretRotatedAt: { type: String, default: null },
+
+    /**
+     * NOTRE PROPRE URL RÉPOND-ELLE ?
+     *
+     * Aucun des trois fournisseurs n'offre d'API d'événement de test (audit
+     * L8, exigence nº10). Sans cette sonde, « aucun événement reçu » est
+     * indiscernable de « le tunnel est tombé », et le diagnostic tourne en
+     * rond. Purement informatif : il ne change JAMAIS le statut du binding —
+     * un réseau qui hoquette n'est pas une dérive de configuration.
+     */
+    callbackReachable: { type: Boolean, default: null },
+    callbackCheckedAt: { type: String, default: null },
+
     lastCheckedAt: { type: String, default: null },
     lastReconciledAt: { type: String, default: null },
     lastErrorCode: { type: String, default: null },

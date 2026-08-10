@@ -41,6 +41,10 @@ const TESTS = [
   // L1.75 — l'ouverture commerciale : « cette action réelle est-elle
   // autorisée ? », posée séparément de « quel monde fournisseur ? ».
   'commercial-readiness.test.js',
+  // L8 — la connaissance Brevo : deux vocabulaires d'événements pour un seul
+  // sens, quatre champs de date pour deux unités, et cinq objets qu'on
+  // confondait. Enregistré ici en L5.1 — il était livré mais jamais exécuté.
+  'brevo-control-plane.test.js',
   // L5 — la fondation webhook : le Panel possède ses endpoints, sait ce que
   // le fournisseur expose vraiment, et ne supprime que ce qu'il prouve avoir
   // créé. Le secret ne sort du coffre par aucune porte.

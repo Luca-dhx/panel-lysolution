@@ -77,22 +77,48 @@ export async function hasWebhookSecret(provider, environment) {
 }
 
 /**
- * Le secret EN CLAIR — pour la vérification d'un appel entrant, et rien d'autre.
+ * Les secrets EN CLAIR acceptables MAINTENANT — pour vérifier un appel entrant.
  *
- * Rendu sous forme de LISTE de candidats. Aujourd'hui elle en contient zéro ou
- * un ; la forme prépare la fenêtre de rotation (accepter l'ancien secret le
- * temps que les événements en vol se vident) sans que la vérification n'ait à
- * changer de signature le jour où on l'ouvrira.
+ * ── POURQUOI UNE LISTE, ET PAS UNE VALEUR ───────────────────────────────────
+ *
+ * Le jour où le secret change, des événements sont DÉJÀ EN VOL : produits par
+ * le fournisseur avant la rotation, livrés après, signés de l'ancien secret.
+ * Les refuser en 401 les perd définitivement — aucun fournisseur ne rejoue un
+ * événement qu'il croit livré-et-refusé pour de bon.
+ *
+ * L'ancien secret reste donc accepté pendant `secretRotationWindowMs`, et pas
+ * une seconde de plus : la fenêtre est bornée par `rotatedAt`, jamais ouverte
+ * « en attendant ».
+ *
+ * @param {object} [options]
+ * @param {string|null} [options.rotatedAt]  horodatage ISO de la rotation
+ * @param {number} [options.now]             injectable pour la recette
  */
-export async function loadVerificationSecrets(provider, environment) {
+export async function loadVerificationSecrets(provider, environment, { rotatedAt = null, now = Date.now() } = {}) {
   const capability = webhookCapability(provider);
   if (!capability?.secretRole) return [];
   const document = await findCredentialSet(provider, environment);
   const stored = toPlainObject(document?.credentialsEncrypted);
   if (!stored[capability.secretRole]?.encrypted) return [];
+
   const values = decryptCredentialSet(provider, document.credentialsEncrypted, { environment });
-  const secret = values[capability.secretRole];
-  return secret ? [secret] : [];
+  const current = values[capability.secretRole];
+  if (!current) return [];
+
+  const previous = capability.secretPreviousRole ? values[capability.secretPreviousRole] : null;
+  if (!previous || !isRotationWindowOpen(capability, rotatedAt, now)) return [current];
+
+  // L'ordre compte pour la lisibilité, pas pour la sécurité : les deux sont
+  // comparés à temps constant, et le premier qui correspond gagne.
+  return current === previous ? [current] : [current, previous];
+}
+
+/** La fenêtre de tolérance est-elle encore ouverte ? Fermée par défaut. */
+export function isRotationWindowOpen(capability, rotatedAt, now = Date.now()) {
+  if (!rotatedAt) return false;
+  const started = Date.parse(rotatedAt);
+  if (!Number.isFinite(started)) return false;
+  return now - started < (capability?.secretRotationWindowMs ?? 0);
 }
 
 /**
@@ -156,6 +182,102 @@ export async function storeWebhookSecret(provider, environment, secret) {
 }
 
 /**
+ * ROTATION — le nouveau secret prend la place, l'ancien recule d'un cran.
+ *
+ * ── CE QUE CETTE FONCTION GARANTIT ──────────────────────────────────────────
+ *
+ * À aucun instant le Panel ne perd la capacité de vérifier un appel : l'ancien
+ * secret est écrit AVANT que le nouveau ne le remplace, dans la même écriture.
+ * Un processus tué au milieu laisse donc soit l'ancien état complet, soit le
+ * nouveau — jamais un coffre sans secret du tout.
+ *
+ * L'appelant est responsable d'horodater la rotation sur le binding
+ * (`secretRotatedAt`) : c'est cette date qui referme la fenêtre. Sans elle, la
+ * fenêtre reste FERMÉE — le défaut sûr.
+ *
+ * @returns {Promise<{role: string, rotated: boolean, at: string}>}
+ *   `rotated: false` = première pose, il n'y avait rien à faire reculer.
+ */
+export async function rotateWebhookSecret(provider, environment, secret) {
+  const capability = webhookCapability(provider);
+  const definition = getProviderDefinition(provider);
+  if (!capability?.secretRole || !definition) {
+    throw new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_UNSUPPORTED,
+      `Aucun rôle de secret déclaré pour ${provider}.`,
+    );
+  }
+  if (!secret) {
+    throw new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_SIGNATURE_CONFIGURATION_INVALID,
+      `Rotation refusée pour ${provider} : un secret vide ne vérifie rien.`,
+    );
+  }
+
+  const existing = await findCredentialSet(provider, environment);
+  const stored = toPlainObject(existing?.credentialsEncrypted);
+  const hadCurrent = Boolean(stored[capability.secretRole]?.encrypted);
+
+  const values = { [capability.secretRole]: secret };
+  if (hadCurrent && capability.secretPreviousRole) {
+    // On déplace la valeur CHIFFRÉE telle quelle plutôt que de la déchiffrer
+    // pour la rechiffrer : moins de manipulations en clair, moins d'occasions
+    // de la laisser traîner dans une variable.
+    stored[capability.secretPreviousRole] = { ...stored[capability.secretRole] };
+  }
+
+  const { stored: next } = encryptCredentialValues({
+    provider: definition.code,
+    current: stored,
+    values,
+    environment,
+    actor: 'WEBHOOK_CONTROL_PLANE',
+  });
+
+  const at = nowIso();
+  await PanelIntegratedApiCredentialSet.updateOne(
+    { provider: definition.code, environment, projectId: null },
+    {
+      $set: { credentialsEncrypted: next, updatedAt: at },
+      $setOnInsert: {
+        credentialSetId: `${definition.code}-${environment}-webhook`,
+        scope: definition.scope,
+        createdAt: at,
+      },
+    },
+    { upsert: true },
+  );
+
+  return { role: capability.secretRole, rotated: hadCurrent, at };
+}
+
+/**
+ * Efface le secret retiré une fois la fenêtre close.
+ *
+ * Un secret qu'on n'accepte plus n'a AUCUNE raison de rester en base : le
+ * garder n'ajoute qu'une valeur à protéger. L'effacement est idempotent, et
+ * rendu `false` quand il n'y avait rien à faire.
+ */
+export async function purgeExpiredPreviousSecret(provider, environment, { rotatedAt = null, now = Date.now() } = {}) {
+  const capability = webhookCapability(provider);
+  if (!capability?.secretPreviousRole) return { purged: false };
+  if (isRotationWindowOpen(capability, rotatedAt, now)) return { purged: false };
+
+  const document = await findCredentialSet(provider, environment);
+  const stored = toPlainObject(document?.credentialsEncrypted);
+  if (!stored[capability.secretPreviousRole]) return { purged: false };
+
+  await PanelIntegratedApiCredentialSet.updateOne(
+    { provider: capability.provider, environment, projectId: null },
+    {
+      $unset: { [`credentialsEncrypted.${capability.secretPreviousRole}`]: '' },
+      $set: { updatedAt: nowIso() },
+    },
+  );
+  return { purged: true };
+}
+
+/**
  * Frappe un jeton partagé pour un fournisseur qui n'en fournit pas (cas C).
  *
  * 32 octets aléatoires en base64url : assez long pour qu'une comparaison à
@@ -182,7 +304,10 @@ export default {
   loadProviderCredentials,
   hasWebhookSecret,
   loadVerificationSecrets,
+  isRotationWindowOpen,
   storeWebhookSecret,
+  rotateWebhookSecret,
+  purgeExpiredPreviousSecret,
   generateSharedSecret,
   secretToSupplyAtCreation,
 };

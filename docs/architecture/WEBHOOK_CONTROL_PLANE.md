@@ -208,9 +208,42 @@ n'est pas « on s'en fiche » — la **gravité** module l'alerte :
 | **Brevo** | `WARNING` | perdre un événement de délivrabilité dégrade le suivi, jamais un état métier. |
 | **Hostinger** | — | sans objet. |
 
-La réconciliation est déclenchée **après** l'ouverture du port d'écoute, et
-**détachée** : enregistrer une callback avant d'écouter publierait une adresse
-morte, et certains fournisseurs désactivent un endpoint qui échoue trop souvent.
+### 8.1 Quand la réconciliation se déclenche — et pourquoi pas ailleurs
+
+Deux déclencheurs, **et seulement deux** :
+
+1. **Au démarrage**, après l'ouverture du port et détachée. Enregistrer une
+   callback avant d'écouter publierait une adresse morte, et certains
+   fournisseurs désactivent un endpoint qui échoue trop souvent.
+2. **Quand l'adresse publique du Panel change** — `PUT /api/system-configuration/network`,
+   et uniquement si `backendUrl` a réellement changé.
+
+Le second existe parce que c'est le **seul** cas où la callback devient
+obsolète sans redémarrage. Sans lui, les fournisseurs continueraient d'appeler
+l'ancien domaine jusqu'au prochain boot — dans le silence.
+
+**Pourquoi PAS de crochet dans le pipeline de déploiement.** Ce pipeline
+déploie des *projets* ; son étape `runtimeConfig` écrit les URLs de la
+*destination*, qui n'ont aucun rapport avec la callback du Panel. Un crochet
+posé là se serait déclenché à chaque mise en ligne de projet, sans raison. Et
+lorsque le Panel se déploie **lui-même**, il redémarre : le déclencheur nº1
+couvre déjà ce cas. Ajouter une troisième exécution n'aurait rien couvert de
+plus, tout en donnant l'illusion d'une garantie supplémentaire.
+
+Le crochet nº2 est détaché : un fournisseur indisponible ne doit pas empêcher
+un opérateur de corriger l'adresse de son Panel — ce serait refuser la
+réparation à cause de la panne qu'elle répare.
+
+### 8.2 Joignabilité — le seul test possible
+
+Aucun des trois fournisseurs n'offre d'API d'événement de test. La seule sonde
+disponible est **la nôtre** : le réconciliateur appelle
+`<callback>/health` et enregistre `callbackReachable`.
+
+C'est un **constat, jamais un verdict** : il ne change pas le statut du
+binding. Un réseau qui hoquette n'est pas une dérive de configuration, et
+confondre les deux ferait chercher au mauvais endroit. Mais sans lui, « aucun
+événement reçu » et « le tunnel est tombé » se ressemblent trop.
 
 ---
 
@@ -261,10 +294,40 @@ connus (`sk_*`, `whsec_*`, `pk_*`, `xkeysib-*`, `Bearer …`) de tout message
 avant journalisation. La première barrière reste de ne jamais y mettre un
 secret.
 
-**Rotation.** `verifyWebhookSignature()` accepte une **liste** de secrets
-candidats. Elle en contient un aujourd'hui ; la forme prépare la fenêtre de
-rotation (accepter l'ancien secret le temps que les événements en vol se
-vident) sans changer de signature le jour où on l'ouvrira. Voir §12.
+### 10.1 Rotation — changer de secret sans perdre un événement
+
+Le jour où le secret change, des événements sont **déjà en vol** : produits par
+le fournisseur avant la rotation, livrés après, signés de l'ancien secret. Les
+refuser en 401 les perd **définitivement** — aucun fournisseur ne rejoue un
+événement qu'il croit livré-et-refusé pour de bon.
+
+D'où un mécanisme **générique**, et non un cas Brevo :
+
+| Élément | Où il vit | Pourquoi là |
+|---|---|---|
+| secret courant | coffre, rôle `webhookSecret` | inchangé depuis L1 |
+| secret retiré | coffre, rôle `webhookSecretPrevious` (**`internal`**) | même protection que le courant ; `internal` = il n'apparaît dans aucun formulaire ni aucune réponse d'API — pas même comme « non configuré » |
+| date de rotation | **binding**, `secretRotatedAt` | c'est une date, pas un secret : la mêler au coffre obligerait à déchiffrer pour lire un horodatage |
+| durée de la fenêtre | **capacité**, `secretRotationWindowMs` | Brevo : la valeur de l'audit L8 (15 min). Défaut identique ailleurs, pour la même raison |
+
+`loadVerificationSecrets()` rend `[courant]`, ou `[courant, retiré]` tant que
+`now - secretRotatedAt < secretRotationWindowMs`. **Fenêtre fermée par
+défaut** : sans horodatage, un seul secret est accepté.
+
+Deux chemins de rotation, dictés par le fournisseur :
+
+- **`CALLER_SUPPLIED` (Brevo)** — on pose un jeton neuf par un `update`, sans
+  recréer l'endpoint. L'ordre est imposé par ce qu'on ne veut pas perdre : le
+  fournisseur accepte d'abord, le coffre bascule ensuite. Si l'appel échoue,
+  rien n'a bougé et l'ancien jeton continue de vérifier.
+- **`AT_CREATION_ONLY` (Stripe, Yousign)** — le secret change en recréant
+  l'endpoint. Le nouveau et l'ancien portent **la même URL** : entre la mise en
+  coffre du nouveau secret et la disparition de l'ancien endpoint, des
+  événements signés de l'ancien secret arrivent encore. La fenêtre les sauve.
+
+Le secret retiré est **effacé** dès la fenêtre close, par le passage régulier du
+réconciliateur — pas par une tâche planifiée de plus. Ce qu'on n'accepte plus
+n'a aucune raison de rester en base. Voir §12.
 
 ---
 
@@ -298,12 +361,37 @@ Points d'accroche laissés explicitement vides :
 - **Dispatch** — `webhookIngest.js`, après l'étape 6. Un événement vérifié,
   unique et daté attend un consommateur. La table de correspondance
   (`checkout.session.completed → PAYMENT_SUCCEEDED`) appartient à L6.
-- **Rotation de secret** — `loadVerificationSecrets()` rend une liste ; il
-  suffira d'y ajouter le secret retiré et sa date de péremption, avec un rôle
-  `webhookSecretPrevious` au registre fournisseur.
-- **Crochet de déploiement** — `reconcileAllProviderWebhooks()` est appelée au
-  démarrage. L'appeler aussi après un déploiement (§8.3 de la roadmap) est une
-  ligne à ajouter dans le pipeline, sans changement de contrat.
 - **Coexistence** — les endpoints de SB Auto restent en place et continuent de
   recevoir. Deux endpoints coexistent **volontairement** pendant L6/L7/L8. Le
   retrait de celui du projet est la dernière étape de son lot, pas de celui-ci.
+
+---
+
+## 13. Le contrat avec le lot Brevo (L8)
+
+L8 possède le fournisseur, L5 possède le moteur. La frontière est un module
+déclaratif publié par L8 — `integratedApi/brevo/brevoEventMapping.js` — que L5
+**importe** et ne recopie jamais. Redéclarer ces valeurs créerait deux vérités
+destinées à diverger, et c'est le webhook qui en paierait le prix.
+
+Les douze exigences de `BREVO_CONTROL_PLANE.md §9.1`, et où elles sont tenues :
+
+| # | Exigence | Où |
+|---|---|---|
+| 1 | comparaison canonique par inclusion | capacité `compareEvents` → `compareSubscribedEvents()` |
+| 2 | `sent` jamais souscrit | `desiredEvents` = `SUBSCRIBED_EVENTS` (L8) |
+| 3 | les 13 événements | idem — aucune liste retapée |
+| 4 | liste vide déguisée en 404 | capacité `emptyListSignals`, consommée par le pilote |
+| 5 | filtre `?type=transactional` | pilote Brevo |
+| 6 | fenêtre de rotation | §10.1, fenêtre = `BREVO_WEBHOOK_FACTS.rotationWindowMs` |
+| 7 | clé d'idempotence composée | capacité `eventIdentity` → `buildEventIdentity()` |
+| 8 | quatre champs de date, deux unités | `parseEventDate()` (L8) |
+| 9 | « authentifié », jamais « vérifié » | `signatureProves: false`, repris tel quel à l'écran |
+| 10 | sonde de joignabilité | §8.2 |
+| 11 | `message-id` sous ses deux graphies | `normalizeProviderMessageId()` (L8), dans la clé |
+| 12 | jamais le secret dans l'URL | `auth: {type:'bearer'}`, jamais d'identifiants d'URL |
+
+L'exigence nº11 méritait mieux qu'une case cochée : composer la clé sur la
+graphie **brute** faisait qu'un rejeu écrit `abc@bar` au lieu de `<abc@bar>`
+produisait une clé différente — donc un événement « neuf », donc l'effet
+appliqué deux fois. Toute l'idempotence Brevo tenait à ce détail de format.

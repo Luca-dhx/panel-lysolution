@@ -26,6 +26,7 @@ import ApiError from '../../utils/ApiError.js';
 import { encryptSecret, decryptSecret } from '../../utils/panelCrypto.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import {
+  administrableRoles,
   credentialRole,
   credentialRoles,
   requiredRoleCodes,
@@ -179,7 +180,11 @@ export function maskCredentialSet(provider, credentialsEncrypted, { environment 
   const stored = toPlainObject(credentialsEncrypted);
   const view = {};
 
-  for (const role of credentialRoles(provider)) {
+  // Les rôles `internal` n'ont pas de vue — pas même « non configuré ».
+  // Annoncer leur EXISTENCE serait déjà dire quelque chose du coffre : un
+  // secret retiré et encore accepté quelques minutes n'est l'affaire de
+  // personne d'autre que du vérificateur de signature.
+  for (const role of administrableRoles(provider)) {
     const entry = stored[role.code];
     if (!entry) {
       view[role.code] = {

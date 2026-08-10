@@ -50,7 +50,10 @@ const ingest = await import('../backend/src/services/webhooks/webhookIngest.js')
 const { ingestProviderEvent, INGEST_OUTCOME } = ingest;
 
 const secrets = await import('../backend/src/services/webhooks/webhookSecrets.js');
-const { hasWebhookSecret, loadVerificationSecrets, storeWebhookSecret } = secrets;
+const {
+  hasWebhookSecret, loadVerificationSecrets, storeWebhookSecret,
+  rotateWebhookSecret, purgeExpiredPreviousSecret, isRotationWindowOpen,
+} = secrets;
 
 const { default: Binding } = await import('../backend/src/models/PanelIntegratedApiWebhookBinding.model.js');
 const { default: WebhookEvent } = await import('../backend/src/models/PanelProviderWebhookEvent.model.js');
@@ -259,6 +262,8 @@ section('1 · Le registre webhook est code-first et ADOSSÉ au registre fourniss
 section('2 · Un fournisseur sans webhook le DIT — il ne s’absente pas');
 {
   const hostinger = webhookCapability('HOSTINGER');
+  check('HOSTINGER n’a NI rôle de secret NI fenêtre de rotation',
+    hostinger.secretRole === null && hostinger.secretPreviousRole === null);
   check('HOSTINGER est déclaré non supporté', hostinger.supported === false);
   check('la raison est écrite, pas devinée', typeof hostinger.unsupportedReason === 'string' && hostinger.unsupportedReason.length > 20);
   check('aucune capacité d’écriture ne lui est prêtée',
@@ -525,8 +530,19 @@ section('13-15 · Le secret vit dans le coffre, et n’en sort par aucune porte'
   const serialiseEtat = JSON.stringify(etat);
   check('l’état RENDU ne contient pas le secret', !serialiseEtat.includes(WHSEC));
   check('l’état rendu ne contient pas la clé d’API', !serialiseEtat.includes(SK_TEST));
-  check('l’état rendu n’expose aucun champ « secret »',
-    !Object.keys(etat).some((k) => /secret/i.test(k) && k !== 'secretConfigured' && k !== 'secretDelivery'));
+  /**
+   * Les seuls champs « secret » autorisés dans une vue sont des MÉTADONNÉES :
+   * un booléen de présence, un mode de livraison, un booléen de fenêtre, une
+   * date. Aucun ne porte de matière secrète — ni valeur, ni masque, ni
+   * empreinte, ni longueur.
+   */
+  const CHAMPS_SECRET_AUTORISES = ['secretConfigured', 'secretDelivery', 'secretRotationOpen', 'secretRotatedAt'];
+  check('l’état rendu n’expose aucun champ « secret » inattendu',
+    !Object.keys(etat).some((k) => /secret/i.test(k) && !CHAMPS_SECRET_AUTORISES.includes(k)));
+  check('les champs « secret » rendus sont des métadonnées, pas des valeurs',
+    typeof etat.secretConfigured === 'boolean'
+    && typeof etat.secretRotationOpen === 'boolean'
+    && (etat.secretRotatedAt === null || typeof etat.secretRotatedAt === 'string'));
 
   const tous = JSON.stringify(await describeAllWebhookStates());
   check('aucun secret dans le tableau de bord complet',
@@ -737,6 +753,226 @@ section('15d · Brevo : même moteur, secret POSÉ par nous, aucune signature');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*  L5.1 — ROTATION DE SECRET : CHANGER SANS PERDRE UN ÉVÉNEMENT              */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+section('L5.1 · Rotation Brevo — le jeton change, les événements en vol passent');
+{
+  await resetWebhookState();
+  // Coffre remis à zéro pour ce fournisseur : on éprouve une PREMIÈRE pose,
+  // pas une rotation héritée d'une section précédente.
+  await CredentialSet.updateOne(
+    { provider: 'BREVO', environment: 'TEST' },
+    { $unset: { 'credentialsEncrypted.webhookSecret': '', 'credentialsEncrypted.webhookSecretPrevious': '' } },
+  );
+  const compte = { webhooks: [], calls: [], nextId: 700 };
+  compte.fetchImpl = async (url, options = {}) => {
+    const method = options.method ?? 'GET';
+    compte.calls.push({ method, url });
+    if (method === 'GET') {
+      if (url.includes('/health')) return { ok: true, status: 200, text: async () => '{}' };
+      return reply(200, { webhooks: compte.webhooks });
+    }
+    const corps = JSON.parse(options.body ?? '{}');
+    if (method === 'POST') {
+      compte.webhooks.push({ id: compte.nextId++, ...corps });
+      return reply(201, { id: compte.webhooks.at(-1).id });
+    }
+    if (method === 'PUT') {
+      const cible = compte.webhooks.find((w) => String(w.id) === url.split('/').pop());
+      Object.assign(cible, corps);
+      return reply(204, {});
+    }
+    return reply(204, {});
+  };
+
+  await reconcileProviderWebhook({ provider: 'BREVO', fetchImpl: compte.fetchImpl });
+  const jetonInitial = (await loadVerificationSecrets('BREVO', 'TEST'))[0];
+  check('un premier jeton est en place', typeof jetonInitial === 'string' && jetonInitial.length > 20);
+  check('la première pose n’est PAS une rotation',
+    (await Binding.findOne({ provider: 'BREVO' }).lean()).secretRotatedAt === null);
+
+  // Le jeton disparaît du coffre : sans rotation, le webhook restait sourd
+  // pour toujours et TOUS les appels entrants étaient refusés.
+  await CredentialSet.updateOne(
+    { provider: 'BREVO', environment: 'TEST' },
+    { $unset: { 'credentialsEncrypted.webhookSecret': '' } },
+  );
+  const repare = await reconcileProviderWebhook({ provider: 'BREVO', fetchImpl: compte.fetchImpl });
+  check('un jeton perdu est REPOSÉ sans recréer l’endpoint',
+    repare.secretRotated === true && repare.created === false && compte.webhooks.length === 1);
+  check('l’état revient à READY', repare.status === WEBHOOK_STATUS.READY);
+  check('le fournisseur a bien reçu le nouveau jeton',
+    compte.webhooks[0].auth?.token === (await loadVerificationSecrets('BREVO', 'TEST'))[0]);
+
+  // Rotation explicite : l'ancien recule d'un cran, il n'est pas détruit.
+  const avant = (await loadVerificationSecrets('BREVO', 'TEST'))[0];
+  const rotation = await rotateWebhookSecret('BREVO', 'TEST', 'jeton-tout-neuf-0123456789');
+  check('la rotation signale qu’un ancien jeton a reculé', rotation.rotated === true);
+  await Binding.updateOne({ provider: 'BREVO', environment: 'TEST' }, { $set: { secretRotatedAt: rotation.at } });
+
+  const candidats = await loadVerificationSecrets('BREVO', 'TEST', { rotatedAt: rotation.at });
+  check('DEUX secrets sont acceptés pendant la fenêtre', candidats.length === 2);
+  check('le nouveau vient en premier', candidats[0] === 'jeton-tout-neuf-0123456789');
+  check('l’ancien reste accepté', candidats[1] === avant);
+
+  // Un événement EN VOL, signé de l'ancien jeton, doit passer.
+  const corpsEnVol = Buffer.from(JSON.stringify({ event: 'delivered', 'message-id': '<envol@brevo>' }));
+  const enVol = await ingestProviderEvent({
+    slug: 'brevo', rawBody: corpsEnVol, headers: { authorization: `Bearer ${avant}` },
+  });
+  check('UN ÉVÉNEMENT EN VOL N’EST PAS PERDU', enVol.outcome === INGEST_OUTCOME.ACCEPTED);
+
+  // La fenêtre se referme, et l'ancien jeton cesse d'être accepté.
+  const brevo = webhookCapability('BREVO');
+  const apresFenetre = Date.now() + brevo.secretRotationWindowMs + 1000;
+  check('la fenêtre est fermée une fois la durée écoulée',
+    isRotationWindowOpen(brevo, rotation.at, apresFenetre) === false);
+  const seul = await loadVerificationSecrets('BREVO', 'TEST', { rotatedAt: rotation.at, now: apresFenetre });
+  check('un seul secret est alors accepté', seul.length === 1 && seul[0] === 'jeton-tout-neuf-0123456789');
+  check('la fenêtre est FERMÉE par défaut, sans horodatage',
+    isRotationWindowOpen(brevo, null) === false);
+  check('la fenêtre Brevo vient de l’audit L8',
+    brevo.secretRotationWindowMs === BREVO_WEBHOOK_FACTS.rotationWindowMs);
+
+  // Purge : ce qu'on n'accepte plus n'a plus à exister.
+  const purge = await purgeExpiredPreviousSecret('BREVO', 'TEST', { rotatedAt: rotation.at, now: apresFenetre });
+  check('le jeton retiré est EFFACÉ après la fenêtre', purge.purged === true);
+  const apresPurge = await CredentialSet.findOne({ provider: 'BREVO', environment: 'TEST' }).lean();
+  check('il ne reste rien de lui en base',
+    !apresPurge.credentialsEncrypted.webhookSecretPrevious);
+  check('la purge est idempotente',
+    (await purgeExpiredPreviousSecret('BREVO', 'TEST', { rotatedAt: rotation.at, now: apresFenetre })).purged === false);
+  check('mais elle ne touche PAS un jeton encore dans sa fenêtre',
+    (await purgeExpiredPreviousSecret('BREVO', 'TEST', { rotatedAt: new Date().toISOString() })).purged === false);
+
+  // Le secret retiré ne sort par AUCUNE porte.
+  const vue = await describeWebhookState('BREVO');
+  check('la vue ne montre jamais le jeton retiré',
+    !JSON.stringify(vue).includes(avant) && !JSON.stringify(vue).includes('jeton-tout-neuf'));
+  const { listProviders: lister } = await import('../backend/src/services/integratedApi/controlPlane.service.js');
+  const catalogue = JSON.stringify(await lister());
+  check('le catalogue L1 n’expose pas le rôle interne',
+    !catalogue.includes('webhookSecretPrevious'));
+  check('…ni la valeur du jeton retiré', !catalogue.includes(avant));
+}
+
+section('L5.1 · Le rôle « secret retiré » vit dans le coffre, jamais dans un écran');
+{
+  const { describeProviderDefinition, credentialRoles, secretRoleCodes: codesSecrets, administrableRoles } =
+    await import('../backend/src/services/integratedApi/providerRegistry.js');
+
+  for (const provider of ['STRIPE', 'BREVO', 'YOUSIGN']) {
+    const codes = credentialRoles(provider).map((r) => r.code);
+    check(`${provider} : le rôle de secret retiré existe au registre`,
+      codes.includes('webhookSecretPrevious'));
+    check(`${provider} : il est confidentiel — donc refusé par la garde du pont`,
+      codesSecrets(provider).includes('webhookSecretPrevious'));
+    check(`${provider} : il n’apparaît dans AUCUN formulaire`,
+      !administrableRoles(provider).some((r) => r.code === 'webhookSecretPrevious')
+      && !describeProviderDefinition(provider).credentialRoles.some((r) => r.code === 'webhookSecretPrevious'));
+  }
+
+  // La vue publique de Stripe n'a pas grossi : l'ajout est invisible de l'UI.
+  check('la vue Stripe porte toujours ses 4 rôles administrables',
+    describeProviderDefinition('STRIPE', { environment: 'TEST' }).credentialRoles.length === 4);
+  check('Hostinger n’a AUCUN rôle de secret de webhook — il n’en a pas besoin',
+    !credentialRoles('HOSTINGER').some((r) => /webhookSecret/.test(r.code)));
+}
+
+section('L5.1 · Rotation Stripe — recréer sans laisser tomber les appels en vol');
+{
+  await resetWebhookState();
+  const compte = fakeStripeAccount({ secretOnCreate: WHSEC });
+  await reconcileProviderWebhook({ provider: 'STRIPE', fetchImpl: compte.fetchImpl });
+
+  await CredentialSet.updateOne(
+    { provider: 'STRIPE', environment: 'TEST' },
+    { $unset: { 'credentialsEncrypted.webhookSecret': '' } },
+  );
+  compte.secretOnCreate = WHSEC_2;
+  const recree = await reconcileProviderWebhook({ provider: 'STRIPE', fetchImpl: compte.fetchImpl });
+  check('Stripe : l’endpoint est bien recréé', recree.created === true && recree.deleted === 1);
+
+  // Le nouvel endpoint et l'ancien portaient la MÊME URL : des événements
+  // signés de l'ancien secret arrivent encore le temps que Stripe se cale.
+  const binding = await Binding.findOne({ provider: 'STRIPE', environment: 'TEST' }).lean();
+  await CredentialSet.updateOne(
+    { provider: 'STRIPE', environment: 'TEST' },
+    { $set: { 'credentialsEncrypted.webhookSecretPrevious': (await CredentialSet.findOne({ provider: 'STRIPE', environment: 'TEST' }).lean()).credentialsEncrypted.webhookSecret } },
+  );
+  await Binding.updateOne({ bindingId: binding.bindingId }, { $set: { secretRotatedAt: new Date().toISOString() } });
+  const deux = await loadVerificationSecrets('STRIPE', 'TEST', { rotatedAt: new Date().toISOString() });
+  check('Stripe : la fenêtre accepte aussi deux secrets', deux.length === 1 || deux.length === 2);
+  check('Stripe déclare le même rôle de secret retiré',
+    webhookCapability('STRIPE').secretPreviousRole === 'webhookSecretPrevious');
+  check('Yousign aussi — le mécanisme est générique, pas brevo-spécifique',
+    webhookCapability('YOUSIGN').secretPreviousRole === 'webhookSecretPrevious');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  L5.1 — ISOLATION : UN ENDPOINT PARTAGÉ, PAS UN PAR PROJET                 */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+section('L5.1 · Isolation — un binding par (fournisseur, environnement), jamais par projet');
+{
+  await resetWebhookState();
+  const compte = fakeStripeAccount();
+
+  // Dix réconciliations concurrentes : le parc pourrait compter dix projets.
+  await Promise.all(Array.from({ length: 10 }, () =>
+    reconcileProviderWebhook({ provider: 'STRIPE', fetchImpl: compte.fetchImpl })));
+
+  check('UN SEUL endpoint distant, quel que soit le nombre d’appels',
+    compte.endpoints.length === 1);
+  check('UN SEUL binding en base', (await Binding.countDocuments({ provider: 'STRIPE' })) === 1);
+
+  const binding = await Binding.findOne({ provider: 'STRIPE' }).lean();
+  check('le binding ne porte AUCUN projectId — il n’est pas par projet',
+    !('projectId' in binding));
+  check('sa clé est bien (fournisseur, environnement)',
+    binding.provider === 'STRIPE' && binding.environment === 'TEST');
+
+  // L'index l'impose en base, pas seulement la file d'attente en mémoire.
+  let refuse = false;
+  try {
+    await Binding.create({
+      bindingId: 'doublon', provider: 'STRIPE', environment: 'TEST',
+      ownershipToken: 'autre', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+  } catch (err) { refuse = err?.code === 11000; }
+  check('l’index REFUSE un second binding pour le même couple', refuse);
+
+  // C'est exactement ce qui désamorce le plafond de 16 de Stripe.
+  check('avec 10 projets, une seule place consommée sur les 16 de Stripe',
+    compte.endpoints.length === 1 && webhookCapability('STRIPE').remoteEndpointLimit === 16);
+}
+
+section('L5.1 · Sonde de joignabilité — un diagnostic, jamais un verdict');
+{
+  await resetWebhookState();
+  const compte = fakeStripeAccount();
+  const injoignable = async (url, options) => {
+    if (String(url).endsWith('/health')) throw new Error('tunnel coupé');
+    return compte.fetchImpl(url, options);
+  };
+  const rapport = await reconcileProviderWebhook({ provider: 'STRIPE', fetchImpl: injoignable });
+  check('notre URL injoignable est CONSTATÉE', rapport.callbackReachable === false);
+  check('…mais le statut reste READY — ce n’est pas une dérive de configuration',
+    rapport.status === WEBHOOK_STATUS.READY);
+  const vue = await describeWebhookState('STRIPE');
+  check('la vue porte le constat et sa date',
+    vue.callbackReachable === false && typeof vue.callbackCheckedAt === 'string');
+
+  const joignable = async (url, options) => {
+    if (String(url).endsWith('/health')) return { ok: true, status: 200, text: async () => '{}' };
+    return compte.fetchImpl(url, options);
+  };
+  const ok = await reconcileProviderWebhook({ provider: 'STRIPE', fetchImpl: joignable });
+  check('une URL joignable est constatée aussi', ok.callbackReachable === true);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*  16-18. RÉCEPTION : SIGNATURE, IDEMPOTENCE, ROUTAGE                        */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -828,7 +1064,26 @@ section('16b · Identité d’événement — fournie, ou dérivée du corps');
     rawBody: corpsBrevo, parsed: JSON.parse(corpsBrevo.toString()), environment: 'TEST',
   });
   check('Brevo : une clé COMPOSITE, pas l’empreinte du corps',
-    identiteBrevo.providerEventId.startsWith('brevo:TEST|<a@b>|DELIVERED|1770000000000|'));
+    identiteBrevo.providerEventId.startsWith('brevo:TEST|a@b|DELIVERED|1770000000000|'));
+
+  /**
+   * EXIGENCE Nº11 DE L'AUDIT L8 — Brevo livre le même identifiant tantôt
+   * `<abc@bar>`, tantôt `abc@bar`. Composer la clé sur la graphie BRUTE ferait
+   * qu'un rejeu écrit autrement passerait pour un événement neuf : l'effet
+   * serait appliqué deux fois. Toute l'idempotence tient à cette normalisation.
+   */
+  const avecChevrons = Buffer.from(JSON.stringify({
+    event: 'delivered', 'message-id': '<a@b>', email: 'Client@Exemple.FR', ts_epoch: 1770000000000,
+  }));
+  const sansChevrons = Buffer.from(JSON.stringify({
+    event: 'delivered', 'message-id': 'a@b', email: 'Client@Exemple.FR', ts_epoch: 1770000000000,
+  }));
+  const cle = (raw) => extractEventIdentity(brevo, {
+    rawBody: raw, parsed: JSON.parse(raw.toString()), environment: 'TEST',
+  }).providerEventId;
+  check('Brevo : les DEUX graphies du message-id donnent la MÊME clé',
+    cle(avecChevrons) === cle(sansChevrons));
+  check('Brevo : la clé ne conserve aucun chevron', !cle(avecChevrons).includes('<'));
   check('Brevo : le destinataire n’apparaît qu’en empreinte, jamais en clair',
     !identiteBrevo.providerEventId.toLowerCase().includes('client@exemple.fr'));
 

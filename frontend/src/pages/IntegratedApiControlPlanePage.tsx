@@ -301,8 +301,25 @@ function WebhookPanel({ provider, supported, webhook, busy, run }: {
             // authentifie le porteur, il ne prouve pas le contenu reçu.
             : <span>jeton partagé — l’appelant est authentifié, le contenu n’est pas prouvé</span>],
           ['Secret de vérification', webhook.secretConfigured
-            ? <span>en place dans le coffre</span>
+            ? (
+              <span>
+                en place dans le coffre
+                {webhook.secretRotationOpen
+                  // Pendant la fenêtre, l'ancien secret reste accepté : le dire
+                  // évite qu'on prenne une tolérance volontaire pour un oubli.
+                  ? <span className="muted"> — rotation en cours, l’ancien reste accepté quelques minutes</span>
+                  : null}
+              </span>
+            )
             : <span className="muted">absent — les appels entrants seront refusés</span>],
+          ['Notre URL répond', webhook.callbackReachable === null || webhook.callbackReachable === undefined
+            ? <span className="muted">jamais sondée</span>
+            : webhook.callbackReachable
+              ? <span>oui — {formatDate(webhook.callbackCheckedAt ?? null)}</span>
+              // Un constat, pas un verdict : le statut du webhook ne bouge pas
+              // pour autant. Mais sans lui, « aucun événement reçu » et « le
+              // tunnel est tombé » se ressemblent trop.
+              : <span>non joignable depuis l’extérieur — {formatDate(webhook.callbackCheckedAt ?? null)}</span>],
           ['Événements souscrits', <span className="muted">{webhook.desiredEvents.length}</span>],
           ['Dernière vérification', formatDate(webhook.lastCheckedAt)],
           ['Dernière réconciliation', formatDate(webhook.lastReconciledAt)],

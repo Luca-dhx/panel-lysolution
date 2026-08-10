@@ -92,6 +92,13 @@ export const TOKEN_STRATEGIES = Object.freeze({
  *                   webhook Stripe n'est rendu qu'à la création de l'endpoint).
  *                   Jamais requis : il arrive tout seul, en L5.
  *
+ * `internal`      → le rôle vit dans le coffre, mais n'apparaît dans AUCUNE
+ *                   vue : ni formulaire, ni réponse d'API. Réservé aux valeurs
+ *                   qu'un humain ne doit ni saisir ni voir exister — le secret
+ *                   de webhook RETIRÉ, gardé quelques minutes le temps que les
+ *                   événements en vol se vident (L5.1). L'afficher n'aurait
+ *                   aucun usage et offrirait un second endroit où se tromper.
+ *
  * `defaultValue`  → proposé, pas imposé. Une valeur stockée l'emporte toujours.
  */
 function role(code, label, options = {}) {
@@ -101,6 +108,7 @@ function role(code, label, options = {}) {
     secret: options.secret !== false,
     required: options.required === true,
     autoManaged: options.autoManaged === true,
+    internal: options.internal === true,
     /** Le rôle porte-t-il une valeur différente par environnement ? */
     environmentScoped: options.environmentScoped !== false,
     /** Préfixe attendu, par environnement — détecte une clé live saisie en TEST. */
@@ -166,6 +174,14 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         prefixHint: 'whsec_',
         hint: 'Capturé automatiquement à la création de l’endpoint (L5). Stripe ne le rend qu’une fois.',
       }),
+      role('webhookSecretPrevious', 'Secret de webhook retiré', {
+        secret: true,
+        required: false,
+        autoManaged: true,
+        internal: true,
+        prefixHint: 'whsec_',
+        hint: 'Conservé quelques minutes après une rotation, le temps que les événements déjà en vol se vident.',
+      }),
       role('baseUrl', 'URL de base de l’API', {
         secret: false,
         required: false,
@@ -210,6 +226,19 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         required: false,
         hint: 'Ce n’est pas une signature : Brevo renvoie l’en-tête que nous lui donnons.',
       }),
+      /**
+       * C'est NOUS qui posons le jeton Brevo : la rotation ne recrée donc pas
+       * l'endpoint, elle le met à jour. Mais les appels DÉJÀ EN VOL portent
+       * encore l'ancien jeton — sans ce rôle, ils repartent en 401 et leurs
+       * événements sont perdus définitivement (audit L8, exigence nº6).
+       */
+      role('webhookSecretPrevious', 'Jeton de webhook retiré', {
+        secret: true,
+        required: false,
+        autoManaged: true,
+        internal: true,
+        hint: 'Accepté quelques minutes après une rotation, puis effacé.',
+      }),
       role('baseUrl', 'URL de base de l’API', {
         secret: false,
         required: false,
@@ -248,6 +277,13 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         required: false,
         autoManaged: true,
         hint: 'Rendu à la création de la souscription (L5).',
+      }),
+      role('webhookSecretPrevious', 'Secret de webhook retiré', {
+        secret: true,
+        required: false,
+        autoManaged: true,
+        internal: true,
+        hint: 'Conservé quelques minutes après une recréation, le temps que les événements en vol se vident.',
       }),
       role('baseUrl', 'URL de base de l’API', {
         secret: false,
@@ -342,6 +378,18 @@ export function secretRoleCodes(code) {
 }
 
 /**
+ * Rôles ADMINISTRABLES — ceux qu'une interface montre et qu'un humain remplit.
+ *
+ * Les rôles `internal` en sont exclus : ils vivent dans le coffre parce que le
+ * plan de contrôle en a besoin, pas parce qu'un opérateur doit les connaître.
+ * Les exposer ajouterait un champ que personne ne doit remplir — donc un
+ * champ que quelqu'un finira par remplir.
+ */
+export function administrableRoles(code) {
+  return credentialRoles(code).filter((r) => !r.internal);
+}
+
+/**
  * Valeur par défaut d'un rôle pour un environnement donné.
  * `defaultValue` peut être une chaîne (même valeur partout) ou une table par
  * environnement (Yousign, dont les hôtes diffèrent).
@@ -387,7 +435,9 @@ export function describeProviderDefinition(code, { environment = null } = {}) {
     console: definition.console,
     capabilities: [...definition.capabilities],
     environments: environmentsFor(definition.code),
-    credentialRoles: definition.credentialRoles.map((r) => ({
+    // Les rôles `internal` ne descendent JAMAIS jusqu'ici : ils n'ont pas de
+    // formulaire, donc pas de vue.
+    credentialRoles: administrableRoles(definition.code).map((r) => ({
       code: r.code,
       label: r.label,
       secret: r.secret,
@@ -417,6 +467,7 @@ export default {
   credentialRole,
   requiredRoleCodes,
   secretRoleCodes,
+  administrableRoles,
   defaultRoleValue,
   environmentsFor,
   describeProviderDefinition,

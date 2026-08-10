@@ -148,6 +148,12 @@ export interface WebhookStateView {
   remoteWebhookId?: string | null;
   drift: string[];
   secretConfigured: boolean;
+  /** Le secret retiré est-il encore accepté ? Un booléen — jamais sa valeur. */
+  secretRotationOpen?: boolean;
+  secretRotatedAt?: string | null;
+  /** Notre propre URL publique répond-elle ? `null` = jamais sondée. */
+  callbackReachable?: boolean | null;
+  callbackCheckedAt?: string | null;
   lastCheckedAt: string | null;
   lastReconciledAt: string | null;
   lastError: { code: string; message: string; at: string | null } | null;

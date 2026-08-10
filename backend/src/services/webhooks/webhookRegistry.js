@@ -47,6 +47,8 @@ import {
   buildEventIdentity as buildBrevoEventIdentity,
   parseEventDate as parseBrevoEventDate,
 } from '../integratedApi/brevo/brevoEventMapping.js';
+/** Même raison : la forme canonique d'un `message-id` appartient au lot Brevo. */
+import { normalizeProviderMessageId } from '../integratedApi/brevo/brevoTransport.js';
 
 /* -------------------------------------------------------------------------- */
 /*  VOCABULAIRE FERMÉ                                                         */
@@ -107,6 +109,17 @@ export const EVENT_ID_STRATEGIES = Object.freeze({
  * renomment leurs libellés ; traiter chaque écart d'étiquette comme une dérive
  * produirait un `update` à chaque passage, éternellement.
  */
+/**
+ * Fenêtre de tolérance par défaut après une rotation de secret.
+ *
+ * Quinze minutes : la valeur établie par l'audit Brevo (L8,
+ * `rotationWindowMs`), reprise comme défaut parce que le problème est le même
+ * partout — un fournisseur qui réessaie avec backoff peut livrer un événement
+ * plusieurs minutes après l'avoir produit. Plus court perdrait des événements ;
+ * beaucoup plus long garderait un secret retiré vivant sans raison.
+ */
+const DEFAULT_ROTATION_WINDOW_MS = 15 * 60 * 1000;
+
 function defaultCompareEvents(remoteEvents, desiredEvents) {
   const present = new Set(remoteEvents ?? []);
   if (present.has('*')) return { aligned: true, missing: [] };
@@ -153,6 +166,23 @@ function capability(code, options = {}) {
     secretDelivery: options.secretDelivery ?? SECRET_DELIVERY.NONE,
     /** Rôle du coffre Panel qui porte le secret. Vérifié contre le registre. */
     secretRole: options.secretRole ?? null,
+    /**
+     * Rôle portant le secret RETIRÉ, accepté pendant la fenêtre de rotation.
+     *
+     * Il existe pour TOUS les fournisseurs à secret, pas seulement Brevo : la
+     * fenêtre naît de la rotation elle-même, pas d'une particularité. Chez
+     * Stripe et Yousign, le secret change en recréant l'endpoint — et entre le
+     * moment où le nouveau secret est en coffre et celui où l'ancien endpoint
+     * disparaît, des événements signés de l'ancien secret arrivent sur LA MÊME
+     * URL. Sans tolérance, ils repartent en 401 et sont perdus.
+     */
+    secretPreviousRole: options.secretPreviousRole
+      ?? (options.secretRole ? `${options.secretRole}Previous` : null),
+    /**
+     * Durée pendant laquelle le secret retiré reste accepté.
+     * Pour Brevo, la valeur vient du lot L8 (`rotationWindowMs`).
+     */
+    secretRotationWindowMs: options.secretRotationWindowMs ?? DEFAULT_ROTATION_WINDOW_MS,
     /** Rôle du coffre portant la clé d'API nécessaire aux appels d'administration. */
     apiCredentialRole: options.apiCredentialRole ?? null,
     eventIdStrategy: options.eventIdStrategy ?? EVENT_ID_STRATEGIES.PAYLOAD_DIGEST,
@@ -244,13 +274,22 @@ const YOUSIGN_EVENTS = Object.freeze([
  * dans la clé, et la clé elle-même ne permet pas de le retrouver.
  */
 function brevoEventIdentity(payload, { environment }) {
-  const messageId = payload?.['message-id'] ?? payload?.messageId ?? '';
+  /**
+   * LE `message-id` EST NORMALISÉ, ET C'EST INDISPENSABLE.
+   *
+   * Brevo livre le même identifiant tantôt `<abc@bar>`, tantôt `abc@bar`
+   * (exigence nº11 de l'audit L8). Composer la clé sur la graphie BRUTE ferait
+   * qu'un rejeu écrit autrement produirait une clé différente — donc un
+   * événement « neuf », donc l'effet appliqué deux fois. Toute l'idempotence
+   * tombe sur ce détail de format.
+   */
+  const messageId = normalizeProviderMessageId(payload?.['message-id'] ?? payload?.messageId ?? '');
   const { canonical } = normalizeBrevoEvent(payload?.event ?? '');
   const recipient = payload?.email ?? payload?.to ?? '';
   if (!messageId && !canonical) return null;
   return `brevo:${buildBrevoEventIdentity({
     environment,
-    providerMessageId: String(messageId),
+    providerMessageId: messageId,
     canonicalEvent: canonical,
     occurredAt: parseBrevoEventDate(payload),
     recipientHash: recipient
@@ -314,6 +353,8 @@ export const WEBHOOK_CAPABILITIES = Object.freeze({
     },
     emptyListSignals: BREVO_WEBHOOK_FACTS.emptyListSignals,
     remoteEndpointLimit: BREVO_WEBHOOK_FACTS.remoteEndpointLimit,
+    // La fenêtre vient de l'audit L8, pas d'une valeur choisie ici.
+    secretRotationWindowMs: BREVO_WEBHOOK_FACTS.rotationWindowMs,
   }),
 
   YOUSIGN: capability('YOUSIGN', {
@@ -389,7 +430,13 @@ export function assertRegistryAlignment() {
         + `${Boolean(definition.webhookSecretReturnedAtCreationOnly)}, le descripteur dit ${cap.secretDelivery}.`,
       );
     }
-    for (const [label, roleCode] of [['secretRole', cap.secretRole], ['apiCredentialRole', cap.apiCredentialRole]]) {
+    for (const [label, roleCode] of [
+      ['secretRole', cap.secretRole],
+      // Sans ce rôle, la rotation devient impossible SANS PERTE : les
+      // événements en vol au moment du changement repartiraient en 401.
+      ['secretPreviousRole', cap.secretPreviousRole],
+      ['apiCredentialRole', cap.apiCredentialRole],
+    ]) {
       if (!roleCode) {
         problems.push(`« ${definition.code} » : ${label} est requis pour un fournisseur supporté.`);
       } else if (!credentialRole(definition.code, roleCode)) {

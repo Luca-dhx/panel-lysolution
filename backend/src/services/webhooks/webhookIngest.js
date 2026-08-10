@@ -90,7 +90,14 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   }
 
   // ── VÉRIFICATION, SUR LES OCTETS ────────────────────────────────────────
-  const secrets = await loadVerificationSecrets(provider, environment);
+  //
+  // `secretRotatedAt` vient du BINDING, pas d'une horloge locale : c'est lui
+  // qui décide si l'ancien secret est encore accepté. Un événement produit
+  // avant une rotation et livré après doit passer — sinon il est perdu, et
+  // aucun fournisseur ne le rejouera une fois refusé pour de bon.
+  const secrets = await loadVerificationSecrets(provider, environment, {
+    rotatedAt: binding.secretRotatedAt ?? null,
+  });
   const signature = verifyWebhookSignature(capability, { rawBody, headers, secrets });
   if (!signature.verified) {
     // Le motif est journalisé, jamais renvoyé : distinguer « mauvaise
