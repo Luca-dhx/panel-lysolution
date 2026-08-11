@@ -23,12 +23,14 @@
 // Le routage vient du BINDING, c'est-à-dire d'un enregistrement que le Panel a
 // écrit lui-même en réconciliant. Rien d'autre.
 //
-// ── OÙ S'ARRÊTE CE LOT ──────────────────────────────────────────────────────
+// ── OÙ S'ARRÊTE CE FICHIER ──────────────────────────────────────────────────
 //
-// À l'étape 6. Aucune traduction en verbe métier, aucun dispatch vers une
-// capacité, aucun appel à un projet. L5 pose la primitive ; L6/L7/L8 la
-// consommeront. Écrire ici la table `checkout.session.completed →
-// PAYMENT_SUCCEEDED` reviendrait à faire L6 sous un autre nom.
+// À l'étape 6, puis un ACHEMINEMENT délégué (L8.4) : l'événement vérifié et
+// unique part vers le projet qui a demandé l'envoi. La traduction en verbe
+// métier vit dans `emailDeliveryDispatch.js` — un fournisseur par module, pour
+// que la table de correspondance d'un lot n'entre jamais dans le moteur
+// générique. Écrire ici `checkout.session.completed → PAYMENT_SUCCEEDED`
+// reviendrait à faire L6 sous un autre nom.
 import logger from '../../utils/logger.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import PanelIntegratedApiWebhookBinding from '../../models/PanelIntegratedApiWebhookBinding.model.js';
@@ -40,6 +42,7 @@ import { capabilityByCallbackSlug } from './webhookRegistry.js';
 import { loadVerificationSecrets } from './webhookSecrets.js';
 import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './webhookSignature.js';
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
+import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
 
 /** Issues d'une réception. Traduites en statut HTTP par le contrôleur. */
 export const INGEST_OUTCOME = Object.freeze({
@@ -159,10 +162,31 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     },
   );
 
-  // ── FIN DE L5 ───────────────────────────────────────────────────────────
-  // L'événement est vérifié, unique et daté. Le dispatch vers une capacité
-  // projet appartient aux lots provider. Le point d'accroche est ici, et il
-  // est volontairement vide.
+  // ── ACHEMINEMENT MÉTIER (L8.4) ──────────────────────────────────────────
+  //
+  // L'événement est vérifié, unique et daté. Il peut donc partir vers le
+  // projet qui a demandé l'envoi — retrouvé par l'identifiant de message que
+  // NOUS avons persisté à l'émission, jamais par le corps du webhook.
+  //
+  // APRÈS l'idempotence, et c'est l'ordre qui compte : un rejeu du fournisseur
+  // n'arrive pas jusqu'ici, donc le journal durable du projet ne peut pas
+  // recevoir deux fois le même fait.
+  //
+  // Best-effort ASSUMÉ : un acheminement qui échoue ne doit pas faire répondre
+  // 500 à Brevo, qui rejouerait en boucle. L'événement est enregistré, il est
+  // rattrapable ; le perdre coûterait moins cher qu'une tempête de rejeux.
+  let dispatch = { dispatched: false, reason: 'DUPLICATE' };
+  if (!duplicate) {
+    dispatch = await dispatchDeliveryEvent({
+      provider,
+      environment,
+      payload: parsed,
+      eventType: identity.eventType,
+    }).catch((err) => {
+      logger.error(`[webhooks] acheminement impossible — ${err?.message ?? 'erreur inconnue'}.`);
+      return { dispatched: false, reason: 'DISPATCH_FAILED' };
+    });
+  }
   return {
     outcome: duplicate ? INGEST_OUTCOME.DUPLICATE : INGEST_OUTCOME.ACCEPTED,
     provider,
@@ -170,6 +194,9 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     duplicate,
     eventType: identity.eventType,
     proven: signature.proven,
+    /** Le projet a-t-il été prévenu, et lequel ? Diagnostic, jamais un secret. */
+    dispatched: dispatch.dispatched,
+    dispatchReason: dispatch.reason ?? null,
     code: null,
   };
 }
