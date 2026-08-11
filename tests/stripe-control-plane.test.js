@@ -344,11 +344,23 @@ section('9. RESOURCE_OWNERSHIP — fail closed tant que le lien manque');
   check('…et un identifiant d’une autre famille refusé',
     ownership.looksLikeResource(KINDS.SUBSCRIPTION, 'cus_123') === false);
 
-  // SANS résolveur : refus. C'est l'état de L6.1, et il est délibéré.
+  /**
+   * DEPUIS L6.2A, LE DÉFAUT EST LE REGISTRE.
+   *
+   * En L6.1, aucun résolveur n'existait et l'absence valait refus. Le registre
+   * fait désormais autorité — c'est `stripe-resource-ownership` qui l'éprouve,
+   * avec une base. Cette suite-ci reste SANS base : elle décrit le CONTRAT, et
+   * un contrat ne se vérifie pas en interrogeant une collection.
+   *
+   * Ce qui compte ici est donc que le résolveur reste INJECTABLE — sans quoi
+   * aucun test ne pourrait éprouver la décision sans monter une base — et que
+   * l'absence de lien vaille toujours refus.
+   */
   const sansLien = await ownership.describeResourceOwnership({
     projectId: 'projet-a', environment: 'TEST', kind: KINDS.SUBSCRIPTION, resourceId: 'sub_123',
+    lookup: async () => null,
   });
-  check('aucun résolveur → NO_BINDING', sansLien.code === CODES.NO_BINDING);
+  check('aucun lien connu → NO_BINDING', sansLien.code === CODES.NO_BINDING);
   check('…et donc refusé', sansLien.allowed === false);
 
   // AVEC un résolveur, le lien décide — et il ne vient jamais du demandeur.
@@ -380,8 +392,10 @@ section('9. RESOURCE_OWNERSHIP — fail closed tant que le lien manque');
     ownership.BINDING_ROUTES.DECLARED_BY_PROJECT.startsWith('REFUSED'));
 
   const readiness = ownership.describeBindingReadiness();
-  check('l’état d’avancement dit que rien n’est branché', readiness.available === false);
-  check('…et énumère les familles bloquées', readiness.blocks.length === 5);
+  // L6.2A a livré le registre : l'outil existe. Ce qui reste fermé l'est par
+  // absence de LIEN pour une ressource donnée, pas par absence d'outil.
+  check('le registre est disponible', readiness.available === true);
+  check('…et plus aucune famille n’est bloquée faute d’outil', readiness.blocks.length === 0);
 
   // Chaque capacité qui désigne une ressource déclare la famille attendue.
   for (const code of STRIPE_CAPABILITY_CODES) {

@@ -69,6 +69,11 @@ const TESTS = [
   'capability-gateway.test.js',
   'capability-preopening.test.js',
   'capability-gateway-e2e.test.js',
+  // L6.1/L6.2A — Stripe : la fondation financière, puis l'autorité
+  // d'appartenance qui la débloque. Aucune capacité n'est encore servie ; ces
+  // deux suites gardent les contrats et l'index qui rend le vol impossible.
+  'stripe-control-plane.test.js',
+  'stripe-resource-ownership.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.
   //

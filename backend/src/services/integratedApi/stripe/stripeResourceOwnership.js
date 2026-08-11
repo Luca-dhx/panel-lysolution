@@ -28,17 +28,22 @@
 // pas : la population est une décision de lot (§« Deux routes » ci-dessous),
 // et la choisir ici reviendrait à trancher L6.2 depuis une fondation.
 import ApiError from '../../../utils/ApiError.js';
+import {
+  STRIPE_RESOURCE_TYPES,
+  STRIPE_RESOURCE_TYPE_VALUES,
+} from '../../../models/PanelStripeResourceBinding.model.js';
+import { findBinding } from './stripeResourceBinding.js';
 
-/** Familles de ressources Stripe que le parc manipule réellement. */
-export const STRIPE_RESOURCE_KINDS = Object.freeze({
-  CUSTOMER: 'CUSTOMER',
-  CHECKOUT_SESSION: 'CHECKOUT_SESSION',
-  SUBSCRIPTION: 'SUBSCRIPTION',
-  PAYMENT_INTENT: 'PAYMENT_INTENT',
-  INVOICE: 'INVOICE',
-});
-
-export const STRIPE_RESOURCE_KIND_VALUES = Object.freeze(Object.values(STRIPE_RESOURCE_KINDS));
+/**
+ * Familles de ressources — RÉEXPORTÉES depuis le modèle de liaison (L6.2A).
+ *
+ * Elles étaient énumérées ici en L6.1, faute de modèle. Maintenant qu'il
+ * existe, deux listes auraient fini par diverger : une capacité déclarerait une
+ * famille que l'index unique ne connaîtrait pas, et le lien ne s'écrirait
+ * jamais. Le modèle fait foi.
+ */
+export const STRIPE_RESOURCE_KINDS = STRIPE_RESOURCE_TYPES;
+export const STRIPE_RESOURCE_KIND_VALUES = STRIPE_RESOURCE_TYPE_VALUES;
 
 /**
  * Préfixes d'identifiants Stripe, par famille.
@@ -54,6 +59,8 @@ export const RESOURCE_ID_PREFIXES = Object.freeze({
   [STRIPE_RESOURCE_KINDS.SUBSCRIPTION]: 'sub_',
   [STRIPE_RESOURCE_KINDS.PAYMENT_INTENT]: 'pi_',
   [STRIPE_RESOURCE_KINDS.INVOICE]: 'in_',
+  [STRIPE_RESOURCE_KINDS.PRODUCT]: 'prod_',
+  [STRIPE_RESOURCE_KINDS.PRICE]: 'price_',
 });
 
 /** Pourquoi une ressource est refusée. Codes fermés. */
@@ -161,17 +168,21 @@ export async function describeResourceOwnership({ projectId, environment, kind, 
   if (!looksLikeResource(kind, id)) {
     return { ...base, code: OWNERSHIP_CODES.MALFORMED_ID };
   }
-  if (typeof lookup !== 'function') {
-    /**
-     * Aucun résolveur = aucun lien connu. On REFUSE, et c'est le comportement
-     * voulu tant que L6.2 n'a pas choisi sa route : une fondation qui
-     * autoriserait « faute de mieux » serait une porte ouverte déguisée en
-     * valeur par défaut.
-     */
-    return { ...base, code: OWNERSHIP_CODES.NO_BINDING };
-  }
+  /**
+   * LE RÉSOLVEUR PAR DÉFAUT EST LE REGISTRE (L6.2A).
+   *
+   * En L6.1 il n'y en avait aucun, et l'absence valait refus. Le registre
+   * existe désormais : `lookup` reste injectable — un test doit pouvoir
+   * éprouver la décision sans base — mais son défaut est la seule autorité,
+   * jamais une valeur permissive.
+   */
+  const resolve = typeof lookup === 'function'
+    ? lookup
+    : async (args) => findBinding({
+      environment: args.environment, resourceType: args.kind, resourceId: args.resourceId,
+    });
 
-  const binding = await lookup({ projectId, environment, kind, resourceId: id });
+  const binding = await resolve({ projectId, environment, kind, resourceId: id });
   if (!binding) return { ...base, code: OWNERSHIP_CODES.NO_BINDING };
 
   if (binding.projectId !== projectId) {
@@ -186,6 +197,13 @@ export async function describeResourceOwnership({ projectId, environment, kind, 
   if (binding.environment && binding.environment !== environment) {
     return { ...base, code: OWNERSHIP_CODES.ENVIRONMENT_MISMATCH, boundProjectId: binding.projectId };
   }
+  /**
+   * Un lien RÉVOQUÉ n'autorise plus rien — sans pour autant libérer
+   * l'identifiant. La ressource reste attribuée à qui elle l'a toujours été ;
+   * elle n'est simplement plus utilisable.
+   */
+  if (binding.revokedAt) return { ...base, code: OWNERSHIP_CODES.NO_BINDING };
+
   return { ...base, allowed: true, code: OWNERSHIP_CODES.OK, boundProjectId: binding.projectId };
 }
 
@@ -216,17 +234,18 @@ export async function assertResourceOwnership(args) {
  * disent la même chose, et que personne n'ait à relire ce fichier pour savoir
  * où en est la migration.
  */
-export function describeBindingReadiness({ lookup = null } = {}) {
-  const available = typeof lookup === 'function';
+export function describeBindingReadiness() {
   return {
-    available,
-    /** Route retenue quand le lien existera. Aucune n'est encore branchée. */
-    plannedRoute: BINDING_ROUTES.CREATED_BY_PANEL,
+    /** Le registre existe et fait autorité depuis L6.2A. */
+    available: true,
+    activeRoute: BINDING_ROUTES.CREATED_BY_PANEL,
     refusedRoute: BINDING_ROUTES.DECLARED_BY_PROJECT,
-    blocks: available ? [] : STRIPE_RESOURCE_KIND_VALUES.map((kind) => ({
-      kind,
-      reason: OWNERSHIP_CODES.NO_BINDING,
-    })),
+    /**
+     * Plus aucune famille n'est bloquée par l'ABSENCE de registre. Ce qui
+     * reste bloqué l'est par l'absence de LIEN pour une ressource donnée —
+     * c'est-à-dire par le fail-closed nominal, pas par un manque d'outil.
+     */
+    blocks: [],
   };
 }
 
