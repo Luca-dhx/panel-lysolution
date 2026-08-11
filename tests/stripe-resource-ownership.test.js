@@ -452,9 +452,19 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
   check('la déclaration par le projet reste refusée',
     readiness.refusedRoute.startsWith('REFUSED'));
 
-  // Et aucune capacité n'est servie : le lot ne migre rien.
-  check('aucune capacité Stripe n’est servie',
-    capabilities.STRIPE_CAPABILITY_CODES.every((c) => capabilities.STRIPE_CAPABILITIES[c].migrated === false));
+  /**
+   * L6.2A ne migrait rien ; L6.2B a servi la première capacité. L'invariant que
+   * cette section défend n'a pas changé pour autant : aucune capacité qui EXIGE
+   * de posséder une ressource préexistante n'est ouverte, parce que le registre
+   * de liens ne contient encore aucun client ni abonnement. Servir l'une
+   * d'elles reviendrait à croire l'identifiant que le projet présente — ce que
+   * tout ce fichier s'emploie à rendre impossible.
+   */
+  const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
+    .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
+  check('quatre capacités exigent une ressource préexistante', exigeantes.length === 4);
+  check('…et AUCUNE d’elles n’est servie',
+    exigeantes.every((c) => capabilities.STRIPE_CAPABILITIES[c].migrated === false));
 }
 
 await stopMemoryMongo();

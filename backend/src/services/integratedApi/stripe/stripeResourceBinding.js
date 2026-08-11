@@ -244,6 +244,34 @@ export async function findBinding({ environment, resourceType, resourceId }) {
 }
 
 /**
+ * LE LIEN LAISSÉ PAR UN ACTE — la trace qui rend une reprise sûre (L6.2B).
+ *
+ * ══ POURQUOI CETTE LECTURE EXISTE ═══════════════════════════════════════════
+ *
+ * Entre « Stripe a créé la session » et « le Panel a écrit le lien », il y a une
+ * fenêtre qu'aucune transaction ne referme (L6.2A §fenêtre). Le lot suivant a
+ * besoin de la rendre REPRENABLE, et une reprise a besoin d'une question
+ * précise : « cet acte a-t-il déjà produit une ressource ? ».
+ *
+ * `createdByOperationId` porte la réponse. Il est écrit dans le MÊME document
+ * que l'identifiant Stripe : soit les deux existent, soit aucun. Il n'y a donc
+ * pas d'état intermédiaire où l'on saurait qu'un acte a eu lieu sans savoir ce
+ * qu'il a produit.
+ *
+ * ══ POURQUOI LE PROJET ET LE MONDE SONT DANS LE FILTRE ══════════════════════
+ *
+ * `operationId` est frappé par le PROJET : deux projets peuvent légitimement
+ * choisir le même. Chercher sans le projet ferait converger la reprise de l'un
+ * vers la session de l'autre — exactement le vol que L6.2A rend impossible.
+ */
+export async function findBindingByOperation({ projectId, environment, resourceType, operationId }) {
+  if (!projectId || !environment || !operationId) return null;
+  return PanelStripeResourceBinding.findOne({
+    projectId, environment, resourceType, createdByOperationId: String(operationId).trim(),
+  }).lean();
+}
+
+/**
  * Verdict d'appartenance, structuré. Ne lève pas : un écran de diagnostic doit
  * pouvoir expliquer un refus sans rejouer la logique.
  */
@@ -364,6 +392,7 @@ export default {
   maskResourceId,
   bindResource,
   findBinding,
+  findBindingByOperation,
   describeOwnership,
   assertOwnedResource,
   listOwnedResourceIds,

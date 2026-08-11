@@ -56,7 +56,79 @@ export const CLAIM = Object.freeze({
   IN_FLIGHT: 'IN_FLIGHT',
   /** Issue indécidable au passage précédent : refuser, ne jamais rejouer seul. */
   UNRESOLVED: 'UNRESOLVED',
+  /**
+   * REPRENDRE — l'acte a peut-être eu lieu, et le refaire à l'identique ne peut
+   * pas le doubler. Réservé aux fournisseurs qui dédupliquent eux-mêmes (L6.2B).
+   */
+  CONVERGE: 'CONVERGE',
 });
+
+/* -------------------------------------------------------------------------- */
+/*  CONVERGENCE                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * QUAND UN DOUTE PEUT-IL SE LEVER TOUT SEUL ?
+ *
+ * ══ LA RÈGLE GÉNÉRALE NE CHANGE PAS ═════════════════════════════════════════
+ *
+ * Sans option de convergence, ce registre se comporte EXACTEMENT comme au lot
+ * L8.3 : `UNKNOWN` interdit tout rejeu automatique, et `PENDING` refuse de
+ * doubler. C'est la seule doctrine tenable face à un fournisseur qui n'offre
+ * aucune clé d'idempotence — rejouer y crée un second effet réel.
+ *
+ * ══ CE QUE LA CONVERGENCE CHANGE, ET POUR QUI ═══════════════════════════════
+ *
+ * Chez un fournisseur qui déduplique sur une clé stable, refaire le MÊME appel
+ * avec la MÊME clé ne produit pas un second acte : il rend le premier. Le doute
+ * n'a alors plus besoin d'un arbitrage humain — il a besoin d'être rejoué à
+ * l'identique. Refuser serait même nuisible : on laisserait un paiement ouvert
+ * chez Stripe que plus personne ne peut retrouver.
+ *
+ * ══ LES DEUX BORNES, ET POURQUOI ELLES SONT INDISPENSABLES ══════════════════
+ *
+ *   `staleAfterMs`   une opération PENDING RÉCENTE est un CONCURRENT, pas un
+ *                    survivant de crash. La laisser converger ferait partir
+ *                    huit appels simultanés portant la même clé — Stripe n'en
+ *                    exécuterait qu'un, mais renverrait sept conflits, et le
+ *                    projet lirait sept échecs pour un paiement réussi.
+ *
+ *   `replayWindowMs` la garantie du fournisseur EXPIRE. Chez Stripe, une clé
+ *                    d'idempotence cesse d'être reconnue après 24 heures :
+ *                    au-delà, rejouer n'est plus une reprise, c'est une
+ *                    SECONDE création. On refuse alors, et le doute redevient
+ *                    ce qu'il était — un arbitrage humain.
+ */
+export const DEFAULT_CONVERGENCE = Object.freeze({
+  /** 90 s : très au-delà du délai d'attente d'une écriture financière (25 s). */
+  staleAfterMs: 90_000,
+  /** 23 h : une marge sous la fenêtre annoncée par Stripe, jamais au-dessus. */
+  replayWindowMs: 23 * 60 * 60 * 1000,
+});
+
+const ageMs = (iso) => {
+  const t = Date.parse(String(iso ?? ''));
+  return Number.isFinite(t) ? Date.now() - t : Number.POSITIVE_INFINITY;
+};
+
+/**
+ * L'INDEX UNIQUE DOIT EXISTER AVANT LA PREMIÈRE ÉCRITURE.
+ *
+ * Mongoose construit ses index EN TÂCHE DE FOND : juste après une connexion,
+ * `create()` peut réussir deux fois pour la même clé, et l'index refuse ensuite
+ * de se construire — en silence. Toute la garantie de non-doublon reposerait
+ * alors sur une course gagnée par hasard. Mémoïsé : une seule attente réelle.
+ */
+let indexesReady = null;
+function ensureIndexes() {
+  indexesReady ??= PanelCapabilityOperation.init();
+  return indexesReady;
+}
+
+/** Tests uniquement : la base change entre deux suites, la promesse non. */
+export function _resetIndexReadinessForTests() {
+  indexesReady = null;
+}
 
 /**
  * RÉCLAME une opération, ou dit pourquoi c'est impossible.
@@ -65,12 +137,16 @@ export const CLAIM = Object.freeze({
  * Un `findOne` d'abord laisserait passer deux concurrents, et la garantie
  * reposerait sur la chance plutôt que sur la base.
  *
+ * @param {object} args
+ * @param {object|null} [args.convergence] politique de reprise — `null` (défaut)
+ *   conserve mot pour mot la doctrine L8.3. Voir `DEFAULT_CONVERGENCE`.
  * @returns {Promise<{claim: string, operation: object}>}
  */
 export async function claimOperation({
   projectId, capability, operationId, environment, provider,
-  templateCode = null, recipientEmail = null,
+  templateCode = null, recipientEmail = null, convergence = null,
 }) {
+  await ensureIndexes();
   const at = nowIso();
   try {
     const operation = await PanelCapabilityOperation.create({
@@ -98,9 +174,33 @@ export async function claimOperation({
 
   switch (existing.status) {
     case OPERATION_STATUS.SUCCEEDED:
-      return { claim: CLAIM.ALREADY_SUCCEEDED, operation: existing };
+      /**
+       * Chez un fournisseur convergent, l'appelant sait retrouver son propre
+       * résultat — c'est même la première chose qu'il fait. On le laisse donc
+       * REPRENDRE plutôt que de lui imposer un résumé conservé ici : le
+       * registre n'a pas à connaître la forme du résultat d'un verbe financier.
+       */
+      return convergence
+        ? { claim: CLAIM.CONVERGE, operation: existing }
+        : { claim: CLAIM.ALREADY_SUCCEEDED, operation: existing };
     case OPERATION_STATUS.UNKNOWN:
+      if (convergence && ageMs(existing.startedAt) <= convergence.replayWindowMs) {
+        return rearm(existing, { projectId, capability, operationId, at, from: OPERATION_STATUS.UNKNOWN });
+      }
       return { claim: CLAIM.UNRESOLVED, operation: existing };
+    case OPERATION_STATUS.PENDING:
+      /**
+       * PENDING RÉCENT = concurrent : on ne double pas. PENDING ANCIEN = un
+       * processus tué avant d'avoir pu conclure ; chez un fournisseur
+       * convergent, c'est exactement le cas qu'il faut reprendre.
+       */
+      if (convergence && ageMs(existing.startedAt) > convergence.staleAfterMs) {
+        if (ageMs(existing.startedAt) > convergence.replayWindowMs) {
+          return { claim: CLAIM.UNRESOLVED, operation: existing };
+        }
+        return rearm(existing, { projectId, capability, operationId, at, from: OPERATION_STATUS.PENDING });
+      }
+      return { claim: CLAIM.IN_FLIGHT, operation: existing };
     case OPERATION_STATUS.FAILED:
       /**
        * Un échec CERTAIN se rejoue : rien n'est parti, et l'appelant a pu
@@ -129,6 +229,32 @@ export async function claimOperation({
     default:
       return { claim: CLAIM.IN_FLIGHT, operation: existing };
   }
+}
+
+/**
+ * RÉARME une opération pour une reprise — atomiquement, et une seule fois.
+ *
+ * La condition `status: from` est le cœur du geste : deux appelants qui
+ * constatent le même `PENDING` périmé tentent tous deux de réarmer, et la base
+ * n'en laisse passer qu'un. Le perdant lit `null` et repart en `IN_FLIGHT` —
+ * il ne part pas parler au fournisseur « lui aussi ».
+ */
+async function rearm(existing, { projectId, capability, operationId, at, from }) {
+  const rearmed = await PanelCapabilityOperation.findOneAndUpdate(
+    { projectId, capability, operationId, status: from },
+    {
+      $set: {
+        status: OPERATION_STATUS.PENDING,
+        errorCode: null, errorMessage: '', httpStatus: null,
+        startedAt: at, settledAt: null,
+      },
+      $inc: { attempts: 1 },
+    },
+    { new: true },
+  ).lean();
+  return rearmed
+    ? { claim: CLAIM.CONVERGE, operation: rearmed }
+    : { claim: CLAIM.IN_FLIGHT, operation: existing };
 }
 
 /** L'opération a abouti : on fige le résultat qu'un rejeu devra rendre. */
@@ -217,6 +343,7 @@ export function describeOperation(operation) {
 
 export default {
   CLAIM,
+  DEFAULT_CONVERGENCE,
   claimOperation,
   settleSucceeded,
   settleFailure,

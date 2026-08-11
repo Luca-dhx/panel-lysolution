@@ -236,7 +236,12 @@ section('LIVE_ALLOWS_POLICY_TO_CONTINUE — le geste débloque réellement');
   check('la politique commerciale n’est plus la cause du refus',
     apres.code !== CODES.BLOCKED_PREOPENING);
   check('…et le refus vient d’une étape ULTÉRIEURE (non migrée / non configurée)',
-    apres.code === CODES.NOT_AVAILABLE || apres.code === CODES.CREDENTIALS_MISSING);
+    apres.code === CODES.NOT_AVAILABLE
+    || apres.code === CODES.CREDENTIALS_MISSING
+    // L6.2B — `billing.checkout.create` est SERVIE : la passerelle descend
+    // désormais jusqu'au contrat d'entrée. L'étape est plus tardive encore, et
+    // la démonstration en sort renforcée, pas affaiblie.
+    || apres.code === CODES.INPUT_INVALID);
 
   const environnementApres = environmentModule.resolveIntegratedApiEnvironment({
     providerDefinition: providerRegistry.getProviderDefinition('STRIPE'),
@@ -400,7 +405,12 @@ section('E2E — LE GESTE RÉEL : écran DEV → HTTP → persistance → passer
   check('après le geste, la pré-ouverture n’est plus la cause du refus',
     apres.code !== CODES.BLOCKED_PREOPENING);
   check('…et le refus vient d’une étape ULTÉRIEURE',
-    apres.code === CODES.NOT_AVAILABLE || apres.code === CODES.CREDENTIALS_MISSING);
+    apres.code === CODES.NOT_AVAILABLE
+    || apres.code === CODES.CREDENTIALS_MISSING
+    // L6.2B — `billing.checkout.create` est SERVIE : la passerelle descend
+    // désormais jusqu'au contrat d'entrée. L'étape est plus tardive encore, et
+    // la démonstration en sort renforcée, pas affaiblie.
+    || apres.code === CODES.INPUT_INVALID);
   check('COMMERCIAL_READINESS_IS_NOT_ENVIRONMENT — la fiche est restée en PROD',
     persiste.runtime?.environment === 'PROD' && record.runtime?.environment === 'PROD');
 

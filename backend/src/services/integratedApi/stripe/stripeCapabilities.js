@@ -90,6 +90,20 @@ const checkoutCreateInput = z.object({
   paymentType: z.enum(['LAUNCH_FEE', 'SUBSCRIPTION']),
   successUrl: z.string().trim().url().max(2048),
   cancelUrl: z.string().trim().url().max(2048),
+  /**
+   * CORROBORATION — recopiée dans les metadata Stripe, jamais interrogée (L6.2B).
+   *
+   * Le journal de paiement du projet se rattache aux objets Stripe par
+   * `metadata.paymentId` depuis l'origine ; couper ce fil casserait la
+   * réconciliation historique sans rien gagner. Mais ces valeurs ne décident de
+   * RIEN : les metadata Stripe s'éditent depuis le tableau de bord, et
+   * l'autorité d'appartenance reste le registre de liens de L6.2A.
+   *
+   * Volontairement close et courte : c'est une référence opaque, pas un canal.
+   */
+  correlation: z.object({
+    paymentRef: z.string().trim().min(1).max(64).optional(),
+  }).strict().optional(),
   operationId,
 }).strict();
 
@@ -142,8 +156,39 @@ const checkoutView = z.object({
 
 const checkoutCreateOutput = z.object({
   checkoutSessionId: z.string(),
-  url: z.string(),
-  /** `RÉUTILISÉE` quand la clé d'idempotence a rendu la session précédente. */
+  /**
+   * NULLABLE, et c'est un fait métier (corrigé en L6.2B).
+   *
+   * Stripe cesse de rendre une URL dès que la session est complétée ou expirée.
+   * Le contrat L6.1 la promettait toujours présente : sur une REPRISE d'acte
+   * déjà payé, il aurait fallu inventer une chaîne, et le projet aurait envoyé
+   * un client vers un lien mort en croyant l'envoyer payer.
+   */
+  url: z.string().nullable(),
+  /**
+   * L'ÉTAT, parce qu'une reprise doit pouvoir se raconter.
+   *
+   * Ce n'est pas l'ouverture d'une capacité de lecture : c'est la description
+   * de l'objet que CET appel vient de produire ou de retrouver. Sans elle, un
+   * `REUSED` sans URL serait indistinguable d'une panne.
+   */
+  status: z.string().nullable(),
+  paymentStatus: z.string().nullable(),
+  /**
+   * LES DEUX OBJETS QUE LA SESSION A ELLE-MÊME PRODUITS.
+   *
+   * Ils ne sont pas une lecture offerte au projet : ce sont les sous-produits
+   * de l'acte qu'il vient de demander, et ils lui appartiennent au même titre
+   * que la session. Sans eux, la réparation d'un webhook perdu marquerait un
+   * paiement PAYÉ sans savoir quelle transaction l'a payé — un journal qui
+   * affirme plus qu'il ne sait.
+   *
+   * `null` tant que la session est ouverte : Stripe ne les attribue qu'au
+   * paiement. Aucun secret : ce sont des identifiants d'objets, pas des clés.
+   */
+  paymentIntentId: z.string().nullable(),
+  customerId: z.string().nullable(),
+  /** `REUSED` quand l'acte avait déjà produit sa session — voir L6.2B §reprise. */
   creation: z.enum(['CREATED', 'REUSED']),
   operationId: z.string(),
 }).strict();
@@ -175,11 +220,15 @@ function capability(code, options) {
     effectNature: CAPABILITY_EFFECTS[code] ?? PROPOSED_EFFECTS[code] ?? null,
     label: options.label,
     /**
-     * AUCUNE n'est servie en L6.1, et ce n'est pas un oubli : voir le §
-     * « Ownership » du rapport. Le champ existe pour que le câblage de L6.2 se
-     * réduise à basculer un booléen une fois le lien établi.
+     * AUCUNE n'était servie en L6.1, et ce n'était pas un oubli : le lien
+     * d'appartenance manquait. L6.2A l'a livré, L6.2B en sert la première —
+     * celle, et la seule, qui ne dépend d'aucun objet Stripe préexistant.
+     *
+     * Les autres restent fermées : elles exigent un lien vers un client ou un
+     * abonnement que le Panel n'a encore jamais créé, et
+     * `validateStripeCapabilities()` refuse qu'on l'oublie.
      */
-    migrated: false,
+    migrated: options.migrated === true,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
     timeoutMs: options.timeoutMs,
@@ -265,9 +314,14 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * par un identifiant Stripe.
      */
     resourceKind: null,
-    migrationNote:
-      'ÉCRITURE FINANCIÈRE — L6.2 au plus tôt. Exige : registre d’opérations, '
-      + 'ouverture commerciale, et le montant lu depuis la projection de contrat.',
+    /**
+     * SERVIE depuis L6.2B — et c'est justement `resourceKind: null` qui l'a
+     * rendue migrable la première : elle ne consomme aucun objet Stripe
+     * préexistant, elle en CRÉE un. Sa contrepartie est qu'elle doit lier ce
+     * qu'elle crée, immédiatement, sans quoi la ressource serait orpheline.
+     */
+    migrated: true,
+    migrationNote: null,
   }),
 
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
@@ -318,8 +372,26 @@ export function validateStripeCapabilities() {
     if (!definition.inputSchema || !definition.outputSchema) {
       problems.push(`${code} : contrat d’entrée ou de sortie manquant.`);
     }
-    if (definition.migrated) {
-      problems.push(`${code} : déclarée servie alors qu’aucun lien d’appartenance n’existe.`);
+    /**
+     * LA RÈGLE A CHANGÉ DE FORME, PAS DE FOND (L6.2B).
+     *
+     * En L6.1 elle disait « aucune n'est servie », faute d'ancrage
+     * d'appartenance. L'ancrage existe désormais, mais il ne contient encore
+     * AUCUN client ni abonnement : une capacité qui exige de posséder un objet
+     * préexistant serait donc servie pour être toujours refusée — ou, bien
+     * pire, servie en faisant confiance à l'identifiant fourni.
+     *
+     * La règle devient donc : on ne sert que ce qui n'exige aucune possession
+     * préalable. Elle se lèvera d'elle-même, capacité par capacité, quand le
+     * Panel créera lui-même les clients et les abonnements.
+     */
+    if (definition.migrated && definition.requiresResourceOwnership) {
+      problems.push(`${code} : servie alors qu’aucun lien vers ${definition.resourceKind} n’existe encore.`);
+    }
+    // Une écriture financière servie doit lier ce qu'elle crée : sans preuve
+    // d'appartenance, la ressource produite n'appartiendrait à personne.
+    if (definition.migrated && definition.financial && definition.idempotency !== 'PROVIDER_IDEMPOTENT') {
+      problems.push(`${code} : écriture financière servie sans idempotence fournisseur.`);
     }
 
     const shape = definition.inputSchema?._def?.schema?.shape ?? definition.inputSchema?.shape ?? {};

@@ -74,6 +74,10 @@ const TESTS = [
   // deux suites gardent les contrats et l'index qui rend le vol impossible.
   'stripe-control-plane.test.js',
   'stripe-resource-ownership.test.js',
+  // L6.2B — LE CUTOVER : un vrai projet demande un paiement, le Panel ouvre la
+  // session avec SA clé, et la lie. Les sections qui comptent sont les
+  // dégradées : réponse perdue, crash avant le lien, huit clics simultanés.
+  'stripe-checkout-cutover-e2e.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.
   //

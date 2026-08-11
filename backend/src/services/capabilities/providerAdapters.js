@@ -33,6 +33,7 @@ import {
   OUTCOMES as TRANSPORT_OUTCOMES,
 } from '../integratedApi/brevo/brevoTransport.js';
 import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
+import { STRIPE_ADAPTERS } from '../integratedApi/stripe/stripeAdapters.js';
 import { brevoSendTemplate } from './brevoSendAdapter.js';
 import {
   CAPABILITY_ERROR_CODES,
@@ -170,6 +171,16 @@ const ADAPTERS = Object.freeze({
    * l'affirmation qui pousse à rejouer.
    */
   ...HOSTINGER_ADAPTERS,
+  /**
+   * STRIPE — un seul verbe, et le premier qui déplace de l'argent réel.
+   *
+   * Même raison qu'ailleurs pour le tenir hors de ce fichier : il traduit ses
+   * propres refus. Sur un provider financier, la nuance est plus coûteuse
+   * encore qu'ailleurs — le traducteur générique rendrait « rien ne s'est
+   * passé » là où Stripe n'a rien dit, et c'est cette phrase-là qui pousse un
+   * projet à rejouer un paiement.
+   */
+  ...STRIPE_ADAPTERS,
 });
 
 export function hasAdapter(code) {

@@ -42,7 +42,9 @@ import logger from '../../utils/logger.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { canExecute, DECISION } from '../integratedApi/commercialReadiness.js';
 import { getCapabilityDefinition, IDEMPOTENCY } from './capabilityRegistry.js';
-import { CLAIM, claimOperation, settleSucceeded, settleFailure } from './operationRegistry.js';
+import {
+  CLAIM, DEFAULT_CONVERGENCE, claimOperation, settleSucceeded, settleFailure,
+} from './operationRegistry.js';
 import { INVOCATION_SOURCES, buildInvocationContext, describeContext } from './invocationContext.js';
 import { assertGranted } from './capabilityGrants.js';
 import { resolveCredentialsForCapability } from './credentialResolver.js';
@@ -220,7 +222,18 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
      */
     if (reservation) {
       await settleSucceeded(reservation.operation, {
-        providerMessageId: result.providerMessageId ?? null,
+        /**
+         * LA POIGNÉE DE CORRÉLATION EST DÉCLARÉE, PAS DEVINÉE.
+         *
+         * Chaque fournisseur nomme différemment ce qui identifie l'objet
+         * produit — `providerMessageId` pour un envoi, `checkoutSessionId`
+         * pour un paiement. Lire l'un puis l'autre « au cas où » ferait
+         * entrer un vocabulaire fournisseur dans la passerelle ; le registre
+         * dit lequel lire, et la passerelle n'en connaît aucun.
+         */
+        providerMessageId: (definition.correlationField
+          ? result[definition.correlationField]
+          : result.providerMessageId) ?? null,
         durationMs,
       });
     }
@@ -282,13 +295,43 @@ function fallbackContext(panelProject, requestId) {
 /**
  * Cette capacité doit-elle être protégée contre le doublon ?
  *
- * `UNKNOWN_ON_TIMEOUT` est le seul cas : le fournisseur n'offre aucune clé
- * d'idempotence, donc son silence laisse l'action indécidable. `SAFE_RETRY` et
- * `NONE` se rejouent sans conséquence ; `PROVIDER_IDEMPOTENT` est déjà protégé
- * chez le fournisseur, et l'ajouter ici doublerait un mécanisme qui marche.
+ * `SAFE_RETRY` et `NONE` se rejouent sans conséquence : rien à réserver.
+ *
+ * Les deux autres réservent, pour des raisons OPPOSÉES :
+ *
+ *   `UNKNOWN_ON_TIMEOUT`   le fournisseur n'offre aucune clé d'idempotence.
+ *                          Le registre EST la garantie de non-doublon ; sans
+ *                          lui, deux clics envoient deux fois.
+ *
+ *   `PROVIDER_IDEMPOTENT`  le fournisseur déduplique déjà — mais seulement
+ *                          pendant sa fenêtre, et seulement s'il reçoit deux
+ *                          fois la même clé. Le registre n'y sert pas à
+ *                          dédupliquer : il sert à empêcher huit appels
+ *                          concurrents de partir ensemble, et à savoir si une
+ *                          reprise est encore couverte par cette fenêtre.
+ *
+ * ── CE QUI A CHANGÉ EN L6.2B, ET POURQUOI ───────────────────────────────────
+ *
+ * `PROVIDER_IDEMPOTENT` ne réservait pas : « le fournisseur s'en charge ».
+ * C'était vrai de la DÉDUPLICATION, et faux de la REPRISE. Un Panel tué entre
+ * l'acceptation par Stripe et l'écriture de sa propre trace ne laissait aucune
+ * trace du tout — et le passage suivant, n'ayant rien à relire, repartait
+ * comme si l'acte n'avait jamais eu lieu.
  */
 function requiresReservation(definition) {
-  return definition.idempotency === IDEMPOTENCY.UNKNOWN_ON_TIMEOUT;
+  return definition.idempotency === IDEMPOTENCY.UNKNOWN_ON_TIMEOUT
+    || convergenceFor(definition) !== null;
+}
+
+/**
+ * La politique de reprise d'une capacité, ou `null` si le doute ne se lève pas
+ * tout seul. Déduite de la stratégie d'idempotence — jamais du fournisseur :
+ * la passerelle ne connaît aucun nom de fournisseur, et ne doit pas commencer.
+ */
+function convergenceFor(definition) {
+  return definition.idempotency === IDEMPOTENCY.PROVIDER_IDEMPOTENT
+    ? DEFAULT_CONVERGENCE
+    : null;
 }
 
 /**
@@ -307,11 +350,28 @@ async function reserve(context, definition, input) {
     provider: definition.provider,
     templateCode: input.templateRef ?? null,
     recipientEmail: input.recipient?.email ?? null,
+    convergence: convergenceFor(definition),
   });
 
   switch (outcome.claim) {
     case CLAIM.EXECUTE:
       return { operation: outcome.operation, memoized: null };
+
+    case CLAIM.CONVERGE:
+      /**
+       * REPRENDRE N'EST PAS REJOUER.
+       *
+       * L'adaptateur est réexécuté avec la MÊME entrée, et il commence par
+       * chercher ce que l'acte a déjà produit. S'il trouve, il le rend sans
+       * parler au fournisseur ; s'il ne trouve pas, il refait le même appel
+       * avec la même clé, que le fournisseur reconnaît.
+       *
+       * Cette branche exige donc de l'adaptateur une propriété que le registre
+       * ne peut pas vérifier : être idempotent PAR CONSTRUCTION. Elle n'est
+       * ouverte qu'aux capacités `PROVIDER_IDEMPOTENT`, et l'alignement du
+       * registre refuse qu'une capacité s'y déclare sans en être une.
+       */
+      return { operation: outcome.operation, memoized: null, converging: true };
 
     case CLAIM.ALREADY_SUCCEEDED:
       /**

@@ -133,6 +133,9 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     SEND,
     // L9.1 — les trois verbes DNS d'un déploiement.
     'dns.zone.resolve', 'dns.records.read', 'dns.record.ensure',
+    // L6.2B — la PREMIÈRE écriture financière servie. Elle ne consomme aucun
+    // objet Stripe préexistant : elle en crée un, et le lie aussitôt.
+    CHECKOUT,
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -146,8 +149,20 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    */
   check('…avec une idempotence qui exige une réservation',
     registry.getCapabilityDefinition(SEND).idempotency === 'UNKNOWN_ON_TIMEOUT');
-  check('les six capacités Stripe restent NON migrées',
-    registry.capabilitiesForProvider('STRIPE').every((c) => !c.migrated));
+  /**
+   * UNE SEULE capacité Stripe est servie, et les cinq autres restent fermées.
+   * Ce n'est pas une étape de calendrier : chacune d'elles exige de POSSÉDER un
+   * client ou un abonnement Stripe préexistant, et le registre de liens de
+   * L6.2A n'en contient aucun. Les ouvrir reviendrait à croire l'identifiant
+   * que le projet présente.
+   */
+  const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
+  check('une seule capacité Stripe est servie', stripeServies.length === 1);
+  check('…et c’est l’ouverture de session de paiement', stripeServies[0]?.code === CHECKOUT);
+  check('…avec une idempotence portée par le fournisseur',
+    stripeServies[0]?.idempotency === 'PROVIDER_IDEMPOTENT');
+  check('…et une poignée de corrélation déclarée',
+    stripeServies[0]?.correlationField === 'checkoutSessionId');
 
   // L'effet vient de L1.75, jamais recopié ici.
   check('l’effet de email.sender.verify est CONFIGURATION',
@@ -264,8 +279,22 @@ section('4. ORDRE DES REFUS — la garantie « zéro appel fournisseur »');
 
   // La même capacité, commerce OUVERT (LIVE) : le refus devient « pas migrée ».
   // C'est la preuve que le blocage venait bien de la politique, pas du hasard.
+  /**
+   * `billing.checkout.create` est SERVIE depuis L6.2B : le refus qu'on lit ici
+   * n'est donc plus « pas migrée » mais « entrée non conforme » — la preuve
+   * porte quand même, et même mieux : le commerce ouvert a laissé l'appel
+   * DESCENDRE jusqu'au contrat d'entrée, là où la pré-ouverture l'arrêtait
+   * avant tout. C'est exactement ce qu'on voulait démontrer.
+   */
   const ouvert = await projet({ projectId: 'p3', grants: [CHECKOUT], commercialState: 'LIVE' });
-  const pasMigre = await invoquer(ouvert, CHECKOUT, {}, provider);
+  const passe = await invoquer(ouvert, CHECKOUT, {}, provider);
+  check('LIVE × FINANCIAL_WRITE → la politique ne bloque plus',
+    passe.code !== CODES.BLOCKED_PREOPENING);
+  check('…le refus vient désormais du contrat d’entrée', passe.code === CODES.INPUT_INVALID);
+
+  // Et une capacité Stripe encore fermée refuse toujours par NOT_MIGRATED.
+  const ferme2 = await projet({ projectId: 'p3b', grants: ['billing.invoice.list'], commercialState: 'LIVE' });
+  const pasMigre = await invoquer(ferme2, 'billing.invoice.list', {}, provider);
   check('LIVE × non migrée → CAPABILITY_NOT_AVAILABLE', pasMigre.code === CODES.NOT_AVAILABLE);
   check('…motif NOT_MIGRATED', pasMigre.error.details?.reason === 'NOT_MIGRATED');
 

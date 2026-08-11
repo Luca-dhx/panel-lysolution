@@ -197,13 +197,18 @@ section('3. OUVERTE (LIVE) — l’écriture réelle n’est plus refusée pour 
   const r = await invoquer(fiche, FINANCIERES[0]);
 
   /**
-   * Le refus CHANGE DE NATURE : ce n'est plus l'ouverture commerciale, c'est
-   * que Stripe n'est pas migré (L6). C'est la preuve que le blocage précédent
-   * venait bien de la politique, et non d'un hasard de calendrier.
+   * Le refus CHANGE DE NATURE : ce n'est plus l'ouverture commerciale.
+   *
+   * En L6.1 c'était « Stripe n'est pas migré ». Depuis L6.2B, la capacité EST
+   * servie, et l'appel descend jusqu'au contrat d'entrée — que ce test ne
+   * remplit pas. Le refus est donc encore plus tardif, et la démonstration
+   * tient toujours : le blocage précédent venait de la POLITIQUE, et non d'un
+   * hasard de calendrier de migration.
    */
   check(`${FINANCIERES[0]} n’est plus bloquée par la pré-ouverture`,
     r.code !== 'CAPABILITY_BLOCKED_PREOPENING');
-  check('…elle est refusée parce que non migrée', r.code === 'CAPABILITY_NOT_AVAILABLE');
+  check('…et le refus vient d’une étape ULTÉRIEURE',
+    r.code === 'CAPABILITY_NOT_AVAILABLE' || r.code === 'CAPABILITY_INPUT_INVALID');
   check('…et toujours ZÉRO appel fournisseur (rien n’est branché)',
     appelsFournisseur === avant);
 }

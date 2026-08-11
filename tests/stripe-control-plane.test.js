@@ -72,11 +72,21 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
 
-  // AUCUNE n'est servie : l'ancrage d'appartenance n'existe pas encore.
-  check('aucune capacité déclarée servie en L6.1',
-    STRIPE_CAPABILITY_CODES.every((c) => STRIPE_CAPABILITIES[c].migrated === false));
-  check('chacune porte une note de migration',
-    STRIPE_CAPABILITY_CODES.every((c) => Boolean(STRIPE_CAPABILITIES[c].migrationNote)));
+  /**
+   * UNE SEULE est servie (L6.2B), et c'est exactement celle qui n'exige la
+   * possession d'aucun objet Stripe préexistant. Les quatre autres attendent un
+   * lien vers un client ou un abonnement que le Panel n'a jamais créé — les
+   * servir reviendrait à faire confiance à l'identifiant que le projet fournit.
+   */
+  const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
+  check('une seule capacité servie', servies.length === 1);
+  check('…et c’est billing.checkout.create', servies[0] === 'billing.checkout.create');
+  check('aucune capacité servie n’exige de ressource préexistante',
+    servies.every((c) => STRIPE_CAPABILITIES[c].requiresResourceOwnership === false));
+  check('chaque capacité NON servie porte une note de migration',
+    STRIPE_CAPABILITY_CODES
+      .filter((c) => !STRIPE_CAPABILITIES[c].migrated)
+      .every((c) => Boolean(STRIPE_CAPABILITIES[c].migrationNote)));
 
   // Le remboursement n'est PAS contractualisé : aucun code du parc ne l'émet.
   check('billing.refund n’est PAS déclarée (aucun usage réel)',

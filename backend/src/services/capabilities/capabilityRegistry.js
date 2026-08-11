@@ -36,6 +36,7 @@ import {
   HOSTINGER_CAPABILITIES,
   HOSTINGER_CAPABILITY_CODES,
 } from '../integratedApi/hostinger/hostingerCapabilities.js';
+import { STRIPE_CAPABILITIES } from '../integratedApi/stripe/stripeCapabilities.js';
 
 /* -------------------------------------------------------------------------- */
 /*  IDEMPOTENCE                                                               */
@@ -187,6 +188,15 @@ function capability(code, options) {
     requiredPermissions: Object.freeze([...(options.requiredPermissions ?? [])]),
     /** Note d'audit pour les capacités non migrées : ce qui les retient. */
     migrationNote: options.migrationNote ?? null,
+    /**
+     * Champ de la SORTIE qui identifie l'objet produit chez le fournisseur.
+     *
+     * C'est lui que le registre d'opérations conserve, et par lui qu'un
+     * événement fournisseur retrouvera plus tard le projet à qui il appartient.
+     * Déclaré ici plutôt que deviné dans la passerelle : sinon le vocabulaire
+     * d'un fournisseur entre dans un fichier qui n'en connaît aucun.
+     */
+    correlationField: options.correlationField ?? null,
   });
 }
 
@@ -270,14 +280,28 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
     migrationNote: 'L6.',
   }),
+  /**
+   * LA PREMIÈRE CAPACITÉ FINANCIÈRE RÉELLEMENT SERVIE (L6.2B).
+   *
+   * Son contrat n'est pas réécrit ici : il vient du catalogue L6.1, seule
+   * source du vocabulaire Stripe, comme Brevo vient de L8 et le DNS de L9.
+   * `assertRegistryAlignment()` vérifie que ce sont bien les MÊMES objets de
+   * schéma — pas deux définitions qui se ressemblent.
+   *
+   * Elle reste FINANCIAL_WRITE : la pré-ouverture la refuse, migrée ou non, et
+   * ce refus tombe avant le coffre comme avant l'adaptateur.
+   */
   'billing.checkout.create': capability('billing.checkout.create', {
     provider: 'STRIPE',
     label: 'Ouvrir une session de paiement',
-    migrated: false,
-    timeoutMs: 20_000,
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.checkout.create'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.checkout.create'].outputSchema,
+    timeoutMs: 25_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
-    migrationNote: 'L6. FINANCIAL_WRITE : bloquée en pré-ouverture, migrée ou non.',
+    correlationField: 'checkoutSessionId',
+    migrationNote: null,
   }),
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     provider: 'STRIPE',
@@ -479,6 +503,38 @@ export function assertRegistryAlignment() {
     }
     if (capability.requiresResourceOwnership !== true) {
       problems.push(`« ${capability.code} » administre une ressource sans exiger la preuve de son appartenance.`);
+    }
+  }
+
+  /**
+   * Le catalogue Stripe de L6.1 est la source du contrat financier.
+   *
+   * On n'y impose PAS la symétrie complète des deux autres : le registre porte
+   * quatre codes Stripe (`billing.customer.ensure`, `billing.subscription.
+   * reconcile`, `billing.refund`, et la réconciliation) que L6.1 a délibérément
+   * refusé de contractualiser — aucun code du parc ne les appelle. Ce qu'on
+   * exige, c'est que toute capacité Stripe déclarée SERVIE tienne son contrat
+   * du catalogue, et le MÊME objet : deux schémas qui se ressemblent
+   * divergeraient au premier ajout de champ, et la divergence porterait sur
+   * ce qu'on accepte de facturer.
+   */
+  for (const capability of capabilitiesForProvider('STRIPE')) {
+    if (!capability.migrated) continue;
+    const catalogue = STRIPE_CAPABILITIES[capability.code];
+    if (!catalogue) {
+      problems.push(`« ${capability.code} » est servie sans figurer au catalogue Stripe (L6.1).`);
+      continue;
+    }
+    if (capability.inputSchema !== catalogue.inputSchema
+      || capability.outputSchema !== catalogue.outputSchema) {
+      problems.push(`« ${capability.code} » ne sert pas le contrat du catalogue Stripe (L6.1).`);
+    }
+    if (capability.idempotency !== IDEMPOTENCY.PROVIDER_IDEMPOTENT) {
+      problems.push(`« ${capability.code} » est une écriture Stripe servie sans idempotence fournisseur.`);
+    }
+    // Sans poignée de corrélation, l'objet créé serait produit puis oublié.
+    if (!capability.correlationField) {
+      problems.push(`« ${capability.code} » est servie sans champ de corrélation.`);
     }
   }
 
