@@ -89,9 +89,15 @@ function safeMessage(message) {
   return clean.length > 300 ? `${clean.slice(0, 300)}…` : clean;
 }
 
+/**
+ * Attente entre deux tentatives de LECTURE.
+ *
+ * Le minuteur n'est PAS `unref` : on l'attend. Le détacher ferait qu'une
+ * reprise ne partirait jamais dans une boucle d'événements au repos — défaut
+ * silencieux en production, bloquant en test.
+ */
 const backoff = (attempt) => new Promise((resolve) => {
-  const timer = setTimeout(resolve, Math.min(2000, 200 * 2 ** (attempt - 1)));
-  timer.unref?.();
+  setTimeout(resolve, Math.min(2000, 200 * 2 ** (attempt - 1)));
 });
 
 /**
