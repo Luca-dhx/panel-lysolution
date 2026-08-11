@@ -205,6 +205,12 @@ async function wire() {
     changeAppliers: {
       DEV_COMPANY: panelConfiguration.applyCompanyChange,
       INTEGRATED_API_CONFIG: panelConfiguration.applyIntegratedApiChange,
+      // L8.4C — le retour de livraison, câblé comme au bootstrap réel. Sans
+      // lui, l'instance recevrait l'événement et n'aurait personne pour
+      // l'appliquer : la recette éprouverait un pont, pas une convergence.
+      EMAIL_DELIVERY_EVENT: (
+        await import(SB('src/services/email/emailDeliveryEvent.applier.js'))
+      ).applyEmailDeliveryEvent,
     },
     appliedConfigurationProvider: panelConfiguration.describeAppliedConfiguration,
     presentationProvider: (
@@ -218,6 +224,11 @@ async function wire() {
     applyHandlers: {
       DEV_COMPANY: panelConfiguration.applyCompanyChange,
       INTEGRATED_API_CONFIG: panelConfiguration.applyIntegratedApiChange,
+      // Le TIRAGE, comme au bootstrap réel : sans lui, un projet revenu en
+      // ligne rattraperait l'événement et l'ignorerait en silence.
+      EMAIL_DELIVERY_EVENT: (
+        await import(SB('src/services/email/emailDeliveryEvent.applier.js'))
+      ).applyEmailDeliveryEvent,
     },
     /**
      * Depuis L4, `integratedApis` n'est plus appliqué : le projet REFUSE tout
@@ -405,6 +416,61 @@ const COMMANDS = {
    * — et l'on veut pouvoir vérifier que RIEN n'a été appliqué pendant ce
    * temps-là.
    */
+  /**
+   * ENVOIE UN E-MAIL MÉTIER — par la VRAIE façade du projet (L8.4C).
+   *
+   * `sendTemplate()` est le point d'entrée réel : readiness, création de la
+   * livraison, appel de la capacité, persistance du statut. Le test n'appelle
+   * ni la passerelle, ni le pont, ni l'adaptateur — il demande un e-mail comme
+   * le ferait une action métier.
+   */
+  async sendEmail({ templateId, recipient, variables, actionExecutionId = null }) {
+    const { sendTemplate, EmailDeliveryError } = await import(
+      SB('src/services/email/emailDelivery.service.js'));
+    try {
+      /**
+       * `key` est la CLÉ STABLE du destinataire, produite en exploitation par
+       * `emailRecipientResolvers`. Le harnais la dérive de l'adresse quand
+       * l'appelant n'en fournit pas : un test qui l'omettrait éprouverait une
+       * validation de modèle plutôt que le chemin d'envoi.
+       */
+      const cible = { ...recipient, key: recipient.key ?? recipient.email };
+      const r = await sendTemplate({ templateId, recipient: cible, variables, actionExecutionId });
+      return { ok: true, delivery: r?.delivery ?? r };
+    } catch (err) {
+      return {
+        ok: false,
+        code: err?.code ?? null,
+        retryable: err instanceof EmailDeliveryError ? err.retryable : null,
+        deliveryId: err?.deliveryId ?? null,
+        message: String(err?.message ?? ''),
+      };
+    }
+  },
+
+  /** L'ÉTAT RÉEL d'une livraison, lu dans la base du projet. */
+  async emailDelivery({ deliveryId }) {
+    const { EmailDelivery } = await import(SB('src/models/EmailDelivery.model.js'));
+    const { EmailDeliveryEvent } = await import(SB('src/models/EmailDeliveryEvent.model.js'));
+    const d = await EmailDelivery.findOne({ deliveryId }).lean();
+    if (!d) return null;
+    const events = await EmailDeliveryEvent.find({ deliveryId }).lean();
+    return {
+      deliveryId: d.deliveryId,
+      status: d.status,
+      providerMessageId: d.providerMessageId ?? null,
+      deliveredAt: d.deliveredAt ?? null,
+      lastErrorSafe: d.lastErrorSafe ?? null,
+      eventCount: events.length,
+    };
+  },
+
+  /** Combien de livraisons existent — pour prouver qu'un rejeu n'en crée pas. */
+  async emailDeliveryCount() {
+    const { EmailDelivery } = await import(SB('src/models/EmailDelivery.model.js'));
+    return EmailDelivery.countDocuments({});
+  },
+
   async goOffline() {
     if (!server) return { listening: false, port };
     await new Promise((r) => server.close(r));

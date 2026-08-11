@@ -144,6 +144,11 @@ export async function startSbAutoInstance({
     resolveDns(args) { return send('resolveDns', args); },
     /** La séquence du moteur : findBestZone → listRecords → ensureRecord. */
     dnsSequence(args) { return send('dnsSequence', args); },
+    /** Un e-mail métier RÉEL, par la façade `sendTemplate()` du projet. */
+    sendEmail(args) { return send('sendEmail', args); },
+    /** L'état d'une livraison, lu dans la base du projet. */
+    emailDelivery(args) { return send('emailDelivery', args); },
+    emailDeliveryCount() { return send('emailDeliveryCount'); },
     severDatabase() { return send('severDatabase'); },
     restoreDatabase() { return send('restoreDatabase'); },
     async stop() {

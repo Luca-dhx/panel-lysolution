@@ -182,6 +182,17 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * du site est DERIVE des deux causes, mais il n'appartient a aucune.
    */
   'PROJECT_SITE_STATUS',
+  /**
+   * >= 1.6.x — RETOUR DE LIVRAISON D'UN E-MAIL, poussé par le Panel (L8.4C).
+   *
+   * Depuis que les envois partent du compte Brevo du Panel, les webhooks de
+   * livraison suivent le COMPTE et n'atteignent plus le projet. Cette entité
+   * est le chemin de retour : elle porte un verbe métier déjà normalisé
+   * (`EMAIL_DELIVERED` / `EMAIL_BOUNCED`), jamais un événement brut du
+   * fournisseur — le projet n'a pas à connaître le vocabulaire de Brevo pour
+   * savoir qu'un message est arrivé.
+   */
+  'EMAIL_DELIVERY_EVENT',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED

@@ -96,7 +96,17 @@ section('Catalogues d’erreurs BRIDGE_*');
 
 section('Types d’entités synchronisées');
 {
-  check('14 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 14);
+  /**
+   * UN COMPTE EN DUR, ET C'EST VOULU : ce nombre est un cliquet. Ajouter un
+   * type d'entité au contrat de pont engage les DEUX dépôts et les DEUX specs ;
+   * le faire par inadvertance doit être impossible. Le test rougit, l'auteur
+   * s'explique, le nombre monte.
+   *
+   * 15 depuis L8.4C — `EMAIL_DELIVERY_EVENT`, le chemin de retour des
+   * livraisons d'e-mails, désormais que les webhooks Brevo suivent le compte
+   * du Panel et n'atteignent plus le projet.
+   */
+  check('15 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 15);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

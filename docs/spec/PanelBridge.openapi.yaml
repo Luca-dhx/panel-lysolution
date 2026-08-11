@@ -726,6 +726,7 @@ components:
                   - MEETING
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
+                  - EMAIL_DELIVERY_EVENT
             operations:
               type: array
               items: { type: string }
@@ -1128,6 +1129,7 @@ components:
             - MEETING
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
+            - EMAIL_DELIVERY_EVENT
         entityId:
           type: string
           format: uuid

@@ -60,6 +60,13 @@ const TESTS = [
   // l'autorité de contenu du Panel, les identités expéditrices par projet, et
   // l'idempotence que Brevo n'offre pas.
   'brevo-send-template-foundation.test.js',
+  // L8.4C — la BOUCLE COMPLÈTE, de bout en bout : un projet demande un envoi,
+  // le Panel le fait partir sous SON compte, le webhook du fournisseur revient
+  // au Panel, et le verbe de livraison redescend jusqu'au projet — y compris
+  // s'il était hors ligne au moment où l'événement est arrivé. C'est la seule
+  // suite qui prouve que l'émission et le retour se referment sur la même
+  // livraison, avec un vrai projet dans un vrai processus voisin.
+  'brevo-send-delivery-convergence-e2e.test.js',
   // L3 — la passerelle de capacités : le projet demande un VERBE, le Panel
   // résout le fournisseur, le monde, le droit et la clé. Trois suites, parce
   // qu'elles ne peuvent pas vivre dans le même processus :

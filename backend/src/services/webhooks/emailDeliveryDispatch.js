@@ -118,12 +118,27 @@ export async function dispatchDeliveryEvent({ provider, environment, payload, ev
   await emitChange({
     entityType: DELIVERY_ENTITY_TYPE,
     /**
-     * L'identifiant de message est l'identité de l'entité côté projet : c'est
-     * par lui qu'il retrouve SA livraison. Utiliser l'identifiant d'opération
-     * marcherait aussi, mais le projet ne le connaît que s'il a reçu la
-     * réponse d'émission — or un événement peut le devancer.
+     * L'IDENTITÉ DE L'ENTITÉ EST L'OPÉRATION, PAS LE MESSAGE.
+     *
+     * ══ CE QUE CE CHOIX CORRIGE ═══════════════════════════════════════════
+     *
+     * Le contrat de pont impose `entityId: uuid`. Un identifiant de message
+     * Brevo (`msg-42@brevo`) n'en est pas un : la page entière était rejetée
+     * en `BRIDGE_INVALID_PAYLOAD`, et AUCUN événement n'atteignait le projet.
+     * Le Panel émettait, le projet n'appliquait rien, et rien ne le disait.
+     *
+     * ══ ET C'EST AUSSI LE BON IDENTIFIANT ═════════════════════════════════
+     *
+     * L'entité dont on parle est la LIVRAISON, pas le message du fournisseur.
+     * `operationId` est le `deliveryId` du projet : il est un UUID, il existe
+     * AVANT l'envoi, et le projet le connaît sans avoir eu besoin de recevoir
+     * la réponse d'émission. C'est précisément ce qui rend la course
+     * « webhook avant réponse » sans effet.
+     *
+     * `providerMessageId` reste dans la charge utile : il sert de repli de
+     * corrélation, jamais d'identité.
      */
-    entityId: providerMessageId,
+    entityId: operation.operationId,
     /**
      * CHARGE UTILE MINIMALE. Ni adresse, ni sujet, ni contenu : le projet les
      * détient déjà, et les recopier ferait du journal durable du Panel un
