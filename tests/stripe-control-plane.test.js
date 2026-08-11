@@ -79,10 +79,24 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * servir reviendrait à faire confiance à l'identifiant que le projet fournit.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('une seule capacité servie', servies.length === 1);
-  check('…et c’est billing.checkout.create', servies[0] === 'billing.checkout.create');
-  check('aucune capacité servie n’exige de ressource préexistante',
-    servies.every((c) => STRIPE_CAPABILITIES[c].requiresResourceOwnership === false));
+  check('deux capacités servies', servies.length === 2);
+  check('…l’ouverture de session', servies.includes('billing.checkout.create'));
+  check('…et sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
+  /**
+   * L6.2C lève la règle « aucune capacité servie n'exige de ressource
+   * préexistante » — mais seulement pour la famille que le Panel CRÉE
+   * lui-même. La lecture exige de posséder une session ; elle ne le peut que
+   * parce que L6.2B en lie à chaque création.
+   */
+  check('la lecture EXIGE la preuve d’appartenance',
+    STRIPE_CAPABILITIES['billing.checkout.retrieve'].requiresResourceOwnership === true);
+  check('…et porte bien la famille SESSION',
+    STRIPE_CAPABILITIES['billing.checkout.retrieve'].resourceKind === 'CHECKOUT_SESSION');
+  check('aucune capacité servie n’exige une famille que le Panel ne crée pas',
+    servies.every((c) => {
+      const d = STRIPE_CAPABILITIES[c];
+      return !d.requiresResourceOwnership || d.resourceKind === 'CHECKOUT_SESSION';
+    }));
   check('chaque capacité NON servie porte une note de migration',
     STRIPE_CAPABILITY_CODES
       .filter((c) => !STRIPE_CAPABILITIES[c].migrated)

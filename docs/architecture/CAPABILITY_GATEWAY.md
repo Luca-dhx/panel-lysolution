@@ -57,21 +57,57 @@ Cinq objets sont régulièrement confondus. Ils sont distincts :
 `backend/src/services/capabilities/capabilityRegistry.js` — **code-first**.
 Rien en base ne peut ajouter, retirer ni modifier une capacité.
 
-Onze capacités, une seule servie :
+Quatorze capacités, sept servies — et le catalogue se lit comme une carte de
+l'avancement :
 
 | Code | Fournisseur | Effet (L1.75) | Idempotence | Servie |
 |---|---|---|---|---|
-| `email.sender.verify` | Brevo | CONFIGURATION | `SAFE_RETRY` | **oui** |
-| `email.send_template` | Brevo | COMMUNICATION_WRITE | `UNKNOWN_ON_TIMEOUT` | non — L8 |
-| `billing.invoice.list` | Stripe | READ_ONLY | `SAFE_RETRY` | non — L6 |
-| `billing.subscription.reconcile` | Stripe | READ_ONLY | `SAFE_RETRY` | non — L6 |
-| `billing.customer.ensure` | Stripe | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
-| `billing.checkout.create` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
-| `billing.subscription.cancel_at_period_end` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
-| `billing.refund` | Stripe | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non — L6 |
-| `signature.document.download` | Yousign | READ_ONLY | `SAFE_RETRY` | non — L7 |
-| `signature.request.create` | Yousign | LEGAL_WRITE | `UNKNOWN_ON_TIMEOUT` | non — L7 |
-| `dns.record.ensure` | Hostinger | INFRASTRUCTURE_WRITE | `SAFE_RETRY` | non — L9 |
+| `email.sender.verify` | BREVO | CONFIGURATION | `SAFE_RETRY` | **oui** |
+| `email.send_template` | BREVO | COMMUNICATION_WRITE | `UNKNOWN_ON_TIMEOUT` | **oui** |
+| `billing.invoice.list` | STRIPE | READ_ONLY | `SAFE_RETRY` | non · **appartenance** |
+| `billing.checkout.retrieve` | STRIPE | READ_ONLY | `SAFE_RETRY` | **oui** · **appartenance** |
+| `billing.subscription.reconcile` | STRIPE | READ_ONLY | `SAFE_RETRY` | non |
+| `billing.customer.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
+| `billing.checkout.create` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** |
+| `billing.subscription.cancel_at_period_end` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non · **appartenance** |
+| `billing.refund` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
+| `signature.document.download` | YOUSIGN | READ_ONLY | `SAFE_RETRY` | non |
+| `signature.request.create` | YOUSIGN | LEGAL_WRITE | `UNKNOWN_ON_TIMEOUT` | non |
+| `dns.zone.resolve` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
+| `dns.records.read` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
+| `dns.record.ensure` | HOSTINGER | INFRASTRUCTURE_WRITE | `UNKNOWN_ON_TIMEOUT` | **oui** |
+
+### L'octroi ne suffit pas : certaines capacités exigent une APPARTENANCE (L6.2C)
+
+La colonne « appartenance » marque les capacités qui manipulent une ressource
+**préexistante** chez le fournisseur. Pour elles, l'octroi répond à « ce projet
+a-t-il le droit de demander ce verbe ? » — et cela ne suffit pas. Il reste à
+répondre à « cette ressource-là est-elle la sienne ? ».
+
+Les deux questions sont distinctes, et la seconde est celle qu'on oublie :
+
+```
+     octroi      →  ce projet peut demander billing.checkout.retrieve
+     appartenance →  … mais SEULEMENT sur les sessions que le Panel lui a liées
+```
+
+**L'ordre est la garantie.** L'appartenance est vérifiée AVANT tout contact
+fournisseur. Interroger Stripe puis vérifier les metadata aurait trois défauts,
+du plus visible au plus grave : on paierait un aller-retour pour une demande
+illégitime ; la durée de réponse trahirait l'existence de la ressource ; et
+l'autorisation reposerait sur des metadata **éditables depuis le tableau de bord
+du fournisseur**, c'est-à-dire sur une donnée que le demandeur peut influencer.
+
+Le refus est **indistinguable** : ressource inconnue, ressource d'un autre
+projet et lien révoqué rendent le même code (`CAPABILITY_RESOURCE_NOT_OWNED`),
+le même message et le même statut. Les distinguer donnerait un oracle
+d'existence. Le motif réel part au journal du Panel, où il sert au diagnostic
+sans servir de sonde.
+
+Une capacité marquée « appartenance » mais non servie l'est pour une raison
+précise : sa famille de ressources n'a **encore aucun lien** parce que le Panel
+n'en a jamais créé. La colonne se lit donc comme une dette, et elle se résorbe
+famille par famille.
 
 **Déclarée ≠ servie.** Une capacité non migrée est *connue* : sa politique, son
 effet et son fournisseur sont établis, et l'écran l'annonce. Elle n'est
@@ -379,9 +415,10 @@ grandir.
 
 ## 14. Réserves
 
-1. **Une seule capacité est servie.** Le lot livre la passerelle, pas les
-   migrations. Stripe (L6), Yousign (L7), Brevo `send_template` (L8) et Hostinger
-   (L9) restent sur le chemin local des projets.
+1. **Sept capacités sur quatorze sont servies** (mise à jour L6.2C). Brevo et
+   Hostinger sont migrés ; Stripe l'est pour l'ouverture et la lecture d'une
+   session de paiement. Restent sur le chemin local : l'abonnement Stripe et
+   ses prérequis (client, tarif), les résiliations, et Yousign (L7).
 2. **`PROD project → PROD credentials` n'est prouvé qu'en processus séparé.** Un
    Panel ne sert qu'un monde par processus ; l'E2E complet en PROD exigerait deux
    instances de Panel. `capability-preopening` couvre le versant PROD, l'E2E le

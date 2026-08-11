@@ -149,6 +149,9 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze([
       'billing.customer.ensure',
       'billing.checkout.create',
+      // L6.2C — la lecture d'une session, servie dès lors que l'appartenance
+      // de la ressource est prouvable (elle l'est depuis L6.2B).
+      'billing.checkout.retrieve',
       'billing.subscription.cancel_at_period_end',
       'billing.subscription.reconcile',
       'billing.invoice.list',

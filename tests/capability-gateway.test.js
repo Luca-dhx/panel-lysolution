@@ -136,6 +136,9 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     // L6.2B — la PREMIÈRE écriture financière servie. Elle ne consomme aucun
     // objet Stripe préexistant : elle en crée un, et le lie aussitôt.
     CHECKOUT,
+    // L6.2C — sa LECTURE, première capacité dont l'autorisation repose sur une
+    // appartenance prouvée plutôt que sur le seul octroi.
+    'billing.checkout.retrieve',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -157,12 +160,21 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * que le projet présente.
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('une seule capacité Stripe est servie', stripeServies.length === 1);
-  check('…et c’est l’ouverture de session de paiement', stripeServies[0]?.code === CHECKOUT);
-  check('…avec une idempotence portée par le fournisseur',
-    stripeServies[0]?.idempotency === 'PROVIDER_IDEMPOTENT');
-  check('…et une poignée de corrélation déclarée',
-    stripeServies[0]?.correlationField === 'checkoutSessionId');
+  check('deux capacités Stripe sont servies', stripeServies.length === 2);
+  const creation = stripeServies.find((c) => c.code === CHECKOUT);
+  const lecture = stripeServies.find((c) => c.code === 'billing.checkout.retrieve');
+  check('…l’ouverture de session', Boolean(creation));
+  check('…et sa lecture', Boolean(lecture));
+  check('l’ÉCRITURE porte une idempotence fournisseur',
+    creation?.idempotency === 'PROVIDER_IDEMPOTENT');
+  check('…et une poignée de corrélation', creation?.correlationField === 'checkoutSessionId');
+  /**
+   * La LECTURE n'a ni l'une ni l'autre, et c'est le bon contrat : rejouer un
+   * `GET` ne produit aucun second acte, donc rien à dédupliquer et aucun objet
+   * à corréler. Lui imposer les deux obligerait à les inventer.
+   */
+  check('la LECTURE se rejoue sans conséquence', lecture?.idempotency === 'SAFE_RETRY');
+  check('…et ne réserve donc aucune opération', lecture?.correlationField === null);
 
   // L'effet vient de L1.75, jamais recopié ici.
   check('l’effet de email.sender.verify est CONFIGURATION',

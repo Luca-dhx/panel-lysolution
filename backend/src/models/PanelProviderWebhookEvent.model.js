@@ -74,6 +74,28 @@ const providerWebhookEventSchema = new mongoose.Schema(
       default: WEBHOOK_EVENT_STATUS.RECEIVED,
     },
 
+    /**
+     * À QUI EST CET ÉVÉNEMENT ? — résolu par le LIEN, jamais par le corps (L6.2C).
+     *
+     * `null` n'est pas un défaut : c'est le cas normal pour un fournisseur dont
+     * l'appartenance ne se résout pas encore, et pour toute ressource que le
+     * Panel n'a pas lui-même créée. Une valeur ici signifie « le Panel PROUVE
+     * que cette ressource est à ce projet », et rien de moins.
+     */
+    projectId: { type: String, default: null },
+
+    /**
+     * Le VERDICT d'appartenance, conservé même quand il est négatif.
+     *
+     * C'est ce qui rend un événement non attribué INVESTIGABLE plutôt que
+     * perdu : on sait qu'il est arrivé, on sait qu'il a été vérifié, et on sait
+     * pourquoi personne ne l'a reçu.
+     */
+    ownership: { type: String, default: null },
+
+    /** Les metadata désignaient-elles un autre projet que le lien ? */
+    claimMismatch: { type: Boolean, default: false },
+
     receivedAt: { type: String, required: true },
   },
   { minimize: false, versionKey: false },
@@ -97,6 +119,16 @@ providerWebhookEventSchema.index(
 
 /** Lecture d'exploitation : « qu'a-t-on reçu récemment sur ce binding ? ». */
 providerWebhookEventSchema.index({ bindingId: 1, receivedAt: -1 }, { name: 'binding_recent' });
+
+/**
+ * Exploitation L6.2C : « qu'a reçu ce projet ? » et « qu'est-ce qui n'a été
+ * attribué à personne ? ». La seconde est la plus importante — c'est la file
+ * d'attente d'un diagnostic, et elle doit rester lisible sans balayage.
+ */
+providerWebhookEventSchema.index(
+  { provider: 1, environment: 1, ownership: 1, receivedAt: -1 },
+  { name: 'ownership_recent' },
+);
 
 export const PanelProviderWebhookEvent = mongoose.model(
   'PanelProviderWebhookEvent',

@@ -85,6 +85,11 @@ const TESTS = [
   // session avec SA clé, et la lie. Les sections qui comptent sont les
   // dégradées : réponse perdue, crash avant le lien, huit clics simultanés.
   'stripe-checkout-cutover-e2e.test.js',
+  // L6.2C — posséder un identifiant n'est pas être autorisé. La lecture vérifie
+  // l'appartenance AVANT de parler au fournisseur, et le webhook trouve son
+  // destinataire dans le registre de liens — jamais dans les metadata.
+  'stripe-checkout-read-webhook-e2e.test.js',
+  'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.
   //

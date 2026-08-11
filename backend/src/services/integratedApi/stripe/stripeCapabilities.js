@@ -145,6 +145,19 @@ const subscriptionView = z.object({
   currency: z.string().nullable(),
 }).strict();
 
+/**
+ * VUE DE LECTURE — établie sur ce que le projet CONSOMME, pas sur ce que Stripe
+ * expose (L6.2C).
+ *
+ * `paymentIntentId` et `customerId` s'ajoutent au contrat L6.1 parce que le
+ * filet de réconciliation du projet en a besoin : sans eux, il marquerait un
+ * paiement PAYÉ sans savoir quelle transaction l'a payé, et le journal
+ * affirmerait plus qu'il ne sait.
+ *
+ * Rien d'autre ne s'y ajoute. Notamment pas les metadata : elles sont
+ * corroboratives par nature (éditables depuis le tableau de bord), et les
+ * rendre inviterait un appelant à s'en servir comme d'une autorité.
+ */
 const checkoutView = z.object({
   checkoutSessionId: z.string(),
   status: z.string().nullable(),
@@ -152,6 +165,8 @@ const checkoutView = z.object({
   /** L'URL n'est rendue QUE tant que la session est ouverte. */
   url: z.string().nullable(),
   expiresAt: z.number().nullable(),
+  paymentIntentId: z.string().nullable(),
+  customerId: z.string().nullable(),
 }).strict();
 
 const checkoutCreateOutput = z.object({
@@ -206,6 +221,25 @@ const checkoutCreateOutput = z.object({
  * `billing.subscription.cancel_at_period_end`, `billing.invoice.list`,
  * `billing.subscription.reconcile`) ne figurent PAS ici : ils ont leur autorité.
  */
+/**
+ * FAMILLES DE RESSOURCES QUE LE PANEL SAIT DÉJÀ POSSÉDER (L6.2C).
+ *
+ * ══ POURQUOI CETTE LISTE, ET POURQUOI ELLE EST COURTE ═══════════════════════
+ *
+ * Une capacité qui exige de POSSÉDER un objet Stripe ne peut être servie que si
+ * le Panel en crée — et donc en lie — au moins un. Sans cela, elle serait ou
+ * bien toujours refusée, ou bien, bien pire, servie en faisant confiance à
+ * l'identifiant que le projet présente.
+ *
+ * `CHECKOUT_SESSION` y entre parce que L6.2B en crée et les lie à la création.
+ * `CUSTOMER`, `SUBSCRIPTION`, `INVOICE`, `PAYMENT_INTENT` n'y sont pas : le
+ * Panel n'en a jamais créé, donc le registre de liens n'en contient aucun.
+ *
+ * Cette liste se lit comme une DETTE : chaque famille qui s'y ajoute débloque
+ * les capacités qui l'exigeaient, et pas une de plus.
+ */
+const BINDABLE_KINDS = Object.freeze([STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION]);
+
 const PROPOSED_EFFECTS = Object.freeze({
   'billing.checkout.retrieve': 'READ_ONLY',
   'billing.subscription.retrieve': 'READ_ONLY',
@@ -287,9 +321,17 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * projet, a déjà provoqué une boucle d'interrogation. La migrer ne doit pas
      * servir de prétexte à refondre ce parcours : mêmes appels, même cadence.
      */
-    migrationNote:
-      'Contrat posé. Bloquée par l’absence de lien projet ↔ session. '
-      + 'À migrer sans toucher à la cadence d’interrogation du parcours de retour.',
+    /**
+     * SERVIE depuis L6.2C. Elle est la première capacité du parc dont
+     * l'autorisation repose sur une APPARTENANCE PROUVÉE plutôt que sur un
+     * simple octroi : posséder l'identifiant ne suffit pas, il faut que le
+     * Panel ait lui-même lié la ressource au projet demandeur.
+     *
+     * La cadence d'interrogation du parcours de retour n'a pas été touchée :
+     * les mêmes appels, aux mêmes moments, par une autre porte.
+     */
+    migrated: true,
+    migrationNote: null,
   }),
 
   /* ── ÉCRITURES FINANCIÈRES ────────────────────────────────────────────── */
@@ -385,7 +427,9 @@ export function validateStripeCapabilities() {
      * préalable. Elle se lèvera d'elle-même, capacité par capacité, quand le
      * Panel créera lui-même les clients et les abonnements.
      */
-    if (definition.migrated && definition.requiresResourceOwnership) {
+    if (definition.migrated
+      && definition.requiresResourceOwnership
+      && !BINDABLE_KINDS.includes(definition.resourceKind)) {
       problems.push(`${code} : servie alors qu’aucun lien vers ${definition.resourceKind} n’existe encore.`);
     }
     // Une écriture financière servie doit lier ce qu'elle crée : sans preuve
@@ -413,7 +457,8 @@ export function validateStripeCapabilities() {
     if (!Object.hasOwn(shape, 'operationId')) {
       problems.push(`${code} : toute capacité financière doit porter un operationId.`);
     }
-    // Une écriture financière sans idempotence fournisseur est un doublon en attente.
+    // Une ÉCRITURE financière sans idempotence fournisseur est un doublon en
+    // attente. Une lecture n'a pas ce problème : la rejouer ne produit rien.
     if (definition.financial && definition.idempotency !== 'PROVIDER_IDEMPOTENT') {
       problems.push(`${code} : écriture financière sans idempotence fournisseur.`);
     }

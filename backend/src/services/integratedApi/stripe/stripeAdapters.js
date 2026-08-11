@@ -36,6 +36,7 @@ import logger from '../../../utils/logger.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
+  capabilityResourceNotOwned,
 } from '../../capabilities/capabilityErrors.js';
 import {
   createCheckoutSession,
@@ -47,8 +48,10 @@ import {
 import {
   STRIPE_RESOURCE_TYPES,
   BINDING_SOURCES,
+  STRIPE_RESOURCE_NOT_OWNED,
   bindResource,
   findBindingByOperation,
+  assertOwnedResource,
   maskResourceId,
 } from './stripeResourceBinding.js';
 import {
@@ -78,6 +81,18 @@ import {
  */
 function translateStripeError(error, definition) {
   if (error instanceof CapabilityError) return error;
+
+  /**
+   * L'APPARTENANCE REFUSÉE — un seul code, une seule phrase (L6.2C).
+   *
+   * `assertOwnedResource` rend déjà le même refus pour « inconnue », « à un
+   * autre » et « révoquée » ; on le traduit sans rien y ajouter. Le motif réel
+   * a été journalisé côté registre, où il sert au diagnostic sans devenir une
+   * sonde d'existence.
+   */
+  if (error?.code === STRIPE_RESOURCE_NOT_OWNED) {
+    return capabilityResourceNotOwned(definition.code);
+  }
 
   if (error instanceof CheckoutAuthorityError) {
     /**
@@ -294,6 +309,95 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
 }
 
 /* -------------------------------------------------------------------------- */
+/*  billing.checkout.retrieve                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lit une session de paiement — SI ELLE EST À CE PROJET.
+ *
+ * ══ L'ORDRE EST TOUTE LA SÉCURITÉ ═══════════════════════════════════════════
+ *
+ *   appartenance  →  fournisseur
+ *
+ * et jamais l'inverse. Demander la session à Stripe puis vérifier ses metadata
+ * aurait trois défauts, du plus visible au plus grave :
+ *
+ *   · le Panel paierait un aller-retour réseau pour une demande illégitime ;
+ *   · la durée de réponse trahirait l'existence de la ressource — un refus
+ *     instantané et un refus lent ne se confondent pas ;
+ *   · l'autorisation reposerait sur des metadata ÉDITABLES depuis le tableau de
+ *     bord Stripe, c'est-à-dire sur une donnée que le demandeur peut influencer.
+ *
+ * Sur les trois refus d'appartenance (inconnue, à un autre, révoquée) :
+ * `STRIPE_PROVIDER_CALLS = 0`. C'est vérifié par le test, pas seulement promis.
+ */
+async function checkoutRetrieve({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+
+  // ── L'APPARTENANCE, AVANT TOUT CONTACT ────────────────────────────────────
+  await guard(definition, () => assertOwnedResource({
+    projectId, environment, resourceType: SESSION, resourceId: input.checkoutSessionId,
+  }));
+
+  const lu = await guard(definition, () => retrieveCheckoutSession({
+    credentials,
+    sessionId: input.checkoutSessionId,
+    timeoutMs: definition.timeoutMs,
+    fetchImpl,
+  }));
+
+  const session = lu.session;
+  /**
+   * LE LIEN AFFIRME, LE FOURNISSEUR DÉMENT — on ne tranche pas tout seul.
+   *
+   * Un `resource_missing` après une appartenance valide est une INCOHÉRENCE :
+   * peut-être une purge du compte, peut-être un mauvais monde, peut-être un
+   * lien écrit à tort. Révoquer le lien automatiquement ferait de l'avis
+   * ponctuel d'un fournisseur une décision d'appartenance définitive — et la
+   * ressource deviendrait irrécupérable. On refuse, on journalise, un humain
+   * tranche.
+   */
+  if (!session?.id) {
+    logger.error(
+      `[stripe] INCOHÉRENCE — ${maskResourceId(input.checkoutSessionId)} est liée à `
+      + `${projectId} (${environment}) mais Stripe ne la rend pas. Lien CONSERVÉ.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : le fournisseur n’a rendu aucune session exploitable.`,
+      { reason: 'BINDING_PROVIDER_DIVERGENCE' },
+    );
+  }
+
+  return describeSessionView(session);
+}
+
+/**
+ * LE DTO DE LECTURE — exactement ce que le parcours migré consomme.
+ *
+ * Cette liste n'est pas « ce qui semble utile » : c'est ce que
+ * `settleFromSession` lit réellement côté projet (`status`, `payment_status`,
+ * `payment_intent`, `customer`), plus l'identifiant et l'URL que le parcours de
+ * retour affiche, plus l'échéance qui dit si le lien vaut encore.
+ *
+ * Tout le reste de l'objet Stripe reste chez le Panel : la ligne d'articles,
+ * l'adresse du client, ses moyens de paiement, le total facturé, le compte. Les
+ * relayer « au cas où » ferait traverser au pont des données personnelles
+ * qu'aucune capacité n'a promises, et qu'aucun écran ne demande.
+ */
+function describeSessionView(session) {
+  return {
+    checkoutSessionId: String(session.id),
+    status: session.status ?? null,
+    paymentStatus: session.payment_status ?? null,
+    url: session.url ?? null,
+    expiresAt: Number.isFinite(session.expires_at) ? session.expires_at : null,
+    paymentIntentId: idOf(session.payment_intent),
+    customerId: idOf(session.customer),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -304,6 +408,16 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
  */
 export const STRIPE_ADAPTERS = Object.freeze({
   'billing.checkout.create': checkoutCreate,
+  /**
+   * LA LECTURE, SERVIE PARCE QU'ELLE A ENFIN UN PROPRIÉTAIRE À VÉRIFIER.
+   *
+   * Elle attendait depuis L6.1, non par prudence de calendrier mais faute
+   * d'ancrage : lire une session sans savoir à qui elle est aurait donné à
+   * n'importe quel projet le droit de lire n'importe quelle session du compte.
+   * L6.2B a commencé à en créer et à les lier ; il y a donc désormais quelque
+   * chose à vérifier.
+   */
+  'billing.checkout.retrieve': checkoutRetrieve,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

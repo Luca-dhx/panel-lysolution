@@ -62,6 +62,19 @@ export const CAPABILITY_ERROR_CODES = Object.freeze({
    * doit attendre et relire, jamais réessayer immédiatement — sans quoi deux
    * clics rapides produiraient deux e-mails.
    */
+  /**
+   * LA RESSOURCE N'EST PAS LA SIENNE — et ce code ne dit rien de plus (L6.2C).
+   *
+   * Un seul code pour TROIS situations : la ressource est inconnue du Panel,
+   * elle appartient à un autre projet, ou son lien a été révoqué. Les
+   * distinguer donnerait un oracle d'existence — on présenterait des
+   * identifiants au hasard et la nuance du refus dirait lesquels existent.
+   *
+   * Distinct de `NOT_GRANTED` à dessein : celui-ci parle du DROIT d'invoquer un
+   * verbe, celui-là de l'APPARTENANCE d'un objet. Les confondre ferait chercher
+   * un octroi manquant là où il n'en manque aucun.
+   */
+  RESOURCE_NOT_OWNED: 'CAPABILITY_RESOURCE_NOT_OWNED',
   OPERATION_IN_FLIGHT: 'CAPABILITY_OPERATION_IN_FLIGHT',
   /**
    * Une tentative antérieure sur cet `operationId` s'est terminée sans qu'on
@@ -87,6 +100,7 @@ const HTTP_STATUS = Object.freeze({
   [CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH]: 403,
   // 409 : l'état actuel de la ressource interdit l'action. Un 429 dirait
   // « ralentis », ce qui inviterait à réessayer — exactement ce qu'il ne faut pas.
+  [CAPABILITY_ERROR_CODES.RESOURCE_NOT_OWNED]: 403,
   [CAPABILITY_ERROR_CODES.OPERATION_IN_FLIGHT]: 409,
   [CAPABILITY_ERROR_CODES.OPERATION_UNRESOLVED]: 409,
 });
@@ -104,6 +118,8 @@ const OUTCOME_BY_CODE = Object.freeze({
   [CAPABILITY_ERROR_CODES.ENVIRONMENT_MISMATCH]: CAPABILITY_OUTCOMES.FAILED,
   [CAPABILITY_ERROR_CODES.CREDENTIALS_MISSING]: CAPABILITY_OUTCOMES.FAILED,
   [CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH]: CAPABILITY_OUTCOMES.BLOCKED,
+  // Rien n'a été tenté, et surtout : le fournisseur n'a pas été touché.
+  [CAPABILITY_ERROR_CODES.RESOURCE_NOT_OWNED]: CAPABILITY_OUTCOMES.BLOCKED,
   // Rien n'a été tenté : l'exécution appartient à quelqu'un d'autre.
   [CAPABILITY_ERROR_CODES.OPERATION_IN_FLIGHT]: CAPABILITY_OUTCOMES.BLOCKED,
   // L'issue d'AVANT reste inconnue — et le refus d'aujourd'hui le dit.
@@ -180,6 +196,18 @@ export const capabilityOperationUnresolved = (code, operationId) => new Capabili
   { operationId },
 );
 
+/**
+ * Refus d'appartenance — UNE seule formulation, quel que soit le motif réel.
+ *
+ * Le message ne nomme ni le propriétaire, ni le type de refus, ni même le fait
+ * que la ressource existe quelque part. Le motif véritable part au journal du
+ * Panel, où il sert au diagnostic sans servir de sonde.
+ */
+export const capabilityResourceNotOwned = (code) => new CapabilityError(
+  CAPABILITY_ERROR_CODES.RESOURCE_NOT_OWNED,
+  `Ressource inconnue ou non autorisée pour ce projet (« ${code} »).`,
+);
+
 export const capabilityProjectScopeMismatch = () => new CapabilityError(
   CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH,
   'Refusé : la demande désigne un autre projet que celui authentifié par le pont.',
@@ -198,4 +226,5 @@ export default {
   capabilityProjectScopeMismatch,
   capabilityOperationInFlight,
   capabilityOperationUnresolved,
+  capabilityResourceNotOwned,
 };

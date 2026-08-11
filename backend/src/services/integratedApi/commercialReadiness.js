@@ -151,6 +151,14 @@ const FORBIDDEN_IN_PREOPENING = Object.freeze([
  */
 export const CAPABILITY_EFFECTS = Object.freeze({
   // ── Stripe ───────────────────────────────────────────────────────────────
+  /**
+   * Lire l'état d'une session de paiement. READ_ONLY : rien n'est encaissé,
+   * rien n'est créé, et la rejouer n'a aucun effet observable — c'est ce qui
+   * autorise une pré-ouverture à s'en servir pour constater où en est un
+   * paiement déjà engagé. Servie depuis L6.2C, et déclarée ici parce que cette
+   * table est la SEULE autorité sur les effets réels.
+   */
+  'billing.checkout.retrieve': EFFECT.READ_ONLY,
   'billing.invoice.list': EFFECT.READ_ONLY,
   'billing.subscription.reconcile': EFFECT.READ_ONLY,
   // Créer un Customer ne débite rien et se supprime. L'interdire empêcherait

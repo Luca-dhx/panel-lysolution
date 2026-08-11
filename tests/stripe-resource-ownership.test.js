@@ -463,8 +463,21 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
   const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
     .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
   check('quatre capacités exigent une ressource préexistante', exigeantes.length === 4);
-  check('…et AUCUNE d’elles n’est servie',
-    exigeantes.every((c) => capabilities.STRIPE_CAPABILITIES[c].migrated === false));
+  /**
+   * L6.2C en sert UNE : la lecture de session. Elle le peut parce que le Panel
+   * crée et lie lui-même des sessions depuis L6.2B — l'appartenance est donc
+   * PROUVABLE, et non supposée. Les trois autres exigent un client ou un
+   * abonnement que le Panel n'a jamais créés : les servir reviendrait à croire
+   * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
+   */
+  const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
+  check('une seule d’elles est servie', servies.length === 1);
+  check('…et c’est la lecture de session', servies[0] === 'billing.checkout.retrieve');
+  check('…dont la famille est bien celle que le Panel crée',
+    capabilities.STRIPE_CAPABILITIES[servies[0]].resourceKind
+    === binding.STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION);
+  check('les trois autres restent fermées',
+    exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated).length === 3);
 }
 
 await stopMemoryMongo();

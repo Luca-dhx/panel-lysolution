@@ -261,6 +261,28 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.BILLING_READ],
     migrationNote: 'L6. Lecture pure — la plus simple à basculer en premier.',
   }),
+  /**
+   * LA LECTURE D'UNE SESSION — servie depuis L6.2C.
+   *
+   * Contrat repris du catalogue L6.1, comme l'écriture : `assertRegistryAlignment`
+   * vérifie que ce sont les MÊMES objets de schéma, pas deux définitions qui se
+   * ressemblent.
+   *
+   * `SAFE_RETRY` et non `PROVIDER_IDEMPOTENT` : une lecture rejouée ne produit
+   * aucun second acte, donc elle ne réserve pas d'opération. Confondre les deux
+   * ferait payer à un `GET` le prix d'une écriture financière.
+   */
+  'billing.checkout.retrieve': capability('billing.checkout.retrieve', {
+    provider: 'STRIPE',
+    label: 'Lire l’état d’une session de paiement',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.checkout.retrieve'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.checkout.retrieve'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_READ],
+    migrationNote: null,
+  }),
   'billing.subscription.reconcile': capability('billing.subscription.reconcile', {
     provider: 'STRIPE',
     label: 'Réconcilier un abonnement',
@@ -529,12 +551,30 @@ export function assertRegistryAlignment() {
       || capability.outputSchema !== catalogue.outputSchema) {
       problems.push(`« ${capability.code} » ne sert pas le contrat du catalogue Stripe (L6.1).`);
     }
-    if (capability.idempotency !== IDEMPOTENCY.PROVIDER_IDEMPOTENT) {
-      problems.push(`« ${capability.code} » est une écriture Stripe servie sans idempotence fournisseur.`);
+    /**
+     * Les deux règles suivantes ne valent que pour les ÉCRITURES.
+     *
+     * Une lecture n'a ni doublon à craindre ni objet à corréler : lui imposer
+     * une idempotence fournisseur et une poignée de corrélation obligerait à
+     * inventer les deux, et une exigence qu'on satisfait en inventant ne
+     * protège plus rien.
+     */
+    if (catalogue.financial) {
+      if (capability.idempotency !== IDEMPOTENCY.PROVIDER_IDEMPOTENT) {
+        problems.push(`« ${capability.code} » est une écriture Stripe servie sans idempotence fournisseur.`);
+      }
+      // Sans poignée de corrélation, l'objet créé serait produit puis oublié.
+      if (!capability.correlationField) {
+        problems.push(`« ${capability.code} » est servie sans champ de corrélation.`);
+      }
     }
-    // Sans poignée de corrélation, l'objet créé serait produit puis oublié.
-    if (!capability.correlationField) {
-      problems.push(`« ${capability.code} » est servie sans champ de corrélation.`);
+    /**
+     * En revanche, TOUTE capacité servie qui manipule une ressource
+     * préexistante doit exiger la preuve de son appartenance. C'est la règle qui
+     * empêche qu'un jour on serve une lecture « juste pour dépanner ».
+     */
+    if (catalogue.resourceKind && !catalogue.requiresResourceOwnership) {
+      problems.push(`« ${capability.code} » manipule une ressource sans exiger la preuve de son appartenance.`);
     }
   }
 

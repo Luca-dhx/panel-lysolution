@@ -1557,16 +1557,50 @@ plus contraignant et dont la donnée est déjà prête (§11.1).
 
 - **Objectif** — SB Auto n'appelle plus Stripe directement.
 - **Dépendances** — L3, L5.
-- **Étapes** — dual-read (le projet appelle la capacité, retombe sur le chemin
-  local en cas d'échec) → capacité seule → retrait du chemin local → retrait
-  des credentials.
-- **Tests** — E2E `SB Auto TEST → capacité → Panel TEST → Stripe sandbox` ·
-  **preuve qu'aucune clé LIVE n'est atteignable** · Panel indisponible → le
-  projet dégrade proprement, sans perte de contrat.
-- **Rollback** — repasser le drapeau de dual-read. Possible **tant que les
-  credentials locaux ne sont pas supprimés**.
 - **Risque** — **ÉLEVÉ** (paiements).
-- **GO** — sept jours sans appel Stripe local en journal, et sans incident.
+
+#### Le dual-read a été ABANDONNÉ — et c'est une décision, pas un raccourci
+
+Ce plan prévoyait « le projet appelle la capacité, retombe sur le chemin local
+en cas d'échec ». Les lots L8.2 (Brevo) puis L9.2 (DNS) ont montré ce que vaut
+un repli : il ne disparaît jamais de lui-même, et le jour d'un incident
+quelqu'un le rallume « le temps de dépanner » — la centralisation qu'on croyait
+acquise n'existe alors plus, sans que rien ne le signale.
+
+Sur un provider financier, c'est pire : un repli sur la clé locale ferait
+encaisser sur un autre compte que celui qui a créé la session. Chaque lot
+Stripe supprime donc le chemin local qu'il migre, au lieu de le désactiver.
+
+**Rollback** — par `git revert` du lot, pas par un drapeau. Les credentials
+locaux ne sont retirés qu'après le dernier lot.
+
+#### Avancement réel
+
+| Lot | Objet | État |
+|---|---|---|
+| **L6.1** | Fondation : transport, contrats, doctrine `UNKNOWN` | READY WITH BLOCKERS |
+| **L6.2A** | Appartenance des ressources — `unique(environment, type, id)` | **PASS** |
+| **L6.2B** | `billing.checkout.create` — première écriture financière servie | **PASS** |
+| **L6.2C** | `billing.checkout.retrieve` + routage webhook par appartenance | **PASS** |
+| L6.2D | `billing.customer.ensure` → débloque l'abonnement | à faire |
+| L6.2E | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
+| L6.3 | Cutover de l'endpoint webhook, retrait des credentials projet | à faire |
+
+**Les deux doctrines établies par ces lots**, et qui valent pour les suivants :
+
+> **Posséder un identifiant n'est pas être autorisé.** L'appartenance est
+> vérifiée AVANT tout appel fournisseur — sinon la durée de réponse elle-même
+> trahit l'existence de la ressource.
+
+> **Metadata ≠ appartenance.** Stripe prouve l'événement par sa signature ;
+> notre registre de liens prouve à qui appartient la ressource. Les metadata
+> corroborent, et perdent quand elles contredisent le lien.
+
+- **Ce qui bloque L6.2D+** — une session d'abonnement référence un Customer et
+  un Price créés avant elle, et ces familles n'ont aucun lien. Neuf des treize
+  événements webhook souscrits restent pour la même raison non attribuables.
+- **GO L6.3** — sept jours sans appel Stripe local en journal sur les parcours
+  migrés, et zéro événement `UNOWNED` non expliqué.
 
 ---
 

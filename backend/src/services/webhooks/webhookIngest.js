@@ -43,6 +43,7 @@ import { loadVerificationSecrets } from './webhookSecrets.js';
 import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './webhookSignature.js';
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
+import { resolveStripeEventOwnership, EVENT_OWNERSHIP } from './stripeEventRouting.js';
 
 /** Issues d'une réception. Traduites en statut HTTP par le contrôleur. */
 export const INGEST_OUTCOME = Object.freeze({
@@ -162,6 +163,44 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     },
   );
 
+  /**
+   * ── À QUI EST-IL ? (L6.2C) ──────────────────────────────────────────────
+   *
+   * Résolu APRÈS la signature et APRÈS l'idempotence, et ENREGISTRÉ sur
+   * l'événement — y compris quand la réponse est « à personne ». Un événement
+   * non attribué qu'on ne consigne pas est un événement perdu, et une perte
+   * silencieuse est la pire des issues sur un flux financier.
+   *
+   * Aucune mutation métier n'en découle dans ce lot : pendant la coexistence,
+   * le projet reçoit les mêmes événements sur son propre endpoint. Appliquer
+   * ici le même fait une seconde fois le doublerait.
+   *
+   * SAUTÉ SUR UN REJEU, comme l'acheminement plus bas. Un doublon a déjà été
+   * résolu à son premier passage, et son verdict est en base : le recalculer
+   * réécrirait les mêmes champs pour rien, et surtout cela romprait la règle
+   * que tout ce fichier applique — après l'idempotence, un rejeu ne produit
+   * plus aucun effet, pas même un effet inoffensif.
+   */
+  const appartenance = duplicate ? null : await resolveStripeEventOwnership({
+    provider, environment, eventType: identity.eventType, payload: parsed,
+  }).catch((err) => {
+    logger.error(`[webhooks] appartenance non résolue — ${err?.message ?? 'erreur inconnue'}.`);
+    return null;
+  });
+
+  if (appartenance && appartenance.ownership !== EVENT_OWNERSHIP.NOT_ROUTABLE) {
+    await PanelProviderWebhookEvent.updateOne(
+      { provider, environment, providerEventId: identity.providerEventId },
+      {
+        $set: {
+          projectId: appartenance.projectId,
+          ownership: appartenance.ownership,
+          claimMismatch: appartenance.claimMismatch,
+        },
+      },
+    ).catch(() => {});
+  }
+
   // ── ACHEMINEMENT MÉTIER (L8.4) ──────────────────────────────────────────
   //
   // L'événement est vérifié, unique et daté. Il peut donc partir vers le
@@ -197,6 +236,14 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     /** Le projet a-t-il été prévenu, et lequel ? Diagnostic, jamais un secret. */
     dispatched: dispatch.dispatched,
     dispatchReason: dispatch.reason ?? null,
+    /**
+     * Le verdict d'appartenance remonte au contrôleur pour le DIAGNOSTIC. Il
+     * ne change pas le statut HTTP : un événement qu'on n'attribue à personne
+     * a bien été reçu et vérifié, et répondre autre chose que 2xx ferait
+     * rejouer Stripe en boucle pour un problème qui n'est pas le sien.
+     */
+    ownership: appartenance?.ownership ?? null,
+    routedProjectId: appartenance?.projectId ?? null,
     code: null,
   };
 }
