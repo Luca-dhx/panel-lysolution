@@ -324,9 +324,20 @@ section('7. Fail closed sur l’inconnu, refus explicite sur le non-migré');
     code: 'email.send_template',
     input: { templateRef: 'X', recipient: { email: 'a@b.fr' }, operationId: 'op-e2e-000007' },
   });
-  check('capacité accordée mais non migrée → CAPABILITY_NOT_AVAILABLE',
+  /**
+   * Depuis L8.4B la capacité est SERVIE : le refus ne vient plus du registre.
+   * Ce projet n'a aucune identité expéditrice configurée, et l'expéditeur est
+   * résolu AVANT le modèle — un modèle valide dont l'expéditeur manque ne doit
+   * pas être rendu pour rien, et l'erreur doit nommer la vraie cause.
+   *
+   * Classé NOT_AVAILABLE et non « fournisseur indisponible » : rien n'a été
+   * tenté chez Brevo, et c'est une CONFIGURATION qui manque — actionnable par
+   * un humain, pas réparable en réessayant.
+   */
+  check('sans identité expéditrice → CAPABILITY_NOT_AVAILABLE',
     nonMigree.code === 'CAPABILITY_NOT_AVAILABLE');
-  check('…et le motif est lisible côté projet', nonMigree.panelDetails?.reason === 'NOT_MIGRATED');
+  check('…et le motif nomme la configuration manquante',
+    nonMigree.panelDetails?.reason === 'SENDER_IDENTITY_MISSING');
 
   check('aucun appel fournisseur sur ces deux refus', appelsFournisseur.length === avant);
 }

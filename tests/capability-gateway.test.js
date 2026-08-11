@@ -127,14 +127,25 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   const SERVIES = [
     // L8.2 — la lecture Brevo, première capacité réellement basculée.
     VERIFY,
+    // L8.4B — l'ENVOI, et seulement parce que le chemin retour existe : les
+    // webhooks de livraison suivent le compte Brevo, donc le Panel. L'activer
+    // sans `emailDeliveryDispatch` aurait figé chaque suivi sur « envoyé ».
+    SEND,
     // L9.1 — les trois verbes DNS d'un déploiement.
     'dns.zone.resolve', 'dns.records.read', 'dns.record.ensure',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
     === JSON.stringify(SERVIES));
-  check('email.send_template reste NON migrée',
-    registry.getCapabilityDefinition(SEND).migrated === false);
+  check('email.send_template est désormais SERVIE',
+    registry.getCapabilityDefinition(SEND).migrated === true);
+  /**
+   * Son idempotence reste `UNKNOWN_ON_TIMEOUT`, et c'est ce qui déclenche la
+   * réservation au goulot de la passerelle : Brevo n'offre aucune clé sur
+   * `/smtp/email`, donc son silence laisse l'envoi indécidable.
+   */
+  check('…avec une idempotence qui exige une réservation',
+    registry.getCapabilityDefinition(SEND).idempotency === 'UNKNOWN_ON_TIMEOUT');
   check('les six capacités Stripe restent NON migrées',
     registry.capabilitiesForProvider('STRIPE').every((c) => !c.migrated));
 
@@ -224,8 +235,8 @@ section('3. OCTROIS — fermés par défaut, et une seule autorité');
 
   const apres = await grantsModule.setCapabilityGrants('projet-nu', [VERIFY, SEND], ACTEUR);
   check('deux capacités accordées', apres.granted.length === 2);
-  check('…dont une réellement effective (l’autre n’est pas migrée)',
-    apres.capabilities.filter((c) => c.effective).length === 1);
+  check('…et les DEUX sont réellement effectives depuis L8.4B',
+    apres.capabilities.filter((c) => c.effective).length === 2);
 
   // Remplacement, pas fusion : la liste se lit d'un coup d'œil.
   const reduit = await grantsModule.setCapabilityGrants('projet-nu', [VERIFY], ACTEUR);
@@ -262,8 +273,20 @@ section('4. ORDRE DES REFUS — la garantie « zéro appel fournisseur »');
   // instance doit pouvoir envoyer la réinitialisation qui l'ouvrira.
   const comm = await projet({ projectId: 'p4', grants: [SEND], commercialState: 'PREOPENING' });
   const communication = await invoquer(comm, SEND, {}, provider);
+  /**
+   * LA POLITIQUE N'A PAS BOUGÉ — c'est l'ÉTAPE ATTEINTE qui a changé.
+   *
+   * Avant L8.4B, la capacité n'était pas servie : le refus tombait à l'étape
+   * « est-ce migré ? », avant toute validation d'entrée. Elle l'est désormais,
+   * donc un corps vide est refusé une étape PLUS LOIN — pour entrée invalide,
+   * et non pour pré-ouverture.
+   *
+   * Ce que l'assertion prouve reste le même, et c'est le point : une capacité
+   * de COMMUNICATION_WRITE n'est PAS bloquée par la pré-ouverture. Une
+   * instance doit pouvoir envoyer la réinitialisation qui l'ouvrira.
+   */
   check('PREOPENING × COMMUNICATION_WRITE n’est PAS bloqué par la politique',
-    communication.code === CODES.NOT_AVAILABLE);
+    communication.code === CODES.INPUT_INVALID);
 
   check('AUCUN appel fournisseur sur tous ces refus', provider.appels.length === 0);
 }

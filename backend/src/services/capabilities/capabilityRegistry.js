@@ -217,7 +217,15 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'email.send_template': capability('email.send_template', {
     provider: 'BREVO',
     label: 'Envoyer une notification depuis un modèle',
-    migrated: false,
+    /**
+     * SERVIE DEPUIS L8.4B — et seulement parce que le CHEMIN RETOUR existe.
+     *
+     * Les envois partent du compte Brevo du Panel : les webhooks de livraison
+     * suivent le compte, pas le projet. Activer l'émission sans
+     * `emailDeliveryDispatch` aurait figé chaque suivi de livraison sur
+     * « envoyé », en silence. Les deux moitiés ont été livrées ensemble.
+     */
+    migrated: true,
     inputSchema: emailSendTemplateInput,
     outputSchema: emailSendTemplateOutput,
     timeoutMs: 15_000,
@@ -230,9 +238,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
      * qui n'est pas le sien. La garde d'architecture le vérifie sur les
      * chaînes, pas seulement sur les commentaires — et elle a bien fait.
      */
-    migrationNote:
-      'Exige le magasin de modèles et d’identités expéditrices du Panel (L8 §15, réserve 2). '
-      + 'Le chemin local du projet reste la seule voie d’envoi.',
   }),
 
   /* ── Stripe — audité, pas migré (L6) ────────────────────────────────────── */

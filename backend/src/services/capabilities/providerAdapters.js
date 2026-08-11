@@ -33,6 +33,7 @@ import {
   OUTCOMES as TRANSPORT_OUTCOMES,
 } from '../integratedApi/brevo/brevoTransport.js';
 import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
+import { brevoSendTemplate } from './brevoSendAdapter.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
@@ -150,6 +151,13 @@ async function brevoSenderVerify({ credentials, definition, fetchImpl }) {
  */
 const ADAPTERS = Object.freeze({
   'email.sender.verify': brevoSenderVerify,
+  /**
+   * L'ENVOI — dans son propre module, pour la meme raison que les verbes DNS :
+   * il resout trois autorites (modele, expediteur, coffre) avant de parler au
+   * fournisseur, et melanger cette resolution a la lecture de compte ferait de
+   * ce fichier un service Brevo plutot qu'une table.
+   */
+  'email.send_template': brevoSendTemplate,
   /**
    * HOSTINGER — trois verbes DNS, définis par le lot qui connaît le fournisseur.
    *

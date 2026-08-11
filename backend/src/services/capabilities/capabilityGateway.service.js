@@ -41,7 +41,8 @@
 import logger from '../../utils/logger.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { canExecute, DECISION } from '../integratedApi/commercialReadiness.js';
-import { getCapabilityDefinition } from './capabilityRegistry.js';
+import { getCapabilityDefinition, IDEMPOTENCY } from './capabilityRegistry.js';
+import { CLAIM, claimOperation, settleSucceeded, settleFailure } from './operationRegistry.js';
 import { INVOCATION_SOURCES, buildInvocationContext, describeContext } from './invocationContext.js';
 import { assertGranted } from './capabilityGrants.js';
 import { resolveCredentialsForCapability } from './credentialResolver.js';
@@ -53,6 +54,8 @@ import {
   capabilityNotAvailable,
   capabilityBlockedPreopening,
   capabilityInputInvalid,
+  capabilityOperationInFlight,
+  capabilityOperationUnresolved,
 } from './capabilityErrors.js';
 
 /**
@@ -128,21 +131,99 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
     // ── 7. L'ENTRÉE EST-ELLE CONFORME ? ─────────────────────────────────────
     const input = parseInput(definition, payload);
 
-    // ── 8. A-T-ON DES IDENTIFIANTS ? ET 9. EXÉCUTER ─────────────────────────
+    // ── 8. A-T-ON DES IDENTIFIANTS ? ────────────────────────────────────────
     // Les valeurs déchiffrées sont obtenues et consommées dans la même
     // expression : elles ne sont jamais liées à une variable de portée large,
     // jamais journalisées, jamais attachées à une erreur.
     const resolved = await resolveCredentialsForCapability(context, definition);
-    const raw = await executeCapability({
-      definition,
-      context,
-      credentials: resolved.values,
-      input,
-      fetchImpl,
-    });
+
+    /**
+     * ── 9. RÉSERVER L'OPÉRATION — LE DERNIER GESTE AVANT LE FOURNISSEUR ─────
+     *
+     * ══ POURQUOI ICI, ET NULLE PART AILLEURS ═══════════════════════════════
+     *
+     * Plus tôt, on écrirait une réservation pour des appels qui vont être
+     * refusés : un projet sans octroi laisserait la trace d'un envoi qui n'a
+     * jamais eu lieu, et le registre deviendrait un journal de refus. Plus
+     * tard, il n'y a plus de « plus tard » — l'appel est parti.
+     *
+     * ══ ELLE NE CONCERNE PAS TOUTES LES CAPACITÉS ══════════════════════════
+     *
+     * Une lecture pure se rejoue sans conséquence, et un fournisseur qui
+     * déduplique lui-même n'a pas besoin de nous. Seules les capacités dont
+     * l'issue devient INDÉCIDABLE en cas de silence méritent ce coût — c'est
+     * exactement ce que déclare `UNKNOWN_ON_TIMEOUT`.
+     */
+    const reservation = requiresReservation(definition)
+      ? await reserve(context, definition, input)
+      : null;
+
+    // Déjà exécutée : on rend ce qui avait été mémorisé, et RIEN ne part.
+    if (reservation?.memoized) {
+      const durationMs = Date.now() - context.startedAt;
+      await audit(context, definition, {
+        outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
+        durationMs,
+        operationId: input.operationId,
+        errorCode: 'REPLAYED',
+      });
+      return {
+        capability: definition.code,
+        provider: definition.provider,
+        environment: context.environment,
+        outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
+        operationId: input.operationId,
+        requestId: context.requestId,
+        durationMs,
+        result: reservation.memoized,
+      };
+    }
+
+    // ── 10. EXÉCUTER ────────────────────────────────────────────────────────
+    let raw;
+    try {
+      raw = await executeCapability({
+        definition,
+        context,
+        credentials: resolved.values,
+        input,
+        fetchImpl,
+      });
+    } catch (error) {
+      /**
+       * L'ÉCHEC EST CLASSÉ AVANT D'ÊTRE RELANCÉ.
+       *
+       * `replaySafe` distingue « il a dit non » (rien n'est parti, rejouable)
+       * de « il n'a rien dit » (l'action a PEUT-ÊTRE eu lieu). Ranger le second
+       * dans le premier ferait rejouer, donc doubler un envoi réel.
+       */
+      if (reservation) {
+        await settleFailure(reservation.operation, {
+          resolved: error instanceof CapabilityError ? error.replaySafe : false,
+          errorCode: error?.code ?? 'UNEXPECTED',
+          errorMessage: error?.message ?? '',
+          httpStatus: error?.details?.httpStatus ?? null,
+          durationMs: Date.now() - context.startedAt,
+        }).catch(() => {});
+      }
+      throw error;
+    }
 
     const result = parseOutput(definition, raw);
     const durationMs = Date.now() - context.startedAt;
+
+    /**
+     * FENÊTRE DE CRASH ASSUMÉE : entre l'acceptation par le fournisseur et
+     * cette écriture, un processus tué laisse l'opération en PENDING. Le
+     * passage suivant la verra « en cours » et REFUSERA de doubler plutôt que
+     * de renvoyer — le bon arbitrage quand on ne sait pas.
+     */
+    if (reservation) {
+      await settleSucceeded(reservation.operation, {
+        providerMessageId: result.providerMessageId ?? null,
+        durationMs,
+      });
+    }
 
     await audit(context, definition, {
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
@@ -192,6 +273,69 @@ function fallbackContext(panelProject, requestId) {
     requestId: requestId ?? null,
     source: INVOCATION_SOURCES.PROJECT_BRIDGE,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  RÉSERVATION D'OPÉRATION                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Cette capacité doit-elle être protégée contre le doublon ?
+ *
+ * `UNKNOWN_ON_TIMEOUT` est le seul cas : le fournisseur n'offre aucune clé
+ * d'idempotence, donc son silence laisse l'action indécidable. `SAFE_RETRY` et
+ * `NONE` se rejouent sans conséquence ; `PROVIDER_IDEMPOTENT` est déjà protégé
+ * chez le fournisseur, et l'ajouter ici doublerait un mécanisme qui marche.
+ */
+function requiresReservation(definition) {
+  return definition.idempotency === IDEMPOTENCY.UNKNOWN_ON_TIMEOUT;
+}
+
+/**
+ * Réclame l'opération, ou refuse.
+ *
+ * @returns {Promise<{operation: object, memoized: object|null}>}
+ * @throws {CapabilityError} si une autre exécution la détient, ou si l'issue
+ *   d'une tentative antérieure reste inconnue.
+ */
+async function reserve(context, definition, input) {
+  const outcome = await claimOperation({
+    projectId: context.projectId,
+    capability: definition.code,
+    operationId: input.operationId,
+    environment: context.environment,
+    provider: definition.provider,
+    templateCode: input.templateRef ?? null,
+    recipientEmail: input.recipient?.email ?? null,
+  });
+
+  switch (outcome.claim) {
+    case CLAIM.EXECUTE:
+      return { operation: outcome.operation, memoized: null };
+
+    case CLAIM.ALREADY_SUCCEEDED:
+      /**
+       * LE REJEU NE RENVOIE RIEN, ET LE DIT.
+       *
+       * `ALREADY_SENT` plutôt que `ACCEPTED` : le projet doit distinguer « je
+       * viens de l'envoyer » de « il était déjà parti ». Les confondre lui
+       * ferait afficher deux fois un envoi qui n'a eu lieu qu'une.
+       */
+      return {
+        operation: outcome.operation,
+        memoized: {
+          status: 'ALREADY_SENT',
+          providerMessageId: outcome.operation.providerMessageId ?? null,
+          operationId: input.operationId,
+        },
+      };
+
+    case CLAIM.UNRESOLVED:
+      throw capabilityOperationUnresolved(definition.code, input.operationId);
+
+    default:
+      throw capabilityOperationInFlight(definition.code, input.operationId);
+  }
 }
 
 /* -------------------------------------------------------------------------- */

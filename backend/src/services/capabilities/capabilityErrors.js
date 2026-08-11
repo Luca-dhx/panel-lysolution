@@ -55,6 +55,20 @@ export const CAPABILITY_ERROR_CODES = Object.freeze({
   CREDENTIALS_MISSING: 'CAPABILITY_CREDENTIALS_MISSING',
   /** La charge utile désigne un autre projet que celui authentifié. */
   PROJECT_SCOPE_MISMATCH: 'CAPABILITY_PROJECT_SCOPE_MISMATCH',
+  /**
+   * Une exécution portant CE MÊME `operationId` est déjà en cours.
+   *
+   * Ce n'est ni un échec, ni un succès : c'est un refus de DOUBLER. L'appelant
+   * doit attendre et relire, jamais réessayer immédiatement — sans quoi deux
+   * clics rapides produiraient deux e-mails.
+   */
+  OPERATION_IN_FLIGHT: 'CAPABILITY_OPERATION_IN_FLIGHT',
+  /**
+   * Une tentative antérieure sur cet `operationId` s'est terminée sans qu'on
+   * puisse savoir si le fournisseur avait accepté. Aucun rejeu automatique
+   * n'est permis : trancher est un arbitrage humain.
+   */
+  OPERATION_UNRESOLVED: 'CAPABILITY_OPERATION_UNRESOLVED',
 });
 
 /** Statut HTTP de chaque refus. Le choix compte : il pilote les reprises. */
@@ -71,6 +85,10 @@ const HTTP_STATUS = Object.freeze({
   [CAPABILITY_ERROR_CODES.ENVIRONMENT_MISMATCH]: 409,
   [CAPABILITY_ERROR_CODES.CREDENTIALS_MISSING]: 409,
   [CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH]: 403,
+  // 409 : l'état actuel de la ressource interdit l'action. Un 429 dirait
+  // « ralentis », ce qui inviterait à réessayer — exactement ce qu'il ne faut pas.
+  [CAPABILITY_ERROR_CODES.OPERATION_IN_FLIGHT]: 409,
+  [CAPABILITY_ERROR_CODES.OPERATION_UNRESOLVED]: 409,
 });
 
 /** Issue associée à chaque refus — ce que le journal enregistre. */
@@ -86,6 +104,10 @@ const OUTCOME_BY_CODE = Object.freeze({
   [CAPABILITY_ERROR_CODES.ENVIRONMENT_MISMATCH]: CAPABILITY_OUTCOMES.FAILED,
   [CAPABILITY_ERROR_CODES.CREDENTIALS_MISSING]: CAPABILITY_OUTCOMES.FAILED,
   [CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH]: CAPABILITY_OUTCOMES.BLOCKED,
+  // Rien n'a été tenté : l'exécution appartient à quelqu'un d'autre.
+  [CAPABILITY_ERROR_CODES.OPERATION_IN_FLIGHT]: CAPABILITY_OUTCOMES.BLOCKED,
+  // L'issue d'AVANT reste inconnue — et le refus d'aujourd'hui le dit.
+  [CAPABILITY_ERROR_CODES.OPERATION_UNRESOLVED]: CAPABILITY_OUTCOMES.UNKNOWN,
 });
 
 /**
@@ -144,6 +166,20 @@ export const capabilityCredentialsMissing = (code, provider, reason) => new Capa
   { provider, reason },
 );
 
+export const capabilityOperationInFlight = (code, operationId) => new CapabilityError(
+  CAPABILITY_ERROR_CODES.OPERATION_IN_FLIGHT,
+  `Une exécution de « ${code} » portant l’identifiant d’opération « ${operationId} » est déjà en cours : `
+  + 'le Panel refuse de la doubler.',
+  { operationId },
+);
+
+export const capabilityOperationUnresolved = (code, operationId) => new CapabilityError(
+  CAPABILITY_ERROR_CODES.OPERATION_UNRESOLVED,
+  `Une tentative antérieure de « ${code} » (opération « ${operationId} ») s’est terminée sans issue `
+  + 'connue : elle a pu aboutir. Aucun rejeu automatique — l’arbitrage est humain.',
+  { operationId },
+);
+
 export const capabilityProjectScopeMismatch = () => new CapabilityError(
   CAPABILITY_ERROR_CODES.PROJECT_SCOPE_MISMATCH,
   'Refusé : la demande désigne un autre projet que celui authentifié par le pont.',
@@ -160,4 +196,6 @@ export default {
   capabilityInputInvalid,
   capabilityCredentialsMissing,
   capabilityProjectScopeMismatch,
+  capabilityOperationInFlight,
+  capabilityOperationUnresolved,
 };

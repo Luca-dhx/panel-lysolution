@@ -28,7 +28,11 @@ import {
 } from '../integratedApi/brevo/brevoTransport.js';
 import { renderForSend } from '../email/panelEmailTemplate.service.js';
 import { resolveForProject } from '../email/panelSenderIdentity.service.js';
-import { CAPABILITY_ERROR_CODES, CapabilityError } from './capabilityErrors.js';
+import {
+  CAPABILITY_ERROR_CODES,
+  CapabilityError,
+  capabilityProjectScopeMismatch,
+} from './capabilityErrors.js';
 
 /**
  * Traduit un refus de transport en refus de passerelle.
@@ -85,30 +89,106 @@ function translate(error, capability) {
 }
 
 /**
+ * Traduit un refus de PRÉPARATION — modèle, variables, expéditeur.
+ *
+ * Aucun de ces refus n'a atteint le fournisseur : ils sont tous actionnables
+ * par un humain, et le code rendu doit dire LEQUEL. Un `INPUT_INVALID` fait
+ * corriger l'appel ; un `NOT_AVAILABLE` fait corriger une configuration ; un
+ * `PROJECT_SCOPE_MISMATCH` est une tentative d'usurpation, et se lit comme
+ * telle dans le journal.
+ */
+function translatePreparation(error, capability) {
+  if (error instanceof CapabilityError) return error;
+  const code = error?.code ?? '';
+
+  // Le projet a nommé un modèle qui n'existe pas, ou omis une variable requise.
+  if (code === 'PANEL_EMAIL_TEMPLATE_UNKNOWN'
+    || code === 'PANEL_EMAIL_TEMPLATE_INVALID'
+    || String(code).startsWith('TEMPLATE_')
+    || String(code).startsWith('RENDER_')) {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.INPUT_INVALID,
+      `Entrée refusée pour « ${capability.code} » : ${error?.message ?? 'modèle ou variables non conformes.'}`,
+      { reason: code || 'TEMPLATE_OR_VARIABLES' },
+    );
+  }
+
+  // Le modèle existe mais a été coupé : ce n'est pas l'appel qui est fautif.
+  if (code === 'PANEL_EMAIL_TEMPLATE_DISABLED') {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `Le modèle demandé par « ${capability.code} » est désactivé : aucun envoi n’est effectué.`,
+      { reason: 'TEMPLATE_DISABLED' },
+    );
+  }
+
+  // Un projet qui réclame l'identité d'un autre : refus sec, et nommé.
+  if (code === 'SENDER_IDENTITY_SCOPE_VIOLATION') {
+    return capabilityProjectScopeMismatch();
+  }
+
+  // Identité absente ou inexploitable : une CONFIGURATION manque, pas une clé.
+  if (String(code).startsWith('SENDER_IDENTITY_')
+    || code === 'PANEL_INTEGRATED_API_ENVIRONMENT_REQUIRED') {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `Aucune identité expéditrice exploitable pour ce projet : « ${capability.code} » ne peut pas s’exécuter.`,
+      { reason: code || 'SENDER_IDENTITY_MISSING' },
+    );
+  }
+
+  // Inconnu : on ne prétend pas savoir, et on ne l'impute pas au fournisseur.
+  return new CapabilityError(
+    CAPABILITY_ERROR_CODES.INPUT_INVALID,
+    `Préparation impossible pour « ${capability.code} ».`,
+    { reason: code || 'PREPARATION_FAILED' },
+  );
+}
+
+/**
  * Envoie une notification depuis un modèle DÉTENU PAR LE PANEL.
  *
  * @returns {Promise<{status: string, providerMessageId: string|null, operationId: string}>}
  */
 export async function brevoSendTemplate({ definition, context, credentials, input, fetchImpl }) {
-  /**
-   * L'EXPÉDITEUR D'ABORD — et il vient du contexte AUTHENTIFIÉ.
-   *
-   * `context.projectId` est celui que le bridgeToken a prouvé. La charge utile
-   * n'a aucun champ pour en proposer un autre (schéma `strict()`), et même si
-   * elle en avait un, il ne serait pas lu ici : la garde du contrat L8 refuse
-   * sur égalité manquée, elle ne choisit pas le plus permissif.
-   */
-  const sender = await resolveForProject({
-    authenticatedProjectId: context.projectId,
-    environment: context.environment,
-  });
+  let sender;
+  let rendered;
 
-  // LE RENDU — par l'autorité Panel, avec le contenu de CE projet.
-  const rendered = await renderForSend({
-    templateCode: input.templateCode,
-    projectId: context.projectId,
-    variables: input.variables ?? {},
-  });
+  /**
+   * ── CE QUI SE PASSE AVANT LE FOURNISSEUR NE LUI EST PAS IMPUTÉ ────────────
+   *
+   * Un modèle inconnu, une variable manquante, un expéditeur non configuré :
+   * rien de tout cela n'est une panne de Brevo, et rien n'est encore parti.
+   * Les laisser tomber dans le traducteur de transport les aurait tous
+   * ressortis en « fournisseur indisponible » — un diagnostic qui envoie
+   * chercher la panne à l'autre bout du monde, et qui invite à réessayer une
+   * configuration qui ne se réparera pas toute seule.
+   */
+  try {
+    /**
+     * L'EXPÉDITEUR D'ABORD — et il vient du contexte AUTHENTIFIÉ.
+     *
+     * `context.projectId` est celui que le bridgeToken a prouvé. La charge
+     * utile n'a aucun champ pour en proposer un autre (schéma `strict()`), et
+     * même si elle en avait un, il ne serait pas lu ici : la garde du contrat
+     * L8 refuse sur égalité manquée, elle ne choisit pas le plus permissif.
+     */
+    sender = await resolveForProject({
+      authenticatedProjectId: context.projectId,
+      environment: context.environment,
+    });
+
+    // LE RENDU — par l'autorité Panel, avec le contenu de CE projet.
+    rendered = await renderForSend({
+      // `templateRef` sur le fil (contrat L8), `templateCode` dans l'autorité
+      // Panel : le même objet, nommé selon le côté où l'on se trouve.
+      templateCode: input.templateRef,
+      projectId: context.projectId,
+      variables: input.variables ?? {},
+    });
+  } catch (error) {
+    throw translatePreparation(error, definition);
+  }
 
   try {
     const outcome = await sendTransactionalEmail({
