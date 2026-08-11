@@ -7,7 +7,7 @@
 // Brevo porte `subject` + `htmlContent`, jamais un `templateId` du fournisseur
 // qui ferait sortir le contenu de nos versions.
 //
-// Ce module vient de `SB Auto 06/backend/src/utils/emailTemplateRegistry.js`. Il n'est PAS
+// Ce module vient du dépôt PROJET (`backend/src/utils/emailTemplateRegistry.js`). Il n'est PAS
 // dupliqué pour le plaisir : l'autorité change de côté, et le moteur suit le
 // contenu qu'il rend. Le jour où l'envoi projet sera retiré (L10), l'exemplaire
 // d'origine partira avec lui — c'est le sens du déplacement.
@@ -163,7 +163,7 @@ export const EMAIL_TEMPLATE_REGISTRY = Object.freeze({
       { key: 'auth.expiresMinutes', label: 'Validité (minutes)', description: 'Durée de validité du lien, en minutes.', type: VARIABLE_TYPE.TEXT, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'user.name': 'Jean Dupont (exemple)',
       'auth.resetUrl': 'https://manager.exemple.fr/reinitialiser-mot-de-passe?token=exemple',
       'auth.expiresMinutes': '60',
@@ -214,7 +214,7 @@ ${button('Réinitialiser mon mot de passe', '{{auth.resetUrl}}')}
       { key: 'manager.contactSubmissionUrl', label: 'Lien Manager', description: 'Lien direct vers la demande dans le Manager.', type: VARIABLE_TYPE.URL, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'contact.name': 'Jean Dupont (exemple)',
       'contact.email': 'jean.dupont@exemple.fr',
       'contact.phone': '+33 6 12 34 56 78',
@@ -273,7 +273,7 @@ ${button('Ouvrir dans le Manager', '{{manager.contactSubmissionUrl}}')}`,
       { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'contract.reference': 'CTR-2026-0042',
       'contract.name': 'Contrat de démonstration 2026',
       'contract.cancelledAt': '2026-07-17T12:32:00.000Z',
@@ -336,7 +336,7 @@ ${button('Voir mon contrat', '{{manager.contractUrl}}')}`,
       { key: 'manager.contractUrl', label: 'Lien Manager', description: 'Lien vers la fiche contrat (DEV).', type: VARIABLE_TYPE.URL, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'company.email': 'contact@exemple.fr',
       'contract.reference': 'CTR-2026-0042',
       'contract.name': 'Contrat de démonstration 2026',
@@ -392,7 +392,7 @@ ${button('Ouvrir la fiche contrat', '{{manager.contractUrl}}')}`,
     ],
     sampleVariables: {
       'developer.companyName': 'Studio Démonstration',
-      'email.senderName': 'SB Auto',
+      'email.senderName': 'Entreprise Démonstration',
       'email.senderAddress': 'contact@exemple.fr',
       'email.providerMode': 'TEST',
       'email.sentAt': '2026-07-17T12:32:00.000Z',

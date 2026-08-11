@@ -1,6 +1,6 @@
 // HISTORIQUE D'UN TEMPLATE — une ligne par sauvegarde réussie (L8.3).
 //
-// Déplacé depuis `SB Auto 06/backend/src/models/EmailTemplateVersion.model.js`
+// Déplacé depuis le dépôt PROJET (`backend/src/models/EmailTemplateVersion.model.js`)
 // avec l'autorité de contenu. Deux raisons de conserver ce mécanisme plutôt
 // que de le simplifier au passage :
 //

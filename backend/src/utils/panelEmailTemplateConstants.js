@@ -7,7 +7,7 @@
 // Brevo porte `subject` + `htmlContent`, jamais un `templateId` du fournisseur
 // qui ferait sortir le contenu de nos versions.
 //
-// Ce module vient de `SB Auto 06/backend/src/utils/emailTemplateConstants.js`. Il n'est PAS
+// Ce module vient du dépôt PROJET (`backend/src/utils/emailTemplateConstants.js`). Il n'est PAS
 // dupliqué pour le plaisir : l'autorité change de côté, et le moteur suit le
 // contenu qu'il rend. Le jour où l'envoi projet sera retiré (L10), l'exemplaire
 // d'origine partira avec lui — c'est le sens du déplacement.

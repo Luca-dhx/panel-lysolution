@@ -13,8 +13,8 @@
 //                              métier, sans aucun secret, parfaitement lisible.
 //
 // Centraliser la clé n'oblige en RIEN à uniformiser l'expéditeur. Un seul
-// compte Brevo peut légitimement porter dix identités : chaque garage écrit à
-// ses clients sous son propre nom. Les confondre produirait un plan de contrôle
+// compte Brevo peut légitimement porter dix identités : chaque projet écrit à
+// ses destinataires sous son nom. Les confondre produirait un plan de contrôle
 // qui envoie tous les e-mails du parc depuis la même adresse — techniquement
 // propre, commercialement absurde.
 //

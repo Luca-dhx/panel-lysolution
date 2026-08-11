@@ -14,8 +14,8 @@
 //                           un trou à l'exécution.
 //
 //   contenu (sujet, HTML) → PAR PROJET, avec un DÉFAUT DE PLATEFORME.
-//                           Chaque garage écrit à ses clients sous son propre
-//                           ton ; imposer un contenu unique à tout le parc
+//                           Chaque projet écrit à ses destinataires sous son
+//                           propre ton ; imposer un contenu unique au parc
 //                           serait techniquement plus simple et
 //                           commercialement absurde. `projectId: null` porte
 //                           le défaut, dont chaque projet hérite tant qu'il
