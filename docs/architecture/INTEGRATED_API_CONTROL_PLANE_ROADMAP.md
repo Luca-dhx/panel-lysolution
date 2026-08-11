@@ -1702,13 +1702,41 @@ L'appartenance vient de `PanelProjectDestination` — la relation canonique
   **n'était inscrite dans aucun runner** : la suite complète annonçait « tout
   vert » sans l'avoir jouée. Même incident qu'au lot L8.
 
-- **Reste ouvert** — la fenêtre de déploiement progressif, et donc la clé
-  `apiToken` du projet. `NO_LOCAL_HOSTINGER_RUNTIME_CALL_AFTER_CUTOVER` n'est
-  pas encore vrai : trois sorties locales subsistent, nommées, et un test
-  échoue si une quatrième apparaît.
+- **Restait ouvert** — la fenêtre de déploiement progressif. Fermée en L9.2.
 - **Risque** — **faible** en écriture (aucune orchestration déplacée) ;
   **réel en exploitation** — un projet sans octroi ni destination `ACTIVE` perd
   son DNS automatique, et le rapport le dit.
+
+#### L9.2 — cutover final et retrait du legacy · ✅ **LIVRÉ**
+
+> Rapport dédié :
+> [HOSTINGER_L9_2_FINAL_CUTOVER_REPORT.md](HOSTINGER_L9_2_FINAL_CUTOVER_REPORT.md).
+
+Le critère de retrait posé en L9.1 était un fait observable, pas une date : « un
+déploiement réel passé par `PANEL_CAPABILITY` ». Le déploiement du **2026-08-11**
+(`demo-sbauto06.ly-solution.com`, TEST, `195.35.0.211`, commit `5c615ae`) l'a
+rempli — provider `hostinger (via Panel)`, zone `ly-solution.com` en `managed`,
+wildcard comprise, résolutions publiques vérifiées, `deployment.finalize = OK`.
+
+- **Supprimés** — `withLocal()`, `hostinger.service.js`, `hostinger.client.js`,
+  `hostinger.dnsProvider.js`, `DNS_PATH.LOCAL`, la branche locale du diagnostic,
+  le champ de saisie du jeton. **Supprimés, pas désactivés** : un repli derrière
+  un drapeau se rallume le jour d'un incident, et la centralisation qu'on croyait
+  acquise n'existe plus sans que rien ne le signale.
+- **Fermé à la porte** — le catalogue déclare `HOSTINGER` d'autorité `PANEL` avec
+  zéro champ, et l'API **refuse** toute écriture de credential pour un tel
+  fournisseur. Masquer le champ n'aurait fermé qu'une des deux entrées, pas celle
+  qu'un script emprunte.
+- **Diagnostic unifié** — une seule source (`dnsControlPlaneDiagnostic.js`) pour
+  le bouton « Tester », le garde-fou de publication et le rapport ; neuf états
+  qui nomment chacun un responsable. Trois implémentations auraient dérivé, et
+  c'est celle qui rassure qui aurait survécu.
+- **Résidu assumé** — le `apiToken` chiffré des instances déjà déployées reste en
+  base, lu par personne. Sa suppression appartient à L10.
+- **Preuve** — `HOSTINGER_LOCAL_RUNTIME_CALLS = 0`, établi par trois contrôles
+  statiques (aucun client, aucune adresse de fournisseur, aucun credential lu) ;
+  91 assertions côté projet, 63 sur l'E2E de bout en bout du Panel.
+- **Le moteur de déploiement n'a pas changé d'une ligne.**
 
 ---
 

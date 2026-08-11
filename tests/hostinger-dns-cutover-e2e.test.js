@@ -1,4 +1,9 @@
-// LE DNS D'UN DÉPLOIEMENT, DE BOUT EN BOUT — L9.1, la bascule réelle.
+// LE DNS D'UN DÉPLOIEMENT, DE BOUT EN BOUT — L9.1 puis L9.2, le cutover final.
+//
+// Depuis L9.2, le projet ne détient plus AUCUNE clé Hostinger et n'en accepte
+// plus : la sentinelle « legacy » ci-dessous ne sert plus à prouver qu'une clé
+// locale dort sans servir, mais que la porte par laquelle on l'aurait posée est
+// fermée.
 //
 // ══ CE QUE CE TEST REFUSE DE RACCOURCIR ══════════════════════════════════════
 //
@@ -209,13 +214,25 @@ section('2. Appairage réel, destination arbitrée, et une clé locale qui traî
   const fiche = await registryStore.getById(projectId);
   check('la destination active est l’hôte du projet', fiche.activeNetwork?.host === HOTE);
 
+  /**
+   * LE PROJET N'ACCEPTE PLUS DE CLÉ HOSTINGER (L9.2).
+   *
+   * En L9.1, ce bloc POSAIT une clé locale pour prouver ensuite qu'elle n'était
+   * jamais utilisée. Depuis le cutover final, la question ne se pose plus dans
+   * ce sens : la route elle-même refuse. On l'éprouve donc par la porte, avec un
+   * vrai jeton DEV — masquer le champ dans l'écran n'aurait fermé qu'une des
+   * deux entrées, et pas celle qu'un script emprunte.
+   */
   jetonDev = await instance.managerToken();
   const pose = await fetch(`${instance.publicBackendUrl}/api/integrated-apis/HOSTINGER/modes/TEST`, {
     method: 'PUT',
     headers: { authorization: `Bearer ${jetonDev}`, 'content-type': 'application/json' },
     body: JSON.stringify({ credentials: { apiToken: JETON_PROJET_LEGACY } }),
   });
-  check('la clé Hostinger legacy du projet est bien en place chez lui', pose.status === 200);
+  check('poser une clé Hostinger locale est REFUSÉ par l’API du projet', pose.status === 400);
+  const refus = await pose.json().catch(() => null);
+  check('…et le refus dit qui administre le fournisseur',
+    /plateforme/i.test(refus?.message ?? refus?.error?.message ?? ''));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -229,7 +246,7 @@ section('3. Sans octroi : AUCUN repli local — le chemin se ferme');
   check('aucun provider n’est retenu', chemin.available === false);
   check('…et surtout PAS la clé locale', chemin.path === 'NONE');
   check('le motif nomme le refus du Panel',
-    chemin.reason === 'PANEL_REFUSED:CAPABILITY_NOT_GRANTED');
+    chemin.reason === 'PANEL_UNAVAILABLE:CAPABILITY_NOT_GRANTED');
   check('aucune clé locale n’a été sortie du coffre du projet',
     chemin.apiTokenPresent === false);
 
@@ -310,7 +327,7 @@ section('5. Un jeton global n’est pas une autorisation globale');
   check('le domaine du voisin est refusé', vol.available === false);
   check('…et le chemin se ferme, sans repli', vol.path === 'NONE');
   check('…pour appartenance, pas pour panne',
-    vol.reason === 'PANEL_REFUSED:CAPABILITY_NOT_GRANTED');
+    vol.reason === 'PANEL_UNAVAILABLE:CAPABILITY_NOT_GRANTED');
   check('AUCUN appel Hostinger : le refus précède le réseau',
     appelsHostinger() === avant);
 

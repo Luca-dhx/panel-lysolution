@@ -1,17 +1,15 @@
 # Hostinger — plan de contrôle
 
-> **Lots L9 (fondation) et L9.1 (câblage).** Le DNS d'un déploiement passe par
-> le Panel : le projet demande un verbe, le Panel prouve que le nom lui
-> appartient, puis écrit avec **sa** clé.
+> **Lots L9 (fondation), L9.1 (câblage), L9.2 (cutover final).** Le DNS d'un
+> déploiement passe par le Panel : le projet demande un verbe, le Panel prouve
+> que le nom lui appartient, puis écrit avec **sa** clé.
 >
-> **État : câblé et servi.** Les trois capacités sont au registre de la
-> passerelle, adaptateurs branchés, alignement bidirectionnel vert. Un E2E
-> traverse la chaîne complète — instance réelle → pont → passerelle → coffre
-> chiffré → faux Hostinger HTTP — sans qu'aucune clé locale ne soit lue.
+> **État : terminé.** Les trois capacités sont servies, et depuis L9.2 le projet
+> n'a **plus aucun chemin Hostinger local** — ni client, ni provider, ni
+> credential lu, ni écriture de secret acceptée.
 >
-> Reste ouverte **une seule** fenêtre : le repli vers la clé du projet quand le
-> Panel ne connaît pas encore le verbe (déploiement progressif). Sa condition de
-> retrait est au §7.
+> Rapport de cutover et résidus :
+> [HOSTINGER_L9_2_FINAL_CUTOVER_REPORT.md](HOSTINGER_L9_2_FINAL_CUTOVER_REPORT.md).
 
 ---
 
@@ -182,12 +180,11 @@ celui qui gagnerait dépendrait de la configuration du jour.
 
 ---
 
-## 7. Migration et repli
+## 7. Migration — et l'absence de repli (L9.2)
 
 ```
-PANEL   capacité dns.*        ← tenté d'abord, éprouvé avant d'être retenu
-LOCAL   clé du projet         ← repli, UNIQUEMENT « ce Panel ignore le verbe »
-NONE    aucun DNS automatique ← tout le reste
+PANEL   capacité dns.*        ← la seule voie
+NONE    aucun DNS automatique ← tout le reste, avec un motif nommé
 ```
 
 `resolveDnsProvider` éprouve la voie du Panel (`verifyCredentials` résout la
@@ -195,46 +192,39 @@ zone : un aller-retour réel qui répond à « le Panel peut-il administrer CE n
 pour CE projet ? ») avant de la retenir. La retenir sans l'éprouver ferait
 échouer le déploiement au milieu de la phase DNS, là où l'échec coûte le plus.
 
-### Le repli est une LISTE BLANCHE (corrigé en L9.1)
+### Les trois âges du repli, et pourquoi il n'en reste rien
 
-La première version raisonnait à l'envers : elle nommait les refus interdisant
-le repli, et **tout le reste** retombait sur la clé locale. Un délai dépassé, un
-Panel injoignable, une erreur inattendue rouvraient donc silencieusement
-l'ancienne voie. Une liste noire oublie toujours un cas, et l'oubli va toujours
-dans le sens permissif.
-
-| Code rendu par le Panel | Repli | Pourquoi |
+| Lot | Politique | Défaut |
 |---|---|---|
-| `CAPABILITY_UNKNOWN` · `CAPABILITY_NOT_AVAILABLE` | **oui** | ce Panel ne sait pas encore faire — déploiement progressif |
-| `CAPABILITY_NOT_GRANTED` · `BLOCKED_PREOPENING` · `PROJECT_SCOPE_MISMATCH` · `INPUT_INVALID` | non | il sait faire, et il a dit non |
-| `CAPABILITY_TIMEOUT` | non | l'écriture a **peut-être** eu lieu ; la rejouer ailleurs la doublerait |
-| `PROVIDER_UNAVAILABLE` · `PANEL_UNREACHABLE` · inattendu | non | on ne contourne pas une panne avec un secret qu'on retire |
+| L9 | liste **noire** : quatre refus interdisaient le repli, **tout le reste** retombait sur la clé locale | un délai dépassé, une panne, l'inattendu rouvraient l'ancienne voie en silence |
+| L9.1 | liste **blanche** : seuls `CAPABILITY_UNKNOWN` / `NOT_AVAILABLE` (déploiement progressif) | la fenêtre restait ouverte, donc la clé locale restait vivante |
+| **L9.2** | **aucun repli** | — |
 
-Le code d'origine survit à la traduction en `HostingerError`
-(`err.capabilityCode`) : sans lui, l'arbitrage se ferait sur
-`HOSTINGER_AUTH_FAILED`, qui ne distingue pas un refus d'une ignorance.
+La condition de retrait fixée en L9.1 n'était pas une date mais un fait
+observable : « un déploiement réel passé par `PANEL_CAPABILITY` ». Le
+déploiement du **2026-08-11** (`demo-sbauto06.ly-solution.com`, TEST, commit
+`5c615ae`) l'a rempli — zone `ly-solution.com` résolue en `managed`, wildcard
+comprise, `deployment.finalize = OK`. La fenêtre s'est donc fermée, et le code
+qui la portait a été **supprimé** plutôt que désactivé : un repli derrière un
+drapeau reste un repli, et se rallume le jour d'un incident.
 
-### Condition de retrait de la fenêtre
+Ce qui a disparu avec elle : `withLocal()`, `hostinger.service.js`,
+`hostinger.client.js`, `hostinger.dnsProvider.js`, la branche locale du
+diagnostic, le champ de saisie du jeton, et `DNS_PATH.LOCAL` lui-même.
 
-Elle n'a pas de date, elle a un **fait observable** : le Panel portant le
-câblage L9.1 est déployé, et un déploiement réel est passé par
-`PANEL_CAPABILITY`. Cela se lit dans le rapport de déploiement — **l'absence**
-d'une ligne `DNS_PATH_LOCAL` est la preuve. Ce jour-là disparaissent ensemble :
-la liste blanche, `withLocal()`, la branche locale du diagnostic, la clé
-`apiToken` du projet et sa saisie.
+### Ce qu'une indisponibilité produit
 
-**Chaque repli est bruyant** : `deployment.warning DNS_PATH_LOCAL` quand une clé
-locale a servi, `DNS_PATH_NONE` quand aucun DNS automatique n'a eu lieu. Les
-deux ne se réparent pas de la même façon, et seul le premier est une régression
-de centralisation.
+Un motif explicite et traçable — `deployment.warning DNS_PATH_NONE`, avec la
+cause (`PANEL_UNAVAILABLE:<code>`) — et un déploiement qui poursuit **sans DNS
+automatique**. Jamais un contournement. `DNS_PATH_LOCAL` n'existe plus : il ne
+reste aucune situation qu'il pourrait décrire.
 
 ### Prérequis d'exploitation
 
 La bascule n'est pas seulement du code : la fiche du projet doit porter
 **l'octroi des trois capacités** (`dns.zone.resolve`, `dns.records.read`,
 `dns.record.ensure`) et une **destination `ACTIVE`** couvrant l'hôte déployé.
-Sans octroi, le chemin se ferme — il ne retombe pas sur la clé locale, et c'est
-voulu.
+Sans octroi, le chemin se ferme — et c'est voulu.
 
 ---
 
@@ -316,18 +306,20 @@ locale ne reprend pas la main.
 
 ## 10. Réserves
 
-1. **La fenêtre de repli reste ouverte** — `CAPABILITY_UNKNOWN` /
-   `NOT_AVAILABLE` uniquement, le temps que le Panel câblé soit déployé.
-   `NO_LOCAL_HOSTINGER_RUNTIME_CALL_AFTER_CUTOVER` n'est donc **pas encore
-   vrai** : trois sorties locales subsistent, nommées et surveillées par un test
-   qui échoue si une quatrième apparaît. Condition de retrait au §7.
-2. **Aucun credential n'a été supprimé.** `apiToken` reste dans le coffre du
-   projet et sa saisie reste à l'écran — mais le bouton « Tester » n'éprouve
-   plus cette clé dès qu'un Panel est appairé : il passe par la capacité, et
-   n'estampille donc plus le credential local (même doctrine qu'en L8.2).
+1. **Plus aucune fenêtre de repli** — `HOSTINGER_LOCAL_RUNTIME_CALLS = 0`, et
+   trois contrôles statiques l'établissent : aucun client, aucune adresse de
+   fournisseur, aucun credential lu. Un quatrième interdit la réapparition d'un
+   champ de saisie.
+2. **Résidu purement DATA.** Le `apiToken` chiffré des instances déjà déployées
+   reste en base, **lu par personne** ; il ne peut plus être ni écrit ni supprimé
+   par l'API (la garde ferme les deux verbes). Sa suppression appartient au lot
+   L10, avec `IntegratedApi` en bloc. Dépréciation déclarée dans le rapport de
+   cutover.
 3. **L'octroi est un prérequis d'exploitation**, pas un défaut : une fiche sans
    les trois capacités accordées ferme le chemin DNS. C'est visible dans le
-   rapport (`DNS_PATH_NONE`, motif `PANEL_REFUSED:CAPABILITY_NOT_GRANTED`).
+   rapport (`DNS_PATH_NONE`, motif `PANEL_UNAVAILABLE:CAPABILITY_NOT_GRANTED`),
+   et l'écran de publication affiche le message de la plateforme, qui nomme le
+   responsable.
 4. **`PENDING` exclu de l'appartenance** : un premier déploiement vers un domaine
    jamais annoncé n'a pas de droit DNS côté Panel. C'est le comportement voulu
    tant qu'une destination n'est pas arbitrée — sinon l'annonce, qui vient du
