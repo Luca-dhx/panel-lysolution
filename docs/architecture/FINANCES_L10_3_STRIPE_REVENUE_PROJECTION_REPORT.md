@@ -454,6 +454,7 @@ actif dans l'arbre au moment de l'exécution, et ils sont **prouvés** tels :
 | `stripe-resource-ownership` | « quatre capacités exigent une ressource préexistante », « deux d'elles sont servies », « les deux autres restent fermées » |
 | `commercial-readiness` | « 4 capacités sont bloquées en pré-ouverture », « la vue nomme ce que la pré-ouverture interdit » |
 | `commercial-readiness-runtime` | idem |
+| `stripe-subscription-cancellation-e2e` | **suite neuve de L6.2G**, non suivie par git au moment de l'exécution : elle s'interrompt en cours (aucune assertion rouge, sortie non nulle) — travail en cours de son propre chantier |
 
 **La preuve, en deux faits :**
 
