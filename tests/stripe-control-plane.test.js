@@ -68,7 +68,8 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 /* ========================================================================== */
 {
   // DIX depuis L6.3A, qui ajoute l'administration de l'endpoint webhook.
-  check('dix capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 10);
+  // DOUZE depuis L6.3B : les factures (liste + unité) et le portail client.
+  check('douze capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 12);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
@@ -81,7 +82,7 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * demanderait une liste plus large que son dû.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('neuf capacités servies', servies.length === 9);
+  check('douze capacités servies — toutes', servies.length === 12);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
@@ -124,7 +125,13 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * depuis la session ou l'abonnement possédé qui l'a produite. Le Panel n'en
    * crée toujours aucune ; il n'en croit aucune sur parole non plus.
    */
-  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION', 'PAYMENT_INTENT'];
+  /**
+   * L6.3B ajoute CUSTOMER — et il aurait pu y entrer dès L6.2D, qui crée le
+   * client d'un contrat et le lie à la création. L'oubli n'a rien coûté tant
+   * qu'aucune capacité n'exigeait cette famille ; les trois de ce lot
+   * l'exigent.
+   */
+  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION', 'PAYMENT_INTENT', 'CUSTOMER'];
   check('aucune capacité servie n’exige une famille non ancrable',
     servies.every((c) => {
       const d = STRIPE_CAPABILITIES[c];
@@ -148,20 +155,47 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    */
   check('billing.refund est déclarée, et elle a un appelant',
     capabilities.isStripeCapability('billing.refund'));
-  // Ni les primitives internes de tarification.
-  for (const absent of ['billing.product.create', 'billing.price.create', 'billing.portal.create']) {
+  // Ni les primitives internes de tarification : le Panel les compose lui-même
+  // sous `billing.price.ensure`, et les exposer laisserait un projet fabriquer
+  // un tarif sans passer par la projection qui porte le montant.
+  for (const absent of ['billing.product.create', 'billing.price.create']) {
     check(`${absent} n’est pas contractualisée`, !capabilities.isStripeCapability(absent));
   }
+  /**
+   * L6.3B — LE PORTAIL, LUI, EST ENTRÉ AU CATALOGUE.
+   *
+   * Il figurait dans cette liste d'absents depuis L6.1, pour la même raison que
+   * `billing.refund` avant L10.4 : aucun appelant. Le projet l'ouvrait
+   * lui-même, avec sa clé. Il a désormais un appelant réel, et c'est le seul
+   * motif d'entrée admis ici.
+   */
+  check('billing.portal.create est contractualisée, et elle a un appelant',
+    capabilities.isStripeCapability('billing.portal.create'));
 
+  /**
+   * L6.3B — LA LISTE DE FACTURES NE PREND PLUS D'IDENTIFIANT STRIPE.
+   *
+   * Elle acceptait `customerId` OU `subscriptionId`, et c'est précisément ce
+   * qui l'a maintenue fermée pendant sept lots : demander au projet de nommer
+   * le client dont il veut les factures, c'est lui demander de nommer un client
+   * qu'il pourrait ne pas posséder. Elle ne prend plus que le CONTRAT.
+   */
   const liste = STRIPE_CAPABILITIES['billing.invoice.list'].inputSchema;
-  check('facture : client OU abonnement, jamais les deux',
-    liste.safeParse({ customerId: 'cus_1', subscriptionId: 'sub_1', operationId: OP }).success === false);
-  check('facture : ni l’un ni l’autre → refusé',
+  check('facture : un contrat seul → accepté',
+    liste.safeParse({ contractRef: 'CTR-1', operationId: OP }).success === true);
+  check('facture : un customerId est REFUSÉ',
+    liste.safeParse({ contractRef: 'CTR-1', customerId: 'cus_1', operationId: OP }).success === false);
+  check('facture : un subscriptionId aussi',
+    liste.safeParse({ contractRef: 'CTR-1', subscriptionId: 'sub_1', operationId: OP }).success === false);
+  check('facture : sans contrat → refusé',
     liste.safeParse({ operationId: OP }).success === false);
-  check('facture : un client seul → accepté',
-    liste.safeParse({ customerId: 'cus_1', operationId: OP }).success === true);
-  check('identifiant de mauvaise famille → refusé',
-    liste.safeParse({ customerId: 'sub_1', operationId: OP }).success === false);
+
+  /** Le portail non plus ne laisse pas désigner le client. */
+  const portail = STRIPE_CAPABILITIES['billing.portal.create'].inputSchema;
+  check('portail : un customerId est REFUSÉ',
+    portail.safeParse({ contractRef: 'CTR-1', customerId: 'cus_1', returnUrl: 'https://a.fr', operationId: OP }).success === false);
+  check('portail : une adresse de retour non absolue est refusée',
+    portail.safeParse({ contractRef: 'CTR-1', returnUrl: '/retour', operationId: OP }).success === false);
 
   const creation = STRIPE_CAPABILITIES['billing.checkout.create'].inputSchema;
   check('checkout : operationId court refusé',
@@ -187,7 +221,7 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
     const schema = STRIPE_CAPABILITIES[code].inputSchema;
     const base = code === 'billing.checkout.create'
       ? { contractRef: 'CTR-1', paymentType: 'LAUNCH_FEE', successUrl: 'https://a.fr', cancelUrl: 'https://b.fr', operationId: OP }
-      : code === 'billing.invoice.list' ? { customerId: 'cus_1', operationId: OP }
+      : code === 'billing.invoice.list' ? { contractRef: 'CTR-1', operationId: OP }
         : code === 'billing.checkout.retrieve' ? { checkoutSessionId: 'cs_1', operationId: OP }
           // L6.2D — le SEUL contrat sans `operationId` : son identité d'acte est
           // dérivée du contrat par le Panel, pas nommée par le projet.
@@ -202,6 +236,11 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
               // L6.3A — le provisionnement n'apporte QUE l'adresse du projet.
               : code === 'webhook.endpoint.ensure'
                 ? { publicBackendUrl: 'https://projet.exemple.test' }
+                // L6.3B — toutes désignent leur objet par le CONTRAT.
+                : code === 'billing.invoice.retrieve'
+                    ? { contractRef: 'CTR-1', invoiceId: 'in_1', operationId: OP }
+                    : code === 'billing.portal.create'
+                      ? { contractRef: 'CTR-1', returnUrl: 'https://retour.test/abo', operationId: OP }
                 : /^billing\.subscription\.cancel_/.test(code) ? { subscriptionId: 'sub_1' }
               // L10.4 — le remboursement, lui, NOMME son acte : deux
               // remboursements partiels du même paiement sont deux actes

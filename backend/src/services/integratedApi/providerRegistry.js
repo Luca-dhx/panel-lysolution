@@ -189,6 +189,9 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       // Stripe qui ne touche pas à l'argent : il garantit le chemin par lequel
       // le projet apprend qu'il en a reçu.
       'webhook.endpoint.ensure',
+      // L6.3B — les dernières lectures du projet, et son écran de portail.
+      'billing.invoice.retrieve',
+      'billing.portal.create',
     ]),
     credentialRoles: Object.freeze([
       role('secretKey', 'Clé secrète', {

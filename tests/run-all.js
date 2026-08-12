@@ -57,6 +57,13 @@ const TESTS = [
   // métadonnée apposée sur le remboursement empêche d'en créer un second.
   // Elle vérifie aussi que rendre 100 € n'ajoute pas 100 € de charges.
   'finance-refunds.test.js',
+  // L10.5 — DE L'ARGENT RÉCLAMÉ, QUI N'EST PAS ENCORE DE L'ARGENT GAGNÉ. Cette
+  // suite garde la frontière : envoyer une prestation n'inscrit RIEN au ledger,
+  // et le revenu naît uniquement du fait Stripe, par L10.3. Elle éprouve aussi
+  // le snapshot fiscal — changer le taux du contrat ne réécrit aucune facture
+  // déjà émise — et l'autorité du montant, qui n'est pas une validation mais
+  // une absence : il n'y a aucun montant dans la requête à falsifier.
+  'finance-payment-requests.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',
@@ -148,6 +155,13 @@ const TESTS = [
   // événement signé traverse encore la vérification du projet et atteint son
   // métier. « L'endpoint est créé » n'aurait rien prouvé.
   'stripe-webhook-provisioning-e2e.test.js',
+  // L6.3B — LES DERNIÈRES LECTURES, ET LE PORTAIL. Aucune ne déplace d'argent,
+  // et c'est pour cela qu'elles avaient survécu à sept lots. Le verbe qui compte
+  // est le PORTAIL : il ouvre au client ses moyens de paiement et ses factures,
+  // et le projet y passait le customerId de sa fiche locale. Se tromper n'aurait
+  // coûté aucun euro — seulement le dossier de quelqu'un d'autre, sans que rien
+  // ne le signale.
+  'stripe-local-surface-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

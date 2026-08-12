@@ -462,7 +462,12 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    */
   const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
     .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
-  check('six capacités exigent une ressource préexistante', exigeantes.length === 6);
+  /**
+   * HUIT depuis L6.3B, qui en ajoute trois sur la famille CLIENT : lister les
+   * factures, en lire une, ouvrir le portail. Toutes trois remontent au client
+   * par le lien de L6.2D — aucune n'accepte d'identifiant Stripe.
+   */
+  check('huit capacités exigent une ressource préexistante', exigeantes.length === 8);
   /**
    * L6.2C en sert UNE : la lecture de session. Elle le peut parce que le Panel
    * crée et lie lui-même des sessions depuis L6.2B — l'appartenance est donc
@@ -471,7 +476,7 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
    */
   const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
-  check('cinq d’elles sont servies', servies.length === 5);
+  check('toutes les huit sont servies', servies.length === 8);
   check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
   check('…celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
   /**
@@ -524,11 +529,21 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * large que son dû. Aucun abonnement ne figure plus dans les fermées — L6.2G
    * les a toutes ouvertes, sur la preuve de L6.2F et sur rien d'autre.
    */
+  /**
+   * L6.3B — PLUS AUCUNE NE RESTE FERMÉE.
+   *
+   * `billing.invoice.list` était la dernière, et ce n'est pas le calendrier qui
+   * l'a ouverte : son contrat d'entrée demandait un `customerId` AU PROJET.
+   * Elle prend désormais le CONTRAT, et le Panel remonte au client par le lien
+   * qu'il a lui-même écrit en L6.2D. Elle a cessé d'exiger ce qu'on ne pouvait
+   * pas lui accorder.
+   */
   const fermees = exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated);
-  check('une seule reste fermée', fermees.length === 1 && fermees[0] === 'billing.invoice.list');
-  check('…et aucun abonnement n’y figure plus',
-    fermees.every((c) => capabilities.STRIPE_CAPABILITIES[c].resourceKind
-      !== binding.STRIPE_RESOURCE_TYPES.SUBSCRIPTION));
+  check('aucune capacité exigeant une ressource ne reste fermée', fermees.length === 0);
+  check('…et les trois nouvelles portent bien la famille CLIENT',
+    ['billing.invoice.list', 'billing.invoice.retrieve', 'billing.portal.create']
+      .every((c) => capabilities.STRIPE_CAPABILITIES[c].resourceKind
+        === binding.STRIPE_RESOURCE_TYPES.CUSTOMER));
 }
 
 await stopMemoryMongo();

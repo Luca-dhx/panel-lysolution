@@ -340,6 +340,59 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
    * appels simultanés non plus — le binding porte un index unique par projet et
    * par monde.
    */
+  /**
+   * L6.3B — LES TROIS VERBES QUI FERMENT LA SURFACE LOCALE DU PROJET.
+   *
+   * Ils ne migrent pas un parcours financier de plus : ils retirent au projet
+   * ses dernières LECTURES Stripe, et l'écran de portail. C'est ce qui rendra
+   * possible, au lot suivant, de lui retirer sa clé.
+   *
+   * Tous trois désignent leur objet par un CONTRAT et remontent au client par
+   * le lien d'appartenance de L6.2D. Aucun n'accepte d'identifiant Stripe
+   * choisi par le projet — sauf `invoiceId`, qui n'est qu'un filtre sur des
+   * factures déjà restreintes au client possédé.
+   */
+  'billing.invoice.list': capability('billing.invoice.list', {
+    provider: 'STRIPE',
+    label: 'Lister les factures d’un contrat',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.invoice.list'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.invoice.list'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_READ],
+    migrationNote: null,
+  }),
+
+  'billing.invoice.retrieve': capability('billing.invoice.retrieve', {
+    provider: 'STRIPE',
+    label: 'Lire une facture du contrat',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.invoice.retrieve'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.invoice.retrieve'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_READ],
+    migrationNote: null,
+  }),
+
+  /**
+   * `BILLING_WRITE`, alors qu'aucun euro ne bouge : ce verbe ouvre au client un
+   * écran d'où il PEUT résilier ou changer de carte. Le ranger en lecture
+   * l'accorderait avec les lectures, à des projets qui n'ont pas à l'avoir.
+   */
+  'billing.portal.create': capability('billing.portal.create', {
+    provider: 'STRIPE',
+    label: 'Ouvrir le portail client d’un contrat',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.portal.create'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.portal.create'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_WRITE],
+    migrationNote: null,
+  }),
+
   'webhook.endpoint.ensure': capability('webhook.endpoint.ensure', {
     provider: 'STRIPE',
     label: 'Garantir l’endpoint webhook du projet',

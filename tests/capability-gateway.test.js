@@ -167,6 +167,16 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
      * donc le pouvoir d'appeler Stripe pour tout le reste.
      */
     'webhook.endpoint.ensure',
+    /**
+     * L6.3B — LES TROIS VERBES QUI FERMENT LA SURFACE LOCALE DU PROJET.
+     *
+     * Ils ne migrent aucun parcours financier de plus : ils retirent au projet
+     * ses dernières LECTURES Stripe et son écran de portail. C'est ce qui
+     * rendra possible, au lot suivant, de lui retirer sa clé.
+     */
+    'billing.invoice.list',
+    'billing.invoice.retrieve',
+    'billing.portal.create',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -188,7 +198,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * création (L6.2B/D/E) ou par filiation (L6.2F).
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('neuf capacités Stripe sont servies', stripeServies.length === 9);
+  check('douze capacités Stripe sont servies', stripeServies.length === 12);
   /**
    * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
    * par la même filiation : l'intention de paiement est adoptée à la projection
@@ -367,8 +377,13 @@ section('4. ORDRE DES REFUS — la garantie « zéro appel fournisseur »');
   check('…le refus vient désormais du contrat d’entrée', passe.code === CODES.INPUT_INVALID);
 
   // Et une capacité Stripe encore fermée refuse toujours par NOT_MIGRATED.
-  const ferme2 = await projet({ projectId: 'p3b', grants: ['billing.invoice.list'], commercialState: 'LIVE' });
-  const pasMigre = await invoquer(ferme2, 'billing.invoice.list', {}, provider);
+  /**
+   * L6.3B a SERVI `billing.invoice.list` : cette sonde a donc changé de sujet.
+   * `billing.subscription.reconcile` reste fermée — elle attend une stratégie
+   * de rejeu, pas un calendrier — et sert désormais de témoin.
+   */
+  const ferme2 = await projet({ projectId: 'p3b', grants: ['billing.subscription.reconcile'], commercialState: 'LIVE' });
+  const pasMigre = await invoquer(ferme2, 'billing.subscription.reconcile', {}, provider);
   check('LIVE × non migrée → CAPABILITY_NOT_AVAILABLE', pasMigre.code === CODES.NOT_AVAILABLE);
   check('…motif NOT_MIGRATED', pasMigre.error.details?.reason === 'NOT_MIGRATED');
 

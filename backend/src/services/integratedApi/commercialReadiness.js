@@ -200,6 +200,22 @@ export const CAPABILITY_EFFECTS = Object.freeze({
    * c'est-à-dire à ouvrir avant d'être sûr.
    */
   'webhook.endpoint.ensure': EFFECT.CONFIGURATION,
+  /**
+   * L6.3B — LES TROIS VERBES QUI FERMENT LA SURFACE LOCALE.
+   *
+   * Lister et lire une facture : READ_ONLY, évidemment — rien n'est créé, rien
+   * n'est encaissé, et les rejouer n'a aucun effet observable.
+   *
+   * Le PORTAIL est plus subtil. Il ne déplace pas d'argent lui-même, donc ce
+   * n'est pas une écriture financière ; mais il ouvre au client un écran où il
+   * PEUT en déplacer — changer de carte, résilier. Le ranger en READ_ONLY
+   * l'autoriserait avant l'ouverture commerciale, c'est-à-dire pendant la
+   * recette, sur un vrai client. `REVERSIBLE_EXTERNAL_WRITE` le range avec ce
+   * qu'il est : un objet distant créé, sans engagement, et qui expire seul.
+   */
+  'billing.invoice.list': EFFECT.READ_ONLY,
+  'billing.invoice.retrieve': EFFECT.READ_ONLY,
+  'billing.portal.create': EFFECT.REVERSIBLE_EXTERNAL_WRITE,
   'billing.refund': EFFECT.FINANCIAL_WRITE,
 
   // ── Brevo ────────────────────────────────────────────────────────────────

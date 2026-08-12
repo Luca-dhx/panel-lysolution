@@ -181,8 +181,9 @@ const backoff = (attempt) => new Promise((resolve) => {
  * @param {string} [args.idempotencyKey]  OBLIGATOIRE sur un POST (voir plus bas)
  */
 async function stripeFetch({
-  credentials, method, path, body, query,
-  idempotencyKey, timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl, retries = 0,
+  credentials, method, path, body, query, form,
+  idempotencyKey, nonDurableWrite = false,
+  timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl, retries = 0,
 }) {
   if (!credentials?.secretKey) {
     throw new StripeTransportError(TRANSPORT_CODES.MISSING_CREDENTIALS, 'Clé secrète Stripe absente.');
@@ -197,7 +198,27 @@ async function stripeFetch({
    * crée alors un nouvel objet à chaque appel. C'est précisément le
    * comportement qu'on ne veut jamais pouvoir obtenir par oubli.
    */
-  if (write && !idempotencyKey) {
+  /**
+   * L'UNIQUE DÉROGATION, ET ELLE DOIT ÊTRE DEMANDÉE (L6.3B).
+   *
+   * Une clé d'idempotence protège en rendant la MÊME réponse à un rejeu. Cela
+   * n'a de sens que si cette réponse reste utilisable — un client, un tarif,
+   * une session de paiement le restent.
+   *
+   * Une session de PORTAIL, non : elle est à usage unique et expire. Lui poser
+   * une clé rendrait à un client revenu deux heures plus tard exactement la
+   * même URL — c'est-à-dire une URL morte, avec un message d'erreur Stripe
+   * pour toute explication. La « protection » produirait la panne.
+   *
+   * La dérogation est donc EXPLICITE — un appelant doit la demander, jamais
+   * l'obtenir par omission — et elle n'est légitime que pour un acte qui ne
+   * crée rien de durable et qui expire seul. Une garde statique vérifie qu'un
+   * seul verbe du transport la réclame.
+   *
+   * Le vrai risque de ces actes-là — le double clic — ne se traite pas ici : il
+   * se traite là où il se produit, en empêchant la seconde soumission.
+   */
+  if (write && !idempotencyKey && !nonDurableWrite) {
     throw new StripeTransportError(
       TRANSPORT_CODES.INPUT_INVALID,
       'Écriture Stripe refusée : aucune clé d’idempotence fournie.',
@@ -421,6 +442,55 @@ export async function listInvoices({ credentials, customer, subscription, limit 
     timeoutMs, fetchImpl, retries: 2,
   });
   return { invoices: res.json?.data ?? [], hasMore: res.json?.has_more ?? false, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/invoices/{id}` — LECTURE d'une facture (L6.3B).
+ *
+ * Sans effet, donc rejouable sans précaution. L'appelant a déjà prouvé qu'il
+ * possède le CLIENT ; c'est lui qui vérifiera ensuite que la facture rendue
+ * appartient bien à ce client — le transport ne juge de rien.
+ */
+export async function retrieveInvoice({ credentials, invoiceId, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/invoices/${encodeURIComponent(invoiceId)}`,
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { outcome: OUTCOMES.DONE, invoice: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `POST /v1/billing_portal/sessions` — LE PORTAIL CLIENT (L6.3B).
+ *
+ * ══ POURQUOI AUCUNE CLÉ D'IDEMPOTENCE ══════════════════════════════════════
+ *
+ * C'est une écriture, et pourtant elle n'en porte pas — seule écriture du
+ * transport dans ce cas, et c'est délibéré.
+ *
+ * Une session de portail est ÉPHÉMÈRE et à usage unique : elle expire, et une
+ * fois suivie elle ne se rejoue pas. Une clé d'idempotence rendrait donc la
+ * MÊME session à un client revenu une heure plus tard — c'est-à-dire une URL
+ * morte, avec un message d'erreur Stripe pour toute explication.
+ *
+ * Elle ne crée par ailleurs aucun objet durable et ne déplace aucun argent :
+ * la rejouer coûte un appel, pas un doublon. Le vrai risque — le double clic —
+ * se traite en amont, là où il se produit.
+ *
+ * PRÉREQUIS : le portail doit être activé une fois dans le tableau de bord
+ * Stripe, par mode. Sans cela Stripe refuse la création, et l'erreur est
+ * remontée telle quelle plutôt que masquée.
+ */
+export async function createBillingPortalSession({ credentials, customer, returnUrl, timeoutMs, fetchImpl }) {
+  if (!customer) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Client requis pour ouvrir le portail.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/billing_portal/sessions',
+    body: { customer, ...(returnUrl ? { return_url: returnUrl } : {}) },
+    nonDurableWrite: true,
+    timeoutMs, fetchImpl,
+  });
+  return { outcome: OUTCOMES.DONE, session: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
 /**

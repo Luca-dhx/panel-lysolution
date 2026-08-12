@@ -50,6 +50,9 @@ import {
   cancelSubscriptionAtPeriodEnd,
   cancelSubscriptionNow,
   retrievePaymentIntent,
+  retrieveInvoice,
+  listInvoices,
+  createBillingPortalSession,
   listRefunds,
   createRefund,
   StripeTransportError,
@@ -1204,7 +1207,167 @@ async function webhookEndpointEnsure({ context, input, fetchImpl }) {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  L6.3B — LES FACTURES ET LE PORTAIL, SUR L'APPARTENANCE DU CLIENT          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * LE CLIENT POSSÉDÉ D'UN CONTRAT — la barrière commune aux trois verbes.
+ *
+ * ══ POURQUOI ELLE PRÉCÈDE TOUT APPEL ═══════════════════════════════════════
+ *
+ * Les trois capacités de ce lot désignent leur objet par un CONTRAT, jamais par
+ * un identifiant Stripe. Il faut donc traduire « ce contrat » en « ce client »,
+ * et cette traduction est le seul endroit où l'appartenance se décide.
+ *
+ * Elle interroge le registre de liens — écrit par `billing.customer.ensure` en
+ * L6.2D — et rien d'autre. Pas les metadata, pas la projection, pas ce que le
+ * projet affirme : un lien, ou un refus.
+ *
+ * Le refus est INDISTINGUABLE dans les trois cas qui comptent — contrat
+ * inconnu, contrat d'un autre projet, lien révoqué — et il tombe AVANT le
+ * premier octet envoyé à Stripe. Sans cela, la durée de réponse suffirait à
+ * apprendre quels contrats existent ailleurs.
+ */
+async function ownedCustomerOfContract({ definition, context, input }) {
+  const { projectId, environment } = context;
+
+  // Le contrat est-il bien à ce projet ? (même autorité qu'en L6.2D)
+  const intent = await guard(definition, () => resolveCustomerIntent({
+    projectId, environment, input: { contractRef: input.contractRef },
+  }));
+
+  /**
+   * Le lien porte l'identité DÉRIVÉE du contrat : on ne cherche pas « un
+   * client de ce projet » mais « LE client de CE contrat ». La nuance compte —
+   * un projet a plusieurs contrats, et servir le mauvais client ouvrirait les
+   * factures d'un autre client au même projet.
+   */
+  const lien = await findBindingByOperation({
+    projectId, environment, resourceType: CUSTOMER, operationId: intent.operationId,
+  });
+  if (!lien || lien.revokedAt) {
+    throw capabilityResourceNotOwned(definition.code);
+  }
+  return { customerId: lien.resourceId, contractId: intent.contractId };
+}
+
+/** Ce qu'une facture montre au projet — jamais l'objet Stripe brut. */
+function vueFacture(facture) {
+  const idOf = (v) => (typeof v === 'string' ? v : v?.id ?? null);
+  const nombre = (v) => (Number.isFinite(v) ? v : null);
+  return {
+    invoiceId: String(facture.id),
+    number: facture.number ?? null,
+    status: facture.status ?? null,
+    paid: facture.paid === true || facture.status === 'paid',
+    amountDue: nombre(facture.amount_due),
+    amountPaid: nombre(facture.amount_paid),
+    total: nombre(facture.total),
+    tax: nombre(facture.tax),
+    currency: facture.currency ?? null,
+    createdAt: nombre(facture.created),
+    dueAt: nombre(facture.due_date),
+    paidAt: nombre(facture.status_transitions?.paid_at),
+    billingReason: facture.billing_reason ?? null,
+    hostedInvoiceUrl: facture.hosted_invoice_url ?? null,
+    invoicePdfUrl: facture.invoice_pdf ?? null,
+    customerId: idOf(facture.customer),
+    /**
+     * L'abonnement d'origine se lit à DEUX endroits selon la version d'API :
+     * `subscription` en `acacia`, `parent.subscription_details` en `basil`.
+     * C'est l'incident RX-01, et l'épinglage de version ne dispense pas de le
+     * savoir — une montée de version le déplacerait sans prévenir.
+     */
+    subscriptionId: idOf(facture.subscription ?? facture.parent?.subscription_details?.subscription),
+  };
+}
+
+/** `billing.invoice.list` — les factures du client possédé, et d'aucun autre. */
+async function invoiceList({ definition, context, credentials, input, fetchImpl }) {
+  const { customerId } = await ownedCustomerOfContract({ definition, context, input });
+
+  const res = await guard(definition, () => listInvoices({
+    credentials, customer: customerId, limit: input.limit ?? 100,
+    timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  return {
+    invoices: (res.invoices ?? []).map(vueFacture),
+    hasMore: Boolean(res.hasMore),
+  };
+}
+
+/**
+ * `billing.invoice.retrieve` — UNE facture, si elle est bien à ce client.
+ *
+ * La FILIATION est vérifiée après la lecture, et c'est le seul ordre possible :
+ * seul Stripe sait à quel client appartient une facture. Mais l'appartenance du
+ * CLIENT, elle, a été prouvée avant — un projet ne peut donc pas se servir de
+ * ce verbe pour sonder l'existence de factures qui ne sont pas les siennes.
+ */
+async function invoiceRetrieve({ definition, context, credentials, input, fetchImpl }) {
+  const { customerId } = await ownedCustomerOfContract({ definition, context, input });
+
+  const res = await guard(definition, () => retrieveInvoice({
+    credentials, invoiceId: input.invoiceId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const vue = vueFacture(res.invoice ?? {});
+
+  if (!vue.customerId || vue.customerId !== customerId) {
+    /**
+     * MÊME REFUS QU'UNE FACTURE INEXISTANTE. Distinguer « elle existe mais
+     * n'est pas à vous » de « elle n'existe pas » transformerait ce verbe en
+     * oracle : on apprendrait, un identifiant à la fois, quelles factures le
+     * compte contient.
+     */
+    logger.warn(
+      `[stripe] refus de filiation — facture demandée par ${context.projectId} `
+      + `(${context.environment}) : son client n’est pas celui du contrat.`,
+    );
+    throw capabilityResourceNotOwned(definition.code);
+  }
+  return vue;
+}
+
+/**
+ * `billing.portal.create` — la porte du client, ouverte pour SON client.
+ *
+ * Stripe héberge l'écran : aucune donnée bancaire n'approche ni le projet ni le
+ * Panel. Ce que ce verbe décide, et la seule chose qu'il décide, est DE QUI on
+ * ouvre le dossier.
+ */
+async function portalCreate({ definition, context, credentials, input, fetchImpl }) {
+  const { customerId } = await ownedCustomerOfContract({ definition, context, input });
+
+  const res = await guard(definition, () => createBillingPortalSession({
+    credentials, customer: customerId, returnUrl: input.returnUrl,
+    timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  const session = res.session ?? {};
+  if (!session.url) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : le fournisseur n’a pas rendu d’adresse de portail.`,
+      { reason: 'PORTAL_URL_MISSING' },
+    );
+  }
+  return {
+    url: String(session.url),
+    expiresAt: Number.isFinite(session.expires_at) ? session.expires_at : null,
+  };
+}
+
 export const STRIPE_ADAPTERS = Object.freeze({
+  /**
+   * L6.3B — les trois verbes qui retirent au projet ses dernières lectures
+   * Stripe. Tous trois remontent au client par le LIEN d'appartenance, jamais
+   * par un identifiant que le projet présenterait.
+   */
+  'billing.invoice.list': invoiceList,
+  'billing.invoice.retrieve': invoiceRetrieve,
+  'billing.portal.create': portalCreate,
   /**
    * L6.3A — le seul verbe qui n'agit pas sur de l'argent : il administre
    * l'endpoint par lequel le projet apprendra qu'il en a reçu.

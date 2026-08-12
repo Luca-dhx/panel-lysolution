@@ -55,6 +55,12 @@ const customerId = z.string().trim().regex(/^cus_[A-Za-z0-9_]+$/, 'Identifiant d
 const checkoutSessionId = z.string().trim().regex(/^cs_[A-Za-z0-9_]+$/, 'Identifiant de session invalide.');
 /** L10.4 — refuser tôt : un `in_…` présenté là où on rembourse est une confusion. */
 const paymentIntentId = z.string().trim().regex(/^pi_[A-Za-z0-9_]+$/, 'Identifiant de paiement invalide.');
+/**
+ * La RÉFÉRENCE DE CONTRAT — la seule identité métier que le projet apporte pour
+ * désigner ce qui lui appartient (L6.2B). Le Panel en dérive le client, le
+ * tarif, les factures : le projet ne nomme jamais un objet Stripe.
+ */
+const contractRef = z.string().trim().min(1).max(64);
 
 /**
  * `strict()` partout. Les champs explicitement REFUSÉS, et pourquoi :
@@ -65,16 +71,70 @@ const paymentIntentId = z.string().trim().regex(/^pi_[A-Za-z0-9_]+$/, 'Identifia
  *                                      permettrait d'agir sur un autre compte ;
  *   `amount` libre sur une lecture     une lecture ne porte pas de montant.
  */
+/**
+ * `billing.invoice.list` — LES FACTURES D'UN CONTRAT (ouverte en L6.3B).
+ *
+ * ══ CE QUI A CHANGÉ, ET POURQUOI ═══════════════════════════════════════════
+ *
+ * Le contrat de L6.1 acceptait `customerId` OU `subscriptionId`. C'est
+ * précisément ce qui l'a maintenue fermée pendant sept lots : un projet nommant
+ * le client dont il veut les factures nomme un client qu'il pourrait ne pas
+ * posséder, et l'appartenance d'une facture ne se prouve pas objet par objet.
+ *
+ * Elle ne prend plus que la référence de CONTRAT. Le Panel en dérive le client
+ * — celui du lien d'appartenance de L6.2D, qu'il a lui-même créé — et liste ses
+ * factures. Le projet ne peut donc demander que les siennes, et l'identifiant
+ * qu'il présenterait ne vaudrait rien.
+ */
 const invoiceListInput = z.object({
-  /** L'un OU l'autre — la validation croisée est plus bas. */
-  customerId: customerId.optional(),
-  subscriptionId: subscriptionId.optional(),
+  contractRef,
   limit: z.number().int().min(1).max(100).optional(),
   operationId,
-}).strict().refine(
-  (value) => Boolean(value.customerId) !== Boolean(value.subscriptionId),
-  { message: 'Fournir exactement un client OU un abonnement.' },
-);
+}).strict();
+
+/**
+ * `billing.invoice.retrieve` — UNE facture, désignée par son contrat (L6.3B).
+ *
+ * Le contrat d'abord, l'identifiant ensuite : c'est le contrat qui porte
+ * l'appartenance, et l'identifiant n'est qu'un filtre. Le Panel vérifie que la
+ * facture rendue appartient bien au client possédé — sans quoi il refuserait
+ * exactement comme si elle n'existait pas.
+ */
+const invoiceRetrieveInput = z.object({
+  contractRef,
+  invoiceId: z.string().trim().regex(/^in_[A-Za-z0-9_]+$/, 'Identifiant de facture invalide.'),
+  operationId,
+}).strict();
+
+/**
+ * `billing.portal.create` — LE PORTAIL CLIENT (L6.3B).
+ *
+ * ══ CE QUE LE PROJET N'APPORTE PAS ═════════════════════════════════════════
+ *
+ * Pas de `customerId`. C'est la seule chose qui compte ici : le portail donne
+ * accès aux moyens de paiement, aux factures et aux abonnements d'un client.
+ * Laisser le projet le désigner reviendrait à lui laisser ouvrir le portail de
+ * n'importe qui — un vol de données qui ne ressemblerait même pas à une
+ * effraction, puisque l'appel serait parfaitement formé.
+ *
+ * Il nomme donc son CONTRAT, et le Panel remonte au client par le lien
+ * d'appartenance qu'il a lui-même écrit en L6.2D.
+ *
+ * `returnUrl` est l'adresse où Stripe renvoie le client après coup. Elle est
+ * cosmétique — elle n'ouvre aucun accès — mais elle est bornée : une adresse
+ * absolue http(s), et rien d'autre.
+ */
+const portalCreateInput = z.object({
+  contractRef,
+  returnUrl: z.string().url().max(2_048),
+  operationId,
+}).strict();
+
+const portalSessionView = z.object({
+  url: z.string(),
+  /** Quand cette URL cessera de fonctionner — le projet peut le dire au client. */
+  expiresAt: z.number().nullable(),
+}).strict();
 
 const subscriptionRetrieveInput = z.object({ subscriptionId, operationId }).strict();
 
@@ -368,16 +428,42 @@ const customerEnsureOutput = z.object({
  * paiement, et l'identifiant du compte. Le relayer ferait traverser au pont des
  * données personnelles qu'aucune capacité n'a promises.
  */
+/**
+ * CE QU'UNE FACTURE MONTRE AU PROJET — établi sur ce qu'il ÉCRIT, pas sur ce
+ * que Stripe expose (L6.3B).
+ *
+ * Le contrat de L6.1 portait neuf champs, posés avant qu'aucun appelant
+ * n'existe. `upsertInvoiceFromStripe` côté SB Auto en lit six de plus : la
+ * taxe, le total, l'échéance, la date de paiement effectif, le motif de
+ * facturation et l'abonnement d'origine. Sans eux, migrer la lecture aurait
+ * appauvri la facture locale — des montants hors taxe faux, des dates vides —
+ * et personne ne l'aurait vu avant la première déclaration.
+ *
+ * Ils sont donc ajoutés parce qu'ils sont LUS, un par un. Ne traversent
+ * toujours pas : les lignes de facture, le moyen de paiement, l'adresse de
+ * facturation, le solde du client — rien de tout cela n'est écrit côté projet.
+ */
 const invoiceView = z.object({
   invoiceId: z.string(),
   number: z.string().nullable(),
   status: z.string().nullable(),
+  paid: z.boolean(),
   amountDue: z.number().nullable(),
   amountPaid: z.number().nullable(),
+  /** Le TOTAL — c'est lui qui fait le montant TTC local, pas `amount_due`. */
+  total: z.number().nullable(),
+  /** La taxe, sans laquelle le montant hors taxe local serait faux. */
+  tax: z.number().nullable(),
   currency: z.string().nullable(),
   createdAt: z.number().nullable(),
+  dueAt: z.number().nullable(),
+  /** Quand elle a RÉELLEMENT été payée — jamais reconstruit localement. */
+  paidAt: z.number().nullable(),
+  billingReason: z.string().nullable(),
   hostedInvoiceUrl: z.string().nullable(),
   invoicePdfUrl: z.string().nullable(),
+  customerId: z.string().nullable(),
+  subscriptionId: z.string().nullable(),
 }).strict();
 
 const invoiceListOutput = z.object({
@@ -511,6 +597,20 @@ const checkoutCreateOutput = z.object({
 const BINDABLE_KINDS = Object.freeze([
   STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION,
   /**
+   * L6.3B — LE CLIENT ENTRE ENFIN, ET IL AURAIT PU DEPUIS L6.2D.
+   *
+   * Le commentaire ci-dessus disait « `CUSTOMER` n'y est pas : le Panel n'en a
+   * jamais créé ». C'était vrai en L6.2C ; L6.2D a livré `billing.customer.ensure`
+   * — le Panel crée le client d'un contrat et le lie à la création — mais cette
+   * liste n'a pas suivi.
+   *
+   * L'oubli n'était pas coûteux tant qu'aucune capacité n'exigeait cette
+   * famille. Les trois de L6.3B l'exigent : lister les factures, en lire une,
+   * ouvrir le portail. Toutes trois remontent au client par le lien, jamais par
+   * un identifiant que le projet présenterait.
+   */
+  STRIPE_RESOURCE_KINDS.CUSTOMER,
+  /**
    * L6.2F — l'abonnement entre dans la liste sans que le Panel n'en crée aucun.
    * Il y entre parce qu'il est ADOPTABLE : la session qui le produit est
    * possédée, et Stripe lui-même désigne la filiation. C'est la seule famille
@@ -601,6 +701,18 @@ function capability(code, options) {
 export const STRIPE_CAPABILITIES = Object.freeze({
   /* ── LECTURES ─────────────────────────────────────────────────────────── */
 
+  /**
+   * SERVIE DEPUIS L6.3B — et ce qui la débloque n'est pas le calendrier.
+   *
+   * Sa note de migration disait vrai pendant sept lots : « bloquée par l'absence
+   * de lien projet ↔ client Stripe ». L6.2D a créé ce lien, mais le contrat
+   * d'entrée continuait de demander un `customerId` au projet — c'est-à-dire de
+   * lui demander de désigner ce qu'il ne possède pas forcément.
+   *
+   * Le contrat prend désormais la référence de CONTRAT. Le Panel remonte au
+   * client par le lien qu'il a lui-même écrit. La capacité n'a donc pas été
+   * « ouverte » : elle a cessé d'exiger ce qu'on ne pouvait pas lui accorder.
+   */
   'billing.invoice.list': capability('billing.invoice.list', {
     label: 'Lister les factures d’un contrat',
     inputSchema: invoiceListInput,
@@ -609,8 +721,66 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     idempotency: 'SAFE_RETRY',
     requiredPermissions: ['billing:read'],
     resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
-    migrationNote:
-      'Contrat posé. Bloquée par l’absence de lien projet ↔ client Stripe côté Panel.',
+    requiresResourceOwnership: true,
+    migrated: true,
+    migrationNote: null,
+  }),
+
+  /**
+   * UNE facture, et seulement si elle est à ce contrat (L6.3B).
+   *
+   * L'appartenance d'une FACTURE ne se prouve pas directement — le Panel n'en
+   * crée aucune, Stripe les fabrique au fil des paiements. Elle se prouve par
+   * FILIATION, comme l'abonnement en L6.2F : la facture appartient au client
+   * possédé, et Stripe le dit lui-même dans l'objet rendu.
+   *
+   * L'ordre compte donc : le client est vérifié AVANT l'appel, la filiation
+   * APRÈS — et une facture dont le client ne serait pas le nôtre est refusée
+   * exactement comme une facture inexistante.
+   */
+  'billing.invoice.retrieve': capability('billing.invoice.retrieve', {
+    label: 'Lire une facture du contrat',
+    inputSchema: invoiceRetrieveInput,
+    outputSchema: invoiceView,
+    timeoutMs: 20_000,
+    idempotency: 'SAFE_RETRY',
+    requiredPermissions: ['billing:read'],
+    resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
+    requiresResourceOwnership: true,
+    migrated: true,
+    migrationNote: null,
+  }),
+
+  /**
+   * LE PORTAIL CLIENT — Stripe héberge l'écran, nous n'y touchons jamais (L6.3B).
+   *
+   * ══ POURQUOI ELLE N'EST PAS UNE ÉCRITURE FINANCIÈRE ═════════════════════════
+   *
+   * Elle n'encaisse rien et ne rembourse rien : elle ouvre une porte. Mais elle
+   * ouvre une porte sur TOUT ce qui concerne un client — moyens de paiement,
+   * factures, abonnements. Se tromper de client n'y coûte pas de l'argent, cela
+   * coûte des données personnelles, et l'appel aurait l'air parfaitement normal.
+   *
+   * D'où une appartenance vérifiée aussi strictement que pour un encaissement,
+   * et un contrat d'entrée qui ne laisse pas le projet nommer le client.
+   */
+  'billing.portal.create': capability('billing.portal.create', {
+    label: 'Ouvrir le portail client d’un contrat',
+    inputSchema: portalCreateInput,
+    outputSchema: portalSessionView,
+    timeoutMs: 20_000,
+    /**
+     * `SAFE_RETRY` et non `PROVIDER_IDEMPOTENT` : une session de portail est
+     * éphémère et à usage unique. La rejouer crée une session neuve — ce qui
+     * est le comportement CORRECT ici, puisque rendre l'ancienne rendrait une
+     * URL morte. Voir la dérogation documentée dans le transport.
+     */
+    idempotency: 'SAFE_RETRY',
+    requiredPermissions: ['billing:write'],
+    resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
+    requiresResourceOwnership: true,
+    migrated: true,
+    migrationNote: null,
   }),
 
   'billing.subscription.retrieve': capability('billing.subscription.retrieve', {
