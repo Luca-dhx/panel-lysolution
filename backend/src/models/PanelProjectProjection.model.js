@@ -223,6 +223,13 @@ const contractSchema = new mongoose.Schema(
      */
     taxRate: { type: Number, default: null },
     /**
+     * LE DÉLAI DE GRÂCE DU CONTRAT, EN JOURS (L10.6B-1).
+     *
+     * `null` se lit « non configuré », jamais « zéro ». La distinction décide
+     * de la fermeture d'un site : voir `resolveGraceDays`.
+     */
+    paymentGraceDays: { type: Number, default: null },
+    /**
      * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
      * Rien n'y est effacé : un contrat résilié reste entièrement consultable,
      * simplement plus jamais présenté comme celui du moment.

@@ -9,6 +9,7 @@ import PanelPaymentDefault, {
 import { EVENT_TYPES } from '../../../models/PanelSupervision.model.js';
 import { recordEvent } from '../../supervision/timeline.service.js';
 import registryStore from '../../registry/registryStore.js';
+import { PanelProjectContract } from '../../../models/PanelProjectProjection.model.js';
 
 /**
  * LES DÉFAUTS DE PAIEMENT D'ABONNEMENT (L10.6).
@@ -42,43 +43,52 @@ import registryStore from '../../registry/registryStore.js';
  */
 
 /**
- * LE DÉLAI DE GRÂCE PAR DÉFAUT DU PARC, EN JOURS.
+ * LA BORNE HAUTE D'UNE POLITIQUE DE GRÂCE, EN JOURS.
  *
- * ══ POURQUOI UNE CONSTANTE ICI, ET NON UNE VARIABLE D'ENVIRONNEMENT ═════════
+ * Un an. Au-delà, ce n'est plus une grâce mais une gratuité, et la valeur
+ * trahit une faute de frappe plutôt qu'une intention commerciale.
  *
- * `CONTRACT_PAYMENT_GRACE_DAYS` existe côté projet depuis longtemps et n'est LU
- * NULLE PART : une configuration morte que tout le monde croit active. La
- * reprendre aurait recréé deux autorités pour une seule question.
+ * ══ IL N'EXISTE AUCUNE VALEUR PAR DÉFAUT, ET C'EST DÉLIBÉRÉ ════════════════
  *
- * Cette valeur-ci est un défaut de PARC, pas une configuration : elle s'applique
- * à un projet dont personne n'a encore décidé la politique. Elle est visible
- * dans le code, versionnée, et un projet qui veut autre chose le dit sur sa
- * fiche — voir `resolveGraceDays`.
+ * Une première version portait ici `DEFAULT_GRACE_DAYS = 7`, lu sur la fiche du
+ * projet. C'était le même défaut que `CONTRACT_PAYMENT_GRACE_DAYS` côté projet :
+ * une valeur que personne n'a décidée, appliquée à tout le parc.
  *
- * Sept jours : une semaine laisse passer un week-end et un renouvellement de
- * carte, ce qui couvre la quasi-totalité des impayés involontaires.
+ * Sept jours auraient fermé des sites à une date que nul n'a fixée. Zéro les
+ * aurait fermés au premier prélèvement refusé. Les deux sont des décisions
+ * commerciales, et aucune ne se déduit du code.
+ *
+ * La politique vit donc sur le CONTRAT, et son absence se lit « non
+ * configurée » — jamais « zéro ».
  */
-export const DEFAULT_GRACE_DAYS = 7;
-export const MAX_GRACE_DAYS = 90;
+export const MAX_GRACE_DAYS = 365;
 
 const JOUR_MS = 24 * 60 * 60 * 1000;
 const nowIso = () => new Date().toISOString();
 
 /**
- * COMBIEN DE GRÂCE POUR CE PROJET ?
+ * QUELLE GRÂCE POUR CE PROJET ? — lue au CONTRAT, jamais supposée.
  *
- * Lue sur la fiche du Panel, qui est l'autorité de la politique commerciale.
- * Absente, on retombe sur le défaut du parc — et c'est acceptable ICI, alors
- * que le taux de TVA de L10.5 refusait tout repli : une grâce trop généreuse
- * coûte quelques jours d'hébergement, un taux de TVA inventé produit une
- * facture fausse.
+ * ══ CE QUE SIGNIFIE `null`, ET CE QUE LE SYSTÈME EN FAIT ═══════════════════
+ *
+ * « Aucune politique n'a été fixée pour ce contrat. » Le Panel en tire la seule
+ * conséquence sûre : il OUVRE l'incident, le suit, l'affiche — et ne le fera
+ * JAMAIS expirer automatiquement. La fermeture du site reste une décision
+ * humaine tant que personne n'a écrit de règle.
+ *
+ * C'est un comportement NON AUTOMATISÉ, pas un comportement permissif : la
+ * dette reste parfaitement visible, elle cesse simplement de fermer un site
+ * toute seule.
+ *
+ * @returns {Promise<number|null>} jours entiers, ou `null` si non configurée
  */
-export function resolveGraceDays(panelProject) {
-  const configure = panelProject?.paymentPolicy?.graceDays;
-  if (Number.isInteger(configure) && configure >= 0 && configure <= MAX_GRACE_DAYS) {
-    return configure;
-  }
-  return DEFAULT_GRACE_DAYS;
+export async function resolveGraceDays(projectId) {
+  const contrat = await PanelProjectContract.findOne({ projectId })
+    .select('paymentGraceDays').lean();
+
+  const jours = contrat?.paymentGraceDays;
+  if (!Number.isInteger(jours) || jours < 0 || jours > MAX_GRACE_DAYS) return null;
+  return jours;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -131,9 +141,20 @@ export async function recordInvoiceFailure(fait) {
       return { recorded: false, reason: 'PROJECT_UNKNOWN' };
     }
 
-    const graceDays = resolveGraceDays(panelProject);
+    const graceDays = await resolveGraceDays(fait.projectId);
     const echecLe = fait.failedAt ?? new Date();
     const paymentDefaultId = randomUUID();
+
+    /**
+     * SANS POLITIQUE, PAS D'ÉCHÉANCE — donc aucune expiration automatique.
+     *
+     * L'incident existe quand même : la dette est réelle et doit se voir. Ce
+     * qui n'existe pas, c'est la date à laquelle on fermerait le site — parce
+     * que personne ne l'a fixée.
+     */
+    const echeance = graceDays === null
+      ? null
+      : new Date(echecLe.getTime() + graceDays * JOUR_MS);
 
     /**
      * `$setOnInsert` SUR TOUT CE QUI EST FIGÉ — la politique et l'échéance.
@@ -150,7 +171,7 @@ export async function recordInvoiceFailure(fait) {
           contractId: fait.contractId ?? null,
           subscriptionId: fait.subscriptionId ?? null,
           graceDaysSnapshot: graceDays,
-          graceDeadlineAt: new Date(echecLe.getTime() + graceDays * JOUR_MS),
+          graceDeadlineAt: echeance,
           firstFailedAt: echecLe,
           status: PAYMENT_DEFAULT_STATUS.OPEN,
           history: [{ at: nowIso(), from: null, to: PAYMENT_DEFAULT_STATUS.OPEN, reason: 'FIRST_FAILURE' }],
@@ -200,7 +221,10 @@ export async function recordInvoiceFailure(fait) {
     if (premier) {
       await trace(incident, EVENT_TYPES.PAYMENT_DEFAULT_OPENED, 'WARNING',
         `Prélèvement échoué — ${formatAmount(incident.amountDueCents, incident.currency)} dus. `
-        + `Grâce de ${graceDays} jour(s), échéance le ${formatDate(incident.graceDeadlineAt)}.`);
+        + (incident.graceDeadlineAt
+          ? `Grâce de ${graceDays} jour(s), échéance le ${formatDate(incident.graceDeadlineAt)}.`
+          : 'Aucun délai de grâce configuré sur le contrat : aucune suspension '
+            + 'automatique ne sera demandée.'));
     }
 
     return { recorded: true, paymentDefaultId: incident.paymentDefaultId, opened: premier };
@@ -338,7 +362,15 @@ export async function closeInvoiceDefault({ environment, invoiceId, reason = 'SU
 export async function expireDueGracePeriods({ now = new Date(), limit = 100 } = {}) {
   const echues = await PanelPaymentDefault.find({
     status: PAYMENT_DEFAULT_STATUS.OPEN,
-    graceDeadlineAt: { $lte: now },
+    /**
+     * `$ne: null` EST LOAD-BEARING, et l'omettre serait catastrophique.
+     *
+     * En BSON, `null` précède les dates dans l'ordre de comparaison : un
+     * `$lte: now` seul CAPTURERAIT les incidents sans échéance. Un contrat sans
+     * politique de grâce verrait donc son site fermé au premier prélèvement
+     * refusé — précisément la décision que personne n'a prise.
+     */
+    graceDeadlineAt: { $ne: null, $lte: now },
   }).sort({ graceDeadlineAt: 1 }).limit(limit).select('paymentDefaultId').lean();
 
   let expired = 0;
@@ -348,7 +380,7 @@ export async function expireDueGracePeriods({ now = new Date(), limit = 100 } = 
         paymentDefaultId,
         /** LA RECONDITION : payé entre-temps ⇒ aucune bascule, aucune demande. */
         status: PAYMENT_DEFAULT_STATUS.OPEN,
-        graceDeadlineAt: { $lte: now },
+        graceDeadlineAt: { $ne: null, $lte: now },
       },
       {
         $set: {
@@ -723,7 +755,7 @@ async function trace(incident, type, severity, summary) {
 
 export default {
   PAYMENT_DEFAULT_STATUS,
-  DEFAULT_GRACE_DAYS,
+  MAX_GRACE_DAYS,
   resolveGraceDays,
   recordInvoiceFailure,
   resolveInvoiceDefault,

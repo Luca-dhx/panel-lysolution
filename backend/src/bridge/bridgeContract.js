@@ -761,6 +761,18 @@ export const contractPayloadSchema = z
      */
     taxRate: z.number().min(0).max(100).nullable().optional(),
     /**
+     * LE DÉLAI DE GRÂCE, EN JOURS ENTIERS (L10.6B-1).
+     *
+     * `nullable` parce qu'un contrat peut légitimement n'avoir aucune politique,
+     * et `optional` parce qu'une projection antérieure au lot n'en porte pas.
+     * Les deux se lisent PAREIL : « non configurée » — et le Panel ne suspend
+     * alors jamais automatiquement.
+     *
+     * Borné à un an : au-delà, une grâce n'est plus une grâce, c'est une
+     * gratuité, et la valeur trahit une faute de frappe.
+     */
+    paymentGraceDays: z.number().int().min(0).max(365).nullable().optional(),
+    /**
      * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
      *
      * Ils restent entièrement consultables : référence, statut terminal,

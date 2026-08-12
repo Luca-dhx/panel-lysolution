@@ -64,6 +64,13 @@ const TESTS = [
   // déjà émise — et l'autorité du montant, qui n'est pas une validation mais
   // une absence : il n'y a aucun montant dans la requête à falsifier.
   'finance-payment-requests.test.js',
+  // L10.6A + L10.6B-1 — L'IMPAYÉ, ET CE QU'IL AUTORISE À FERMER. Instantané des
+  // trois causes et boucle de confirmation (on ne conclut jamais d'après la
+  // seule cause dominante), puis la politique de grâce : elle vient du CONTRAT,
+  // est FIGÉE à l'ouverture de l'incident, et son absence n'autorise AUCUNE
+  // fermeture automatique. La suite garde aussi la frontière avec Stripe, qui
+  // reste seul ordonnanceur des tentatives de collecte.
+  'finance-payment-default-confirmation.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',

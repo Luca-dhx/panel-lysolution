@@ -181,15 +181,20 @@ const paymentDefaultSchema = new mongoose.Schema(
      * C'est la même doctrine que le snapshot fiscal de L10.5 : ce qui a été
      * annoncé au client l'a été sous les règles du jour.
      */
-    graceDaysSnapshot: { type: Number, required: true, min: 0 },
+    graceDaysSnapshot: { type: Number, default: null, min: 0 },
     /**
      * L'ÉCHÉANCE — calculée UNE FOIS, depuis le premier échec.
      *
      * Ancrée sur `firstFailedAt`, jamais sur le dernier échec : sinon chaque
      * tentative de Stripe repousserait la date, et la grâce n'expirerait
      * jamais. C'est le piège le plus naturel de tout le lot.
+     *
+     * `null` quand le contrat ne porte AUCUNE politique de grâce (L10.6B-1).
+     * L'incident vit alors normalement — il est ouvert, suivi, affiché — mais
+     * il n'expire jamais tout seul, parce que personne n'a fixé la date à
+     * laquelle on fermerait le site. La fermeture reste humaine.
      */
-    graceDeadlineAt: { type: Date, required: true },
+    graceDeadlineAt: { type: Date, default: null },
 
     status: {
       type: String,

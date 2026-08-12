@@ -175,6 +175,13 @@ async function applyContract({ projectId, change, stamp }) {
          * facturation d'une prestation refuse alors explicitement.
          */
         taxRate: Number.isFinite(c.taxRate) ? c.taxRate : null,
+        /**
+         * LE DÉLAI DE GRÂCE (L10.6B-1) — reflété, jamais complété.
+         *
+         * `?? null` et surtout pas `?? 7` : supposer une clémence que personne
+         * n'a accordée ferait fermer un site à une date que nul n'a décidée.
+         */
+        paymentGraceDays: Number.isInteger(c.paymentGraceDays) ? c.paymentGraceDays : null,
         // L'histoire est REMPLACÉE d'un bloc, comme le reste de la
         // photographie : le projet publie la liste, le Panel la reflète.
         previousContracts: (c.previousContracts ?? []).map((p) => ({
