@@ -134,6 +134,15 @@ const providerRevenueFactSchema = new mongoose.Schema(
       claimedProjectId: { type: String, default: null },
       contractId: { type: String, default: null },
       paymentType: { type: String, default: null },
+      /**
+       * L10.5 — LA PRESTATION QUE CE PAIEMENT RÈGLE.
+       *
+       * Lue dans les metadata Stripe que le Panel a lui-même apposées à
+       * l'ouverture de la session. Corroborative comme les autres : elle sert à
+       * RETROUVER la demande, jamais à décider de l'appartenance — celle-ci
+       * reste prouvée par le registre de liens (L6.2A).
+       */
+      paymentRequestId: { type: String, default: null },
     },
 
     /**

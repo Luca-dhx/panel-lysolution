@@ -798,6 +798,7 @@ components:
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
                   - EMAIL_DELIVERY_EVENT
+                  - PAYMENT_REQUEST
             operations:
               type: array
               items: { type: string }
@@ -1201,6 +1202,7 @@ components:
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
             - EMAIL_DELIVERY_EVENT
+            - PAYMENT_REQUEST
         entityId:
           type: string
           format: uuid

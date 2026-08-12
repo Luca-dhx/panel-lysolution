@@ -1034,6 +1034,129 @@ sortie, coffre, réservation d'opération, appartenance, journal.
 
 ---
 
+## 13 sexies. PRESTATIONS À FACTURER (L10.5)
+
+### Créance ≠ revenu
+
+C'est toute la doctrine du lot, et elle tient en deux lignes :
+
+```
+PanelPaymentRequest      de l'argent RÉCLAMÉ    — n'entre dans aucun total
+PanelFinancialTransaction de l'argent CONSTATÉ  — le ledger, et lui seul
+```
+
+Envoyer une prestation de 500 € n'inscrit **rien** au livret. Le bénéfice du mois
+ne dépend pas de ce qu'on espère encaisser. Les deux objets se rejoignent à un
+seul instant — le paiement — et **pas par cette porte** :
+
+```
+Stripe → fait canonique → projection L10.3 → FinancialTransaction
+                                  │
+                                  └──► la demande APPREND qu'elle est payée
+```
+
+Le sens de la flèche est l'inverse de l'intuition. L'écrire dans l'autre sens —
+la demande créant le revenu à son passage `PAID` — aurait produit DEUX revenus
+par euro dès l'arrivée du webhook.
+
+### La doctrine fiscale
+
+| Question | Autorité |
+|---|---|
+| Quel taux de TVA s'applique ? | Le **Contract**, côté projet (`taxRate`, en pourcentage) |
+| Comment le Panel l'apprend-il ? | Par la **projection canonique** du contrat |
+| Que se passe-t-il si le taux est inconnu ? | La création **refuse**. Aucun repli à 20 % |
+| Le taux peut-il changer une facture émise ? | **Non** — le triplet est figé à la création |
+
+```
+Contrat aujourd'hui : 20 %          Prestation : 500 € HT
+                                    ├─ netAmountCents   = 50 000
+                                    ├─ taxRate          = 20
+                                    ├─ taxAmountCents   = 10 000
+                                    └─ grossAmountCents = 60 000
+
+Le contrat passe à 10 % demain      → cette prestation reste à 600 € TTC.
+                                      Une facture est un ACTE DATÉ.
+```
+
+L'arrondi est celui du projet — `Math.round(net × rate / 100)`, la formule de
+`computePricing`. Deux arrondis différents auraient produit un centime d'écart
+entre ce que le Panel annonce et ce que le contrat calcule, et cet écart-là est
+le plus coûteux à expliquer à un comptable. Le TTC, lui, est une **somme de deux
+entiers** : exact par construction, jamais arrondi séparément.
+
+### L'autorité du montant n'est pas une validation, c'est une absence
+
+Le projet n'envoie **aucun montant**. Ni HT, ni TVA, ni TTC. Il transmet
+l'identité d'une prestation, et le Panel lit la sienne.
+
+```
+Manager  → POST /my-invoices/payment-requests/:id/pay   (corps VIDE)
+         → billing.checkout.create { paymentType: SERVICE, paymentRequestId }
+         → le Panel lit grossAmountCents dans SON document
+         → Stripe débite 600 €
+```
+
+Un client qui remplacerait `600` par `6` ne modifierait rien : il n'y a aucun
+montant dans la requête à modifier. C'est la même doctrine que `contractRef`
+depuis L6.2B, appliquée à un objet qui n'est pas un contrat.
+
+### La primitive Stripe, et pourquoi pas l'API Invoice
+
+`mode: payment` + `invoice_creation`. Stripe émet une **vraie facture** au
+paiement — numéro, page hébergée, PDF. C'est déjà le choix des frais de
+lancement depuis L6.2B ; on ne l'invente pas, on l'applique.
+
+L'API Invoice aurait demandé TROIS actes fournisseur — créer le brouillon, le
+finaliser, l'envoyer — donc trois capacités à contractualiser et trois états de
+plus à faire converger, pour le même document.
+
+Conséquence heureuse en aval : la session portant une facture, c'est la
+**facture** que L10.3 retient comme objet canonique. Session, facture, intention
+et débit — quatre annonces — produisent **un seul revenu**, sans une ligne de
+plus.
+
+### Ce que L10.5 a dû corriger dans L10.3
+
+Une facture de prestation n'a **pas d'abonnement**. Sa filiation d'appartenance
+n'existait donc pas, et le revenu n'était jamais projeté : de l'argent réellement
+encaissé, invisible au livret.
+
+L'appartenance se prouve désormais par l'**intention de paiement**, adoptée
+depuis la session possédée au moment où son événement arrive — l'adoption L6.2F
+appliquée un cran plus bas. Les trois preuves y sont réunies : session possédée,
+webhook signé, filiation désignée par Stripe.
+
+Second correctif : `invoiceDocument.invoiceId` n'était persisté nulle part sur le
+fait. Personne ne l'avait remarqué parce que rien ne cherchait la facture par son
+identité.
+
+### Où la prestation se voit
+
+| Écran | Ce qu'il montre |
+|---|---|
+| Panel · Projet · Finances · **Revenus** | bloc « Paiements en attente », séparé de la liste |
+| Panel · Finances **globale** | rien — une créance se réclame à quelqu'un, la page globale ne désigne personne |
+| Manager · **Facturation & abonnement** | les prestations avant les contrats : ce qui est dû se lit avant ce qui est réglé |
+
+La projection vers le projet est volontairement **pauvre** : ni identifiant
+Stripe, ni URL de session, ni historique, ni auteur. L'URL de paiement en
+particulier ne traverse jamais — elle est périssable, et la projeter ferait
+afficher un bouton menant à une session morte. Le Manager la demande au clic.
+
+### Réserve assumée — l'annulation
+
+Une session Stripe déjà ouverte **reste payable** après annulation. Notre bascule
+en base empêche d'en ouvrir une nouvelle ; elle ne périme pas une URL déjà émise
+(Stripe les expire de lui-même en 24 h).
+
+Le cas est traité sans être nié : le paiement entre quand même au ledger et la
+demande passe `PAID` **avec la trace de l'incohérence**, plutôt que de faire
+diverger le Panel de la banque. Fermer complètement la fenêtre demanderait une
+capacité `checkout.session.expire` qui n'existe pas au catalogue.
+
+---
+
 ## 14. Ce que ces lots n'ont PAS fait
 
 **Aucun second stockage de fichiers** : le protocole Media existant a été étendu, pas

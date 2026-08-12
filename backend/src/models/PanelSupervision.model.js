@@ -144,6 +144,27 @@ export const EVENT_TYPES = Object.freeze({
   FINANCIAL_TRANSACTION_CREATED: 'FINANCIAL_TRANSACTION_CREATED',
   FINANCIAL_TRANSACTION_UPDATED: 'FINANCIAL_TRANSACTION_UPDATED',
   FINANCIAL_TRANSACTION_DELETED: 'FINANCIAL_TRANSACTION_DELETED',
+  /**
+   * L10.5 — LES PRESTATIONS FACTURÉES. Six types, et le découpage compte.
+   *
+   * Ils décrivent l'ARGENT RÉCLAMÉ, jamais l'argent constaté : ce dernier a
+   * déjà ses trois types au-dessus. Les fondre aurait rendu impossible la
+   * question la plus fréquente — « qu'ai-je facturé qui n'est pas rentré ? ».
+   *
+   * Aucun n'est un événement Stripe recopié. `PAYMENT_REQUEST_PAID` ne dit pas
+   * « checkout.session.completed reçu » : il dit qu'une prestation nommée a été
+   * réglée. La chronologie d'un projet parle métier, et un opérateur qui la
+   * relit ne devrait jamais avoir à connaître le vocabulaire du fournisseur.
+   */
+  PAYMENT_REQUEST_CREATED: 'PAYMENT_REQUEST_CREATED',
+  PAYMENT_REQUEST_SENT: 'PAYMENT_REQUEST_SENT',
+  /** Une session de paiement s'est ouverte. Le client est devant sa carte. */
+  PAYMENT_REQUEST_PAYMENT_STARTED: 'PAYMENT_REQUEST_PAYMENT_STARTED',
+  PAYMENT_REQUEST_PAID: 'PAYMENT_REQUEST_PAID',
+  PAYMENT_REQUEST_CANCELED: 'PAYMENT_REQUEST_CANCELED',
+  PAYMENT_REQUEST_REMINDER_SENT: 'PAYMENT_REQUEST_REMINDER_SENT',
+  /** Un e-mail perdu est un FAIT, pas un silence. La créance, elle, reste due. */
+  PAYMENT_REQUEST_REMINDER_FAILED: 'PAYMENT_REQUEST_REMINDER_FAILED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

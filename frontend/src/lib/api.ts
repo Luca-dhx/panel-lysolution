@@ -36,6 +36,7 @@ import type {
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
   ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
   RefundEligibility, RefundOutcome, RefundRequest, StripeRefundReason,
+  PaymentRequest, PaymentRequestInput,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -987,6 +988,33 @@ export const finances = {
    * navigateur finirait par diverger de celui que le serveur oppose, et
    * l'opérateur verrait un bouton actif sur un refus certain.
    */
+  /* ── Prestations à facturer (L10.5) ──────────────────────────────────── */
+
+  /**
+   * LES PRESTATIONS — surface distincte de `/transactions`, et c'est le point :
+   * une somme DUE n'est pas un mouvement, et n'entre dans aucun total.
+   */
+  paymentRequests: (projectId?: string | null) =>
+    request<{ items: PaymentRequest[] }>(
+      `/api/finances/payment-requests${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`,
+    ),
+
+  /**
+   * CRÉE ET ENVOIE. Le serveur calcule la TVA depuis le contrat du projet et
+   * fige le triplet HT / TVA / TTC — l'écran n'envoie que le HT.
+   */
+  createPaymentRequest: (body: PaymentRequestInput) =>
+    request<{ paymentRequest: PaymentRequest }>('/api/finances/payment-requests', {
+      method: 'POST', body,
+    }),
+
+  /** ANNULE — la demande RESTE, avec son histoire et son motif. */
+  cancelPaymentRequest: (paymentRequestId: string, reason?: string) =>
+    request<{ paymentRequest: PaymentRequest }>(
+      `/api/finances/payment-requests/${paymentRequestId}/cancel`,
+      { method: 'POST', body: { reason: reason ?? null } },
+    ),
+
   refundEligibility: (transactionId: string) =>
     request<RefundEligibility>(`/api/finances/transactions/${transactionId}/refund`),
 

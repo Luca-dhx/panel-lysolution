@@ -149,9 +149,29 @@ const checkoutRetrieveInput = z.object({ checkoutSessionId, operationId }).stric
  * le projet l'annoncer permettrait de facturer un euro un contrat à mille.
  */
 const checkoutCreateInput = z.object({
-  /** Référence du contrat, telle que le Panel la connaît par projection. */
-  contractRef: z.string().trim().min(1).max(64),
-  paymentType: z.enum(['LAUNCH_FEE', 'SUBSCRIPTION']),
+  /**
+   * Référence du contrat, telle que le Panel la connaît par projection.
+   *
+   * FACULTATIVE depuis L10.5 : une prestation ponctuelle n'appartient à aucun
+   * contrat. Le raffinement en bas de ce schéma exige l'une OU l'autre des deux
+   * références selon le type — jamais aucune, jamais les deux.
+   */
+  contractRef: z.string().trim().min(1).max(64).optional(),
+  /**
+   * L10.5 — LA PRESTATION À PAYER, DÉSIGNÉE PAR SON IDENTITÉ INTERNE.
+   *
+   * ══ CE QUI N'ENTRE PAS ICI, ET C'EST TOUT LE POINT ════════════════════════
+   *
+   * Aucun montant. Le projet nomme une demande ; le Panel lit LE SIEN, dans son
+   * propre document. Un client qui remplacerait 500 par 5 dans la requête ne
+   * modifierait rien — il n'y a pas de montant dans la requête à modifier.
+   *
+   * C'est la même doctrine que `contractRef` depuis L6.2B (« laisser le projet
+   * l'annoncer permettrait de facturer un euro un contrat à mille »), appliquée
+   * à un objet qui n'est pas un contrat.
+   */
+  paymentRequestId: z.string().trim().uuid().optional(),
+  paymentType: z.enum(['LAUNCH_FEE', 'SUBSCRIPTION', 'SERVICE']),
   successUrl: z.string().trim().url().max(2048),
   cancelUrl: z.string().trim().url().max(2048),
   /**
@@ -169,7 +189,44 @@ const checkoutCreateInput = z.object({
     paymentRef: z.string().trim().min(1).max(64).optional(),
   }).strict().optional(),
   operationId,
-}).strict();
+}).strict().superRefine((valeur, ctx) => {
+  /**
+   * UNE RÉFÉRENCE, ET UNE SEULE — celle que le type exige.
+   *
+   * ══ POURQUOI UN RAFFINEMENT PLUTÔT QUE DEUX SCHÉMAS ══════════════════════
+   *
+   * Deux schémas auraient signifié deux capacités, donc deux adaptateurs, deux
+   * clés d'idempotence et deux chemins d'appartenance — pour un acte qui est le
+   * MÊME : ouvrir une session de paiement. Ce qui change n'est pas l'acte, c'est
+   * d'où le Panel tire le montant.
+   *
+   * Le refus des DEUX références à la fois n'est pas du zèle : accepter
+   * l'ambiguïté obligerait l'autorité à choisir, et ce choix serait la première
+   * chose qu'on chercherait à retourner contre elle.
+   */
+  const service = valeur.paymentType === 'SERVICE';
+  if (service && !valeur.paymentRequestId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['paymentRequestId'],
+      message: 'Une prestation doit désigner la demande de paiement à régler.',
+    });
+  }
+  if (!service && !valeur.contractRef) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['contractRef'],
+      message: 'Ce type de paiement doit désigner un contrat.',
+    });
+  }
+  if (valeur.contractRef && valeur.paymentRequestId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['paymentRequestId'],
+      message: 'Un paiement désigne un contrat OU une prestation, jamais les deux.',
+    });
+  }
+});
 
 /**
  * LES DEUX RÉSILIATIONS — contrats ÉTROITS, et sans `operationId` (L6.2G).

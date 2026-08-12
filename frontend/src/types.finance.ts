@@ -428,3 +428,67 @@ export interface BulkScopePreview {
   count: number;
   activeRecurringCosts: number;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PRESTATIONS À FACTURER (L10.5) — de l'argent RÉCLAMÉ.
+
+   Distinct d'une transaction : une créance n'a rien eu lieu. Elle rejoint le
+   ledger à un seul instant — le paiement — et pas par cette porte : par le
+   webhook Stripe, la projection L10.3, et un unique revenu.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export type PaymentRequestStatus =
+  | 'DRAFT' | 'OPEN' | 'PAYMENT_PENDING' | 'PAID' | 'CANCELED' | 'EXPIRED';
+
+export interface PaymentRequest {
+  paymentRequestId: string;
+  projectId: string;
+  projectNameSnapshot: string | null;
+  label: string;
+  description: string;
+  /** LE SNAPSHOT FISCAL, figé à la création. Jamais recalculé. */
+  netAmountCents: number;
+  /** Pourcentage — celui du CONTRAT au moment de la facturation. */
+  taxRate: number;
+  taxAmountCents: number;
+  /** Ce que Stripe débite, et ce que le ledger constatera. */
+  grossAmountCents: number;
+  currency: string;
+  status: PaymentRequestStatus;
+  environment: 'TEST' | 'PROD' | null;
+  payable: boolean;
+  stripe: {
+    checkoutSessionId: string | null;
+    paymentIntentId: string | null;
+    invoiceId: string | null;
+    hostedInvoiceUrl: string | null;
+    invoicePdfUrl: string | null;
+  };
+  /** Le revenu produit. `null` tant que rien n'a été encaissé. */
+  transactionId: string | null;
+  reminders: {
+    enabled: boolean;
+    intervalDays: number;
+    nextAt: string | null;
+    lastSentAt: string | null;
+    count: number;
+    lastError: string | null;
+  };
+  history: { at: string; from: string | null; to: string; reason: string | null; actor: string | null }[];
+  createdBy: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  paidAt: string | null;
+  canceledAt: string | null;
+  cancelReason: string | null;
+}
+
+export interface PaymentRequestInput {
+  projectId: string;
+  label: string;
+  description?: string;
+  /** En euros, tel que saisi. Le serveur le convertit en centimes entiers. */
+  netAmount: string;
+  currency?: string;
+  reminders?: { enabled: boolean; intervalDays?: number };
+}

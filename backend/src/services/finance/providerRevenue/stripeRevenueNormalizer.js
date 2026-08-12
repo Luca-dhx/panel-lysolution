@@ -249,13 +249,30 @@ function normalizeInvoice({ objet, payload, environment }) {
       /**
        * PAR QUELLE RESSOURCE L'APPARTENANCE SE PROUVE.
        *
-       * Une facture n'a pas de lien à elle : elle en hérite de l'abonnement qui
+       * Une facture n'a pas de lien à elle : elle en hérite de la ressource qui
        * l'a produite — filiation désignée par Stripe sur l'objet lui-même,
        * exactement comme l'adoption L6.2F. Aucun appel fournisseur.
+       *
+       * ══ DEUX FILIATIONS, ET LA SECONDE EST ARRIVÉE AVEC L10.5 ═══════════
+       *
+       * L'ABONNEMENT d'abord : c'est lui qui produit les factures récurrentes,
+       * et c'est la seule filiation qui existait jusqu'ici.
+       *
+       * L'INTENTION DE PAIEMENT ensuite. Une prestation ponctuelle est payée
+       * par une session `mode: payment` avec `invoice_creation` : Stripe émet
+       * une vraie facture, et cette facture n'a AUCUN abonnement. Sans seconde
+       * filiation, son appartenance restait improuvable et le revenu n'était
+       * jamais projeté — de l'argent réellement encaissé, invisible au livret.
+       *
+       * L'intention, elle, est possédée : la session qui l'a produite est liée
+       * depuis sa création (L6.2B), et son événement la fait adopter. Voir
+       * `adoptIntentFromSession()` dans le service de projection.
        */
       ownershipVia: subscriptionId
         ? { resourceType: 'SUBSCRIPTION', resourceId: subscriptionId }
-        : null,
+        : (idOf(objet.payment_intent)
+          ? { resourceType: 'PAYMENT_INTENT', resourceId: idOf(objet.payment_intent) }
+          : null),
 
       /** Identités secondaires — pour l'audit et pour préparer L10.4. */
       corroboration: {
@@ -268,6 +285,8 @@ function normalizeInvoice({ objet, payload, environment }) {
         claimedProjectId: chaine(meta.panelProjectId),
         contractId: chaine(meta.contractId),
         paymentType: chaine(meta.paymentType),
+        /** L10.5 — la prestation réglée, si ce paiement en règle une. */
+        paymentRequestId: chaine(meta.paymentRequestId),
       },
 
       /** Ce que Stripe expose du document — voir la doctrine des justificatifs. */
@@ -365,6 +384,8 @@ function normalizeSession({ objet, payload, environment, eventType }) {
         claimedProjectId: chaine(meta.panelProjectId),
         contractId: chaine(meta.contractId),
         paymentType: chaine(meta.paymentType),
+        /** L10.5 — la prestation réglée, si ce paiement en règle une. */
+        paymentRequestId: chaine(meta.paymentRequestId),
       },
 
       /** Une session sans facture n'a aucun document à proposer. */
@@ -459,6 +480,7 @@ export function normalizeStripeRefundObject({ refund, environment, chargeReceipt
         claimedProjectId: null,
         contractId: null,
         paymentType: null,
+        paymentRequestId: null,
       },
 
       /**

@@ -50,6 +50,7 @@ import { SUPPORTED_CURRENCIES } from '../money.js';
 import {
   FACT_KIND,
   NOT_A_FACT,
+  CANONICAL_TYPES,
   normalizeStripeRevenueEvent,
   normalizeStripeRefundEvent,
   normalizeStripeRefundObject,
@@ -110,6 +111,26 @@ export async function recordStripeRevenueEvent({
        */
       if (reason === FACT_KIND.REFUND) {
         return recordStripeRefundEvent({ environment, eventType, payload, providerEventId });
+      }
+
+      /**
+       * UNE SESSION CORROBORATIVE N'EST PAS INUTILE (L10.5).
+       *
+       * Une session `mode: payment` avec `invoice_creation` s'efface devant sa
+       * facture — c'est la doctrine L10.3, et elle évite le double comptage.
+       * Mais elle porte quelque chose que la facture n'a pas : le lien vers le
+       * projet, prouvé depuis sa création (L6.2B).
+       *
+       * Sans ce passage, une prestation ponctuelle payée restait UNOWNED pour
+       * toujours : la facture n'a pas d'abonnement, donc aucune filiation, donc
+       * aucun revenu. De l'argent réellement encaissé, absent du livret.
+       *
+       * On adopte donc l'intention de paiement AVANT de laisser passer la
+       * session. La facture, qui porte la même intention, y trouvera son
+       * propriétaire — quel que soit l'ordre d'arrivée des deux événements.
+       */
+      if (reason === NOT_A_FACT.CORROBORATING_ONLY || reason === NOT_A_FACT.NOT_FINANCIAL) {
+        await adoptIntentFromSession({ environment, eventType, payload }).catch(() => null);
       }
       return { ...rien, reason };
     }
@@ -243,6 +264,15 @@ async function upsertFact({ fact, eventType, providerEventId }) {
    * de la convergence ; accueillir un nouveau MONTANT ne l'est pas.
    */
   const enrichissables = {};
+  /**
+   * L'IDENTIFIANT DE LA FACTURE MANQUAIT (corrigé en L10.5).
+   *
+   * Les trois autres champs étaient conservés, pas lui — et rien ne s'en
+   * plaignait tant que personne ne cherchait la facture par son identité. Une
+   * prestation payée, elle, veut la rattacher : sans cet identifiant, elle
+   * n'aurait présenté aucun document alors que Stripe en avait émis un.
+   */
+  if (fact.invoiceDocument?.invoiceId) enrichissables['invoiceDocument.invoiceId'] = fact.invoiceDocument.invoiceId;
   if (fact.invoiceDocument?.pdfUrl) enrichissables['invoiceDocument.pdfUrl'] = fact.invoiceDocument.pdfUrl;
   if (fact.invoiceDocument?.hostedUrl) enrichissables['invoiceDocument.hostedUrl'] = fact.invoiceDocument.hostedUrl;
   if (fact.invoiceDocument?.number) enrichissables['invoiceDocument.number'] = fact.invoiceDocument.number;
@@ -410,6 +440,30 @@ export async function projectFact(factId) {
    * `adoptMissingPaymentIntents()`.
    */
   await adoptPaymentIntent({ fait, projectId });
+
+  /**
+   * L10.5 — LA PRESTATION APPREND QU'ELLE EST PAYÉE, ET SEULEMENT MAINTENANT.
+   *
+   * ══ POURQUOI ICI, ET DANS CE SENS ═══════════════════════════════════════
+   *
+   * Le revenu vient d'être écrit, une fois, par la seule voie qui en écrive.
+   * La demande de paiement en reçoit l'identité — elle ne la produit pas.
+   *
+   * L'inverse aurait été plus court à écrire : passer la demande à `PAID` au
+   * retour de l'appel, et y créer la transaction. Il aurait produit DEUX
+   * revenus pour un euro dès l'arrivée du webhook, c'est-à-dire exactement le
+   * défaut que tout L10.3 existe pour rendre impossible.
+   *
+   * Best-effort : un revenu correctement projeté ne doit pas être perdu parce
+   * que la demande qui l'a motivé n'a pas pu être mise à jour. La convergence
+   * la reprendra, et le fait porte de quoi la retrouver.
+   */
+  await soldePrestation({ fait, transactionId }).catch((err) => {
+    logger.warn(
+      `[finance] prestation non soldée pour ${maskResourceId(fait.objectId)} `
+      + `(${fait.environment}) — ${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+    );
+  });
 
   await PanelProviderRevenueFact.updateOne(
     { factId },
@@ -601,6 +655,114 @@ async function upsertRefundTransaction({ fait, origine }) {
 
   const ecrite = await PanelFinancialTransaction.findOne(clef).select('transactionId').lean();
   return ecrite?.transactionId ?? transactionId;
+}
+
+/**
+ * ADOPTE L'INTENTION DE PAIEMENT D'UNE SESSION POSSÉDÉE (L10.5).
+ *
+ * ══ POURQUOI DEPUIS LA SESSION, ET NON DEPUIS LA FACTURE ═══════════════════
+ *
+ * Parce que la session est la SEULE des deux dont l'appartenance soit déjà
+ * prouvée : le Panel l'a créée et liée (L6.2B). La facture, elle, n'a aucun
+ * lien — c'est précisément le problème qu'on résout.
+ *
+ * Les trois preuves de l'adoption L6.2F sont réunies à cet instant : la session
+ * est possédée, l'événement est un webhook signé, et Stripe désigne lui-même la
+ * filiation en portant `payment_intent` sur la session.
+ *
+ * ══ POURQUOI SANS ATTENDRE LE PAIEMENT ═════════════════════════════════════
+ *
+ * `checkout.session.completed` n'arrive QUE si la session est payée. À ce
+ * moment, l'intention existe, et la facture est déjà en route — parfois déjà
+ * arrivée. Adopter ici, plutôt qu'à la projection du revenu, ferme la fenêtre
+ * où la facture arriverait la première et repartirait sans propriétaire.
+ *
+ * Ne lève jamais : une adoption manquée laisse le fait en attente, et la
+ * convergence le reprendra au passage suivant.
+ */
+async function adoptIntentFromSession({ environment, eventType, payload }) {
+  if (!String(eventType).startsWith('checkout.session.')) return;
+
+  const session = payload?.data?.object ?? null;
+  const sessionId = typeof session?.id === 'string' ? session.id : null;
+  const intentId = typeof session?.payment_intent === 'string'
+    ? session.payment_intent
+    : session?.payment_intent?.id ?? null;
+  if (!sessionId || !intentId) return;
+
+  /** LA SESSION DOIT ÊTRE POSSÉDÉE. Sans lien, aucune filiation à transmettre. */
+  const lien = await findBinding({
+    environment,
+    resourceType: STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
+    resourceId: sessionId,
+  });
+  if (!lien || lien.revokedAt) return;
+
+  const deja = await findBinding({
+    environment,
+    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
+    resourceId: intentId,
+  });
+  if (deja) return;
+
+  await bindResource({
+    projectId: lien.projectId,
+    environment,
+    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
+    resourceId: intentId,
+    source: BINDING_SOURCES.LEARNED_FROM_WEBHOOK,
+    proof: {
+      derivedFromResourceType: STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
+      derivedFromResourceId: sessionId,
+    },
+  });
+
+  /**
+   * L'ADOPTION VIENT DE CRÉER UN LIEN : une facture arrivée AVANT elle peut
+   * enfin trouver son projet. Même mécanisme que l'adoption d'abonnement.
+   */
+  await convergePendingFactsFor({
+    environment,
+    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
+    resourceId: intentId,
+  }).catch(() => null);
+}
+
+/**
+ * SOLDE LA PRESTATION QUE CE PAIEMENT RÈGLE (L10.5).
+ *
+ * ══ TROIS FAÇONS DE LA RETROUVER, ET C'EST NÉCESSAIRE ══════════════════════
+ *
+ * La métadonnée d'abord — c'est le Panel qui l'a apposée à l'ouverture de la
+ * session, et elle voyage sur la session, l'intention et la facture. Puis la
+ * session, puis l'intention : Stripe n'ordonne pas ses livraisons, et
+ * l'événement qui arrive en premier ne porte pas toujours les trois.
+ *
+ * Aucune n'est une preuve d'appartenance — celle-ci a déjà été tranchée par le
+ * registre de liens, quelques lignes plus haut. Ce sont trois façons de poser
+ * la même question : « de quelle demande cet euro vient-il ? ».
+ *
+ * Import DYNAMIQUE : la projection ne doit pas dépendre du domaine des
+ * prestations pour projeter un revenu d'abonnement.
+ */
+async function soldePrestation({ fait, transactionId }) {
+  const paymentRequestId = fait.corroboration?.paymentRequestId ?? null;
+  const checkoutSessionId = fait.corroboration?.checkoutSessionId
+    ?? (fait.objectType === CANONICAL_TYPES.CHECKOUT_SESSION ? fait.objectId : null);
+  const paymentIntentId = fait.corroboration?.paymentIntentId ?? null;
+
+  if (!paymentRequestId && !checkoutSessionId && !paymentIntentId) return null;
+
+  const { markPaidFromFact } = await import('../paymentRequests/paymentRequests.service.js');
+  return markPaidFromFact({
+    paymentRequestId,
+    checkoutSessionId,
+    paymentIntentId,
+    transactionId,
+    environment: fait.environment,
+    invoiceDocument: fait.invoiceDocument ?? null,
+    paidAt: fait.occurredAt ?? null,
+  });
 }
 
 /**

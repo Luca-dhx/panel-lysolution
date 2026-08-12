@@ -63,6 +63,10 @@ import {
   downloadReceipt,
   editRecurringCost,
   editTransaction,
+  addPaymentRequest,
+  cancelPayment,
+  paymentRequest,
+  paymentRequests,
   recurringCost,
   recurringCosts,
   refund,
@@ -168,6 +172,35 @@ router.delete('/transactions/:transactionId', asyncHandler(removeTransaction));
  * désignée par son adresse — il n'y a d'ailleurs aucune adresse à désigner.
  */
 router.post('/transactions/bulk-delete', requirePanelDev, asyncHandler(removeAll));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PRESTATIONS À FACTURER (L10.5) — de l'argent RÉCLAMÉ.
+
+   ══ POURQUOI UNE SURFACE À PART, ET NON UNE CATÉGORIE DE MOUVEMENT ══════════
+
+   Parce qu'une créance n'a rien eu lieu. La loger sous `/transactions` l'aurait
+   fait entrer dans le registre, donc dans les totaux, donc dans le bénéfice —
+   et le résultat du mois aurait dépendu de ce qu'on espère encaisser.
+
+   Elle rejoint le ledger à UN seul instant : le paiement. Et pas par cette
+   porte — par le webhook Stripe, la projection L10.3, et un unique revenu.
+
+   ══ PERMISSIONS ═════════════════════════════════════════════════════════════
+
+   Comme la saisie d'un mouvement : tout compte du Panel. Facturer une
+   prestation est un acte de gestion courant, et le réserver aux DEV obligerait
+   à passer par un développeur pour envoyer une note de 500 €. Chaque écriture
+   porte son auteur et part au journal.
+   ══════════════════════════════════════════════════════════════════════════ */
+router.get('/payment-requests', asyncHandler(paymentRequests));
+router.post('/payment-requests', asyncHandler(addPaymentRequest));
+// APRÈS le chemin fixe : la création ne doit jamais être lue comme un identifiant.
+router.get('/payment-requests/:paymentRequestId', asyncHandler(paymentRequest));
+/**
+ * POST et non DELETE : annuler n'est pas supprimer. La demande RESTE, avec son
+ * histoire et son motif — c'est une trace commerciale, et elle se relit.
+ */
+router.post('/payment-requests/:paymentRequestId/cancel', asyncHandler(cancelPayment));
 
 /* ══════════════════════════════════════════════════════════════════════════
    COÛTS RÉCURRENTS (L10.2) — les RÈGLES.

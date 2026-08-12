@@ -201,6 +201,22 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * savoir qu'un message est arrivé.
    */
   'EMAIL_DELIVERY_EVENT',
+  /**
+   * >= 1.7.x — UNE PRESTATION À PAYER, poussée par le Panel (L10.5).
+   *
+   * DISTINCTE de `INVOICE` et de `PAYMENT`, et elle doit le rester. Ces deux-là
+   * décrivent ce qui a EU LIEU — une facture Stripe émise, un paiement encaissé.
+   * Celle-ci décrit ce qui est RÉCLAMÉ : une somme due, qui n'a produit aucune
+   * facture et aucun encaissement, et qui n'en produira peut-être jamais.
+   *
+   * Les confondre aurait fait apparaître, dans l'historique de facturation du
+   * client, des factures qui n'existent pas.
+   *
+   * La charge utile est volontairement PAUVRE : un nom, un montant, un état, et
+   * le document Stripe une fois payé. Aucun identifiant fournisseur, aucune URL
+   * de session — celle-ci est périssable et se demande au moment du clic.
+   */
+  'PAYMENT_REQUEST',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
@@ -700,6 +716,18 @@ export const contractPayloadSchema = z
     createdAt: z.string().nullable().optional(),
     activatedAt: z.string().nullable().optional(),
     pricing: contractPricingSchema.optional(),
+    /**
+     * LE TAUX DE TVA EFFECTIF — en POURCENTAGE (L10.5).
+     *
+     * `optional()` parce qu'une projection antérieure à ce lot n'en porte pas,
+     * et `nullable()` parce qu'un contrat peut légitimement n'en avoir aucun.
+     *
+     * Les deux se lisent PAREIL côté Panel : « taux inconnu ». Et un taux
+     * inconnu ne devient jamais 20 % par défaut — il fait REFUSER la création
+     * d'une prestation, avec un message qui dit quoi corriger. Un repli
+     * implicite aurait facturé un client à un taux que personne n'a décidé.
+     */
+    taxRate: z.number().min(0).max(100).nullable().optional(),
     /**
      * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
      *

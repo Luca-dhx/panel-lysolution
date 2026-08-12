@@ -33,6 +33,12 @@ import {
   listRefundRequests,
   requestRefund,
 } from '../services/finance/refunds/refundOrchestration.service.js';
+import {
+  cancelPaymentRequest,
+  createPaymentRequest,
+  getPaymentRequest,
+  listPaymentRequests,
+} from '../services/finance/paymentRequests/paymentRequests.service.js';
 
 /** L'auteur d'une écriture comptable. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -164,6 +170,52 @@ export async function transaction(req, res) {
      */
     refundRequests: await listRefundRequests(req.params.transactionId),
   });
+}
+
+/* ── Prestations à facturer (L10.5) ────────────────────────────────────────── */
+
+/**
+ * LES PRESTATIONS D'UN PROJET — ce qui est réclamé, jamais ce qui est constaté.
+ *
+ * Surface distincte de `/transactions`, et c'est le point : une somme DUE n'est
+ * pas un mouvement. Les mêler aurait fait apparaître des créances dans les
+ * totaux du livret, c'est-à-dire du chiffre d'affaires qui n'existe pas encore.
+ */
+export async function paymentRequests(req, res) {
+  return ok(res, {
+    items: await listPaymentRequests({
+      projectId: req.query?.projectId ?? null,
+      includeTerminal: req.query?.includeTerminal !== 'false',
+    }),
+  });
+}
+
+export async function paymentRequest(req, res) {
+  return ok(res, { paymentRequest: await getPaymentRequest(req.params.paymentRequestId) });
+}
+
+/**
+ * CRÉE ET ENVOIE une prestation — le bouton « Envoyer » de l'écran.
+ *
+ * L'échec d'un e-mail ne remonte PAS ici : la créance est écrite, elle est
+ * visible et payable. Le service journalise, et la relance suivante repartira.
+ * Rendre une erreur ferait croire à l'opérateur que rien n'a été créé — et il
+ * recommencerait, produisant une seconde créance bien réelle.
+ */
+export async function addPaymentRequest(req, res) {
+  const document = await createPaymentRequest(req.body ?? {}, actorOf(req));
+  return created(res, {
+    paymentRequest: await getPaymentRequest(document.paymentRequestId),
+  });
+}
+
+export async function cancelPayment(req, res) {
+  const document = await cancelPaymentRequest(
+    req.params.paymentRequestId,
+    { reason: req.body?.reason ?? null },
+    actorOf(req),
+  );
+  return ok(res, { paymentRequest: await getPaymentRequest(document.paymentRequestId) });
 }
 
 /* ── Remboursements (L10.4) ────────────────────────────────────────────────── */

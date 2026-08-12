@@ -166,6 +166,15 @@ async function applyContract({ projectId, change, stamp }) {
           subscription: c.pricing?.subscription ?? null,
           launchFee: c.pricing?.launchFee ?? null,
         },
+        /**
+         * LE TAUX DE TVA EFFECTIF (L10.5) — reflété, jamais complété.
+         *
+         * `?? null` et surtout pas `?? 20` : une projection antérieure à ce lot
+         * n'en porte aucun, et supposer un taux ferait facturer un client à une
+         * valeur que personne n'a décidée. `null` se lit « inconnu », et la
+         * facturation d'une prestation refuse alors explicitement.
+         */
+        taxRate: Number.isFinite(c.taxRate) ? c.taxRate : null,
         // L'histoire est REMPLACÉE d'un bloc, comme le reste de la
         // photographie : le projet publie la liste, le Panel la reflète.
         previousContracts: (c.previousContracts ?? []).map((p) => ({

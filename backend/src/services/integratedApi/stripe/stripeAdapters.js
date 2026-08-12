@@ -409,6 +409,31 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
     );
   });
 
+  /**
+   * ── LA PRESTATION APPREND QUE SA SESSION EST OUVERTE (L10.5) ──────────────
+   *
+   * APRÈS le lien, jamais avant : on n'annonce un paiement en cours que
+   * lorsqu'il est établi que la session existe ET qu'elle appartient au projet.
+   *
+   * Best-effort assumé. Cette écriture ne conditionne rien — la preuve du
+   * paiement viendra du webhook, qui retrouvera la demande par la session, par
+   * l'intention ou par la métadonnée. Faire échouer une session RÉELLEMENT
+   * ouverte parce qu'on n'a pas su noter son état ferait payer au client une
+   * erreur d'écriture de notre côté.
+   */
+  if (input.paymentType === 'SERVICE' && intent.paymentRequestId) {
+    await noterSessionSurPrestation({
+      paymentRequestId: intent.paymentRequestId,
+      checkoutSessionId: session.id,
+      url: session.url ?? null,
+    }).catch((error) => {
+      logger.warn(
+        `[stripe] session ${maskResourceId(session.id)} ouverte, prestation non mise à jour `
+        + `(${projectId}, ${environment}) : ${error?.message ?? 'erreur inconnue'}.`,
+      );
+    });
+  }
+
   const vue = describeSession(session, 'CREATED', input.operationId);
   /**
    * `customer` n'est pas toujours renvoyé par Stripe sur une session fraîche ;
@@ -417,6 +442,18 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
    * relire la session — et sans jamais choisir le client lui-même.
    */
   return customerId ? { ...vue, customerId: vue.customerId ?? customerId } : vue;
+}
+
+/**
+ * Import DYNAMIQUE, pour la même raison que dans l'autorité de checkout : ce
+ * fichier sert le plan de contrôle Stripe et ne doit pas tirer le domaine
+ * financier dans son graphe de chargement.
+ */
+async function noterSessionSurPrestation(args) {
+  const { attachCheckoutSession } = await import(
+    '../../finance/paymentRequests/paymentRequests.service.js'
+  );
+  return attachCheckoutSession(args);
 }
 
 /* -------------------------------------------------------------------------- */

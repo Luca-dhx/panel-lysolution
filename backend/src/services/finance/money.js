@@ -176,3 +176,69 @@ export default {
   sumCents,
   normalizeCurrency,
 };
+
+/* -------------------------------------------------------------------------- */
+/*  TVA (L10.5)                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * BORNES D'UN TAUX DE TVA, EN POURCENTAGE.
+ *
+ * La convention vient du projet, pas de nous : `contract.taxRate` est un
+ * POURCENTAGE (`20` vaut 20 %), et `computePricing` l'utilise ainsi depuis
+ * toujours. Changer d'unité en route — points de base, décimal — aurait fait
+ * facturer vingt fois trop ou deux mille fois trop peu, et le défaut se serait
+ * vu chez un client avant de se voir ici.
+ *
+ * `100` est la borne haute : au-delà, la TVA dépasserait le prix, ce qui
+ * n'existe dans aucune fiscalité et signale une saisie en décimal (`0.2`
+ * deviendrait 0,2 %, pas 20 %).
+ */
+export const TAX_RATE_MIN = 0;
+export const TAX_RATE_MAX = 100;
+
+/** Un taux exploitable ? `null`, `undefined` et `NaN` répondent NON. */
+export function isUsableTaxRate(rate) {
+  return Number.isFinite(rate) && rate >= TAX_RATE_MIN && rate <= TAX_RATE_MAX;
+}
+
+/**
+ * HT + TAUX → TVA + TTC. Fonction PURE, centimes entiers de bout en bout.
+ *
+ * ══ L'ARRONDI EST CELUI DU PROJET, ET C'EST DÉLIBÉRÉ ══════════════════════
+ *
+ * `Math.round(net * rate / 100)` — exactement la formule de `computePricing`
+ * côté SB Auto. Deux arrondis différents pour la même facture produiraient un
+ * écart d'un centime entre ce que le Panel annonce et ce que le contrat
+ * calcule, et cet écart-là est le plus coûteux à expliquer à un comptable.
+ *
+ * L'arrondi porte sur la TVA, jamais sur le TTC : le TTC est une SOMME de deux
+ * entiers, donc exact par construction. Arrondir le TTC séparément aurait pu
+ * produire `net + tax ≠ gross`, c'est-à-dire une facture qui ne s'additionne
+ * pas.
+ *
+ * ══ POURQUOI PAS DE FLOTTANT ═══════════════════════════════════════════════
+ *
+ * `net` et le résultat sont des entiers ; la seule opération intermédiaire est
+ * une multiplication d'entiers suivie d'une division. À 5,5 % sur 50 000
+ * centimes : `50000 * 5.5 = 275000`, puis `/100 = 2750`. Exact.
+ *
+ * @param {{netCents: number, taxRate: number}} args  taux en POURCENTAGE
+ * @returns {{netCents: number, taxRate: number, taxCents: number, grossCents: number}}
+ */
+export function computeTax({ netCents, taxRate }) {
+  if (!Number.isInteger(netCents) || netCents < 0) {
+    throw new Error(`Montant HT invalide : ${netCents}`);
+  }
+  if (!isUsableTaxRate(taxRate)) {
+    throw new Error(`Taux de TVA invalide : ${taxRate}`);
+  }
+
+  const taxCents = Math.round((netCents * taxRate) / 100);
+  const grossCents = netCents + taxCents;
+
+  if (grossCents > MAX_AMOUNT_CENTS) {
+    throw new Error('Montant TTC hors bornes.');
+  }
+  return { netCents, taxRate, taxCents, grossCents };
+}

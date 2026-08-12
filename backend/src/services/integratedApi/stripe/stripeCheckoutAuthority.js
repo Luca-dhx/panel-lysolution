@@ -33,6 +33,7 @@
 // liens (`stripeResourceBinding.js`), jamais un champ éditable.
 import { createHash } from 'node:crypto';
 
+import logger from '../../../utils/logger.js';
 import { PanelProjectContract } from '../../../models/PanelProjectProjection.model.js';
 
 /* -------------------------------------------------------------------------- */
@@ -50,6 +51,18 @@ export const CHECKOUT_REFUSALS = Object.freeze({
   CONTRACT_NOT_OWNED: 'CONTRACT_NOT_OWNED',
   PRICE_ABSENT: 'CONTRACT_PRICE_ABSENT',
   SUBSCRIPTION_NOT_MIGRATED: 'SUBSCRIPTION_PREREQUISITES_NOT_MIGRATED',
+  /**
+   * L10.5 — UN SEUL MOTIF POUR TOUTES LES PRESTATIONS REFUSÉES.
+   *
+   * Inconnue, appartenant à un autre projet, déjà payée, annulée, ou d'un autre
+   * monde : cinq causes, un seul code et un seul message. Les distinguer
+   * apprendrait à un projet que la demande d'un autre existe — exactement ce que
+   * la doctrine de refus indistinct de L6.2A interdit.
+   *
+   * La cause réelle n'est pas perdue : elle est journalisée côté Panel, où
+   * l'exploitant la lit, et où le projet ne la lit pas.
+   */
+  SERVICE_NOT_PAYABLE: 'SERVICE_NOT_PAYABLE',
 });
 
 export class CheckoutAuthorityError extends Error {
@@ -117,9 +130,37 @@ async function defaultLookupContract(projectId) {
  *   currency: string, reference: string|null}>}
  * @throws {CheckoutAuthorityError}
  */
+/**
+ * Lecture par défaut d'une demande de paiement. Injectable, comme le contrat.
+ *
+ * L'import est DYNAMIQUE : ce module appartient au plan de contrôle Stripe, et
+ * le charger ne doit pas tirer tout le domaine financier dans son graphe. Il
+ * consulte une autorité métier, il n'en dépend pas.
+ */
+async function defaultLookupPaymentRequest(args) {
+  const { resolveServiceAmount } = await import(
+    '../../finance/paymentRequests/paymentRequests.service.js'
+  );
+  return resolveServiceAmount(args);
+}
+
 export async function resolveCheckoutIntent({
-  projectId, environment, input, lookupContract = defaultLookupContract,
+  projectId, environment, input,
+  lookupContract = defaultLookupContract,
+  lookupPaymentRequest = defaultLookupPaymentRequest,
 }) {
+  /**
+   * ── LA PRESTATION PONCTUELLE (L10.5) ────────────────────────────────────
+   *
+   * Elle sort AVANT toute lecture de contrat, parce qu'elle n'en a pas. La
+   * traiter plus bas aurait obligé à rendre facultatif le refus
+   * `CONTRACT_NOT_OWNED`, c'est-à-dire à percer la garde qui protège les
+   * paiements contractuels.
+   */
+  if (input.paymentType === 'SERVICE') {
+    return resolveServiceIntent({ projectId, environment, input, lookupPaymentRequest });
+  }
+
   /**
    * L'ABONNEMENT EST SERVI DEPUIS L6.2E.
    *
@@ -236,6 +277,95 @@ export async function resolveCheckoutIntent({
 }
 
 /**
+ * UNE PRESTATION PONCTUELLE — le montant vient du Panel, jamais de l'appelant.
+ *
+ * ══ POURQUOI `mode: payment` ET PAS UNE FACTURE STRIPE ══════════════════════
+ *
+ * Le besoin métier parle de « facture », et l'on pourrait croire qu'il faut
+ * l'API Invoice de Stripe — créer un brouillon, le finaliser, l'envoyer,
+ * attendre son règlement. Ce serait TROIS actes fournisseur là où il en faut
+ * un, trois capacités à contractualiser, et trois états de plus à faire
+ * converger.
+ *
+ * Ce n'est pas nécessaire : `invoice_creation` fait émettre à Stripe une VRAIE
+ * facture au moment du paiement, avec son numéro, sa page hébergée et son PDF.
+ * Le client obtient exactement le document attendu ; le Panel n'a qu'un acte à
+ * rendre idempotent. C'est déjà le choix des frais de lancement depuis L6.2B —
+ * on ne l'invente pas, on l'applique à un objet qui n'est pas un contrat.
+ *
+ * Et il a une conséquence heureuse en aval : la session portant une facture,
+ * c'est la FACTURE que L10.3 retient comme objet canonique. Session, facture,
+ * intention et débit — quatre annonces Stripe — produisent donc UN seul revenu,
+ * sans une ligne de code de plus.
+ */
+async function resolveServiceIntent({ projectId, environment, input, lookupPaymentRequest }) {
+  let prestation;
+  try {
+    prestation = await lookupPaymentRequest({
+      projectId, paymentRequestId: input.paymentRequestId,
+    });
+  } catch (err) {
+    /**
+     * La cause réelle part au JOURNAL, le refus rendu reste unique. Un projet
+     * ne doit pas pouvoir distinguer « elle n'existe pas » de « elle n'est pas
+     * à vous » : la seconde réponse lui apprendrait le parc.
+     */
+    logger.warn(
+      `[stripe-checkout] prestation refusée — projet ${projectId} (${environment}) : `
+      + `${err?.code ?? 'INCONNU'}.`,
+    );
+    throw new CheckoutAuthorityError(
+      CHECKOUT_REFUSALS.SERVICE_NOT_PAYABLE,
+      'Aucune prestation à payer ne correspond à cette référence.',
+    );
+  }
+
+  const metadata = buildMetadata({ projectId, environment, contractId: null, input });
+  /**
+   * LA CORRÉLATION QUI FERME LA BOUCLE.
+   *
+   * Elle est recopiée sur la session, sur l'intention de paiement ET sur la
+   * facture. Sans les trois, l'événement qui nous reviendra — et l'on ne sait
+   * pas lequel arrivera en premier — pourrait ne porter aucun rattachement
+   * lisible vers la prestation. Ce n'est PAS une autorité (une métadonnée
+   * s'édite depuis le tableau de bord) : c'est un fil, et le Panel confronte
+   * toujours ce qu'il y lit à ce qu'il sait.
+   */
+  metadata.paymentRequestId = prestation.paymentRequestId;
+
+  return {
+    contractId: null,
+    reference: prestation.label,
+    amountIncludingTax: prestation.amountCents,
+    currency: prestation.currency,
+    paymentRequestId: prestation.paymentRequestId,
+    params: {
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: String(prestation.currency).toLowerCase(),
+            product_data: {
+              name: prestation.label,
+              /** Stripe refuse une description vide — on omet plutôt qu'on invente. */
+              ...(prestation.description ? { description: prestation.description.slice(0, 500) } : {}),
+            },
+            unit_amount: prestation.amountCents,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      metadata,
+      payment_intent_data: { metadata },
+      /** La vraie facture Stripe — page hébergée et PDF, émises au paiement. */
+      invoice_creation: { enabled: true, invoice_data: { metadata } },
+    },
+  };
+}
+
+/**
  * Les metadata Stripe — un pont vers l'historique, pas une autorité.
  *
  * `contractId` vient de la PROJECTION (valeur confrontée), jamais de la charge
@@ -247,7 +377,12 @@ export async function resolveCheckoutIntent({
 function buildMetadata({ projectId, environment, contractId, input }) {
   const paymentRef = input.correlation?.paymentRef ?? null;
   return {
-    contractId,
+    /**
+     * OMIS quand il n'y en a pas (L10.5 — une prestation n'a pas de contrat).
+     * Une métadonnée vide chez Stripe se lit « contrat inconnu » plutôt que
+     * « sans objet », et c'est la première chose qu'on croirait en enquêtant.
+     */
+    ...(contractId ? { contractId } : {}),
     paymentType: input.paymentType,
     /**
      * Champs HISTORIQUES conservés. Ils décrivaient le monde du RUNTIME PROJET ;

@@ -108,8 +108,15 @@ section('Types d’entités synchronisées');
    * 15 depuis L8.4C — `EMAIL_DELIVERY_EVENT`, le chemin de retour des
    * livraisons d'e-mails, désormais que les webhooks Brevo suivent le compte
    * du Panel et n'atteignent plus le projet.
+   *
+   * 16 depuis L10.5 — `PAYMENT_REQUEST`, une PRESTATION À RÉGLER poussée par le
+   * Panel. Elle ne pouvait emprunter ni `INVOICE` ni `PAYMENT` : ces deux-là
+   * décrivent ce qui a EU LIEU — une facture émise, un encaissement constaté —
+   * alors qu'une prestation décrit ce qui est RÉCLAMÉ, et qui ne sera peut-être
+   * jamais payé. Les confondre aurait fait apparaître, dans l'historique de
+   * facturation du client, des factures qui n'existent pas.
    */
-  check('15 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 15);
+  check('16 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 16);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

@@ -419,6 +419,122 @@ ${row('Envoyé le', '{{email.sentAt}}')}
       });
     },
   },
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * L10.5 — LES DEUX MESSAGES D'UNE PRESTATION FACTURÉE.
+   *
+   * Deux templates et non un seul avec un drapeau : ce qu'on écrit à quelqu'un
+   * la première fois et ce qu'on lui écrit la quatrième ne se ressemblent pas,
+   * et un DEV doit pouvoir adoucir l'un sans toucher à l'autre.
+   *
+   * Aucun n'appelle Brevo lui-même. Ils sont RENDUS par l'autorité Panel puis
+   * envoyés par la capacité `email.send_template`, comme tout message du parc
+   * depuis L8.4C.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  PAYMENT_REQUEST_CREATED: {
+    templateId: 'PAYMENT_REQUEST_CREATED',
+    defaultName: 'Prestation — nouvelle demande de paiement',
+    defaultDescription:
+      "Envoyé quand une prestation ponctuelle est facturée au client. Contient le nom de la prestation, son montant et un lien vers l'espace de facturation, où le paiement se fait. Aucun lien de paiement direct n'est mis dans l'e-mail : il serait périssable.",
+    defaultSubject: 'Nouvelle prestation à régler — {{payment.label}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du site du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.label', label: 'Nom de la prestation', description: 'Intitulé saisi par l’équipe.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.description', label: 'Description', description: 'Détail de la prestation. Peut être vide.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'payment.amount', label: 'Montant', description: 'Montant à régler, déjà formaté.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.url', label: 'Lien vers la facturation', description: 'Page « Facturation & abonnement » du Manager. Jamais un lien Stripe.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Votre société', description: 'Émetteur de la demande.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Garage Démonstration',
+      'payment.label': 'Ajout formulaire personnalisé',
+      'payment.description': 'Développement et intégration du formulaire demandé.',
+      'payment.amount': '500,00 €',
+      'payment.url': 'https://manager.exemple.fr/factures',
+      'developer.companyName': 'L.Y Solution',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: '{{payment.label}} — {{payment.amount}} à régler.',
+        heading: 'Nouvelle prestation à régler',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour,
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Une prestation vient d'être ajoutée à votre espace de facturation.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <p style="margin:0 0 4px;font-size:15px;font-weight:600;color:${BRAND};">{{payment.label}}</p>
+                  <p style="margin:0 0 12px;font-size:13px;line-height:1.6;color:${MUTED};">{{payment.description}}</p>
+                  <p style="margin:0;font-size:20px;font-weight:700;color:${BRAND};">{{payment.amount}}</p>
+                </td>
+              </tr>
+            </table>
+${button('Régler cette prestation', '{{payment.url}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Le règlement se fait depuis votre espace, par paiement sécurisé. Votre facture
+              y sera disponible dès le paiement effectué.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — {{company.name}}.',
+      });
+    },
+  },
+
+  PAYMENT_REQUEST_REMINDER: {
+    templateId: 'PAYMENT_REQUEST_REMINDER',
+    defaultName: 'Prestation — relance de paiement',
+    defaultDescription:
+      "Envoyé automatiquement, à l'intervalle configuré sur la prestation, tant qu'elle n'est ni payée, ni annulée, ni échue. La relance s'arrête d'elle-même dès que l'un de ces états est atteint : aucune tâche n'a à être annulée.",
+    defaultSubject: 'Rappel — {{payment.label}} reste à régler',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du site du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.label', label: 'Nom de la prestation', description: 'Intitulé saisi par l’équipe.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.amount', label: 'Montant', description: 'Montant à régler, déjà formaté.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.url', label: 'Lien vers la facturation', description: 'Page « Facturation & abonnement » du Manager.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'payment.issuedOn', label: 'Émise le', description: 'Date d’envoi de la demande, déjà formatée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.companyName', label: 'Votre société', description: 'Émetteur de la demande.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Garage Démonstration',
+      'payment.label': 'Ajout formulaire personnalisé',
+      'payment.amount': '500,00 €',
+      'payment.url': 'https://manager.exemple.fr/factures',
+      'payment.issuedOn': '12 août 2026',
+      'developer.companyName': 'L.Y Solution',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: '{{payment.label}} — {{payment.amount}} en attente de règlement.',
+        heading: 'Une prestation reste à régler',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour,
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              La prestation ci-dessous, émise le {{payment.issuedOn}}, n'a pas encore été réglée.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <p style="margin:0 0 8px;font-size:15px;font-weight:600;color:${BRAND};">{{payment.label}}</p>
+                  <p style="margin:0;font-size:20px;font-weight:700;color:${BRAND};">{{payment.amount}}</p>
+                </td>
+              </tr>
+            </table>
+${button('Régler maintenant', '{{payment.url}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Si le règlement vient d'être effectué, ce message peut se croiser avec lui —
+              dans ce cas, merci de ne pas en tenir compte.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — {{company.name}}.',
+      });
+    },
+  },
 });
 
 /** Identifiants connus. C'est la LISTE DE RÉFÉRENCE : la base n'en fait pas foi. */

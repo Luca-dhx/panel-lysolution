@@ -43,6 +43,7 @@ import type { ProjectChoice } from '@/components/finance/TransactionForm';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
 import { RefundModal } from '@/components/finance/RefundModal';
+import { PaymentRequestPanel } from '@/components/finance/PaymentRequestPanel';
 import { RecurringCostList } from '@/components/finance/RecurringCostList';
 import { RecurringCostForm, StopRecurringDialog } from '@/components/finance/RecurringCostForm';
 import {
@@ -550,6 +551,21 @@ export function FinanceWorkspace({
         C'est là que le cahier des charges les demande, et c'est là qu'elles ont
         un sens : à côté du livret des coûts, sans y être mêlées.
       */}
+      {/*
+        ── LES PAIEMENTS EN ATTENTE — sous « Revenus », et jamais ailleurs (L10.5).
+
+        Sur une fiche PROJET seulement : une créance se réclame à quelqu'un, et
+        la page globale ne désigne personne. L'y afficher aurait obligé à
+        inventer un destinataire, ou à mélanger ceux de tout le parc.
+
+        Le bloc est SÉPARÉ de la liste au-dessus, et c'est le point : une somme
+        due n'entre dans aucun total. Le bénéfice du mois ne dépend pas de ce
+        qu'on espère encaisser.
+      */}
+      {sousOnglet === 'revenues' && verrouille && projectId ? (
+        <PaymentRequestPanel projectId={projectId} projectName={projectName} />
+      ) : null}
+
       {sousOnglet === 'costs' ? (
         regles === null ? (
           <Card><p className="muted">Chargement des coûts récurrents…</p></Card>

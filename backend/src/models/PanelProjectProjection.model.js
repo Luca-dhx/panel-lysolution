@@ -205,6 +205,14 @@ const contractSchema = new mongoose.Schema(
       launchFee: { type: amountSchema, default: null },
     },
     /**
+     * LE TAUX DE TVA EFFECTIF DU CONTRAT, EN POURCENTAGE (L10.5).
+     *
+     * `null` se lit « inconnu », jamais « zéro » et surtout jamais « 20 ». La
+     * facturation d'une prestation le REFUSE plutôt que d'en supposer un —
+     * voir `resolveTaxRate()` dans le service des prestations.
+     */
+    taxRate: { type: Number, default: null },
+    /**
      * L'HISTOIRE — les contrats terminés, du plus récent au plus ancien.
      * Rien n'y est effacé : un contrat résilié reste entièrement consultable,
      * simplement plus jamais présenté comme celui du moment.

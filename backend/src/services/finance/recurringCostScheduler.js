@@ -30,6 +30,7 @@ import logger from '../../utils/logger.js';
 import { materializeAllDue } from './recurringCosts.service.js';
 import { convergePendingRevenue } from './providerRevenue/revenueProjection.service.js';
 import { convergePendingRefunds } from './refunds/refundOrchestration.service.js';
+import { sendDueReminders } from './paymentRequests/paymentRequests.service.js';
 
 const TICK_MS = 3_600_000;
 
@@ -106,10 +107,37 @@ export async function runRecurringCostCycle() {
       logger.info(`[finance] ${remboursements.settled} remboursement(s) indéterminé(s) résolu(s).`);
     }
 
+    /**
+     * ── LES RELANCES DE PRESTATIONS (L10.5) ───────────────────────────────
+     *
+     * ══ POURQUOI ICI, ET SURTOUT PAS DANS UN MINUTEUR À ELLES ═════════════
+     *
+     * Un `setInterval` armé à la création d'une prestation aurait été plus
+     * direct à écrire, et faux : il vit en MÉMOIRE. Un redémarrage — un
+     * déploiement, un incident, une simple relecture de configuration — et
+     * toutes les relances du parc disparaissent sans que rien ne le dise.
+     *
+     * L'échéance vit donc en base (`reminders.nextAt`), et cet ordonnanceur la
+     * relit. C'est la même doctrine que la matérialisation des coûts récurrents
+     * (L10.2) : ce qui doit arriver est INSCRIT, pas armé.
+     *
+     * La course « relance sélectionnée / paiement reçu » est fermée dans le
+     * service, par une réservation atomique reconditionnée sur l'état — pas
+     * ici. Ce fichier ordonnance, il n'arbitre pas.
+     */
+    const relances = await sendDueReminders({}).catch((err) => {
+      logger.warn(`[finance] Relances de prestations impossibles : ${err.message}`);
+      return { sent: 0 };
+    });
+    if (relances.sent) {
+      logger.info(`[finance] ${relances.sent} relance(s) de prestation envoyée(s).`);
+    }
+
     return {
       ...rapport,
       revenueProjected: revenus.projected ?? 0,
       refundsSettled: remboursements.settled ?? 0,
+      remindersSent: relances.sent ?? 0,
     };
   } catch (err) {
     // Un cycle raté sera revu au suivant, et de toute façon à la prochaine
