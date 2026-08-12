@@ -127,6 +127,12 @@ const TESTS = [
   // L6.2F — la PREMIÈRE adoption : Stripe crée l'abonnement au paiement, et le
   // Panel ne peut le posséder que par filiation — la session qui l'a produit.
   'stripe-subscription-ownership-e2e.test.js',
+  // L6.2G — les deux RÉSILIATIONS, et la convergence par l'ÉTAT : contrairement
+  // à un paiement, une coupure laisse une trace non ambiguë, donc relire répond
+  // à « l'acte a-t-il eu lieu ? ». Les sections qui comptent sont le rejeu (que
+  // Stripe REFUSE de servir deux fois), la réponse perdue, et l'état illisible —
+  // qui ne devient jamais une seconde mutation.
+  'stripe-subscription-cancellation-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

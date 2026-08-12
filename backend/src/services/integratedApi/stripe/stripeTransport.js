@@ -525,6 +525,39 @@ export async function cancelSubscriptionAtPeriodEnd({ credentials, subscriptionI
 }
 
 /**
+ * `DELETE /v1/subscriptions/{id}` — RÉSILIATION IMMÉDIATE (L6.2G).
+ *
+ * ══ CE QUE STRIPE FAIT, ET CE QU'IL NE FAIT PAS ═════════════════════════════
+ *
+ * Il coupe l'abonnement séance tenante : plus aucun prélèvement, `status`
+ * devient `canceled`, et l'objet reste lisible pour toujours.
+ *
+ * Ce qu'il ne fait PAS, c'est accepter deux fois. Résilier un abonnement déjà
+ * `canceled` rend une erreur — la mutation n'est donc pas convergente chez le
+ * fournisseur, contrairement au drapeau de fin de période.
+ *
+ * ══ POURQUOI CETTE ÉCRITURE PORTE QUAND MÊME UNE CLÉ ════════════════════════
+ *
+ * Le code historique du projet n'en passait AUCUNE (défaut relevé en L6.1, et
+ * confirmé à chaque lot depuis). Deux clics, un rejeu HTTP ou un redémarrage
+ * produisaient donc deux appels réels, dont le second échouait bruyamment — au
+ * mieux. La clé rend le rejeu de la MÊME intention silencieux et sûr.
+ *
+ * Elle ne suffit pourtant pas : la fenêtre d'idempotence de Stripe est bornée.
+ * Au-delà, c'est l'ÉTAT de l'abonnement qui tranche — et pour une résiliation,
+ * il tranche sans ambiguïté. Voir `stripeSubscriptionCancellation.js`.
+ */
+export async function cancelSubscriptionNow({ credentials, subscriptionId, idempotencyKey, timeoutMs, fetchImpl }) {
+  if (!subscriptionId) throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant d’abonnement manquant.');
+  const res = await stripeFetch({
+    credentials, method: 'DELETE', path: `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+    idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] abonnement résilié immédiatement — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, subscription: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
  * Faut-il, et peut-on, réessayer ?
  *
  * Sur un provider financier, la seule reprise automatique admise est celle
@@ -550,6 +583,7 @@ export function describeRetryDecision(error) {
 }
 
 export default {
+  cancelSubscriptionNow,
   createCustomer,
   retrieveCustomer,
   createProduct,

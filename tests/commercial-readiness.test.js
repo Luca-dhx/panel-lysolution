@@ -246,7 +246,9 @@ section('La politique est une table fermée, relisible');
     && policy.forbiddenEffectsInPreopening.includes(EFFECT.LEGAL_WRITE));
 
   const bloquees = capabilitiesBlockedInPreopening();
-  check('4 capacités sont bloquées en pré-ouverture', bloquees.length === 4);
+  // L6.2G ajoute la coupure immédiate : une résiliation engage l'argent du
+  // client autant qu'un encaissement, et n'a donc rien à faire avant l'ouverture.
+  check('5 capacités sont bloquées en pré-ouverture', bloquees.length === 5);
   check('…et ce sont bien les financières et la signature',
     bloquees.every((b) => [EFFECT.FINANCIAL_WRITE, EFFECT.LEGAL_WRITE].includes(b.effect)));
 

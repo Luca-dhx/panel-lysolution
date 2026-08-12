@@ -182,6 +182,13 @@ export const CAPABILITY_EFFECTS = Object.freeze({
   'billing.price.ensure': EFFECT.REVERSIBLE_EXTERNAL_WRITE,
   'billing.checkout.create': EFFECT.FINANCIAL_WRITE,
   'billing.subscription.cancel_at_period_end': EFFECT.FINANCIAL_WRITE,
+  /**
+   * LA COUPURE IMMÉDIATE — même effet que sa jumelle, et pour la même raison :
+   * elle décide de ne plus prélever, et cet engagement est pris devant un tiers
+   * réel. Qu'elle soit instantanée plutôt que différée ne la rend pas moins
+   * engageante ; cela la rend seulement irréversible plus tôt.
+   */
+  'billing.subscription.cancel_now': EFFECT.FINANCIAL_WRITE,
   'billing.refund': EFFECT.FINANCIAL_WRITE,
 
   // ── Brevo ────────────────────────────────────────────────────────────────

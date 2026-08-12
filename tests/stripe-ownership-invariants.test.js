@@ -518,8 +518,15 @@ section('16. AUCUN ABONNEMENT N’EST CRÉÉ NI MUTÉ PAR NOUS (L6.2F)');
   const versAbonnement = [...transport.matchAll(/method: '(\w+)', path: `\/v1\/subscriptions\/\$\{[^`]*`/g)]
     .map((m) => m[1]);
   const ecrituresAbo = versAbonnement.filter((m) => m !== 'GET');
-  check('…et une seule écriture ciblée : la résiliation différée de L6.1',
-    ecrituresAbo.length === 1 && ecrituresAbo[0] === 'POST');
+  /**
+   * DEUX écritures ciblées depuis L6.2G, et deux seulement : le drapeau de fin
+   * de période (`POST`) et la coupure immédiate (`DELETE`). Aucune autre mutation
+   * d'abonnement n'a de raison d'exister — pas de changement de tarif, pas de
+   * reprise, pas de pause. Le compte exact est l'invariant : il rend visible
+   * toute écriture ajoutée sans stratégie de convergence.
+   */
+  check('…et deux écritures ciblées, les deux résiliations de L6.2G',
+    ecrituresAbo.length === 2 && ecrituresAbo.includes('POST') && ecrituresAbo.includes('DELETE'));
   check('…la lecture, elle, existe bien', versAbonnement.includes('GET'));
   check('il sait en revanche en LIRE un', /export async function retrieveSubscription/.test(transport));
 }
@@ -550,11 +557,116 @@ section('17. LE PROJET NE LIT PLUS D’ABONNEMENT LOCALEMENT (SB Auto)');
     check('…et aucun rattachement par metadata',
       !/metadata\?\.contractId/.test(abonnement));
 
-    // Les résiliations restent locales — périmètre assumé, pas un oubli.
-    const contrat = sansCommentaires(fs.readFileSync(path.join(voisin, 'contract.service.js'), 'utf8'));
-    check('les résiliations restent locales — L6.2G',
-      /cancelSubscriptionAtPeriodEnd|cancelSubscriptionNow/.test(contrat));
   }
+}
+
+/* ========================================================================== */
+section('18. LA RÉSILIATION NE SE FAIT PLUS LOCALEMENT (L6.2G — SB Auto)');
+/* ========================================================================== */
+{
+  const voisin = path.resolve(RACINE, '..', 'SB Auto 06', 'backend', 'src', 'services');
+  if (!fs.existsSync(voisin)) {
+    check('SB Auto absent — contrôle sauté proprement', true);
+  } else {
+    const contrat = sansCommentaires(fs.readFileSync(path.join(voisin, 'contract.service.js'), 'utf8'));
+    const outils = sansCommentaires(fs.readFileSync(path.join(voisin, 'contractTestTools.service.js'), 'utf8'));
+    const service = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.service.js'), 'utf8'));
+
+    /**
+     * LOCAL_RUNTIME_SUBSCRIPTION_CANCELLATION_WRITES = 0.
+     *
+     * Les quatre appelants historiques passent désormais par la capacité. On le
+     * lit sur les DEUX faces : plus aucune mutation locale, et la porte du
+     * Panel effectivement empruntée.
+     */
+    for (const [nom, source] of [['contract.service', contrat], ['contractTestTools.service', outils]]) {
+      check(`${nom} : aucune coupure locale`,
+        !/(provider|stripeSvc|stripe)\.cancelSubscription(Now|AtPeriodEnd)/.test(source));
+      check(`${nom} : la résiliation passe par le Panel`,
+        /cancelSubscriptionViaPanel/.test(source));
+    }
+
+    /**
+     * LE WRAPPER MORT A ÉTÉ SUPPRIMÉ, PAS SEULEMENT CONTOURNÉ.
+     *
+     * Un `cancelSubscriptionAtPeriodEnd` laissé en place sans appelant est une
+     * invitation : le prochain développeur le trouve, l'appelle, et rouvre le
+     * chemin local sans que rien ne l'en avertisse.
+     */
+    check('le wrapper local de résiliation à échéance a disparu',
+      !/export (async )?function cancelSubscriptionAtPeriodEnd/.test(service));
+
+    /**
+     * LA COUPURE IMMÉDIATE RESTE la doctrine en TEST — ce lot déplace la porte,
+     * il ne change pas la politique commerciale.
+     */
+    check('la doctrine « immédiate en TEST » est préservée',
+      /CANCEL_NOW_CAPABILITY|mode: 'NOW'/.test(contrat));
+  }
+}
+
+/* ========================================================================== */
+section('19. ON NE COUPE JAMAIS SANS AVOIR LU L’ÉTAT (L6.2G — Panel)');
+/* ========================================================================== */
+{
+  const adaptateurs = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeAdapters.js'));
+  const transport = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeTransport.js'));
+  const capacites = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCapabilities.js'));
+
+  const bloc = adaptateurs.slice(adaptateurs.indexOf('async function cancelSubscription('));
+  const corps = bloc.slice(0, bloc.indexOf('\n}\n') + 3);
+
+  /**
+   * L'ORDRE EST L'INVARIANT. Trois positions, dans cet ordre exact :
+   *
+   *   1. l'appartenance   — sinon la durée de réponse trahit l'existence
+   *   2. la relecture     — sinon on rejoue une coupure que Stripe refusera
+   *   3. la mutation      — et seulement si l'état dit qu'elle manque
+   *
+   * Une vérification présente mais mal placée ne protège de rien : c'est
+   * pourquoi on compare des positions, et non des présences.
+   */
+  const posOwn = corps.indexOf('assertOwnedResource');
+  const posLecture = corps.indexOf('retrieveSubscription');
+  const posEtat = corps.indexOf('describeCancellationState');
+  const posMutation = corps.indexOf('mutate(');
+  check('l’appartenance est vérifiée en premier', posOwn > 0);
+  check('…AVANT toute lecture chez Stripe', posLecture > posOwn);
+  check('…l’état est qualifié après la lecture', posEtat > posLecture);
+  check('…et la mutation vient en dernier', posMutation > posEtat);
+
+  /** La convergence par l'état : un acte déjà inscrit est CONSTATÉ, jamais rejoué. */
+  check('un acte déjà fait n’est jamais rejoué',
+    /CANCELLATION_STATE\.ALREADY_DONE/.test(corps));
+  check('…et l’incertitude ne devient pas une mutation',
+    /INDETERMINATE/.test(corps) && /SUBSCRIPTION_STATE_UNREADABLE/.test(corps));
+
+  /**
+   * LE DÉFAUT DE L6.1, FERMÉ PAR LA STRUCTURE.
+   *
+   * `cancelSubscriptionNow` partait sans aucune clé d'idempotence. On vérifie
+   * que le transport en EXIGE une, et qu'elle voyage jusqu'à l'en-tête.
+   */
+  const coupure = transport.slice(transport.indexOf('export async function cancelSubscriptionNow'), transport.indexOf('export async function cancelSubscriptionNow') + 800);
+  check('la coupure immédiate reçoit une clé d’idempotence',
+    /cancelSubscriptionNow\(\{[^}]*idempotencyKey/.test(coupure));
+  const posFetch = coupure.indexOf('stripeFetch({');
+  check('…et la transmet au transport',
+    posFetch > 0 && coupure.indexOf('idempotencyKey', posFetch) > posFetch);
+  /** …lequel en fait un en-tête. Sans ce dernier maillon, la clé mourrait ici. */
+  check('…qui en fait l’en-tête Stripe',
+    /'Idempotency-Key'\]?\s*=?\s*:?\s*idempotencyKey/.test(transport));
+
+  /**
+   * LE PROJET NE NOMME PAS L'ACTE. S'il le pouvait, il pourrait en fabriquer
+   * deux — c'est-à-dire couper deux fois ce qui ne se coupe qu'une.
+   */
+  const contrat = capacites.slice(capacites.indexOf('subscriptionCancelInput'));
+  check('le contrat d’entrée ne prend QUE l’abonnement',
+    /subscriptionCancelInput = z\s*\.?\s*object\(\{\s*subscriptionId/.test(contrat.slice(0, 400)));
+  check('…et il est strict', /\.strict\(\)/.test(contrat.slice(0, 600)));
+  check('l’identité de l’acte est DÉRIVÉE par le Panel',
+    /cancellationOperationId/.test(sansCommentaires(lire('backend/src/services/capabilities/capabilityRegistry.js'))));
 }
 
 finish();

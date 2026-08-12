@@ -70,7 +70,8 @@ l'avancement :
 | `billing.customer.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **acte dérivé** |
 | `billing.price.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **acte dérivé** |
 | `billing.checkout.create` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** |
-| `billing.subscription.cancel_at_period_end` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non · **appartenance** |
+| `billing.subscription.cancel_at_period_end` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **appartenance** · **acte dérivé** |
+| `billing.subscription.cancel_now` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **appartenance** · **acte dérivé** |
 | `billing.refund` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
 | `signature.document.download` | YOUSIGN | READ_ONLY | `SAFE_RETRY` | non |
 | `signature.request.create` | YOUSIGN | LEGAL_WRITE | `UNKNOWN_ON_TIMEOUT` | non |
@@ -99,6 +100,46 @@ l'objet d'origine et extrait la filiation elle-même.
 
 Les metadata (`panelProjectId`, `contractId`) et la cohérence du client
 corroborent, et sont enregistrées dans la preuve du lien. Aucune ne décide.
+
+### Convergence par l'ÉTAT, et non par la seule clé (L6.2G)
+
+L'idempotence de L6.2B repose sur une clé dérivée : rejouer un acte avec la même
+clé rend la même réponse, tant que la fenêtre de Stripe la retient. C'est la
+seule protection possible pour un **paiement**, dont l'état ne tranche pas :
+une session absente peut signifier « jamais créée » comme « créée puis perdue ».
+
+Une **résiliation** est différente, et cette différence est un fait vérifiable,
+pas une commodité :
+
+```
+cancel_at_period_end   vaut true, ou il ne le vaut pas
+status                 vaut 'canceled', ou il ne le vaut pas
+```
+
+Il n'existe aucun état intermédiaire. Relire l'abonnement répond donc exactement
+à « l'acte a-t-il eu lieu ? ». La séquence est donc, dans cet ordre :
+
+```
+  appartenance prouvée  →  relecture d'état  →  mutation SI ET SEULEMENT SI absente
+```
+
+Trois conséquences, toutes éprouvées :
+
+- un **rejeu** ne mute rien : il CONSTATE, et rend `outcome: 'ALREADY_CANCELLED'`,
+  qui est un succès ;
+- une **réponse perdue** laisse l'opération en `UNKNOWN` ; la reprise la conclut
+  en relisant, sans jamais émettre une seconde coupure ;
+- un **état illisible** ne devient pas une mutation : la capacité refuse en
+  `PROVIDER_UNAVAILABLE` / `SUBSCRIPTION_STATE_UNREADABLE`, et rien ne part.
+
+Ce dernier point est la règle générale du plan de contrôle : **on ne transforme
+jamais l'incertitude en nouvelle mutation.**
+
+Les deux verbes n'ont d'ailleurs pas la même nature. Le drapeau de fin de période
+est convergent par construction — le poser deux fois donne le même état. La
+coupure immédiate est **terminale**, et Stripe REFUSE de la rejouer : résilier un
+abonnement déjà `canceled` rend une erreur. Sans la relecture, un rejeu légitime
+ressemblerait à un échec — ce que produisait le chemin local.
 
 ### Une capacité peut en COMPOSER d'autres (L6.2E)
 
@@ -471,11 +512,14 @@ grandir.
 
 ## 14. Réserves
 
-1. **Dix capacités sur quinze sont servies** (mise à jour L6.2F). Brevo et
+1. **Douze capacités sur dix-sept sont servies** (mise à jour L6.2G). Brevo et
    Hostinger sont migrés ; Stripe l'est pour l'ouverture et la lecture d'une
-   session de paiement, le client d'un contrat et son tarif — donc l'abonnement
-   entier. Restent sur le chemin local : les lectures d'abonnement et de facture
-   (aucun lien pour ces familles), le portail, les résiliations, et Yousign (L7).
+   session de paiement, le client d'un contrat, son tarif, la lecture d'un
+   abonnement et ses **deux résiliations** — donc le cycle de vie complet d'un
+   abonnement, de l'ouverture à la coupure. Restent sur le chemin local : la
+   liste de factures (elle demanderait une liste plus large que son dû, et son
+   appartenance ne se prouve pas objet par objet), le portail client, le
+   remboursement — non contractualisé faute d'usage réel — et Yousign (L7).
 2. **`PROD project → PROD credentials` n'est prouvé qu'en processus séparé.** Un
    Panel ne sert qu'un monde par processus ; l'E2E complet en PROD exigerait deux
    instances de Panel. `capability-preopening` couvre le versant PROD, l'E2E le

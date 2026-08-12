@@ -145,6 +145,11 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'billing.price.ensure',
     // L6.2F — la lecture d'un abonnement, servie parce qu'il est ADOPTABLE.
     'billing.subscription.retrieve',
+    // L6.2G — les deux RÉSILIATIONS. Elles ferment le seul défaut d'idempotence
+    // qui restait dans le parc : la coupure immédiate partait sans clé, et
+    // possédait plusieurs appelants.
+    'billing.subscription.cancel_at_period_end',
+    'billing.subscription.cancel_now',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -159,21 +164,23 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   check('…avec une idempotence qui exige une réservation',
     registry.getCapabilityDefinition(SEND).idempotency === 'UNKNOWN_ON_TIMEOUT');
   /**
-   * UNE SEULE capacité Stripe est servie, et les cinq autres restent fermées.
-   * Ce n'est pas une étape de calendrier : chacune d'elles exige de POSSÉDER un
-   * client ou un abonnement Stripe préexistant, et le registre de liens de
-   * L6.2A n'en contient aucun. Les ouvrir reviendrait à croire l'identifiant
-   * que le projet présente.
+   * SEPT capacités Stripe sont servies ; une seule reste fermée.
+   * Ce n'est pas une étape de calendrier : `billing.invoice.list` demanderait
+   * une liste plus large que son dû, et son appartenance ne se prouve pas objet
+   * par objet. Les sept autres s'ancrent toutes sur un lien prouvé — par
+   * création (L6.2B/D/E) ou par filiation (L6.2F).
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('cinq capacités Stripe sont servies', stripeServies.length === 5);
+  check('sept capacités Stripe sont servies', stripeServies.length === 7);
   /**
-   * L6.2D — `billing.customer.ensure` est la SEULE dont l'identité d'acte est
-   * dérivée. « Garantir » n'a qu'une réponse correcte par contrat ; laisser le
-   * projet nommer l'acte lui permettrait d'en obtenir deux.
+   * QUATRE capacités dérivent leur identité d'acte : les deux `ensure` (L6.2D/E)
+   * et les deux résiliations (L6.2G). Le point commun n'est pas le verbe, c'est
+   * qu'UNE SEULE réponse est correcte — garantir un client, ou couper un
+   * abonnement. Laisser le projet nommer l'acte lui permettrait d'en obtenir
+   * deux, c'est-à-dire de couper deux fois ce qui ne se coupe qu'une.
    */
   const derivees = registry.listCapabilityDefinitions().filter((c) => c.deriveOperationId);
-  check('deux capacités dérivent leur identité d’acte', derivees.length === 2);
+  check('quatre capacités dérivent leur identité d’acte', derivees.length === 4);
   check('…le client d’un contrat', derivees.some((c) => c.code === 'billing.customer.ensure'));
   check('…et son tarif', derivees.some((c) => c.code === 'billing.price.ensure'));
   const client = derivees.find((c) => c.code === 'billing.customer.ensure');

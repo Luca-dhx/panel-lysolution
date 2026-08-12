@@ -1585,7 +1585,7 @@ locaux ne sont retirés qu'après le dernier lot.
 | **L6.2D** | `billing.customer.ensure` — le client d'un CONTRAT | **PASS** |
 | **L6.2E** | `billing.price.ensure` + checkout d'abonnement | **PASS** |
 | **L6.2F** | Ownership Subscription — la première ADOPTION | **PASS** |
-| L6.2G | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
+| **L6.2G** | Résiliations (`cancel_at_period_end`, `cancel_now`) | **PASS** |
 | L6.3 | Cutover de l'endpoint webhook, retrait des credentials projet | à faire |
 
 **Les deux doctrines établies par ces lots**, et qui valent pour les suivants :
@@ -1621,13 +1621,24 @@ locaux ne sont retirés qu'après le dernier lot.
 > son acte : lui seul sait que deux clics sont la même intention. Mais un verbe
 > `ensure` n'a qu'une réponse correcte, et laisser le projet le nommer lui
 > permettrait d'en obtenir deux. Le Panel dérive alors l'identité de la clé
-> métier vérifiée, par une fonction pure.
+> métier vérifiée, par une fonction pure. **L6.2G étend la règle aux actes
+> TERMINAUX** : une résiliation n'a pas de « seconde tentative légitime », donc
+> le projet ne la nomme pas non plus.
 
-- **L'abonnement est migré** depuis L6.2E, et **possédé** depuis L6.2F : le
-  Panel détient le client, le tarif, la session et l'abonnement lui-même. Ce qui
-  reste local : les résiliations, le portail, et les lectures de facture.
-- **`cancelSubscriptionNow` n'a toujours aucune clé d'idempotence** (risque L6.1
-  re-confirmé en L6.2F). C'est le premier point à traiter en L6.2G.
+> **On ne transforme jamais l'incertitude en nouvelle mutation** (L6.2G). Quand
+> l'acte laisse une trace d'état non ambiguë — ce qui est le cas d'une
+> résiliation et pas d'un paiement — on RELIT avant d'agir, et la mutation n'est
+> émise que si l'état prouve qu'elle manque. Un état illisible n'autorise rien :
+> l'opération reste indécidable et attend un arbitrage humain.
+
+- **Le cycle de vie complet d'un abonnement est servi** depuis L6.2G : client,
+  tarif, session, abonnement, et les deux façons d'y mettre fin. Ce qui reste
+  local : le portail client et la liste de factures.
+- **Le défaut d'idempotence de `cancelSubscriptionNow` est FERMÉ** (L6.2G). Il
+  était ouvert depuis L6.1 et re-confirmé à chaque lot : la coupure partait sans
+  aucune clé, et possédait quatre appelants. Elle en a une désormais, dérivée
+  comme les autres — et une relecture d'état la précède, de sorte qu'un rejeu
+  CONSTATE au lieu de retenter une opération que Stripe refuserait.
 - **La clé d'un tarif porte ses TERMES**, pas la version du contrat : cette
   version compte les sauvegardes de zones de signature, pas les engagements
   commerciaux. La lui adosser produisait des tarifs identiques démultipliés.

@@ -157,6 +157,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       // L6.2F — la lecture d'un abonnement, servie dès qu'il est adoptable.
       'billing.subscription.retrieve',
       'billing.subscription.cancel_at_period_end',
+      // L6.2G — la coupure immédiate, contractualisée pour la première fois.
+      'billing.subscription.cancel_now',
       'billing.subscription.reconcile',
       'billing.invoice.list',
       'billing.refund',

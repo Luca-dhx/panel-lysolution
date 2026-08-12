@@ -144,7 +144,7 @@ section('Persistance et transitions — aucune ouverture automatique');
   check('…et la vue dit que personne n’a tranché', vue.neverDecided === true);
   check('les contrôles passent sur une instance saine', vue.readyToGoLive === true);
   check('la vue nomme ce que la pré-ouverture interdit',
-    vue.blockedInPreopening.length === 4);
+    vue.blockedInPreopening.length === 5);
 
   const ouvert = await service.setCommercialReadiness('p-cycle', 'LIVE', {
     actor: ACTEUR, reason: 'Recette validée par le client.',

@@ -47,6 +47,8 @@ import {
   createProduct,
   createPrice,
   retrievePrice,
+  cancelSubscriptionAtPeriodEnd,
+  cancelSubscriptionNow,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
@@ -74,6 +76,13 @@ import {
   resolvePriceIntent,
 } from './stripePriceAuthority.js';
 import { adoptSubscriptionFromSession } from './stripeSubscriptionAdoption.js';
+import {
+  CANCELLATION_STATE,
+  cancellationOperationId,
+  describeCancellationState,
+  describeCancelledSubscription,
+  logConvergence,
+} from './stripeSubscriptionCancellation.js';
 import { STRIPE_CAPABILITIES } from './stripeCapabilities.js';
 
 /**
@@ -823,6 +832,108 @@ async function priceEnsure({ definition, context, credentials, input, fetchImpl 
 }
 
 /* -------------------------------------------------------------------------- */
+/*  billing.subscription.cancel_*                                             */
+/* -------------------------------------------------------------------------- */
+
+const SUBSCRIPTION = STRIPE_RESOURCE_TYPES.SUBSCRIPTION;
+
+/**
+ * RÉSILIE — une seule fois, quoi qu'il arrive.
+ *
+ * ══ L'ORDRE, ET IL N'EST PAS NÉGOCIABLE ═════════════════════════════════════
+ *
+ *   1. APPARTENANCE   avant tout contact fournisseur. Un abonnement qui n'est
+ *                     pas au projet ne doit pas même être LU — sinon la durée
+ *                     de réponse trahirait son existence.
+ *   2. ÉTAT           l'acte est-il déjà inscrit ? Une résiliation laisse une
+ *                     trace non ambiguë, contrairement à un paiement.
+ *   3. MUTATION       seulement si l'état dit qu'elle n'a pas eu lieu.
+ *
+ * L'étape 2 est ce qui rend ce lot possible. Elle coûte une lecture, et elle
+ * évite la seule chose qu'on ne peut pas défaire : couper deux fois, ou pire,
+ * conclure qu'on n'a pas coupé alors qu'on l'a fait.
+ *
+ * @param {'AT_PERIOD_END'|'NOW'} kind
+ */
+async function cancelSubscription({ definition, context, credentials, input, fetchImpl, kind, mutate }) {
+  const { projectId, environment } = context;
+  const subscriptionId = input.subscriptionId;
+
+  // ── 1. L'APPARTENANCE, AVANT TOUT CONTACT ────────────────────────────────
+  await guard(definition, () => assertOwnedResource({
+    projectId, environment, resourceType: SUBSCRIPTION, resourceId: subscriptionId,
+  }));
+
+  // ── 2. L'ÉTAT — l'acte est-il déjà inscrit ? ─────────────────────────────
+  const lu = await guard(definition, () => retrieveSubscription({
+    credentials, subscriptionId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const etat = describeCancellationState(lu.subscription, kind);
+
+  if (etat === CANCELLATION_STATE.INDETERMINATE) {
+    /**
+     * Le lien affirme, le fournisseur ne rend rien d'exploitable. On ne mute
+     * PAS : agir sans savoir dans quel état on agit est exactement ce que ce
+     * module existe pour empêcher. Le lien est conservé — l'avis ponctuel d'un
+     * fournisseur ne fait pas une décision d'appartenance.
+     */
+    logger.error(
+      `[stripe-cancel] INCOHÉRENCE — ${maskResourceId(subscriptionId)} est lié à ${projectId} `
+      + `(${environment}) mais son état est illisible. AUCUNE mutation émise.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : l’état de l’abonnement n’est pas lisible, aucune résiliation n’a été tentée.`,
+      { reason: 'SUBSCRIPTION_STATE_UNREADABLE' },
+    );
+  }
+
+  if (etat === CANCELLATION_STATE.ALREADY_DONE) {
+    /**
+     * CONVERGENCE PAR L'ÉTAT — le cas qui justifie tout le module.
+     *
+     * Un rejeu après réponse perdue, un double clic, un redémarrage du projet :
+     * tous arrivent ici, et aucun n'émet de seconde mutation. La différence
+     * avec un paiement est que l'état RÉPOND, au lieu de laisser un doute.
+     */
+    logConvergence({ subscriptionId, environment, kind, projectId });
+    return describeCancelledSubscription(lu.subscription, { alreadyDone: true });
+  }
+
+  // ── 3. LA MUTATION ───────────────────────────────────────────────────────
+  const idempotencyKey = deriveIdempotencyKey({
+    environment, projectId, capability: definition.code,
+    operationId: cancellationOperationId({ environment, subscriptionId }),
+  });
+
+  const mute = await guard(definition, () => mutate({
+    credentials, subscriptionId, idempotencyKey, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  const apres = mute.subscription;
+  if (!apres?.id) {
+    /**
+     * 2xx sans corps exploitable : la résiliation a PEUT-ÊTRE eu lieu. On ne
+     * conclut pas — la reprise relira l'état, qui tranchera.
+     */
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `Stripe a répondu à « ${definition.code} » sans état exploitable : issue indéterminée.`,
+    );
+  }
+
+  return describeCancelledSubscription(apres, { alreadyDone: false });
+}
+
+async function subscriptionCancelAtPeriodEnd(args) {
+  return cancelSubscription({ ...args, kind: 'AT_PERIOD_END', mutate: cancelSubscriptionAtPeriodEnd });
+}
+
+async function subscriptionCancelNow(args) {
+  return cancelSubscription({ ...args, kind: 'NOW', mutate: cancelSubscriptionNow });
+}
+
+/* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -863,6 +974,13 @@ export const STRIPE_ADAPTERS = Object.freeze({
    * droit de lire n'importe quel abonnement du compte.
    */
   'billing.subscription.retrieve': subscriptionRetrieve,
+  /**
+   * LES DEUX RÉSILIATIONS — le dernier chemin d'écriture Stripe du parcours
+   * d'abonnement encore local, et celui qui portait le plus vieux défaut connu
+   * du parc : une coupure immédiate SANS aucune clé d'idempotence (L6.1).
+   */
+  'billing.subscription.cancel_at_period_end': subscriptionCancelAtPeriodEnd,
+  'billing.subscription.cancel_now': subscriptionCancelNow,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

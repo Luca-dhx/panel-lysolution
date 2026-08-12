@@ -67,19 +67,20 @@ const reponse = (status, body) => ({
 section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 /* ========================================================================== */
 {
-  check('sept capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 7);
+  check('huit capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 8);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
 
   /**
-   * UNE SEULE est servie (L6.2B), et c'est exactement celle qui n'exige la
-   * possession d'aucun objet Stripe préexistant. Les quatre autres attendent un
-   * lien vers un client ou un abonnement que le Panel n'a jamais créé — les
-   * servir reviendrait à faire confiance à l'identifiant que le projet fournit.
+   * SEPT SONT SERVIES depuis L6.2G, qui ajoute les deux résiliations. Elles ne
+   * sont servies que parce que l'abonnement visé a d'abord été ADOPTÉ par
+   * filiation (L6.2F) : sans lien prouvé, l'identifiant que le projet fournit ne
+   * vaut toujours rien. La seule restée fermée est `billing.invoice.list`, qui
+   * demanderait une liste plus large que son dû.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('cinq capacités servies', servies.length === 5);
+  check('sept capacités servies', servies.length === 7);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
@@ -171,7 +172,11 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
             // L6.2E — le tarif ne reçoit QUE la référence de contrat : montant,
             // devise et périodicité sont lus dans la projection du Panel.
             : code === 'billing.price.ensure' ? { contractRef: 'CTR-1' }
-              : { subscriptionId: 'sub_1', operationId: OP };
+              // L6.2G — les deux résiliations rejoignent `customer.ensure` et
+              // `price.ensure` : leur identité d'acte est DÉRIVÉE. Le projet ne
+              // nomme pas une coupure, sinon il pourrait en fabriquer deux.
+              : /^billing\.subscription\.cancel_/.test(code) ? { subscriptionId: 'sub_1' }
+                : { subscriptionId: 'sub_1', operationId: OP };
     check(`${code} : l’entrée nominale est acceptée`, schema.safeParse(base).success === true);
     const refuses = interdits.filter((champ) => schema.safeParse({ ...base, [champ]: 'x' }).success === false);
     check(`${code} : les ${interdits.length} champs interdits sont refusés`, refuses.length === interdits.length);
@@ -198,7 +203,16 @@ section('3. COMMERCIAL READINESS — l’écriture financière avant l’ouvertu
 /* ========================================================================== */
 {
   const financieres = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].financial);
-  check('deux écritures financières contractualisées', financieres.length === 2);
+  /**
+   * QUATRE depuis L6.2G. Une résiliation est une écriture financière au même
+   * titre qu'un paiement : elle met fin à un encaissement récurrent, et se
+   * tromper de projet coûte aussi cher que d'encaisser deux fois.
+   */
+  check('trois écritures financières contractualisées', financieres.length === 3);
+  check('…l’ouverture de session', financieres.includes('billing.checkout.create'));
+  check('…et les deux résiliations',
+    financieres.includes('billing.subscription.cancel_now')
+    && financieres.includes('billing.subscription.cancel_at_period_end'));
 
   for (const code of financieres) {
     const verdict = commercial.canExecute({ capability: code, commercialState: 'PREOPENING' });

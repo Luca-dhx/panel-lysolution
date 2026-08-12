@@ -107,7 +107,29 @@ const checkoutCreateInput = z.object({
   operationId,
 }).strict();
 
-const subscriptionCancelInput = z.object({ subscriptionId, operationId }).strict();
+/**
+ * LES DEUX RÉSILIATIONS — contrats ÉTROITS, et sans `operationId` (L6.2G).
+ *
+ * ══ POURQUOI PAS DE VERBE GÉNÉRIQUE ═════════════════════════════════════════
+ *
+ * Une capacité `billing.subscription.update` permettrait n'importe quelle
+ * mutation d'abonnement — changer le tarif, la quantité, la période d'essai.
+ * On n'expose donc que les deux gestes que le parc pratique réellement, chacun
+ * avec son propre contrat et sa propre politique.
+ *
+ * ══ POURQUOI PAS D'`operationId` NON PLUS ═══════════════════════════════════
+ *
+ * Un paiement peut légitimement être retenté : une session expire, une carte
+ * est refusée, et la tentative suivante est un acte NOUVEAU. C'est pourquoi le
+ * projet nomme ses paiements.
+ *
+ * Une résiliation est TERMINALE : « résilier cet abonnement de cette façon »
+ * n'a pas de seconde tentative légitime, seulement des rejeux de la même
+ * intention. Laisser le projet nommer l'acte lui permettrait d'en fabriquer
+ * deux — de couper deux fois ce qui ne se coupe qu'une. L'identité est donc
+ * dérivée du monde et de l'abonnement.
+ */
+const subscriptionCancelInput = z.object({ subscriptionId }).strict();
 
 /**
  * `billing.customer.ensure` — LE SEUL CONTRAT SANS `operationId`, et c'est le
@@ -171,6 +193,28 @@ const priceEnsureOutput = z.object({
   interval: z.enum(['month', 'year']),
   amount: z.number().int().positive(),
   currency: z.string(),
+}).strict();
+
+/**
+ * CE QUE REND UNE RÉSILIATION — l'état de l'abonnement, plus le CONSTAT.
+ *
+ * Les mêmes champs que `billing.subscription.retrieve` : le projet projette
+ * déjà cet état, et lui rendre une seconde forme l'obligerait à écrire deux
+ * traductions pour une même réalité.
+ *
+ * `outcome` porte la seule information vraiment nouvelle : a-t-on muté, ou
+ * constaté que c'était déjà fait ? `ALREADY_CANCELLED` n'est PAS un échec —
+ * c'est la preuve qu'une reprise a convergé sans rien recouper.
+ */
+const subscriptionCancelledView = z.object({
+  subscriptionId: z.string(),
+  status: z.string().nullable(),
+  cancelAtPeriodEnd: z.boolean(),
+  currentPeriodStart: z.number().nullable(),
+  currentPeriodEnd: z.number().nullable(),
+  latestInvoiceId: z.string().nullable(),
+  customerId: z.string().nullable(),
+  outcome: z.enum(['CANCELLED', 'ALREADY_CANCELLED']),
 }).strict();
 
 const customerEnsureOutput = z.object({
@@ -351,7 +395,17 @@ const BINDABLE_KINDS = Object.freeze([
  * générale, et chaque entrée doit pouvoir se justifier par « il n'existe qu'une
  * réponse correcte, et le projet n'a rien à en décider ».
  */
-const DERIVED_OPERATION_IDENTITY = Object.freeze(['billing.customer.ensure', 'billing.price.ensure']);
+const DERIVED_OPERATION_IDENTITY = Object.freeze([
+  'billing.customer.ensure',
+  'billing.price.ensure',
+  /**
+   * L6.2G — une résiliation est TERMINALE : elle n'a pas de seconde tentative
+   * légitime, seulement des rejeux. Laisser le projet la nommer lui permettrait
+   * de couper deux fois ce qui ne se coupe qu'une.
+   */
+  'billing.subscription.cancel_at_period_end',
+  'billing.subscription.cancel_now',
+]);
 
 const PROPOSED_EFFECTS = Object.freeze({
   'billing.checkout.retrieve': 'READ_ONLY',
@@ -538,6 +592,31 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     migrationNote: null,
   }),
 
+  /**
+   * `billing.subscription.cancel_now` — LA COUPURE IMMÉDIATE.
+   *
+   * Elle n'existait dans aucun contrat : le projet l'appelait directement, sans
+   * clé d'idempotence (défaut L6.1, confirmé à chaque lot depuis). Elle entre
+   * ici avec le même effet que sa jumelle — FINANCIAL_WRITE — parce qu'elle
+   * décide de ne plus prélever, et que c'est un engagement.
+   *
+   * `PROVIDER_IDEMPOTENT` décrit la clé qu'on envoie, non une convergence du
+   * fournisseur : Stripe REFUSE de résilier deux fois. C'est l'état de
+   * l'abonnement qui porte la convergence — voir `stripeSubscriptionCancellation`.
+   */
+  'billing.subscription.cancel_now': capability('billing.subscription.cancel_now', {
+    label: 'Résilier un abonnement immédiatement',
+    inputSchema: subscriptionCancelInput,
+    outputSchema: subscriptionCancelledView,
+    timeoutMs: 25_000,
+    idempotency: 'PROVIDER_IDEMPOTENT',
+    requiredPermissions: ['billing:write'],
+    financial: true,
+    resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
+    migrated: true,
+    migrationNote: null,
+  }),
+
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     label: 'Résilier un abonnement en fin de période',
     inputSchema: subscriptionCancelInput,
@@ -547,9 +626,14 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: true,
     resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
-    migrationNote:
-      'ÉCRITURE FINANCIÈRE — L6.2. Convergente (poser deux fois le même drapeau '
-      + 'donne le même état), mais elle décide de ne plus prélever : c’est un engagement.',
+    outputSchema: subscriptionCancelledView,
+    /**
+     * SERVIE depuis L6.2G. Convergente par nature — poser deux fois le même
+     * drapeau donne le même état — mais elle décide de ne plus prélever :
+     * c'est un engagement, donc FINANCIAL_WRITE.
+     */
+    migrated: true,
+    migrationNote: null,
   }),
 });
 

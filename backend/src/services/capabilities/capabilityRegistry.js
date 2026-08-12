@@ -39,6 +39,7 @@ import {
 import { STRIPE_CAPABILITIES } from '../integratedApi/stripe/stripeCapabilities.js';
 import { customerOperationId } from '../integratedApi/stripe/stripeCustomerAuthority.js';
 import { productOperationId } from '../integratedApi/stripe/stripePriceAuthority.js';
+import { cancellationOperationId } from '../integratedApi/stripe/stripeSubscriptionCancellation.js';
 
 /* -------------------------------------------------------------------------- */
 /*  IDEMPOTENCE                                                               */
@@ -401,14 +402,48 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     correlationField: 'checkoutSessionId',
     migrationNote: null,
   }),
+  /**
+   * LES DEUX RÉSILIATIONS — servies depuis L6.2G.
+   *
+   * Leur identité d'acte est DÉRIVÉE du monde et de l'abonnement : une
+   * résiliation est terminale, et laisser le projet la nommer lui permettrait
+   * de couper deux fois ce qui ne se coupe qu'une.
+   *
+   * La capacité ne figure pas dans l'identité — elle est déjà dans la clé du
+   * registre `(projectId, capability, operationId)` et dans la dérivation de la
+   * clé Stripe. Les deux verbes restent donc des actes distincts.
+   */
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     provider: 'STRIPE',
     label: 'Résilier en fin de période',
-    migrated: false,
-    timeoutMs: 20_000,
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_at_period_end'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_at_period_end'].outputSchema,
+    timeoutMs: 25_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
-    migrationNote: 'L6.',
+    correlationField: 'subscriptionId',
+    deriveOperationId: (context, input) => cancellationOperationId({
+      environment: context.environment,
+      subscriptionId: input.subscriptionId,
+    }),
+    migrationNote: null,
+  }),
+  'billing.subscription.cancel_now': capability('billing.subscription.cancel_now', {
+    provider: 'STRIPE',
+    label: 'Résilier immédiatement',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_now'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_now'].outputSchema,
+    timeoutMs: 25_000,
+    idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
+    requiredPermissions: [PERMISSIONS.BILLING_WRITE],
+    correlationField: 'subscriptionId',
+    deriveOperationId: (context, input) => cancellationOperationId({
+      environment: context.environment,
+      subscriptionId: input.subscriptionId,
+    }),
+    migrationNote: null,
   }),
   'billing.refund': capability('billing.refund', {
     provider: 'STRIPE',

@@ -462,7 +462,7 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    */
   const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
     .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
-  check('quatre capacités exigent une ressource préexistante', exigeantes.length === 4);
+  check('cinq capacités exigent une ressource préexistante', exigeantes.length === 5);
   /**
    * L6.2C en sert UNE : la lecture de session. Elle le peut parce que le Panel
    * crée et lie lui-même des sessions depuis L6.2B — l'appartenance est donc
@@ -471,9 +471,23 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
    */
   const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
-  check('deux d’elles sont servies', servies.length === 2);
+  check('quatre d’elles sont servies', servies.length === 4);
   check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
-  check('…et celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
+  check('…celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
+  /**
+   * L6.2G — LES DEUX RÉSILIATIONS S'APPUIENT SUR LA MÊME PREUVE.
+   *
+   * Elles n'ouvrent aucune voie d'ancrage nouvelle : elles MUTENT un abonnement
+   * déjà adopté par filiation. C'est ce qui les rend servables sans rien céder —
+   * l'identifiant que le projet présente ne vaut toujours rien par lui-même.
+   */
+  check('…et les deux résiliations (L6.2G)',
+    servies.includes('billing.subscription.cancel_at_period_end')
+    && servies.includes('billing.subscription.cancel_now'));
+  check('elles portent bien la famille ABONNEMENT',
+    ['billing.subscription.cancel_at_period_end', 'billing.subscription.cancel_now']
+      .every((c) => capabilities.STRIPE_CAPABILITIES[c].resourceKind
+        === binding.STRIPE_RESOURCE_TYPES.SUBSCRIPTION));
 
   /**
    * DEUX VOIES D'ANCRAGE, ET C'EST NOUVEAU.
@@ -492,8 +506,17 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
     capabilities.STRIPE_CAPABILITIES['billing.subscription.retrieve'].resourceKind
     === binding.STRIPE_RESOURCE_TYPES.SUBSCRIPTION);
 
-  check('les deux autres restent fermées',
-    exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated).length === 2);
+  /**
+   * UNE SEULE reste fermée : le listing de factures. Il exige un CLIENT, famille
+   * qu'aucun lien n'ancre encore, et demanderait de surcroît une liste plus
+   * large que son dû. Aucun abonnement ne figure plus dans les fermées — L6.2G
+   * les a toutes ouvertes, sur la preuve de L6.2F et sur rien d'autre.
+   */
+  const fermees = exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated);
+  check('une seule reste fermée', fermees.length === 1 && fermees[0] === 'billing.invoice.list');
+  check('…et aucun abonnement n’y figure plus',
+    fermees.every((c) => capabilities.STRIPE_CAPABILITIES[c].resourceKind
+      !== binding.STRIPE_RESOURCE_TYPES.SUBSCRIPTION));
 }
 
 await stopMemoryMongo();
