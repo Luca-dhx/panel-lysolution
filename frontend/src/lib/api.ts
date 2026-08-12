@@ -34,7 +34,7 @@ import type {
 import type {
   BulkDeleteResult, BulkScopePreview, FinanceCriteria, FinanceListResult, FinanceProjectLine,
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
-  RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
+  ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -964,8 +964,17 @@ export const finances = {
   list: (criteria: FinanceCriteria = {}) =>
     request<FinanceListResult>(`/api/finances/transactions${financeQuery(criteria)}`),
 
+  /**
+   * LE DÉTAIL — le mouvement, et son fait fournisseur s'il en a un.
+   *
+   * `providerFact` est `null` pour une saisie manuelle ou une occurrence de
+   * coût récurrent : il n'y a rien à dire, et un bloc vide se lirait comme une
+   * donnée manquante.
+   */
   detail: (transactionId: string) =>
-    request<{ transaction: FinancialTransaction }>(`/api/finances/transactions/${transactionId}`),
+    request<{ transaction: FinancialTransaction; providerFact: ProviderFact | null }>(
+      `/api/finances/transactions/${transactionId}`,
+    ),
 
   /** La répartition par projet — la page globale, et elle seule. */
   byProject: (criteria: FinanceCriteria = {}) =>

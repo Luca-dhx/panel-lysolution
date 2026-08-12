@@ -182,6 +182,52 @@ export interface RecurringCostPatch {
   reason?: string;
 }
 
+/**
+ * LE FAIT FOURNISSEUR D'UN MOUVEMENT — chargé À LA DEMANDE, sur le détail.
+ *
+ * Il n'apparaît jamais dans une liste : une colonne de `pi_3Q7x…` rendrait le
+ * livret illisible pour la seule personne qui, une fois par trimestre, veut
+ * rapprocher une ligne du tableau de bord Stripe.
+ *
+ * Ce n'est PAS une lecture du fournisseur : le fait a été normalisé à la
+ * réception du webhook et vit en base. Cet écran fonctionne Stripe indisponible.
+ */
+export interface ProviderFact {
+  factId: string;
+  provider: string;
+  environment: 'TEST' | 'PROD';
+  /** L'objet CANONIQUE — celui qui porte l'identité économique du paiement. */
+  objectType: string;
+  objectId: string;
+  occurredAt: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+  projectionStatus: string;
+  projectedAt: string | null;
+  /** Les metadata désignaient-elles un autre projet que le lien ? */
+  claimMismatch: boolean;
+  /** Identités secondaires — audit, et préparation des remboursements. */
+  corroboration: {
+    subscriptionId: string | null;
+    paymentIntentId: string | null;
+    chargeId: string | null;
+    customerId: string | null;
+    checkoutSessionId: string | null;
+    invoiceNumber: string | null;
+  };
+  /**
+   * LES ADRESSES STRIPE DE LA FACTURE — des liens du fournisseur, jamais un
+   * média local. Voir la doctrine : aucune copie n'est matérialisée d'office.
+   */
+  invoiceDocument: {
+    number: string | null;
+    hostedUrl: string | null;
+    pdfUrl: string | null;
+  } | null;
+  lastEventType: string | null;
+  seenEventCount: number;
+}
+
 export interface FinancePeriod {
   period: FinancePeriodKey;
   /** Bornes SEMI-OUVERTES `[startsAt, endsAt[`. `null` pour « depuis toujours ». */

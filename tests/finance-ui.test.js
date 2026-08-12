@@ -266,8 +266,18 @@ section('8. Le détail n’affiche AUCUN champ Stripe vide par anticipation');
   check('l’auteur et les dates de création/modification aussi',
     detail.includes('Saisi par') && detail.includes('Dernière modification'));
 
+  /**
+   * L'INVARIANT N'A PAS CHANGÉ, SA FORME SI (L10.3).
+   *
+   * La provenance brute reste conditionnée à son existence — un bloc Stripe
+   * vide sur une saisie manuelle serait toujours un mensonge poli. Elle est
+   * désormais un REPLI : dès que le fait fournisseur complet est chargé, c'est
+   * lui qui s'affiche, et afficher les deux dirait la même chose en double.
+   */
   check('LA PROVENANCE N’EST RENDUE QUE SI ELLE EXISTE',
-    /transaction\.provenance \?/.test(detail));
+    /transaction\.provenance && !fait \?/.test(detail));
+  check('…et elle s’efface devant le fait fournisseur complet',
+    /\{fait \? <ProviderFactPanel/.test(detail));
   check('…chaque champ fournisseur est conditionné individuellement',
     /provenance\.provider \?/.test(detail)
     && /provenance\.environment \?/.test(detail)
@@ -483,6 +493,84 @@ section('18. « Tout supprimer » prévient que les règles survivent');
   check('…en précisant que vider le livret n’arrête rien',
     /Vider le livret n’arrête\s+aucun abonnement/.test(workspace));
   check('…et où aller pour arrêter', /arrêtez chaque récurrence depuis l’onglet Coûts/.test(workspace));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L10.3 — REVENUS STRIPE PROJETÉS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+section('19. Un revenu Stripe se lit comme un revenu manuel');
+{
+  const code = code2(workspace);
+  check('l’origine automatique est signalée DISCRÈTEMENT',
+    /origin === 'STRIPE'[\s\S]{0,200}Encaissé via Stripe/.test(workspace));
+  check('…sans aucun identifiant Stripe dans la ligne',
+    !/in_|pi_|cs_|sub_/.test(code.replace(/'STRIPE'/g, '')));
+  check('le monde TEST est signalé par une pastille',
+    /provenance\?\.environment === 'TEST'[\s\S]{0,120}badge-warn/.test(workspace));
+  check('la liste ne charge AUCUN fait fournisseur',
+    !/providerFact/.test(code));
+}
+
+section('20. Les identifiants Stripe vivent dans le détail, repliés');
+{
+  const panneau = lire('frontend/src/components/finance/ProviderFactPanel.tsx');
+  const code = code2(panneau);
+
+  check('le panneau existe et est monté depuis le détail',
+    /<ProviderFactPanel/.test(detail) && /ProviderFactPanel/.test(panneau));
+  check('…et il n’est chargé QU’À l’ouverture du détail',
+    /finances\.detail\(transaction\.transactionId\)/.test(detail));
+  check('…jamais si le mouvement n’a pas de provenance',
+    /if \(!transaction\.provenance\) return undefined/.test(detail));
+
+  check('le fournisseur et le MONDE sont affichés',
+    /fact\.provider/.test(code) && /fact\.environment/.test(code));
+  check('…l’environnement porte une pastille distincte PROD / TEST',
+    /environment === 'PROD' \? 'badge badge-ok' : 'badge badge-warn'/.test(code));
+  check('l’objet canonique est nommé en français',
+    /INVOICE: 'Facture'/.test(panneau) && /CHECKOUT_SESSION: 'Session de paiement'/.test(panneau));
+  check('l’état de projection est traduit', /PROJECTED: 'Porté au registre'/.test(panneau));
+  check('une revendication divergente est SIGNALÉE',
+    /claimMismatch/.test(code) && /Revendication divergente/.test(panneau));
+
+  check('LES IDENTIFIANTS TECHNIQUES SONT REPLIÉS par défaut',
+    /<details className="finance-technical">/.test(panneau));
+  check('…et le CSS les traite comme un repli, pas comme un écran',
+    /\.finance-technical \{/.test(css) && /finance-technical > summary/.test(css));
+  check('abonnement, intention, débit, session et client y figurent',
+    /subscriptionId/.test(code) && /paymentIntentId/.test(code)
+    && /chargeId/.test(code) && /checkoutSessionId/.test(code) && /customerId/.test(code));
+  check('…et chacun est copiable', /<CopyField/.test(panneau));
+}
+
+section('21. La facture Stripe est un LIEN, jamais un média local');
+{
+  const panneau = lire('frontend/src/components/finance/ProviderFactPanel.tsx');
+  const code = code2(panneau);
+
+  check('les deux adresses Stripe sont proposées',
+    /doc\.hostedUrl/.test(code) && /doc\.pdfUrl/.test(code));
+  check('…et s’ouvrent en toute sécurité',
+    /rel="noopener noreferrer"/.test(panneau) && /target="_blank"/.test(panneau));
+  check('AUCUNE URL absolue codée en dur', !/https?:\/\/(?!localhost)/.test(code));
+  check('le panneau ne fabrique aucun média local',
+    !/uploads|storePrivateDocument|mediaId/.test(code));
+  check('…et l’écran dit que ces liens peuvent expirer',
+    /peuvent expirer/.test(panneau));
+  check('…en renvoyant vers le justificatif privé pour une copie durable',
+    /espace\s+privé du Panel/.test(panneau));
+}
+
+section('22. Le client d’API n’interroge jamais Stripe');
+{
+  const bloc = api.slice(api.indexOf('export const finances'), api.indexOf('export function errorMessage'));
+  check('aucun appel vers un domaine Stripe', !/stripe\.com|api\.stripe/.test(bloc));
+  check('…aucun verbe de lecture fournisseur',
+    !/listInvoices|retrieveInvoice|fetchStripe/i.test(bloc));
+  check('le détail est la SEULE voie vers le fait fournisseur',
+    /providerFact: ProviderFact \| null/.test(bloc));
+  check('…et il passe par le Panel', /\/api\/finances\/transactions\/\$\{transactionId\}/.test(bloc));
 }
 
 finish();

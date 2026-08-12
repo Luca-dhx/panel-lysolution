@@ -41,6 +41,14 @@ const TESTS = [
   //     rétroactives comme à l'annulation du cycle courant.
   'finance-recurring.test.js',
   'finance-receipts.test.js',
+  // L10.3 — LES REVENUS STRIPE ENTRENT DANS LE LEDGER GÉNÉRIQUE. Ce que cette
+  // suite garde tient en une phrase : un paiement, une transaction. Quatre
+  // annonces Stripe du même euro — session, facture, intention, débit — n'en
+  // produisent qu'une, parce que l'objet CANONIQUE est choisi sur la charge
+  // utile et que l'index unique de la provenance tranche. Elle éprouve aussi
+  // le désordre de livraison (facture avant adoption), la suppression suivie
+  // d'un rejeu, et le parcours réel depuis un webhook signé.
+  'finance-stripe-revenue.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',

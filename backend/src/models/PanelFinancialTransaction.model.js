@@ -414,6 +414,56 @@ financialTransactionSchema.index(
   },
 );
 
+/**
+ * L'INDEX QUI REND UN DOUBLE COMPTAGE FOURNISSEUR IMPOSSIBLE (L10.3).
+ *
+ * ══ POURQUOI `{sourceId, cycleKey}` N'A PAS ÉTÉ DÉTOURNÉ ════════════════════
+ *
+ * Le lot L10.2 avait laissé la réserve explicitement : cette clé-là est taillée
+ * pour les occurrences de coûts récurrents — une règle interne, un cycle
+ * calendaire. Y faire entrer Stripe aurait exigé de faire passer un
+ * identifiant d'abonnement pour un `sourceId` et une période facturée pour un
+ * `cycleKey`. Deux familles sans rapport partageraient alors un même index
+ * unique, et se collisionneraient le jour où leurs identifiants se croiseraient
+ * — un défaut silencieux, qui se manifesterait par un revenu manquant.
+ *
+ * ══ L'EMPLACEMENT EXISTAIT DÉJÀ ═════════════════════════════════════════════
+ *
+ * `provenance` a été posée au lot L10.1 pour exactement cela : dire d'où vient
+ * un mouvement, avec un fournisseur, un monde, un type d'objet et un
+ * identifiant. Il n'y avait donc rien à inventer — seulement à rendre cette
+ * identité CONTRAIGNANTE.
+ *
+ * ══ CE QU'IL GARANTIT ═══════════════════════════════════════════════════════
+ *
+ * Un même objet Stripe canonique ne peut produire qu'UNE transaction, quel que
+ * soit le nombre d'événements qui l'annoncent, le nombre de rejeux, le nombre
+ * de processus concurrents ou le nombre de redémarrages. La garantie est en
+ * base : le second écrivain reçoit un E11000, et ce refus EST la preuve.
+ *
+ * `environment` fait partie de la clé : un identifiant de recette et son
+ * homonyme de production sont deux faits distincts, et jamais l'un ne doit
+ * empêcher l'autre.
+ *
+ * Le filtre partiel n'indexe que les mouvements portant réellement un
+ * identifiant externe : les saisies manuelles et les occurrences récurrentes
+ * ont `provenance.externalId` à `null` et restent hors de cet index — sans
+ * quoi elles entreraient toutes en collision sur une même clé nulle.
+ */
+financialTransactionSchema.index(
+  {
+    'provenance.provider': 1,
+    'provenance.environment': 1,
+    'provenance.externalKind': 1,
+    'provenance.externalId': 1,
+  },
+  {
+    unique: true,
+    name: 'uniq_provider_external_object',
+    partialFilterExpression: { 'provenance.externalId': { $type: 'string' } },
+  },
+);
+
 export const PanelFinancialTransaction = mongoose.model(
   'PanelFinancialTransaction',
   financialTransactionSchema,

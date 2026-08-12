@@ -28,6 +28,7 @@
  */
 import logger from '../../utils/logger.js';
 import { materializeAllDue } from './recurringCosts.service.js';
+import { convergePendingRevenue } from './providerRevenue/revenueProjection.service.js';
 
 const TICK_MS = 3_600_000;
 
@@ -53,7 +54,28 @@ export async function runRecurringCostCycle() {
     if (rapport.overflow) {
       logger.warn(`[finance] ${rapport.overflow} récurrence(s) encore en retard : rattrapage borné, poursuite au cycle suivant.`);
     }
-    return rapport;
+
+    /**
+     * ── LES REVENUS FOURNISSEUR CONVERGENT DANS LE MÊME CYCLE (L10.3) ──────
+     *
+     * Un SEUL minuteur pour les deux convergences financières. En ouvrir un
+     * second aurait doublé les réglages, les arrêts propres et les gardes de
+     * réentrance, pour deux traitements qui répondent à la même question :
+     * « qu'est-ce qui aurait dû être écrit et ne l'est pas encore ? ».
+     *
+     * Ce n'est pas la garantie — la projection a lieu à la réception du
+     * webhook, et la convergence rejoue aussi à chaque lecture financière.
+     * C'est le filet pour un fait dont le déclencheur a manqué.
+     */
+    const revenus = await convergePendingRevenue({}).catch((err) => {
+      logger.warn(`[finance] Convergence des revenus fournisseur impossible : ${err.message}`);
+      return { projected: 0 };
+    });
+    if (revenus.projected) {
+      logger.info(`[finance] ${revenus.projected} revenu(s) fournisseur en attente projeté(s).`);
+    }
+
+    return { ...rapport, revenueProjected: revenus.projected ?? 0 };
   } catch (err) {
     // Un cycle raté sera revu au suivant, et de toute façon à la prochaine
     // lecture d'écran. Inutile de bruire.

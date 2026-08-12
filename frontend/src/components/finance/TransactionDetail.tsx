@@ -14,7 +14,11 @@
  * transaction parente, il s'affichera sans qu'on touche à cet écran — et il ne
  * s'affichera que là.
  */
+import { useEffect, useState } from 'react';
+import { finances } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
+import { ProviderFactPanel } from '@/components/finance/ProviderFactPanel';
+import type { ProviderFact } from '@/types.finance';
 import { formatCents, formatFlowCents } from '@/lib/money';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
@@ -51,6 +55,29 @@ export function TransactionDetail({
 }) {
   const supprime = transaction.deletedAt !== null;
 
+  /**
+   * LE FAIT FOURNISSEUR EST CHARGÉ À L'OUVERTURE DU DÉTAIL — et seulement là.
+   *
+   * La liste ne le demande jamais : ce sont des identités techniques, et les
+   * charger pour cent lignes coûterait cent lectures pour un écran qui n'en
+   * montre aucune. Ici, on en montre une, et quelqu'un la cherche.
+   *
+   * Aucune requête si le mouvement n'a pas de provenance : une saisie manuelle
+   * ou une occurrence de coût récurrent n'a rien à dire, et un appel qui rend
+   * toujours `null` est un appel de trop.
+   */
+  const [fait, setFait] = useState<ProviderFact | null>(null);
+  useEffect(() => {
+    if (!transaction.provenance) return undefined;
+    let vivant = true;
+    finances.detail(transaction.transactionId)
+      .then((res) => { if (vivant) setFait(res.providerFact); })
+      // Un détail fournisseur indisponible ne doit pas casser l'écran : le
+      // mouvement lui-même est déjà là, et c'est lui qui compte.
+      .catch(() => null);
+    return () => { vivant = false; };
+  }, [transaction.transactionId, transaction.provenance]);
+
   return (
     <FinanceModal title={transaction.label} onClose={onClose}>
       {supprime ? (
@@ -84,10 +111,15 @@ export function TransactionDetail({
         <Ligne label="Montant brut">{formatCents(transaction.amountCents)}</Ligne>
 
         {/*
-          PROVENANCE — affichée SEULEMENT si elle existe. Voir l'en-tête : un
-          bloc Stripe vide sur une saisie manuelle serait un mensonge poli.
+          PROVENANCE — affichée SEULEMENT si elle existe, et seulement TANT QUE
+          le fait fournisseur complet n'est pas chargé.
+
+          Les deux diraient la même chose en double. Ce repli sert le cas où le
+          détail fournisseur n'a pas pu être lu : mieux vaut le peu qu'on a en
+          main que rien du tout — un bloc vide sur une saisie manuelle serait en
+          revanche un mensonge poli.
         */}
-        {transaction.provenance ? (
+        {transaction.provenance && !fait ? (
           <>
             {transaction.provenance.provider ? (
               <Ligne label="Fournisseur">{transaction.provenance.provider}</Ligne>
@@ -154,6 +186,13 @@ export function TransactionDetail({
           </Ligne>
         ) : null}
       </div>
+
+      {/*
+        LE FAIT FOURNISSEUR — après les données métier, et jamais avant.
+        L'utilisateur lit d'abord un montant, une date et un nom ; les
+        identifiants Stripe viennent après, pour qui les cherche.
+      */}
+      {fait ? <ProviderFactPanel fact={fait} /> : null}
 
       {!transaction.editable && !supprime ? (
         <p className="field-hint muted">{transaction.notEditableReason}</p>

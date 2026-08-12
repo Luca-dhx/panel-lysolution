@@ -23,6 +23,11 @@ import {
 import {
   attachReceipt, detachReceipt, readReceipt,
 } from '../services/finance/receipts.service.js';
+import {
+  convergePendingRevenue,
+  describeProviderFact,
+  listUnprojectedFacts,
+} from '../services/finance/providerRevenue/revenueProjection.service.js';
 
 /** L'auteur d'une écriture comptable. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -94,6 +99,29 @@ async function converge(req) {
     const { default: logger } = await import('../utils/logger.js');
     logger.warn(`[finance] Convergence des récurrences impossible : ${err.message}`);
   }
+
+  /**
+   * LES REVENUS FOURNISSEUR CONVERGENT AUSSI À LA LECTURE (L10.3).
+   *
+   * ══ POURQUOI, ALORS QUE LA PROJECTION A LIEU À LA RÉCEPTION ═══════════════
+   *
+   * Parce qu'un fait peut arriver AVANT son propriétaire. Stripe n'ordonne pas
+   * ses livraisons : une facture peut précéder la session qui a fait adopter
+   * l'abonnement. Le fait est alors retenu, et il attend.
+   *
+   * La réception le reprend dès l'adoption ; cette passe-ci est le filet pour
+   * tout ce qui n'aurait pas eu de déclencheur — un lien créé par un autre
+   * chemin, une panne pendant la convergence, un import.
+   *
+   * Ce n'est PAS une lecture de Stripe. Aucun appel fournisseur : on rejoue une
+   * résolution d'appartenance sur des faits déjà reçus.
+   */
+  try {
+    await convergePendingRevenue({});
+  } catch (err) {
+    const { default: logger } = await import('../utils/logger.js');
+    logger.warn(`[finance] Convergence des revenus fournisseur impossible : ${err.message}`);
+  }
 }
 
 /* ── Lecture ───────────────────────────────────────────────────────────────── */
@@ -103,8 +131,54 @@ export async function transactions(req, res) {
   return ok(res, await listTransactions(criteriaOf(req)));
 }
 
+/**
+ * LE DÉTAIL D'UN MOUVEMENT — enrichi du fait fournisseur, s'il en a un.
+ *
+ * ══ POURQUOI SEULEMENT ICI ══════════════════════════════════════════════════
+ *
+ * Les identifiants Stripe n'ont rien à faire dans une liste : une colonne de
+ * `pi_3Q7x…` rendrait le livret illisible pour la seule personne qui, une fois
+ * par trimestre, veut rapprocher une ligne du tableau de bord Stripe. Ils sont
+ * donc chargés à la demande, sur l'écran qui les cherche.
+ *
+ * Ce n'est PAS une lecture de Stripe : le fait a été normalisé à la réception
+ * et vit en base. Cet écran fonctionne fournisseur indisponible.
+ */
 export async function transaction(req, res) {
-  return ok(res, { transaction: await getTransaction(req.params.transactionId) });
+  const mouvement = await getTransaction(req.params.transactionId);
+  return ok(res, {
+    transaction: mouvement,
+    providerFact: await describeProviderFact(mouvement),
+  });
+}
+
+/**
+ * LES FAITS FOURNISSEUR NON PROJETÉS — la file de diagnostic d'un exploitant.
+ *
+ * « De l'argent est arrivé chez Stripe et n'apparaît pas dans le Panel » est la
+ * question qu'on posera, et elle mérite une réponse autre qu'un balayage de
+ * journaux. Chaque ligne porte son motif : ressource sans lien, lien révoqué,
+ * devise non gérée, monde qui ne concorde pas.
+ *
+ * Réservée aux comptes DEV : ce sont des identités techniques de fournisseur.
+ */
+export async function unprojectedRevenue(_req, res) {
+  const faits = await listUnprojectedFacts({});
+  return ok(res, {
+    items: faits.map((f) => ({
+      factId: f.factId,
+      environment: f.environment,
+      objectType: f.objectType,
+      objectId: f.objectId,
+      amountCents: f.amountCents,
+      currency: f.currency,
+      occurredAt: f.occurredAt ? new Date(f.occurredAt).toISOString() : null,
+      projectionStatus: f.projectionStatus,
+      projectionReason: f.projectionReason,
+      ownershipResourceType: f.ownershipResourceType,
+      lastSeenAt: f.lastSeenAt,
+    })),
+  });
 }
 
 /**

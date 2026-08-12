@@ -2745,3 +2745,59 @@ body {
   .finance-recurrence-row { flex-wrap: wrap; }
   .finance-interval { width: 100%; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FAIT FOURNISSEUR (L10.3) — le détail technique, derrière le métier.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.finance-provider-fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+  padding-top: var(--p-space-3);
+  border-top: 1px solid var(--p-border);
+}
+
+/*
+  Le monde d'origine, collé au libellé de la ligne. Discret mais présent : lire
+  un montant sans savoir s'il vient de la recette est exactement l'erreur qu'un
+  badge évite, et il ne doit pas pour autant peser autant que le montant.
+*/
+.finance-env-tag {
+  margin-left: var(--p-space-2);
+  font-size: 0.65rem;
+  padding: 0 0.35rem;
+  vertical-align: middle;
+}
+
+/*
+  LES IDENTIFIANTS TECHNIQUES SONT REPLIÉS PAR DÉFAUT.
+
+  Ils servent une fois par trimestre, à une personne, pour rapprocher une ligne
+  du tableau de bord Stripe. Les déplier d'office ferait passer le détail d'un
+  mouvement pour un écran de débogage.
+*/
+.finance-technical {
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  padding: var(--p-space-2) var(--p-space-3);
+  background: var(--p-surface-sunken);
+}
+
+.finance-technical > summary {
+  cursor: pointer;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+}
+
+.finance-technical > summary:hover { color: var(--p-text); }
+.finance-technical > summary:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 2px; }
+.finance-technical[open] > summary { margin-bottom: var(--p-space-3); }
+
+/* Les deux liens de facture restent sur une ligne tant qu'il y a la place. */
+.finance-invoice-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}

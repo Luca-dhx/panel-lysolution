@@ -703,6 +703,15 @@ section('14. Performance : les agrégats ne remontent pas les documents');
     'projectId,deletedAt,effectiveDate',      // le livret d'un projet
     'deletedAt,effectiveDate',                // le livret global
     'sourceId,cycleKey',                      // L10.2 — l'unicité d'une occurrence
+    /**
+     * L10.3 — l'unicité d'un fait fournisseur.
+     *
+     * Il est DISTINCT de celui des occurrences récurrentes, et c'est tout
+     * l'enjeu : une règle interne et un paiement Stripe ne partagent pas la
+     * même notion d'identité. Les faire cohabiter sur une seule clé les aurait
+     * fait se collisionner le jour où leurs identifiants se croisent.
+     */
+    'provenance.provider,provenance.environment,provenance.externalKind,provenance.externalId',
   ].sort();
   check(`les index sont exactement ceux prévus — ${indexes.join(' · ')}`,
     JSON.stringify([...indexes].sort()) === JSON.stringify(INDEX_ATTENDUS));

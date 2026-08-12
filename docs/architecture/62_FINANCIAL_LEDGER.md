@@ -639,6 +639,190 @@ peut obtenir l'adresse d'un document privé, même en la demandant.
 
 ---
 
+## 13 quater. REVENUS FOURNISSEUR (L10.3)
+
+### Stripe produit des faits, le Panel les projette
+
+```
+événement Stripe → fait normalisé → appartenance → transaction → écrans
+```
+
+Jamais l'inverse. **Aucun écran, aucun graphique, aucun agrégat n'interroge Stripe.** Une
+fois projetée, la transaction vit dans le registre : le bilan reste lisible fournisseur
+indisponible. C'est toute la différence entre *projeter un fait* et *consulter une API*.
+
+### Le fait canonique — la décision structurante
+
+Un seul paiement d'abonnement produit chez Stripe, en quelques secondes :
+
+```
+checkout.session.completed    la session est payée
+invoice.paid                  la facture est réglée
+payment_intent.succeeded      l'intention a abouti
+charge.succeeded              la carte a été débitée
+```
+
+**Quatre annonces, un seul euro.** Projeter chacune produirait un quadruple comptage — le
+défaut le plus coûteux possible, parce qu'il est silencieux.
+
+La règle, lisible sur la charge utile seule :
+
+| Cas | Objet canonique |
+|---|---|
+| le paiement est **facturé** | la **facture** (`in_…`) |
+| le paiement n'est pas facturé | la **session** (`cs_…`) |
+
+Une session d'abonnement porte `invoice` : elle s'efface devant la facture. Une session de
+frais de lancement (`mode: payment`) n'en a pas : elle est canonique.
+
+Conséquence : les deux chemins calculent **la même clé**. Ce n'est pas une déduplication a
+posteriori, c'est la même identité.
+
+`payment_intent.succeeded` et `charge.succeeded` sont **énumérés** comme corroboratifs — et
+non simplement ignorés — pour que la recette puisse prouver qu'ils ont été vus et écartés.
+
+### Intention ≠ encaissement
+
+- facture : `amount_paid`, **jamais** `total` ni `amount_due`. Une facture de 249 € réglée
+  à 0 € ne produit rien ;
+- session : `amount_total`, et seulement si `payment_status === 'paid'`.
+
+Date économique = celle du **règlement** (`status_transitions.paid_at`), pas de l'émission.
+Une facture émise le 28 et payée le 2 appartient au mois du paiement.
+
+### L'identité externe — et pourquoi `{sourceId, cycleKey}` n'a pas été détourné
+
+L10.2 avait laissé la réserve. Cette clé-là est taillée pour les occurrences de coûts
+récurrents : une règle interne, un cycle calendaire. Y faire entrer Stripe aurait fait
+passer un identifiant d'abonnement pour un `sourceId` — deux familles sans rapport sur un
+même index unique, qui se collisionneraient le jour où leurs identifiants se croiseraient.
+
+**L'emplacement existait déjà** : `provenance`, posée en L10.1 pour exactement cela.
+
+```
+provenance.provider      STRIPE
+provenance.environment   TEST | PROD
+provenance.externalKind  INVOICE | CHECKOUT_SESSION
+provenance.externalId    in_… | cs_…
+```
+
+Index **unique partiel** sur ces quatre champs (`uniq_provider_external_object`). Le filtre
+partiel n'indexe que ce qui porte un `externalId` : saisies manuelles et occurrences
+récurrentes restent dehors.
+
+L'`environment` fait partie de la clé — un identifiant de recette et son homonyme de
+production sont deux faits distincts, et jamais l'un n'empêche l'autre.
+
+### L'inbox des faits — pas un second ledger
+
+`PanelProviderRevenueFact` retient chaque fait normalisé. Trois raisons :
+
+1. **le registre de webhooks ne garde pas le corps** (`payloadHash` seulement, par choix) :
+   rien ne serait reprojetable ;
+2. **l'appartenance n'est pas toujours résoluble à la réception** — Stripe n'ordonne pas ses
+   livraisons ;
+3. **un fait non projeté doit rester traçable** : ressource sans lien, devise non gérée, lien
+   révoqué. Chaque cas porte son motif.
+
+Rien n'y est sommé, filtré par période ni affiché dans un total. Le bénéfice se calcule
+exclusivement sur `PanelFinancialTransaction`.
+
+### L'appartenance — par le lien, jamais par les metadata
+
+| Fait | Ressource porteuse | Lien |
+|---|---|---|
+| session payée | la session elle-même | L6.2B, `PANEL_CREATED` |
+| facture payée | son **abonnement** (`invoice.subscription`) | L6.2F, adopté par filiation |
+
+La filiation facture → abonnement est **désignée par Stripe sur l'objet lui-même**, dans la
+charge utile déjà reçue : **aucun appel fournisseur**. C'est la même légitimité que
+l'adoption L6.2F.
+
+> L'abonnement d'une facture est lu à **trois** emplacements (`subscription`,
+> `parent.subscription_details.subscription`, la ligne de facture). Stripe a déplacé ce
+> champ ; n'en lire qu'un ferait cesser toute projection d'abonnement le jour d'une
+> migration d'API du compte — en silence.
+
+Les metadata **corroborent** et ne décident jamais. Une divergence est consignée
+(`claimMismatch`) et affichée dans le détail : c'est un signal de sécurité.
+
+Une ressource **non possédée** ne produit aucune transaction. Le fait est retenu, visible
+dans `GET /api/finances/provider-revenue/unprojected` (DEV), avec son motif.
+
+### Convergence — le désordre de livraison
+
+```
+invoice.paid                arrive d'abord — l'abonnement n'est pas adopté → PENDING
+checkout.session.completed  arrive ensuite → adoption L6.2F
+                            → convergence : le fait trouve son projet
+```
+
+Trois déclencheurs, dont un seul est la garantie :
+
+1. **à la réception du webhook** — après idempotence, après adoption ;
+2. à chaque **lecture financière** (filet) ;
+3. au **tick horaire** du même ordonnanceur que les coûts récurrents (filet).
+
+### Taxonomie — provider-agnostique
+
+`flow: INFLOW` + `category: REVENUE`. **Pas** de `STRIPE_REVENUE`, pas de
+`SUBSCRIPTION_REVENUE` : Stripe est une **origine** (`origin: STRIPE`), pas une nature
+économique. Inventer une catégorie par fournisseur ferait éclater le compte de résultat en
+autant de colonnes que d'intégrations.
+
+### Immuable / enrichissable
+
+| | |
+|---|---|
+| **Immuable** (`$setOnInsert`) | montant, devise, date, sens, catégorie, projet, identité externe |
+| **Enrichissable** | document de facture, identités secondaires, libellé de ligne — sur le **fait**, jamais sur la transaction |
+| **Jamais touché** | `receipt` — le justificatif manuel survit à tous les rejeux |
+
+Une seconde annonce ne réécrit aucun chiffre : un total affiché ne doit pas changer parce
+qu'un webhook a été rejoué.
+
+### Suppression et rejeu — la pierre tombale
+
+Un revenu supprimé **ne ressuscite pas**. La suppression est logique (L10.1) : le document
+reste, `deletedAt` le sort des totaux, et sa clé d'identité externe **reste occupée**. La
+recherche d'une transaction existante ne filtre donc pas sur `deletedAt` — c'est portant.
+
+### La facture Stripe — une adresse, pas un fichier
+
+Stripe expose `hosted_invoice_url` et `invoice_pdf`. Le Panel les **conserve et les
+affiche** ; il n'en matérialise **aucune copie d'office**.
+
+Pourquoi : télécharger systématiquement chaque facture ferait entrer des documents dans le
+stockage privé sans que personne l'ait demandé, avec une rétention à définir et un coût de
+transfert à chaque paiement. La copie durable existe déjà — c'est le **justificatif privé de
+L10.2**, que l'opérateur attache quand il le décide.
+
+Un revenu Stripe **sans** facture (frais de lancement) accepte donc un justificatif manuel
+par le mécanisme L10.2, sans une ligne de code nouvelle. Un rejeu de webhook ne le détruit
+jamais.
+
+### TEST / PROD
+
+Une instance de Panel sert **un** monde, et sa base est par environnement. L'environnement
+vient du **runtime**, jamais de `livemode` — laisser le corps choisir permettrait à un
+événement de recette de désigner un lien de production.
+
+Il est porté par le fait, par la transaction, affiché en pastille dans le détail et dans la
+ligne (`TEST`), et **jamais perdu**. Dans un Panel de recette, les montants de recette sont
+la réalité de ce Panel : ils comptent dans ses totaux — et sa base n'est pas celle de la
+production.
+
+### Préparation de L10.4
+
+`payment_intent` et `charge` sont conservés sur le **fait** — pas sur la transaction, dont
+L10.1 exige que la provenance reste maigre. Un remboursement les y trouvera.
+
+`charge.refunded`, `charge.dispute.created` et `credit_note.created` sont **reconnus et
+journalisés**, jamais projetés. Aucun `REFUND`, aucun `COST` d'origine fournisseur n'existe
+dans le registre à l'issue de ce lot.
+
+---
+
 ## 14. Ce que ces lots n'ont PAS fait
 
 Aucun appel Stripe. Aucune modification de `bridgeContract`, `projectBridge`, des registres

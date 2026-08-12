@@ -66,6 +66,7 @@ import {
   summary,
   transaction,
   transactions,
+  unprojectedRevenue,
   uploadReceipt,
 } from '../controllers/finances.controller.js';
 
@@ -112,6 +113,15 @@ router.get('/summary', asyncHandler(summary));
 router.get('/by-project', asyncHandler(byProject));
 router.get('/bulk-scope', asyncHandler(bulkScope));
 router.get('/transactions', asyncHandler(transactions));
+/**
+ * L10.3 — LES FAITS FOURNISSEUR QUI N'ONT PAS PU ÊTRE PROJETÉS.
+ *
+ * Réservée aux comptes DEV : elle expose des identités techniques Stripe, et
+ * répond à une question d'exploitation — « de l'argent est arrivé chez le
+ * fournisseur et n'apparaît pas ici, pourquoi ? ». Ce n'est pas une donnée de
+ * gestion, c'est un diagnostic.
+ */
+router.get('/provider-revenue/unprojected', requirePanelDev, asyncHandler(unprojectedRevenue));
 // APRÈS les chemins fixes : `/summary` ne doit jamais être lu comme un identifiant.
 router.get('/transactions/:transactionId', asyncHandler(transaction));
 

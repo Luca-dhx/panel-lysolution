@@ -28,6 +28,7 @@
     "test:finance-ui": "node ../tests/finance-ui.test.js",
     "test:finance-recurring": "node ../tests/finance-recurring.test.js",
     "test:finance-receipts": "node ../tests/finance-receipts.test.js",
+    "test:finance-stripe": "node ../tests/finance-stripe-revenue.test.js",
     "test:panel-ux": "node ../tests/panel-ux.test.js",
     "test:panel-meetings-ui": "node ../tests/panel-meetings-ui.test.js",
     "test:panel-timeline-ui": "node ../tests/panel-timeline-ui.test.js",

@@ -45,6 +45,10 @@ import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
 import { resolveStripeEventOwnership, EVENT_OWNERSHIP } from './stripeEventRouting.js';
 import { adoptSubscriptionFromSession } from '../integratedApi/stripe/stripeSubscriptionAdoption.js';
+import {
+  convergePendingFactsFor,
+  recordStripeRevenueEvent,
+} from '../finance/providerRevenue/revenueProjection.service.js';
 
 /** Issues d'une réception. Traduites en statut HTTP par le contrôleur. */
 export const INGEST_OUTCOME = Object.freeze({
@@ -201,9 +205,10 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
    * est BEST-EFFORT : un endpoint public qui lève produit une 500, et une 500
    * fait rejouer le fournisseur en boucle.
    */
+  let adoption = null;
   if (appartenance?.ownership === EVENT_OWNERSHIP.OWNED
     && appartenance.resourceType === 'CHECKOUT_SESSION') {
-    await adoptSubscriptionFromSession({
+    adoption = await adoptSubscriptionFromSession({
       environment,
       session: parsed?.data?.object ?? null,
       source: 'LEARNED_FROM_WEBHOOK',
@@ -211,6 +216,58 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
       logger.error(`[webhooks] adoption d’abonnement impossible — ${err?.message ?? 'erreur inconnue'}.`);
       return null;
     });
+  }
+
+  /**
+   * ── PROJECTION FINANCIÈRE (L10.3) ───────────────────────────────────────
+   *
+   * L'événement est vérifié, unique, et son appartenance est résolue. S'il
+   * porte de l'argent RÉELLEMENT encaissé, il devient un fait financier
+   * normalisé, puis une transaction du registre — le même registre que les
+   * revenus manuels et les coûts, jamais un second.
+   *
+   * ── POURQUOI ICI, ET PAS DANS UNE ROUTE D'ÉCRAN ─────────────────────────
+   * Le CDC demande que le Panel converge sans action manuelle. Une projection
+   * déclenchée par l'ouverture d'une page ferait dépendre l'existence d'un
+   * revenu du fait que quelqu'un la regarde.
+   *
+   * ── APRÈS L'IDEMPOTENCE, ET APRÈS L'ADOPTION ────────────────────────────
+   * Après l'idempotence : un rejeu n'arrive pas jusqu'ici, donc il ne peut pas
+   * produire un second exemplaire du même euro. Après l'adoption : c'est elle
+   * qui vient, peut-être, de rendre l'abonnement possédé — et donc de rendre
+   * projetable une facture reçue plus tôt.
+   *
+   * ── BEST-EFFORT ASSUMÉ ──────────────────────────────────────────────────
+   * Une projection qui échoue ne doit pas faire répondre 500 à Stripe, qui
+   * rejouerait en boucle. Le fait est retenu et la convergence le reprendra ;
+   * le service ne lève d'ailleurs jamais.
+   */
+  if (!duplicate) {
+    await recordStripeRevenueEvent({
+      environment,
+      eventType: identity.eventType,
+      payload: parsed,
+      providerEventId: identity.providerEventId,
+    }).catch((err) => {
+      logger.error(`[webhooks] projection financière impossible — ${err?.message ?? 'erreur inconnue'}.`);
+      return null;
+    });
+
+    /**
+     * L'ADOPTION VIENT DE CRÉER UN LIEN : les faits qui l'attendaient peuvent
+     * enfin trouver leur projet. C'est le cas d'une facture arrivée AVANT la
+     * session qui l'a produite — Stripe n'ordonne pas ses livraisons.
+     */
+    if (adoption?.subscriptionId) {
+      await convergePendingFactsFor({
+        environment,
+        resourceType: 'SUBSCRIPTION',
+        resourceId: adoption.subscriptionId,
+      }).catch((err) => {
+        logger.error(`[webhooks] convergence financière impossible — ${err?.message ?? 'erreur inconnue'}.`);
+        return null;
+      });
+    }
   }
 
   if (appartenance && appartenance.ownership !== EVENT_OWNERSHIP.NOT_ROUTABLE) {

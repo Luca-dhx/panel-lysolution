@@ -434,6 +434,21 @@ export function FinanceWorkspace({
                           {`Coût récurrent · cycle ${ligne.cycleKey}`}
                         </span>
                       ) : null}
+                      {/*
+                        L'ORIGINE AUTOMATIQUE EST DISCRÈTE, et sans identifiant.
+                        Le lecteur doit savoir que la ligne n'a pas été saisie à
+                        la main — c'est ce qui explique qu'elle ne se modifie
+                        pas. Le `in_1Qx…`, lui, vit dans le détail : une colonne
+                        d'identifiants Stripe transformerait le livret en console.
+                      */}
+                      {ligne.origin === 'STRIPE' ? (
+                        <span className="cell-secondary">
+                          Encaissé via Stripe
+                          {ligne.provenance?.environment === 'TEST' ? (
+                            <span className="badge badge-warn finance-env-tag">TEST</span>
+                          ) : null}
+                        </span>
+                      ) : null}
                     </td>
                     {!verrouille ? (
                       <td>{ownershipLabel(ligne.projectId, ligne.projectNameSnapshot, nomsVivants)}</td>
