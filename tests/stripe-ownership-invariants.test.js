@@ -441,12 +441,21 @@ section('14. LE PARCOURS ABONNEMENT N’ÉCRIT PLUS CHEZ STRIPE (SB Auto)');
       !/catch[\s\S]{0,200}provider\.create/.test(abonnement));
 
     /**
-     * Le pilote garde `createCheckoutSession` : plus aucun parcours ne
-     * l'appelle, mais on ne retire pas un pilote encore requis par d'autres
-     * verbes (portail, résiliations, lectures).
+     * L6.3 — LE PILOTE A ÉTÉ RÉDUIT, ET C'EST LE POINT.
+     *
+     * Aux lots précédents on constatait que le verbe survivait « au cas où » :
+     * plus aucun parcours ne l'appelait, mais la capacité technique restait.
+     * C'était une porte fermée avec la clé sur la serrure.
+     *
+     * L6.3 retire les neuf verbes dont le Panel a repris la charge. On vérifie
+     * ici les trois qui concernent cette section — la session, sa lecture, et
+     * la création de client — parce que ce sont ceux que le parcours abonnement
+     * pourrait rouvrir le plus naturellement.
      */
     const pilote = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.provider.js'), 'utf8'));
-    check('le pilote reste complet', /async createCheckoutSession/.test(pilote));
+    for (const parti of ['createCheckoutSession', 'retrieveCheckoutSession', 'createCustomer']) {
+      check(`le pilote n’expose plus ${parti}`, !new RegExp(`async ${parti}\\s*\\(`).test(pilote));
+    }
   }
 }
 
