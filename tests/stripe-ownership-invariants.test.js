@@ -452,10 +452,28 @@ section('14. LE PARCOURS ABONNEMENT N’ÉCRIT PLUS CHEZ STRIPE (SB Auto)');
      * la création de client — parce que ce sont ceux que le parcours abonnement
      * pourrait rouvrir le plus naturellement.
      */
-    const pilote = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.provider.js'), 'utf8'));
-    for (const parti of ['createCheckoutSession', 'retrieveCheckoutSession', 'createCustomer']) {
-      check(`le pilote n’expose plus ${parti}`, !new RegExp(`async ${parti}\\s*\\(`).test(pilote));
+    /**
+     * L6.3C — LE PILOTE N'EXISTE PLUS DU TOUT.
+     *
+     * Cet invariant a pris trois formes, et chacune disait où en était la
+     * migration :
+     *
+     *   L6.2E  « le pilote reste complet »        le verbe survivait au cas où
+     *   L6.3   « il n'expose plus ces trois-là »  la porte se refermait
+     *   L6.3C  « il n'y a plus de porte »         le fichier a disparu
+     *
+     * On vérifie donc l'ABSENCE des fichiers. C'est plus fort qu'une liste de
+     * verbes retirés, qu'un fichier vide satisferait aussi.
+     */
+    for (const parti of ['stripe.provider.js', 'stripe.stub.js']) {
+      check(`le pilote voisin ${parti} n’existe plus`,
+        !fs.existsSync(path.join(voisin, 'stripe', parti)));
     }
+    const serviceStripe = sansCommentaires(
+      fs.readFileSync(path.join(voisin, 'stripe', 'stripe.service.js'), 'utf8'),
+    );
+    check('…et le service voisin n’en fabrique plus aucun',
+      !/getStripeProvider/.test(serviceStripe));
   }
 }
 
