@@ -105,6 +105,16 @@ const siteStatusSchema = new mongoose.Schema(
     /** Le RÉGLAGE, vrai même lorsqu'il ne produit aucun effet. */
     contractProtectionEnabled: { type: Boolean, default: false },
     technicalSuspension: { type: Boolean, default: false },
+    /**
+     * L'INSTANTANÉ DES CAUSES (L10.6A) — la preuve autoritative dont le Panel a
+     * besoin pour confirmer sa cause financière sans la confondre avec la cause
+     * DOMINANTE. `null` se lit « projet antérieur au lot », pas « aucune cause ».
+     */
+    causes: {
+      technical: { type: Boolean, default: null },
+      contract: { type: Boolean, default: null },
+      paymentDefault: { type: Boolean, default: null },
+    },
     sourceModifiedAt: { type: String, required: true },
     ...SOURCE_FIELDS,
     receivedAt: { type: String, required: true },

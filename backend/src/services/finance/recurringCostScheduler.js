@@ -31,6 +31,7 @@ import { materializeAllDue } from './recurringCosts.service.js';
 import { convergePendingRevenue } from './providerRevenue/revenueProjection.service.js';
 import { convergePendingRefunds } from './refunds/refundOrchestration.service.js';
 import { sendDueReminders } from './paymentRequests/paymentRequests.service.js';
+import { expireDueGracePeriods } from './paymentDefaults/paymentDefaults.service.js';
 
 const TICK_MS = 3_600_000;
 
@@ -133,11 +134,40 @@ export async function runRecurringCostCycle() {
       logger.info(`[finance] ${relances.sent} relance(s) de prestation envoyée(s).`);
     }
 
+    /**
+     * ── LES DÉLAIS DE GRÂCE ÉCHUS (L10.6) ─────────────────────────────────
+     *
+     * ══ LA SEULE DÉCISION QUE LE PANEL PRENNE DANS TOUT CE CYCLE ══════════
+     *
+     * Stripe constate les échecs et ordonnance ses propres tentatives. SB Auto
+     * décide de l'accessibilité de son site. Entre les deux, le Panel n'a
+     * qu'une chose à trancher : combien de temps on laisse un impayé courir
+     * avant de demander la fermeture. C'est cette ligne-là, et rien d'autre.
+     *
+     * ══ AUCUN PAIEMENT N'EST TENTÉ ICI ════════════════════════════════════
+     *
+     * Pas un appel à Stripe, pas une facture représentée. Ce passage lit des
+     * échéances en base et bascule des états. Le jour où quelqu'un voudra y
+     * ajouter « et on retente », c'est le double débit qui entrera.
+     *
+     * L'échéance vit en base : un redémarrage ne perd aucune expiration, et la
+     * réservation atomique du service garantit qu'un basculement n'a lieu
+     * qu'une fois même si huit ordonnanceurs tournent.
+     */
+    const graces = await expireDueGracePeriods({}).catch((err) => {
+      logger.warn(`[finance] Expiration des délais de grâce impossible : ${err.message}`);
+      return { expired: 0 };
+    });
+    if (graces.expired) {
+      logger.warn(`[finance] ${graces.expired} délai(s) de grâce échu(s) — fermeture demandée.`);
+    }
+
     return {
       ...rapport,
       revenueProjected: revenus.projected ?? 0,
       refundsSettled: remboursements.settled ?? 0,
       remindersSent: relances.sent ?? 0,
+      gracePeriodsExpired: graces.expired ?? 0,
     };
   } catch (err) {
     // Un cycle raté sera revu au suivant, et de toute façon à la prochaine

@@ -165,6 +165,19 @@ export const EVENT_TYPES = Object.freeze({
   PAYMENT_REQUEST_REMINDER_SENT: 'PAYMENT_REQUEST_REMINDER_SENT',
   /** Un e-mail perdu est un FAIT, pas un silence. La créance, elle, reste due. */
   PAYMENT_REQUEST_REMINDER_FAILED: 'PAYMENT_REQUEST_REMINDER_FAILED',
+  /**
+   * L10.6 — LES DÉFAUTS DE PAIEMENT D'ABONNEMENT. Trois types, trois faits.
+   *
+   * `OPENED` est l'impayé constaté ; `GRACE_EXPIRED` est la seule décision que
+   * le Panel prenne dans tout ce cycle ; `RESOLVED` est la régularisation.
+   *
+   * Il n'existe volontairement AUCUN type « tentative » : le Panel ne retente
+   * rien. Stripe est l'unique ordonnanceur des tentatives de collecte, et
+   * inscrire ses essais dans la chronologie du projet ferait croire l'inverse.
+   */
+  PAYMENT_DEFAULT_OPENED: 'PAYMENT_DEFAULT_OPENED',
+  PAYMENT_DEFAULT_GRACE_EXPIRED: 'PAYMENT_DEFAULT_GRACE_EXPIRED',
+  PAYMENT_DEFAULT_RESOLVED: 'PAYMENT_DEFAULT_RESOLVED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

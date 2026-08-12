@@ -115,8 +115,14 @@ section('Types d’entités synchronisées');
    * alors qu'une prestation décrit ce qui est RÉCLAMÉ, et qui ne sera peut-être
    * jamais payé. Les confondre aurait fait apparaître, dans l'historique de
    * facturation du client, des factures qui n'existent pas.
+   *
+   * 17 depuis L10.6 — `PAYMENT_DEFAULT_CAUSE`, une CAUSE de suspension et non un
+   * état. Le Panel est l'autorité de la politique de grâce ; le projet reste
+   * l'autorité de son accessibilité. Transporter un état aurait créé deux
+   * maîtres pour la même question, et une régularisation aurait pu rouvrir un
+   * site en maintenance technique.
    */
-  check('16 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 16);
+  check('17 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 17);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

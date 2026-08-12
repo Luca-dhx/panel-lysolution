@@ -217,6 +217,18 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * de session — celle-ci est périssable et se demande au moment du clic.
    */
   'PAYMENT_REQUEST',
+  /**
+   * >= 1.7.x — UNE CAUSE DE SUSPENSION, poussée par le Panel (L10.6).
+   *
+   * Elle transporte un FAIT COMMERCIAL — « le défaut de paiement est actif » —
+   * jamais un état de site. Le Panel décide de la politique de grâce ; le projet
+   * reste l'autorité de son accessibilité et combine cette cause avec les
+   * siennes (maintenance technique, contrat éteint).
+   *
+   * Un ordre `status: SUSPENDED` aurait créé un second maître, et une
+   * régularisation aurait pu rouvrir un site en maintenance.
+   */
+  'PAYMENT_DEFAULT_CAUSE',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
@@ -618,13 +630,33 @@ export const siteStatusPayloadSchema = z
   .object({
     accessible: z.boolean(),
     status: z.enum(['ACTIVE', 'SUSPENDED']),
-    suspensionSource: z.enum(['NONE', 'TECHNICAL', 'CONTRACT']),
+    suspensionSource: z.enum(['NONE', 'TECHNICAL', 'CONTRACT', 'PAYMENT_DEFAULT']),
     /** Motif LISIBLE, tel que le projet le formule. Jamais reconstruit ici. */
     reason: z.string().min(1).optional(),
     suspendedAt: isoDate.nullable().optional(),
     contractProtectionEnabled: z.boolean(),
     /** La cause technique, publiée à part : elle prime sur tout le reste. */
     technicalSuspension: z.boolean(),
+    /**
+     * L'INSTANTANÉ DES CAUSES ACTIVES (L10.6A) — toutes, pas la dominante.
+     *
+     * `suspensionSource` ne nomme que celle qui prime à l'affichage. Une
+     * maintenance technique ET un impayé coexistent parfaitement, et c'est la
+     * maintenance qui s'affiche : un Panel qui en conclurait que sa cause
+     * financière n'a pas été appliquée se tromperait.
+     *
+     * OPTIONNEL — une projection antérieure à ce lot n'en porte pas, et l'on ne
+     * périme pas ce qui a déjà été reçu. Son absence se lit « je ne sais pas »,
+     * jamais « aucune cause ».
+     */
+    causes: z
+      .object({
+        technical: z.boolean(),
+        contract: z.boolean(),
+        paymentDefault: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

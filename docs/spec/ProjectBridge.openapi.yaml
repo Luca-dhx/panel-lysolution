@@ -595,6 +595,7 @@ components:
                   - PROJECT_SITE_STATUS
                   - EMAIL_DELIVERY_EVENT
                   - PAYMENT_REQUEST
+                  - PAYMENT_DEFAULT_CAUSE
             operations:
               type: array
               items: { type: string }
@@ -733,6 +734,7 @@ components:
             - PROJECT_SITE_STATUS
             - EMAIL_DELIVERY_EVENT
             - PAYMENT_REQUEST
+            - PAYMENT_DEFAULT_CAUSE
         entityId: { type: string, format: uuid }
         deleted: { type: boolean }
         payload: { nullable: true }

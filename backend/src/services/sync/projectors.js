@@ -277,12 +277,48 @@ async function applyProjectSiteStatus({ projectId, change, stamp }) {
         suspendedAt: s.suspendedAt ?? null,
         contractProtectionEnabled: s.contractProtectionEnabled,
         technicalSuspension: s.technicalSuspension,
+        /**
+         * REFLÉTÉ, jamais complété (L10.6A). `undefined` sur une projection
+         * antérieure au lot : le champ reste absent, et la confirmation
+         * financière refuse de conclure plutôt que de supposer.
+         */
+        ...(s.causes ? { causes: s.causes } : {}),
         sourceModifiedAt: change.modifiedAt,
         ...stamp,
       },
     },
     { upsert: true },
   );
+
+  /**
+   * ── LA BOUCLE DE CONFIRMATION SE FERME ICI (L10.6A) ─────────────────────
+   *
+   * Ce projecteur est le POINT UNIQUE par lequel un état de site entre dans le
+   * Panel — que le projet l'ait poussé en temps réel ou que le Panel l'ait tiré
+   * après une absence. Y brancher la confirmation garantit que les deux voies
+   * appliquent exactement la même logique métier : il n'y en a qu'une.
+   *
+   * Le cœur a déjà écarté les snapshots plus anciens (dernier-écrit-gagne) : un
+   * retardataire n'arrive jamais jusqu'ici, et ne peut donc pas faire régresser
+   * une confirmation acquise.
+   *
+   * Best-effort : un état de site correctement projeté ne doit pas être perdu
+   * parce qu'un incident financier n'a pas pu être mis à jour. Le snapshot
+   * suivant reprendra.
+   */
+  await confirmerDefautsDePaiement({ projectId, snapshot: { ...s, sourceModifiedAt: change.modifiedAt } })
+    .catch(() => null);
+}
+
+/**
+ * Import DYNAMIQUE : la table des projecteurs ne doit pas tirer le domaine
+ * financier dans son graphe de chargement. Elle l'appelle, elle n'en dépend pas.
+ */
+async function confirmerDefautsDePaiement(args) {
+  const { confirmFromSiteStatus } = await import(
+    '../finance/paymentDefaults/paymentDefaults.service.js'
+  );
+  return confirmFromSiteStatus(args);
 }
 
 /** Table FERMÉE — le cœur n'applique que ce qui y figure. */

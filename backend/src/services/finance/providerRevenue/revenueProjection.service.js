@@ -132,6 +132,23 @@ export async function recordStripeRevenueEvent({
       if (reason === NOT_A_FACT.CORROBORATING_ONLY || reason === NOT_A_FACT.NOT_FINANCIAL) {
         await adoptIntentFromSession({ environment, eventType, payload }).catch(() => null);
       }
+
+      /**
+       * UN ÉCHEC DE PRÉLÈVEMENT N'EST PAS UN REVENU — mais c'est un FAIT (L10.6).
+       *
+       * Il ressort ici en `NO_MONEY_MOVED`, ce qui est exact : rien n'est entré.
+       * Rien n'entrera peut-être jamais, et c'est précisément l'incident. Le
+       * laisser filer ferait dépendre tout le cycle de défaut d'un événement
+       * que personne ne regarde.
+       *
+       * AUCUN mouvement n'est écrit au ledger : une absence de revenu n'est ni
+       * un coût ni un revenu négatif. Voir `paymentDefaults.service.js`.
+       */
+      if (String(eventType) === 'invoice.payment_failed') {
+        await ingestInvoiceFailure({ environment, eventType, payload }).catch((err) => {
+          logger.error(`[finance] défaut de paiement non ingéré — ${err?.message ?? 'erreur inconnue'}.`);
+        });
+      }
       return { ...rien, reason };
     }
 
@@ -458,6 +475,25 @@ export async function projectFact(factId) {
    * que la demande qui l'a motivé n'a pas pu être mise à jour. La convergence
    * la reprendra, et le fait porte de quoi la retrouver.
    */
+  /**
+   * L10.6 — UNE FACTURE PAYÉE ÉTEINT L'INCIDENT QU'ELLE AVAIT OUVERT.
+   *
+   * La preuve du paiement est le fait Stripe qu'on vient de projeter, jamais un
+   * bouton d'écran ni un retour de navigateur. Et la résolution ne rouvre AUCUN
+   * site : elle retire une CAUSE, que SB Auto recombinera avec les siennes.
+   *
+   * Best-effort, comme le solde de prestation : un revenu correctement projeté
+   * ne doit pas être perdu parce que l'incident n'a pas pu être mis à jour.
+   */
+  if (fait.objectType === CANONICAL_TYPES.INVOICE) {
+    await eteintDefaut({ fait, transactionId }).catch((err) => {
+      logger.warn(
+        `[finance] incident de paiement non résolu pour ${maskResourceId(fait.objectId)} `
+        + `(${fait.environment}) — ${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+      );
+    });
+  }
+
   await soldePrestation({ fait, transactionId }).catch((err) => {
     logger.warn(
       `[finance] prestation non soldée pour ${maskResourceId(fait.objectId)} `
@@ -655,6 +691,76 @@ async function upsertRefundTransaction({ fait, origine }) {
 
   const ecrite = await PanelFinancialTransaction.findOne(clef).select('transactionId').lean();
   return ecrite?.transactionId ?? transactionId;
+}
+
+/**
+ * LA FACTURE EST PAYÉE — l'incident correspondant s'éteint (L10.6).
+ *
+ * Appelée APRÈS l'écriture du revenu, jamais avant : la résolution s'appuie sur
+ * un fait projeté, pas sur une intention. Sans incident ouvert pour cette
+ * facture, elle ne fait rien — le cas nominal, puisque la plupart des factures
+ * sont payées du premier coup.
+ */
+async function eteintDefaut({ fait, transactionId }) {
+  const { resolveInvoiceDefault } = await import('../paymentDefaults/paymentDefaults.service.js');
+  return resolveInvoiceDefault({
+    environment: fait.environment,
+    invoiceId: fait.objectId,
+    transactionId,
+    paidAt: fait.occurredAt ?? null,
+  });
+}
+
+/**
+ * UN ÉCHEC DE PRÉLÈVEMENT D'ABONNEMENT ENTRE DANS LE CYCLE DE DÉFAUT (L10.6).
+ *
+ * ══ L'APPARTENANCE D'ABORD, ET PAR LE LIEN ═════════════════════════════════
+ *
+ * Une facture n'a pas de lien à elle : elle hérite de celui de son ABONNEMENT,
+ * exactement comme un revenu facturé (L10.3). Sans propriétaire prouvé, aucun
+ * incident n'est ouvert — on ne saurait ni quelle politique de grâce appliquer,
+ * ni quel site fermer.
+ *
+ * Les metadata ne décident de rien ici non plus : `contractId` y est lu pour
+ * l'audit, le registre de liens fait autorité.
+ *
+ * Import DYNAMIQUE : la projection des revenus ne doit pas dépendre du domaine
+ * des défauts pour projeter un encaissement.
+ */
+async function ingestInvoiceFailure({ environment, eventType, payload }) {
+  const { normalizeInvoiceFailure } = await import(
+    '../paymentDefaults/stripeInvoiceFailureNormalizer.js'
+  );
+  const { fait, reason } = normalizeInvoiceFailure({ eventType, payload, environment });
+  if (!fait) {
+    /**
+     * `NOT_A_SUBSCRIPTION` est le refus le plus important du lot : une facture
+     * ponctuelle — prestation L10.5, frais de lancement — ne doit JAMAIS ouvrir
+     * un incident qui puisse fermer un site. Le CDC l'exclut, et le filtre est
+     * ici plutôt que plus bas pour qu'aucun chemin ne le contourne.
+     */
+    return { recorded: false, reason };
+  }
+
+  const lien = await findBinding({
+    environment,
+    resourceType: STRIPE_RESOURCE_TYPES.SUBSCRIPTION,
+    resourceId: fait.subscriptionId,
+  });
+  if (!lien || lien.revokedAt) {
+    logger.info(
+      `[finance] échec de prélèvement sans abonnement possédé — `
+      + `${maskResourceId(fait.subscriptionId)} (${environment}). Aucun incident.`,
+    );
+    return { recorded: false, reason: 'SUBSCRIPTION_NOT_OWNED' };
+  }
+
+  const { recordInvoiceFailure } = await import('../paymentDefaults/paymentDefaults.service.js');
+  return recordInvoiceFailure({
+    ...fait,
+    projectId: lien.projectId,
+    contractId: fait.claimedContractId ?? null,
+  });
 }
 
 /**
