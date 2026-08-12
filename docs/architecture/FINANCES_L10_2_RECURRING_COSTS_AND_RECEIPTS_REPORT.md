@@ -13,8 +13,12 @@ Lot précédent : [`FINANCES_L10_1_FINANCIAL_CORE_REPORT.md`](./FINANCES_L10_1_F
 | Panel | `ca9a68c` (rapport L10.1, sur `7bde5d0`) | propre |
 | SB Auto 06 | `ef43487` | propre |
 
-Le chantier **Stripe L6.2F** a démarré et committé pendant ce lot :
-`209d137 feat(stripe): la première adoption — et elle reste une preuve`.
+Le chantier **Stripe L6.2F** a démarré et committé pendant ce lot, dans les deux dépôts :
+
+| Dépôt | HEAD en fin de lot | |
+|---|---|---|
+| Panel | `8709d92` | ce lot, sur `209d137` (L6.2F) |
+| SB Auto 06 | `dc9e25f` | **entièrement L6.2F** — aucun fichier touché ici |
 
 Aucun de ses fichiers n'a été lu-pour-modifier, restauré, reformatté ni stagé. Aucun
 `git add -A`, aucun `git add .`, aucun `stash`, `reset`, `clean` ni `checkout` global.
@@ -499,3 +503,68 @@ antérieurs sont corrects sans être touchés ; aucune transaction existante ne 
 justificatif, donc il n'y a rien à reprendre.
 
 ---
+
+## Recette et livraison
+
+| | |
+|---|---|
+| Suites ciblées | `finance-recurring` **105/105** · `finance-receipts` **105/105** · `finance-ui` **156/156** · `finance-core` **138/138** |
+| Protocole Media | `media-first-deployment` **63/63** · `-limits` 9 · `-validation` 30 · `descriptor` 56 · `canonical-save` 58 · `cache-versioning` 42 |
+| Non-régression | `architecture` **31/31** · `panel-ux` **86/86** |
+| **Suite Panel complète** | **`════ Suite : 103/103 fichiers OK ════`** |
+| Typecheck (`tsc -b`, aussi le `lint` du frontend) | vert |
+| Build (`vite build`) | vert |
+| SB Auto 06 | aucun fichier touché ; aucun contrat partagé modifié |
+
+Premier passage de la suite : **102/103**. Le seul rouge était le contrôle
+`length <= 3` sur les index du ledger, posé en L10.1 — l'index d'idempotence est le
+quatrième. Il a été remplacé par un **inventaire nommé** : un nombre ne distingue pas un
+index nécessaire d'un index spéculatif, une liste fermée oblige à justifier le suivant.
+
+### Commit et push
+
+```
+8709d92  feat(finances): une règle n'est pas une dépense — elle en produit
+         35 fichiers, 6 357 insertions, 44 suppressions
+```
+
+Parent : `209d137` (L6.2F). Staging **nommé fichier par fichier** ; jamais `git add -A`.
+`git diff --cached` audité : aucun fichier ni aucune ligne du chantier voisin.
+Push **en avance rapide** (`209d137..8709d92`), sans `--force`, sans réécriture.
+
+Le seul fichier partagé, `tests/run-all.js`, ne contenait que mon hunk au moment du
+staging : le chantier voisin avait déjà committé le sien.
+
+---
+
+## Critères de passage
+
+| Critère | État |
+|---|---|
+| modèle complet de coûts récurrents | ✅ `PanelRecurringCost` + révisions append-only |
+| génération durable des occurrences | ✅ dans le ledger existant, jamais projetée |
+| modification temporelle des récurrences | ✅ 3 modes, cycle d'effet calculé |
+| arrêt selon le CDC | ✅ 2 modes, borne à la source |
+| intégration au ledger existant | ✅ aucun second ledger |
+| justificatifs par occurrence | ✅ jamais sur la définition |
+| stockage conforme au protocole Media | ✅ `visibility: PRIVATE`, pas de pile parallèle |
+| fonctionne en localhost | ✅ même chemin de code |
+| fonctionne déployé, survit au redeploy | ✅ symlink + exclusion de build, prouvés |
+| aucun système de fichiers financier parallèle | ✅ le module financier n'écrit aucun fichier |
+| aucun justificatif servi publiquement | ✅ 4 barrières, dont 2 structurelles |
+| chantier Stripe préservé | ✅ 0 fichier touché |
+| tests verts | ✅ 103/103 fichiers |
+| build / typecheck verts | ✅ |
+| commit / push propres | ✅ |
+
+---
+
+FINANCES RECURRING COSTS + PRIVATE RECEIPTS: PASS
+
+GO L10.3 STRIPE REVENUE PROJECTION: YES
+
+> Réserve à traiter **au début** de L10.3, pas après : l'index unique
+> `{sourceId, cycleKey}` est taillé pour les récurrences. Une source Stripe devra soit le
+> réutiliser en toute conscience (`sourceId` = identifiant d'abonnement, `cycleKey` =
+> période facturée), soit poser sa propre clé d'idempotence. Deux familles de sources sur
+> un même index unique se collisionneraient si leurs identifiants se croisaient.
