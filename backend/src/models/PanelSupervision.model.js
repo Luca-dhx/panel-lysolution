@@ -124,6 +124,26 @@ export const EVENT_TYPES = Object.freeze({
    */
   COMMERCIAL_OPENED: 'COMMERCIAL_OPENED',
   COMMERCIAL_CLOSED: 'COMMERCIAL_CLOSED',
+  /**
+   * L10.1 — le registre financier.
+   *
+   * Trois types, parce que les trois questions qu'on posera à ce journal sont
+   * distinctes : « qui a saisi cette ligne ? », « qui l'a corrigée, et
+   * qu'y avait-il avant ? », « qui l'a retirée du bénéfice, et pourquoi ? ».
+   * Un type unique obligerait à filtrer sur `data` pour répondre à la
+   * troisième — celle qui compte le jour où un total change sans explication.
+   *
+   * `projectId` vaut `null` pour un mouvement propre à L.Y Solution : c'est le
+   * même nul que le modèle, et il se lit pareil.
+   *
+   * Leur `data` porte l'identifiant du mouvement, sa taxonomie, son montant en
+   * centimes et son origine. JAMAIS de charge utile fournisseur, jamais de
+   * secret : un journal de chronologie se lit à plusieurs, un secret ne se
+   * lit pas.
+   */
+  FINANCIAL_TRANSACTION_CREATED: 'FINANCIAL_TRANSACTION_CREATED',
+  FINANCIAL_TRANSACTION_UPDATED: 'FINANCIAL_TRANSACTION_UPDATED',
+  FINANCIAL_TRANSACTION_DELETED: 'FINANCIAL_TRANSACTION_DELETED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

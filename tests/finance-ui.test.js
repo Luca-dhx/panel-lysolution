@@ -1,0 +1,349 @@
+/**
+ * L10.1 — L'INTERFACE DES FINANCES.
+ *
+ * Ce que ces contrôles verrouillent :
+ *
+ *   · qu'un montant s'affiche SIGNÉ — « +2 490,00 € », « −48,00 € » — et qu'un
+ *     bénéfice négatif s'affiche négatif, sans valeur absolue complaisante ;
+ *   · que le graphique ne casse sur AUCUN des cinq états d'un registre qui
+ *     démarre : zéro point, un point, que des revenus, que des coûts, tout à
+ *     zéro. Ce calcul-là est réellement exécuté, pas relu ;
+ *   · que la fiche projet et la page globale montent LE MÊME moteur ;
+ *   · que « Tout supprimer » exige un mot retapé, annonce un décompte, et
+ *     n'apparaisse que pour un compte DEV ;
+ *   · qu'aucun champ Stripe vide ne soit affiché par anticipation ;
+ *   · que la récurrence soit annoncée DÉSACTIVÉE, jamais simulée ;
+ *   · que l'écran ait un état vide, un état de chargement et un état d'erreur.
+ *
+ * Les contrôles d'écran portent sur les SOURCES quand le composant est en
+ * `.tsx` : le dépôt n'embarque aucun moteur de rendu React. Tout ce qui pouvait
+ * être extrait en module pur l'a été, et est exécuté pour de vrai.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { register } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { check, finish, section } from './helpers/harness.js';
+
+register('./helpers/frontendLoader.mjs', import.meta.url);
+
+const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
+
+/**
+ * LA SOURCE DÉCOMMENTÉE — même discipline que `architecture.test.js`.
+ *
+ * Ces fichiers EXPLIQUENT longuement ce qu'ils refusent de faire : « pas de
+ * `type="number"` », « pas de drapeau `isRecurring` ». Chercher ces chaînes
+ * dans le texte brut ferait échouer les contrôles sur la documentation qui les
+ * justifie — exactement l'inverse de ce qu'on veut vérifier.
+ */
+const code = (source) => source
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+  .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+const money = await import('@/lib/money');
+const echelle = await import('@/lib/netChartScale');
+const libelles = await import('@/components/finance/financeLabels');
+
+const workspace = lire('frontend/src/components/finance/FinanceWorkspace.tsx');
+const formulaire = lire('frontend/src/components/finance/TransactionForm.tsx');
+const detail = lire('frontend/src/components/finance/TransactionDetail.tsx');
+const graphique = lire('frontend/src/components/finance/NetChart.tsx');
+const pageGlobale = lire('frontend/src/pages/FinancesPage.tsx');
+const ficheProjet = lire('frontend/src/pages/ProjectDetailPage.tsx');
+const nav = lire('frontend/src/config/nav.ts');
+const app = lire('frontend/src/App.tsx');
+const api = lire('frontend/src/lib/api.ts');
+const css = lire('frontend/src/components.css');
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('1. Les montants s’affichent signés — et le net peut être négatif');
+{
+  check('un revenu porte un plus', money.formatFlowCents(249_000, 'INFLOW').startsWith('+'));
+  check('un coût porte un moins', money.formatFlowCents(4800, 'OUTFLOW').startsWith('−'));
+  check('…le MOINS typographique, qui s’aligne sur le plus',
+    money.formatFlowCents(4800, 'OUTFLOW').startsWith('−'));
+
+  const revenu = money.formatFlowCents(249_000, 'INFLOW');
+  check('2 490,00 € s’écrit en français', /2\s?490,00/.test(revenu));
+  check('…avec le symbole euro', revenu.includes('€'));
+  check('39,90 € ne perd pas son centime', money.formatCents(3990).includes('39,90'));
+  check('un montant nul s’affiche, il ne disparaît pas', money.formatCents(0).includes('0,00'));
+  check('un montant absent se lit « — »', money.formatCents(null) === '—');
+
+  const negatif = money.formatNetCents(-15_050);
+  check('UN BÉNÉFICE NÉGATIF S’AFFICHE NÉGATIF', negatif.startsWith('−'));
+  check('…et pas en valeur absolue', /150,50/.test(negatif));
+  check('un net nul n’a pas de signe', !money.formatNetCents(0).startsWith('+'));
+
+  check('la tonalité suit le signe',
+    money.netTone(10) === 'ok' && money.netTone(-10) === 'danger' && money.netTone(0) === 'neutral');
+
+  // La division par cent n'a lieu qu'ICI : la preuve que l'arrondi tient.
+  check('0,10 + 0,20 sommés EN CENTIMES puis affichés donnent 0,30',
+    money.formatCents(10 + 20).includes('0,30'));
+}
+
+section('2. Le graphique ne casse sur aucun état d’un registre qui démarre');
+{
+  const GEO = { width: 720, height: 200, margin: { top: 16, bottom: 26, left: 8, right: 8 } };
+  const point = (bucket, netCents) => ({
+    bucket, netCents, inflowCents: Math.max(netCents, 0), outflowCents: Math.max(-netCents, 0),
+  });
+  const sain = (e) =>
+    Number.isFinite(e.zeroY) && e.span > 0
+    && e.bars.every((b) => [b.x, b.y, b.width, b.height].every(Number.isFinite) && b.height > 0);
+
+  const aucun = echelle.computeChartScale([], GEO);
+  check('AUCUN point : aucune coordonnée n’est NaN', Number.isFinite(aucun.zeroY) && aucun.span > 0);
+  check('…et il n’y a simplement pas de barre', aucun.bars.length === 0);
+
+  const un = echelle.computeChartScale([point('2026-03-01T00:00:00.000Z', 24_900)], GEO);
+  check('UN SEUL point : pas de division par zéro', sain(un));
+  check('…et la barre ne prend pas toute la largeur', un.bars[0].width <= 56);
+  check('…elle reste visible', un.bars[0].width >= 3);
+
+  const revenusSeuls = echelle.computeChartScale(
+    [point('a', 10_000), point('b', 25_000)], GEO,
+  );
+  check('QUE DES REVENUS : la ligne de zéro est en BAS du cadre',
+    revenusSeuls.low === 0 && revenusSeuls.zeroY > GEO.height / 2 && sain(revenusSeuls));
+
+  const coutsSeuls = echelle.computeChartScale(
+    [point('a', -10_000), point('b', -25_000)], GEO,
+  );
+  check('QUE DES COÛTS : la ligne de zéro est en HAUT du cadre',
+    coutsSeuls.high === 0 && coutsSeuls.zeroY < GEO.height / 2 && sain(coutsSeuls));
+  check('…et toutes les barres sont marquées négatives',
+    coutsSeuls.bars.every((b) => b.negative));
+
+  const mixte = echelle.computeChartScale(
+    [point('a', 30_000), point('b', -12_000)], GEO,
+  );
+  check('NET NÉGATIF ET POSITIF : le zéro tombe entre les deux',
+    mixte.zeroY > 16 && mixte.zeroY < GEO.height - 26 && sain(mixte));
+
+  const zeros = echelle.computeChartScale([point('a', 0), point('b', 0)], GEO);
+  check('TOUT À ZÉRO : l’amplitude reste strictement positive', zeros.span > 0);
+  check('…aucune coordonnée n’est NaN', sain(zeros));
+  check('…et une barre nulle garde un filet visible', zeros.bars.every((b) => b.height >= 1));
+
+  const trenteEtUn = echelle.computeChartScale(
+    Array.from({ length: 31 }, (_, i) => point(`j${i}`, i * 100)), GEO,
+  );
+  check('31 jours : les libellés sont espacés, jamais tous affichés',
+    trenteEtUn.labelEvery >= 3);
+
+  check('le composant montre un état vide plutôt qu’un cadre sans barres',
+    graphique.includes('series.length === 0') && graphique.includes('EmptyState'));
+}
+
+section('3. UN SEUL moteur — la fiche projet et la page globale le partagent');
+{
+  check('la fiche projet monte le moteur', ficheProjet.includes('<FinanceWorkspace'));
+  check('…avec la portée verrouillée sur le projet',
+    /<FinanceWorkspace[\s\S]{0,200}scope="project"/.test(ficheProjet));
+  check('…et le projectId préselectionné',
+    /<FinanceWorkspace[\s\S]{0,240}projectId=\{project\.projectId\}/.test(ficheProjet));
+
+  check('la page globale monte LE MÊME moteur', pageGlobale.includes('<FinanceWorkspace'));
+  check('…avec la portée ouverte', /<FinanceWorkspace[\s\S]{0,120}scope="all"/.test(pageGlobale));
+
+  check('aucun second calcul de bénéfice côté écran',
+    !workspace.includes('revenueCents -') && !pageGlobale.includes('- costCents'));
+  check('le net vient du backend, jamais d’une soustraction locale',
+    workspace.includes('summary.totals.netCents'));
+}
+
+section('4. L’onglet Finances et la page globale sont atteignables');
+{
+  check('l’onglet existe dans la fiche projet', /className=\{tab === 'finances'/.test(ficheProjet));
+  check('…il est nommé « Finances »', /tab === 'finances'[\s\S]{0,200}Finances/.test(ficheProjet));
+  check('…il vit dans l’URL comme les autres', ficheProjet.includes("'finances'"));
+  check('…et il n’est PAS réservé aux DEV',
+    !/isDev[\s\S]{0,120}tab === 'finances'/.test(ficheProjet));
+
+  check('la page globale a sa route', app.includes('path="/finances"'));
+  check('…hors de la garde DEV', !/dev\(<FinancesPage/.test(app));
+  check('la navigation la propose', nav.includes("to: '/finances'"));
+  check('…dans la section GESTION', /to: '\/finances'[^}]*section: 'GESTION'/.test(nav));
+  check('…et pas en devOnly', !/to: '\/finances'[^}]*devOnly/.test(nav));
+}
+
+section('5. Les trois sous-onglets, et ce qu’ils filtrent');
+{
+  check('les trois sous-onglets existent',
+    workspace.includes("key: 'general'")
+    && workspace.includes("key: 'costs'")
+    && workspace.includes("key: 'revenues'"));
+  check('« Coûts » filtre sur la catégorie COST',
+    /sousOnglet === 'costs' \? 'COST'/.test(workspace));
+  check('« Revenus » filtre sur la catégorie REVENUE',
+    /sousOnglet === 'revenues' \? 'REVENUE'/.test(workspace));
+  check('« Général » ne filtre rien', /'REVENUE' : null/.test(workspace));
+
+  check('le graphique n’apparaît que sur « Général »',
+    /sousOnglet === 'general' \?[\s\S]{0,200}<NetChart/.test(workspace));
+
+  check('LES AGRÉGATS NE SUIVENT PAS LE SOUS-ONGLET — ils décrivent la période',
+    workspace.includes('criteresResume') && workspace.includes('criteresListe')
+    && /useFinanceWorkspace\(criteresResume, criteresListe\)/.test(workspace));
+}
+
+section('6. Les périodes, les filtres et le tri sont à l’écran');
+{
+  check('les six périodes du cahier des charges sont proposées',
+    ['TODAY', 'LAST_7_DAYS', 'LAST_30_DAYS', 'CURRENT_MONTH', 'CURRENT_YEAR', 'CUSTOM']
+      .every((clef) => libelles.PERIOD_ORDER.includes(clef)));
+  check('…plus « depuis le début », qui n’en est pas une borne',
+    libelles.PERIOD_ORDER.includes('ALL'));
+  check('chacune porte un libellé lisible',
+    libelles.PERIOD_ORDER.every((clef) => typeof libelles.PERIOD_LABELS[clef] === 'string'
+      && libelles.PERIOD_LABELS[clef].length > 0));
+
+  check('la période personnalisée ouvre deux bornes de date',
+    /period === 'CUSTOM' \?[\s\S]{0,600}type="date"/.test(workspace));
+  check('…et une borne manquante ne part pas en erreur serveur',
+    workspace.includes('periodeUtilisable'));
+
+  check('la recherche est branchée', workspace.includes('<SearchField'));
+  check('le tri propose date et montant, dans les deux sens',
+    libelles.SORT_ORDER.length === 4
+    && libelles.SORT_ORDER.includes('AMOUNT_ASC')
+    && libelles.SORT_ORDER.includes('DATE_DESC'));
+  check('le filtre par rattachement n’apparaît QUE sur la page globale',
+    /!verrouille \? \([\s\S]{0,400}Rattachement/.test(workspace));
+  check('…et il propose L.Y Solution seule', workspace.includes('__COMPANY__'));
+
+  check('les filtres passent par le sélecteur thémé, jamais par un select natif',
+    workspace.includes('<ThemedFilter'));
+}
+
+section('7. Saisir : deux catégories, et une récurrence ANNONCÉE, pas simulée');
+{
+  check('le bouton d’ajout existe', workspace.includes('Ajouter une transaction'));
+  const formCode = code(formulaire);
+  check('la catégorie propose Revenu et Coût',
+    />\s*Revenu\s*</.test(formCode) && />\s*Coût\s*</.test(formCode));
+  check('le type propose « Ponctuel »', /Ponctuel/.test(formCode));
+  check('…et « Récurrent » DÉSACTIVÉ',
+    /disabled[\s\S]{0,300}Récurrent/.test(formCode));
+  check('…avec la mention de ce qui viendra',
+    /prochain lot/.test(formCode));
+  check('AUCUNE fausse récurrence n’est envoyée au backend',
+    !/recurring|isRecurring|RECURRING/i.test(formCode));
+
+  check('le montant part en CHAÎNE, jamais en nombre flottant',
+    /type="text"[\s\S]{0,200}inputMode="decimal"/.test(formCode)
+    && !formCode.includes('type="number"'));
+  check('la date est un jour, pas un horodatage', formulaire.includes('type="date"'));
+  check('le rattachement est VERROUILLÉ depuis une fiche projet',
+    formulaire.includes('lockedProjectId') && formulaire.includes('readOnly'));
+  check('…et sans projet, le mouvement appartient à L.Y Solution',
+    formulaire.includes('LY_SOLUTION'));
+  check('le nom est obligatoire', /value=\{label\}[\s\S]{0,200}required/.test(formulaire));
+}
+
+section('8. Le détail n’affiche AUCUN champ Stripe vide par anticipation');
+{
+  check('le bouton « Voir les détails » existe', workspace.includes('Voir les détails'));
+
+  check('l’identifiant interne est affiché', detail.includes('Identifiant interne'));
+  check('le projet, le nom, la description, le montant, la date le sont aussi',
+    detail.includes('Rattachement') && detail.includes('Date d’effet')
+    && detail.includes('Description') && detail.includes('Montant brut'));
+  check('l’origine et le statut sont affichés',
+    detail.includes('ORIGIN_LABELS') && detail.includes('STATUS_LABELS'));
+  check('l’auteur et les dates de création/modification aussi',
+    detail.includes('Saisi par') && detail.includes('Dernière modification'));
+
+  check('LA PROVENANCE N’EST RENDUE QUE SI ELLE EXISTE',
+    /transaction\.provenance \?/.test(detail));
+  check('…chaque champ fournisseur est conditionné individuellement',
+    /provenance\.provider \?/.test(detail)
+    && /provenance\.environment \?/.test(detail)
+    && /provenance\.externalId \?/.test(detail));
+  check('la transaction parente n’apparaît que s’il y en a une',
+    /transaction\.parentTransactionId \?/.test(detail));
+  check('aucun libellé Stripe n’est écrit en dur',
+    !/Stripe/.test(detail.replace(/\/\*[\s\S]*?\*\//g, '')));
+}
+
+section('9. Supprimer : une ligne, puis « tout », avec confirmation forte');
+{
+  check('la suppression unitaire passe par une confirmation',
+    workspace.includes('SuppressionUnitaire') && workspace.includes('Supprimer ce mouvement ?'));
+  check('…et annonce que le document reste auditable',
+    /reste consultable pour l’audit/.test(workspace));
+
+  check('« Tout supprimer » n’est proposé qu’à un compte DEV',
+    /isDev \? \([\s\S]{0,200}Tout supprimer/.test(workspace));
+  check('…il annonce un DÉCOMPTE avant d’agir',
+    workspace.includes('bulkScope') && workspace.includes('Décompte en cours'));
+  check('…il exige que le mot soit RETAPÉ',
+    workspace.includes("CONFIRMATION_MASSE = 'SUPPRIMER'")
+    && workspace.includes('phrase !== CONFIRMATION_MASSE'));
+  check('…il nomme sa PORTÉE', /Portée : \$\{libelle\}/.test(workspace));
+  check('…et dit qu’elle ignore la période affichée',
+    /Toutes périodes confondues/.test(workspace));
+  check('le bouton reste inerte s’il n’y a rien à supprimer',
+    workspace.includes('compte === 0'));
+}
+
+section('10. États vides, chargement, erreur, et le tronquage dit son nom');
+{
+  check('un état de chargement existe', workspace.includes('Chargement des finances'));
+  check('un état d’erreur existe', /alert alert-error/.test(workspace));
+  check('un état vide existe pour la liste', workspace.includes('Aucun mouvement ne correspond'));
+  check('…et il ne dit pas la même chose selon qu’on cherche ou non',
+    /recherche\.trim\(\)[\s\S]{0,200}Élargissez la recherche/.test(workspace));
+  check('le graphique a son propre état vide',
+    graphique.includes('Aucun mouvement sur cette période'));
+  check('la page globale a un état vide pour la répartition',
+    pageGlobale.includes('Aucun mouvement enregistré'));
+
+  check('une liste TRONQUÉE le dit, et rappelle que les totaux sont complets',
+    /list\.truncated \?/.test(workspace) && /les totaux ci-dessus/.test(workspace));
+  check('une relecture en cours ne vide pas l’écran',
+    workspace.includes('isRefreshing') && workspace.includes('Mise à jour…'));
+}
+
+section('11. Responsive, thème et accessibilité');
+{
+  check('les montants sont en chiffres de largeur fixe — une colonne comparable',
+    css.includes('font-variant-numeric: tabular-nums'));
+  check('les tableaux défilent horizontalement plutôt que de déborder',
+    workspace.includes('table-scroll'));
+  check('la mise en page du détail passe à une colonne sur petit écran',
+    /@media \(max-width: 40rem\)[\s\S]{0,400}finance-detail-row/.test(css));
+  check('le formulaire aussi', /@media \(max-width: 40rem\)[\s\S]{0,400}finance-form-row/.test(css));
+
+  check('AUCUNE couleur en dur dans les styles financiers',
+    !/\.finance-[\s\S]{0,4000}#[0-9a-f]{3,6}/i.test(css.slice(css.indexOf('.finance-workspace'))));
+  check('les couleurs viennent du thème', css.includes('.finance-amount-inflow')
+    && /\.finance-amount-inflow[^}]*var\(--p-ok\)/.test(css));
+
+  check('le graphique porte un rôle et une description',
+    graphique.includes('role="img"') && graphique.includes('aria-label'));
+  check('chaque barre porte sa valeur en infobulle native', graphique.includes('<title>'));
+  check('la colonne d’actions a un intitulé pour les lecteurs d’écran',
+    workspace.includes('sr-only'));
+  check('les choix de catégorie annoncent leur état', formulaire.includes('aria-pressed'));
+}
+
+section('12. Le client d’API ne connaît ni Stripe, ni remboursement, ni import');
+{
+  const bloc = api.slice(api.indexOf('export const finances'), api.indexOf('export function errorMessage'));
+  check('le client financier existe', bloc.length > 0);
+  check('aucun verbe de remboursement', !/refund/i.test(bloc));
+  check('aucun verbe Stripe', !/stripe/i.test(bloc));
+  check('aucun import automatique', !/\bimport(er)?From|synchronis/i.test(bloc));
+  check('la suppression est bien un retrait LOGIQUE annoncé comme tel',
+    /Suppression LOGIQUE/.test(bloc));
+  check('la portée de la suppression en masse est un paramètre EXIGÉ',
+    /scope: FinanceScope; projectId\?: string \| null; confirm: string/.test(bloc));
+}
+
+finish();

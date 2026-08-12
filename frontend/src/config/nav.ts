@@ -30,6 +30,9 @@ export const NAV_ITEMS: NavItem[] = [
   // Agenda ET événements : une seule page, les filtres suffisent à passer de
   // l'un à l'autre. Deux écrans auraient montré les mêmes objets deux fois.
   { to: '/agenda', label: 'Agenda et événements', section: 'GESTION' },
+  // L10.1 — le registre financier. Dans GESTION et non DÉVELOPPEUR : savoir si
+  // un client rapporte est le travail de l'équipe, pas du développeur.
+  { to: '/finances', label: 'Finances', section: 'GESTION' },
   // « Mon entreprise » et non « Entreprise » : cette page porte l'identité de
   // L.Y Solution publiée vers les sites, pas la fiche d'un client.
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },

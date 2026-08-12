@@ -2429,3 +2429,215 @@ body {
    l'environnement ne concorde pas avec celui du Panel. Il menait donc
    invariablement à une fiche fantôme. Ses styles sont partis avec lui.
 */
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   REGISTRE FINANCIER (L10.1)
+
+   ══ TROIS COULEURS, ET PAS UNE DE PLUS ═════════════════════════════════════
+   Une entrée est un ACCENT (`--p-ok`), une sortie un DANGER (`--p-danger`), un
+   net nul reste neutre. Inventer une palette financière séparée aurait produit
+   un écran qui ne ressemble à aucun autre du Panel, et qui cesserait de suivre
+   le thème éditable à la première personnalisation.
+
+   Le SIGNE reste porté par le texte (« +2 490,00 € », « −48,00 € ») : la
+   couleur seule n'est pas une information accessible.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.finance-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-5);
+}
+
+/* Sous-onglets : la même mécanique que les onglets de page, un cran plus bas.
+   Marge basse retirée — l'espacement vient de la grille du plan de travail. */
+.tabs-sub {
+  margin-bottom: 0;
+  align-items: center;
+  gap: var(--p-space-2);
+  flex-wrap: wrap;
+}
+
+.finance-metrics { flex-wrap: wrap; }
+
+.finance-amount-inflow,
+.finance-net-ok { color: var(--p-ok); }
+
+.finance-amount-outflow,
+.finance-net-danger { color: var(--p-danger); }
+
+.finance-net-neutral { color: var(--p-text-muted); }
+
+/* Les montants s'alignent à DROITE et sur des chiffres de largeur fixe :
+   c'est ce qui permet de comparer une colonne d'un coup d'œil, sans lire. */
+.finance-cell-amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.finance-table .cell-secondary {
+  display: block;
+  color: var(--p-text-muted);
+  font-size: var(--p-text-xs);
+}
+
+.finance-filters {
+  align-items: flex-end;
+  gap: var(--p-space-3);
+  flex-wrap: wrap;
+}
+
+/* La recherche prend la place restante, sans jamais pousser les filtres
+   hors de la ligne : `min-width: 0` autorise la compression. */
+.finance-filter-search {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+/* ---------- Graphique du net ---------- */
+
+.net-chart { margin: 0; }
+
+.net-chart-svg {
+  display: block;
+  width: 100%;
+  /* Le SVG se met à l'échelle ; sa hauteur est réservée d'avance pour que la
+     carte ne saute pas au premier rendu. */
+  height: auto;
+  overflow: visible;
+}
+
+.net-chart-zero {
+  stroke: var(--p-border-strong);
+  stroke-width: 1;
+}
+
+.net-chart-bar { fill: var(--p-ok); }
+.net-chart-bar-negative { fill: var(--p-danger); }
+
+.net-chart-label {
+  fill: var(--p-text-faint);
+  font-size: 10px;
+}
+
+.net-chart-caption {
+  margin-top: var(--p-space-2);
+  color: var(--p-text-muted);
+  font-size: var(--p-text-xs);
+}
+
+/* ---------- Formulaire ---------- */
+
+.finance-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+}
+
+.finance-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+.finance-choice-row {
+  display: flex;
+  gap: var(--p-space-2);
+  flex-wrap: wrap;
+}
+
+/*
+  UN CHOIX DÉSACTIVÉ RESTE LISIBLE.
+
+  « Récurrent » est présent et inactif : il annonce ce qui vient. Le rendre
+  presque invisible reviendrait à le retirer, et retirer un choix prévu laisse
+  croire qu'il n'existera jamais. Opacité modérée, curseur explicite, et
+  l'infobulle dit pourquoi.
+*/
+.finance-choice {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+  cursor: pointer;
+}
+
+.finance-choice:hover:not(:disabled) { border-color: var(--p-border-strong); color: var(--p-text); }
+
+.finance-choice-on {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+  color: var(--p-text);
+  font-weight: 600;
+}
+
+.finance-choice:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.finance-choice:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 1px; }
+
+.finance-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--p-space-4);
+}
+
+.finance-textarea {
+  min-height: 4.5rem;
+  font-family: inherit;
+  font-size: var(--p-text-sm);
+}
+
+/* ---------- Détail ---------- */
+
+.finance-detail-amount {
+  margin: 0;
+  font-size: var(--p-text-2xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.finance-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+/*
+  Deux colonnes tant qu'il y a la place, UNE seule en dessous : un libellé et
+  sa valeur écrasés côte à côte sur 320 px se coupent tous les deux.
+*/
+.finance-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  gap: var(--p-space-3);
+  padding-bottom: var(--p-space-2);
+  border-bottom: 1px solid var(--p-border);
+}
+
+.finance-detail-row:last-child { border-bottom: none; }
+
+.finance-detail-label {
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+}
+
+.finance-detail-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 40rem) {
+  .finance-detail-row { grid-template-columns: minmax(0, 1fr); gap: var(--p-space-1); }
+  .finance-form-row { grid-template-columns: minmax(0, 1fr); }
+  .finance-filters > * { flex: 1 1 100%; }
+}

@@ -10,6 +10,7 @@ import bridgeRoutes from './routes/bridge.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import eventsRoutes from './routes/events.routes.js';
+import financesRoutes from './routes/finances.routes.js';
 import themeRoutes from './routes/theme.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import networkRoutes from './routes/network.routes.js';
@@ -95,6 +96,20 @@ export function createApp() {
    */
   app.use('/api/public', publicRoutes);
   app.use('/api', eventsRoutes);
+  /**
+   * L10.1 — LE REGISTRE FINANCIER.
+   *
+   * Monté APRÈS `eventsRoutes`, comme tout le reste : ce routeur-là s'installe
+   * sur `/api` tout entier et pose sa propre garde. Un chemin monté avant lui
+   * échapperait à cette garde ; un chemin monté après la subit — et
+   * `/api/finances` la veut, puisqu'elle exige exactement le même jeton.
+   *
+   * Hors de `/api/projects` volontairement : un mouvement peut n'appartenir à
+   * AUCUN projet (`projectId: null`, les finances propres à L.Y Solution). Le
+   * loger sous la surface du registre des projets aurait fait de l'entreprise
+   * elle-même un cas particulier de projet.
+   */
+  app.use('/api/finances', financesRoutes);
   app.use('/api/theme', themeRoutes);
   app.use('/api/system-configuration', networkRoutes);
   app.use('/api/supervision', supervisionRoutes);

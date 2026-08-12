@@ -47,8 +47,17 @@ section('1. Deux espaces, et le menu reflète la règle');
   const gestionLabels = gestion.map((i) => i.label);
   // « Agenda et événements » entre en Gestion (Lot 2C) : c'est le suivi client
   // de l'équipe, pas une opération d'infrastructure.
-  check(`Gestion = Tableau de bord, Projets clients, Agenda et événements, Mon entreprise — ${gestionLabels.join(', ')}`,
-    gestionLabels.join('|') === 'Tableau de bord|Projets clients|Agenda et événements|Mon entreprise');
+  //
+  // « Finances » entre en Gestion (Lot L10.1), et pour la même raison : savoir
+  // si un client rapporte est le travail de l'équipe. La classer en
+  // Développeur ferait de la personne qui écrit le code la seule à pouvoir
+  // lire le chiffre d'affaires. La liste reste FERMÉE et énumérée : une
+  // entrée de plus dans cet espace est une décision, jamais un effet de bord.
+  const GESTION_ATTENDUE = [
+    'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Finances', 'Mon entreprise',
+  ];
+  check(`Gestion = ${GESTION_ATTENDUE.join(', ')} — ${gestionLabels.join(', ')}`,
+    gestionLabels.join('|') === GESTION_ATTENDUE.join('|'));
 
   const devPaths = dev.map((i) => i.to);
   check('les 7 entrées techniques sont dans Développeur',
@@ -68,7 +77,19 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
 
   // `*` est le repli global (redirection), `/login` est hors coquille : ni
   // l'un ni l'autre n'est une surface technique à garder.
-  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/company', '/panel'];
+  /**
+   * LES ROUTES MÉTIER, ÉNUMÉRÉES — et c'est la liste qui fait l'invariant.
+   *
+   * Tout ce qui n'est pas nommé ici est réputé TECHNIQUE, donc doit passer par
+   * la garde DEV. Une route ouverte ne peut donc pas apparaître par
+   * distraction : il faut venir l'inscrire, ce qui oblige à dire pourquoi.
+   *
+   * `/finances` (L10.1) est métier. Le backend applique exactement la même
+   * règle — lecture et tenue de livres ouvertes à tout compte du Panel, seule
+   * la suppression EN MASSE est réservée aux DEV, et cette garde-là vit côté
+   * serveur, où une URL tapée ne la contourne pas.
+   */
+  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company', '/panel'];
   const technical = routes.filter(
     (r) => !BUSINESS.includes(r.path) && r.path !== '/login' && r.path !== '*',
   );
@@ -338,8 +359,21 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
     !/searchParams\.get\('env'\)/.test(detail));
   check('…et ne porte plus de sélecteur d’instance sœur',
     !/SisterInstanceLink|groupProjectsByLogicalProject/.test(detail));
+  /**
+   * L'ONGLET LU DEPUIS L'URL EST VALIDÉ CONTRE UNE LISTE FERMÉE.
+   *
+   * Le contrôle épinglait la comparaison écrite à la main
+   * (`tabParam === 'dev' || tabParam === 'events'`). Elle ne passait pas
+   * l'échelle : le lot L10.1 ajoute « Finances », et une chaîne de plus
+   * chaque fois est précisément la forme qu'on finit par oublier de compléter.
+   *
+   * L'INVARIANT n'a pas changé — une valeur inconnue retombe sur « Vue
+   * d'ensemble » — mais il est désormais porté par une liste nommée, que le
+   * type et le rendu partagent. C'est ce que ce contrôle vérifie.
+   */
   check('…et une valeur inattendue ne devient jamais un onglet',
-    /tabParam === 'dev' \|\| tabParam === 'events'/.test(detail));
+    /const TABS: Tab\[\] = \[/.test(detail)
+    && /TABS\.includes\(tabParam as Tab\)[\s\S]{0,60}: 'overview'/.test(detail));
   check('la fiche n’affiche plus de chargement après le premier',
     /isInitialLoading\) return/.test(detail));
 

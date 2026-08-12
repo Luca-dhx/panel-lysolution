@@ -24,6 +24,7 @@ import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
 import { MeetingRow } from '@/components/EventLists';
 import { EventTimeline } from '@/components/EventTimeline';
+import { FinanceWorkspace } from '@/components/finance/FinanceWorkspace';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
@@ -63,7 +64,10 @@ import {
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
-type Tab = 'overview' | 'events' | 'dev';
+type Tab = 'overview' | 'events' | 'finances' | 'dev';
+
+/** Les onglets atteignables par l'URL — la garde DEV reste séparée. */
+const TABS: Tab[] = ['overview', 'events', 'finances', 'dev'];
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();
@@ -89,7 +93,7 @@ export function ProjectDetailPage() {
    */
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const tab: Tab = tabParam === 'dev' || tabParam === 'events' ? tabParam : 'overview';
+  const tab: Tab = TABS.includes(tabParam as Tab) ? (tabParam as Tab) : 'overview';
   const setTab = (t: Tab) => {
     const next = new URLSearchParams(searchParams);
     if (t === 'overview') next.delete('tab');
@@ -225,6 +229,18 @@ export function ProjectDetailPage() {
         >
           Événements
         </button>
+        {/*
+          FINANCES — visible par tout compte du Panel, comme la vue d'ensemble.
+          Le backend applique la même règle : cet onglet ne masque rien qu'une
+          URL révélerait, il reflète une permission qui existe côté serveur.
+        */}
+        <button
+          type="button"
+          className={tab === 'finances' ? 'tab tab-active' : 'tab'}
+          onClick={() => setTab('finances')}
+        >
+          Finances
+        </button>
         {isDev ? (
           <button
             type="button"
@@ -240,6 +256,19 @@ export function ProjectDetailPage() {
         <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
+      {/*
+        LE MÊME MOTEUR QUE LA PAGE GLOBALE, avec le rattachement VERROUILLÉ.
+        Rien n'est recopié : un second calcul de bénéfice aurait fini par
+        afficher un autre chiffre que celui de la page Finances, pour les mêmes
+        lignes.
+      */}
+      {tab === 'finances' ? (
+        <FinanceWorkspace
+          scope="project"
+          projectId={project.projectId}
+          projectName={projectDisplayName(project)}
+        />
+      ) : null}
       {tab === 'dev' && isDev ? <DeveloperTab project={project} fraicheur={fraicheur} /> : null}
     </div>
   );

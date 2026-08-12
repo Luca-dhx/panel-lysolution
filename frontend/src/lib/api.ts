@@ -31,6 +31,10 @@ import type {
   ReleaseList, RunRow, StartedOperation, TargetDetail,
   DeployStreamEvent,
 } from '@/types.deployment';
+import type {
+  BulkDeleteResult, FinanceCriteria, FinanceListResult, FinanceProjectLine, FinanceScope,
+  FinanceSummary, FinancialTransaction, ManualTransactionInput,
+} from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
 
@@ -916,6 +920,87 @@ export const deployment = {
     request<{ items: RunRow[] }>(
       `/api/deployment/runs${targetId ? `?targetId=${targetId}` : ''}`,
     ),
+};
+
+/**
+ * REGISTRE FINANCIER (L10.1) — un seul moteur, deux écrans.
+ *
+ * La fiche projet et la page Finances globale appellent EXACTEMENT ces
+ * fonctions, avec une portée différente. Il n'y a pas de « surface projet » et
+ * de « surface globale » : un second jeu d'appels aurait fini par calculer le
+ * bénéfice deux fois, et les deux chiffres auraient divergé.
+ *
+ * Aucun appel ici ne parle à Stripe, ne rembourse, n'importe ni ne synchronise.
+ * Ces verbes appartiennent aux lots suivants.
+ */
+const financeQuery = (criteria: FinanceCriteria = {}): string => {
+  const params = new URLSearchParams();
+  const poser = (clef: string, valeur: unknown) => {
+    if (valeur === undefined || valeur === null || valeur === '') return;
+    params.set(clef, String(valeur));
+  };
+  poser('scope', criteria.scope);
+  poser('projectId', criteria.projectId);
+  poser('period', criteria.period);
+  poser('start', criteria.start);
+  poser('end', criteria.end);
+  poser('category', criteria.category);
+  poser('flow', criteria.flow);
+  poser('search', criteria.search);
+  poser('sort', criteria.sort);
+  poser('limit', criteria.limit);
+  if (criteria.includeDeleted) params.set('includeDeleted', '1');
+  const query = params.toString();
+  return query ? `?${query}` : '';
+};
+
+export const finances = {
+  /** Revenus, coûts, net et points du graphique — sur TOUT ce que le filtre retient. */
+  summary: (criteria: FinanceCriteria = {}) =>
+    request<FinanceSummary>(`/api/finances/summary${financeQuery(criteria)}`),
+
+  /** La liste, bornée. `total` dit combien il y en a vraiment. */
+  list: (criteria: FinanceCriteria = {}) =>
+    request<FinanceListResult>(`/api/finances/transactions${financeQuery(criteria)}`),
+
+  detail: (transactionId: string) =>
+    request<{ transaction: FinancialTransaction }>(`/api/finances/transactions/${transactionId}`),
+
+  /** La répartition par projet — la page globale, et elle seule. */
+  byProject: (criteria: FinanceCriteria = {}) =>
+    request<{ items: FinanceProjectLine[] }>(`/api/finances/by-project${financeQuery(criteria)}`),
+
+  create: (body: ManualTransactionInput) =>
+    request<{ transaction: FinancialTransaction }>('/api/finances/transactions', {
+      method: 'POST', body,
+    }),
+
+  update: (transactionId: string, body: Partial<ManualTransactionInput>) =>
+    request<{ transaction: FinancialTransaction }>(`/api/finances/transactions/${transactionId}`, {
+      method: 'PATCH', body,
+    }),
+
+  /** Suppression LOGIQUE : la ligne quitte les totaux, le document reste. */
+  remove: (transactionId: string, reason?: string) =>
+    request<{ transaction: FinancialTransaction }>(`/api/finances/transactions/${transactionId}`, {
+      method: 'DELETE', body: { reason: reason ?? null },
+    }),
+
+  /**
+   * COMBIEN « tout supprimer » retirerait — sans rien retirer.
+   * Appelé AVANT d'ouvrir la confirmation : une question posée sans chiffre
+   * n'est pas une question à laquelle on peut répondre.
+   */
+  bulkScope: (scope: FinanceScope, projectId?: string | null) =>
+    request<{ scope: FinanceScope; projectId: string | null; count: number }>(
+      `/api/finances/bulk-scope?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
+    ),
+
+  /** Réservé aux comptes DEV côté backend. Portée explicite, confirmation retapée. */
+  bulkDelete: (body: {
+    scope: FinanceScope; projectId?: string | null; confirm: string; reason?: string;
+  }) =>
+    request<BulkDeleteResult>('/api/finances/transactions/bulk-delete', { method: 'POST', body }),
 };
 
 export function errorMessage(err: unknown, fallback: string): string {

@@ -11,6 +11,7 @@ import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
 import { IntegratedApiControlPlanePage } from '@/pages/IntegratedApiControlPlanePage';
 import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
+import { FinancesPage } from '@/pages/FinancesPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { OverviewPage } from '@/pages/OverviewPage';
 import { ExecutionPage } from '@/pages/ExecutionPage';
@@ -53,6 +54,13 @@ export default function App() {
         <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/agenda" element={<AgendaPage />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage />} />
+        {/*
+          FINANCES — GESTION, et non DÉVELOPPEUR : c'est la donnée de gestion
+          par excellence. La réserver aux comptes DEV ferait du développeur le
+          seul lecteur du chiffre d'affaires. Le backend applique la même règle,
+          et c'est LUI la barrière — cette route ne fait que la refléter.
+        */}
+        <Route path="/finances" element={<FinancesPage />} />
         <Route path="/company" element={<CompanyPage />} />
 
         {/* ── DÉVELOPPEUR — routes réellement interdites aux ADMIN ──────── */}
