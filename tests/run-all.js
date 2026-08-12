@@ -106,6 +106,9 @@ const TESTS = [
   // non la version du contrat : cette version compte les sauvegardes de zones
   // de signature, pas les engagements commerciaux.
   'stripe-subscription-cutover-e2e.test.js',
+  // L6.2F — la PREMIÈRE adoption : Stripe crée l'abonnement au paiement, et le
+  // Panel ne peut le posséder que par filiation — la session qui l'a produit.
+  'stripe-subscription-ownership-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

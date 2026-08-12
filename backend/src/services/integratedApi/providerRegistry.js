@@ -154,6 +154,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       // L6.2C — la lecture d'une session, servie dès lors que l'appartenance
       // de la ressource est prouvable (elle l'est depuis L6.2B).
       'billing.checkout.retrieve',
+      // L6.2F — la lecture d'un abonnement, servie dès qu'il est adoptable.
+      'billing.subscription.retrieve',
       'billing.subscription.cancel_at_period_end',
       'billing.subscription.reconcile',
       'billing.invoice.list',

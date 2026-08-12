@@ -64,29 +64,42 @@ export const EVENT_OWNERSHIP = Object.freeze({
 /**
  * ÉVÉNEMENT → RESSOURCE PORTEUSE D'APPARTENANCE.
  *
- * ══ POURQUOI SI PEU D'ENTRÉES ═══════════════════════════════════════════════
+ * ══ CE QUE LA MATRICE MESURE VRAIMENT ═══════════════════════════════════════
  *
- * Le Panel souscrit treize événements Stripe (registre L5). Seuls quatre
- * portent aujourd'hui une ressource dont il peut PROUVER l'appartenance : les
- * sessions de paiement, parce que L6.2B est le seul lot qui en crée et les lie.
+ * Pas ce qu'on aimerait router : ce dont on peut PROUVER l'appartenance. Le
+ * Panel souscrit treize événements (registre L5) ; sept y figurent aujourd'hui.
  *
- * Les neuf autres parlent de `payment_intent`, `invoice`, `charge` ou
- * `subscription` : des objets que le Panel n'a jamais créés, donc jamais liés.
- * Les router exigerait de remonter du `payment_intent` vers sa session — c'est
- * possible, et c'est exactement ce qu'il ne faut PAS faire ici : cette remontée
- * demande un appel Stripe pour une ressource dont on ne sait pas encore si elle
- * nous concerne. On refuse de payer un appel fournisseur pour découvrir à qui
- * appartient quelque chose.
+ *   · les SESSIONS de paiement, parce que le Panel les crée et les lie (L6.2B) ;
+ *   · les ABONNEMENTS, parce qu'il peut les ADOPTER depuis la session qui les a
+ *     produits (L6.2F) — le premier cas où l'ancrage ne vient pas d'une
+ *     création, mais d'une filiation désignée par le fournisseur lui-même.
  *
- * Ils resteront `NOT_ROUTABLE` jusqu'à ce que leurs propres familles entrent
- * dans le registre de liens — c'est-à-dire jusqu'à `billing.customer.ensure` et
- * ce qui suivra. La matrice est donc une DETTE lisible, pas un oubli.
+ * Les six autres parlent de `payment_intent`, `invoice` ou `charge` : des objets
+ * dont aucune famille n'a encore de lien. Les router exigerait de remonter de
+ * l'objet vers sa session en interrogeant Stripe — c'est-à-dire de payer un
+ * appel fournisseur pour découvrir à qui appartient quelque chose. C'est
+ * exactement l'ordre inverse de la doctrine.
+ *
+ * La matrice est donc une DETTE lisible, et elle se résorbe famille par famille.
  */
 export const EVENT_RESOURCE_MATRIX = Object.freeze({
   'checkout.session.completed': STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
   'checkout.session.async_payment_succeeded': STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
   'checkout.session.async_payment_failed': STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
   'checkout.session.expired': STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
+  /**
+   * L6.2F — LES ABONNEMENTS DEVIENNENT ROUTABLES, et pas parce qu'on a décidé
+   * de leur faire confiance : parce qu'ils ont désormais un lien, adopté depuis
+   * la session qui les a produits.
+   *
+   * Ces événements ne sont routés que si ce lien EXISTE. Un abonnement dont la
+   * session n'a pas encore été vue reste `UNOWNED` — voir le § « arrivées dans
+   * le désordre » du rapport. On n'invente jamais la filiation à partir de
+   * l'événement lui-même.
+   */
+  'customer.subscription.created': STRIPE_RESOURCE_TYPES.SUBSCRIPTION,
+  'customer.subscription.updated': STRIPE_RESOURCE_TYPES.SUBSCRIPTION,
+  'customer.subscription.deleted': STRIPE_RESOURCE_TYPES.SUBSCRIPTION,
 });
 
 /** Les événements souscrits qui ne portent pas encore d'appartenance prouvable. */
@@ -94,12 +107,15 @@ export const UNROUTABLE_EVENTS = Object.freeze([
   'payment_intent.succeeded',
   'payment_intent.payment_failed',
   'charge.refunded',
+  /**
+   * Les factures restent hors de portée : elles portent un `subscription`, mais
+   * remonter de la facture à l'abonnement demanderait d'interroger Stripe pour
+   * découvrir à qui appartient quelque chose — l'ordre inverse de la doctrine.
+   * Elles deviendront routables quand la famille INVOICE aura son propre lien.
+   */
   'invoice.finalized',
   'invoice.paid',
   'invoice.payment_failed',
-  'customer.subscription.created',
-  'customer.subscription.updated',
-  'customer.subscription.deleted',
 ]);
 
 /* -------------------------------------------------------------------------- */

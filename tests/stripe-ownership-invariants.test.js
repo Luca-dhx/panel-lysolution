@@ -30,6 +30,7 @@ const routage = sansCommentaires(lire('backend/src/services/webhooks/stripeEvent
 const autoriteClient = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCustomerAuthority.js'));
 const autoriteTarif = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripePriceAuthority.js'));
 const transport = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeTransport.js'));
+const adoption = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeSubscriptionAdoption.js'));
 const ingest = sansCommentaires(lire('backend/src/services/webhooks/webhookIngest.js'));
 
 /* ========================================================================== */
@@ -194,10 +195,20 @@ section('7. PLUS AUCUNE LECTURE LOCALE SUR LE PARCOURS MIGRÉ (SB Auto)');
     check('aucun repli local en cas d’échec de la capacité',
       !/catch[\s\S]{0,200}provider\.retrieve/.test(paiement));
 
-    // L'abonnement, lui, garde son chemin — et c'est explicite, pas un oubli.
+    /**
+     * ── CE CONTRÔLE A CHANGÉ DE SENS (L6.2E puis L6.2F) ──────────────────────
+     *
+     * Il vérifiait que l'abonnement lisait ENCORE localement — un périmètre
+     * assumé au lot L6.2C, quand ses ressources n'avaient aucun lien.
+     *
+     * Elles en ont désormais toutes : la session (L6.2B), le client (L6.2D), le
+     * tarif (L6.2E) et l'abonnement lui-même (L6.2F, par adoption). Il n'y a
+     * donc plus aucune raison de lire quoi que ce soit avec la clé du projet, et
+     * le contrôle s'inverse.
+     */
     const abonnement = sansCommentaires(fs.readFileSync(path.join(voisin, 'subscription.service.js'), 'utf8'));
-    check('l’abonnement lit encore localement — périmètre assumé',
-      /provider\.retrieveCheckoutSession/.test(abonnement));
+    check('le parcours d’abonnement ne lit plus AUCUNE session localement',
+      !/provider\.retrieveCheckoutSession/.test(abonnement));
   }
 }
 
@@ -436,6 +447,113 @@ section('14. LE PARCOURS ABONNEMENT N’ÉCRIT PLUS CHEZ STRIPE (SB Auto)');
      */
     const pilote = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.provider.js'), 'utf8'));
     check('le pilote reste complet', /async createCheckoutSession/.test(pilote));
+  }
+}
+
+/* ========================================================================== */
+section('15. L’ADOPTION NE S’OBTIENT QUE PAR FILIATION (L6.2F)');
+/* ========================================================================== */
+{
+  /**
+   * SUBSCRIPTION_ADOPTION_BY_CLAIM = 0.
+   *
+   * L'abonnement est la première ressource adoptée du plan de contrôle. Toute
+   * la légitimité de cette adoption tient à UNE chose : elle part d'une session
+   * dont l'appartenance est déjà prouvée, et c'est Stripe qui désigne la
+   * filiation.
+   *
+   * L'invariant se lit donc sur la SIGNATURE : la fonction ne doit pas pouvoir
+   * recevoir un identifiant d'abonnement. Si elle le pouvait, un appelant
+   * distrait — ou un futur endpoint d'administration — finirait par le lui
+   * passer, et l'adoption redeviendrait une déclaration.
+   */
+  check('la fonction d’adoption ne prend PAS d’identifiant d’abonnement',
+    !/adoptSubscriptionFromSession\(\{[^}]*subscriptionId/.test(adoption));
+  check('…elle reçoit la SESSION telle que Stripe la rend',
+    /adoptSubscriptionFromSession\(\{ environment, session, source \}\)/.test(adoption));
+  check('…et extrait elle-même la filiation', /idOf\(session\.subscription\)/.test(adoption));
+
+  /**
+   * La preuve vient AVANT tout le reste : sans lien sur la session, on renonce.
+   * On vérifie l'ORDRE, pas seulement la présence — une vérification placée
+   * après la lecture des metadata ne protégerait plus de rien.
+   */
+  const posLien = adoption.indexOf('findBinding(');
+  const posMetadata = adoption.indexOf('metadata?.panelProjectId');
+  check('le lien de session est cherché AVANT de lire les metadata',
+    posLien > 0 && posMetadata > posLien);
+  check('…et l’absence de lien interrompt tout',
+    /if \(!lienSession \|\| lienSession\.revokedAt\) return rien;/.test(adoption));
+
+  /**
+   * Le projet propriétaire vient du LIEN de la session, jamais des metadata.
+   * On vérifie que la seule affectation de `projectId` en découle.
+   */
+  check('le propriétaire vient du lien de session',
+    /const projectId = lienSession\.projectId;/.test(adoption));
+  check('…et les metadata ne servent qu’à comparer',
+    /claimMismatch = Boolean\(revendique && revendique !== projectId\)/.test(adoption));
+}
+
+/* ========================================================================== */
+section('16. AUCUN ABONNEMENT N’EST CRÉÉ NI MUTÉ PAR NOUS (L6.2F)');
+/* ========================================================================== */
+{
+  /**
+   * Stripe crée les abonnements au paiement ; c'est ce fait qui rend l'adoption
+   * nécessaire. Le jour où le transport saurait en créer un, l'adoption
+   * cesserait d'être la seule voie — et la doctrine tomberait sans bruit.
+   *
+   * Les résiliations sont explicitement reportées à L6.2G : le transport ne doit
+   * pas non plus savoir muter un abonnement tant que cette écriture n'a pas sa
+   * propre stratégie d'idempotence et de convergence.
+   */
+  check('le transport ne sait pas CRÉER d’abonnement',
+    !/path: '\/v1\/subscriptions'/.test(transport));
+  /**
+   * On isole les ÉCRITURES ciblant un abonnement précis. La lecture (`GET`) est
+   * au contraire indispensable — c'est elle qui sert `billing.subscription.
+   * retrieve` — et la confondre avec une mutation rendrait ce contrôle inutile.
+   */
+  const versAbonnement = [...transport.matchAll(/method: '(\w+)', path: `\/v1\/subscriptions\/\$\{[^`]*`/g)]
+    .map((m) => m[1]);
+  const ecrituresAbo = versAbonnement.filter((m) => m !== 'GET');
+  check('…et une seule écriture ciblée : la résiliation différée de L6.1',
+    ecrituresAbo.length === 1 && ecrituresAbo[0] === 'POST');
+  check('…la lecture, elle, existe bien', versAbonnement.includes('GET'));
+  check('il sait en revanche en LIRE un', /export async function retrieveSubscription/.test(transport));
+}
+
+/* ========================================================================== */
+section('17. LE PROJET NE LIT PLUS D’ABONNEMENT LOCALEMENT (SB Auto)');
+/* ========================================================================== */
+{
+  const voisin = path.resolve(RACINE, '..', 'SB Auto 06', 'backend', 'src', 'services');
+  if (!fs.existsSync(voisin)) {
+    check('SB Auto absent — contrôle sauté proprement', true);
+  } else {
+    const abonnement = sansCommentaires(fs.readFileSync(path.join(voisin, 'subscription.service.js'), 'utf8'));
+
+    check('aucune lecture locale d’abonnement',
+      !/provider\.retrieveSubscription/.test(abonnement));
+    check('…il demande la capacité', /readSubscriptionViaPanel/.test(abonnement));
+
+    /**
+     * LE REPLI PAR METADATA A DISPARU.
+     *
+     * `listSubscriptions` listait les abonnements d'un client et retenait celui
+     * dont `metadata.contractId` correspondait : l'appartenance décidée par un
+     * champ éditable, sur une liste demandée plus large que son dû. C'est
+     * exactement ce que l'ownership remplace.
+     */
+    check('aucun listing d’abonnements', !/listSubscriptions/.test(abonnement));
+    check('…et aucun rattachement par metadata',
+      !/metadata\?\.contractId/.test(abonnement));
+
+    // Les résiliations restent locales — périmètre assumé, pas un oubli.
+    const contrat = sansCommentaires(fs.readFileSync(path.join(voisin, 'contract.service.js'), 'utf8'));
+    check('les résiliations restent locales — L6.2G',
+      /cancelSubscriptionAtPeriodEnd|cancelSubscriptionNow/.test(contrat));
   }
 }
 

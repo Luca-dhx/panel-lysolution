@@ -146,6 +146,17 @@ export const BIND_OUTCOMES = Object.freeze({
  * La récupération est donc le REJEU DE LA MÊME OPÉRATION, jamais une adoption
  * a posteriori sur foi d'un identifiant présenté.
  *
+ * ── UNE ADOPTION EXISTE POURTANT DEPUIS L6.2F, ET ELLE NE CONTREDIT PAS CECI ─
+ *
+ * L'abonnement n'est créé par personne de notre côté : Stripe le fabrique au
+ * paiement. Il est donc adopté — mais pas « sur foi d'un identifiant présenté » :
+ * il l'est parce que le fournisseur lui-même, sur une SESSION dont nous avons
+ * déjà prouvé l'appartenance, désigne cette ressource comme issue d'elle.
+ *
+ * La règle n'a pas été assouplie ; on a trouvé une seconde façon de la
+ * satisfaire. Voir `stripeSubscriptionAdoption.js`, et le champ `proof.
+ * derivedFrom*` qui porte cette filiation.
+ *
  * @returns {Promise<{outcome: string, binding: object}>}
  */
 export async function bindResource({
@@ -163,10 +174,22 @@ export async function bindResource({
     resourceId: String(resourceId).trim(),
     source,
     createdByOperationId,
+    /**
+     * La preuve est recopiée CHAMP PAR CHAMP, jamais étalée.
+     *
+     * Un `...proof` laisserait entrer n'importe quoi dans le registre
+     * d'appartenance — un montant, un nom, une charge utile de webhook — et ce
+     * registre doit rester lisible par n'importe quel opérateur sans précaution.
+     * Ajouter un champ de preuve est donc un GESTE, et il se voit.
+     */
     proof: {
       stripeMetadataContractId: proof?.stripeMetadataContractId ?? null,
       matchedProjectionContractId: proof?.matchedProjectionContractId ?? null,
       approvedBy: proof?.approvedBy ?? null,
+      /** L6.2F — la filiation : de quelle ressource possédée celle-ci découle. */
+      derivedFromResourceType: proof?.derivedFromResourceType ?? null,
+      derivedFromResourceId: proof?.derivedFromResourceId ?? null,
+      customerCorroborated: proof?.customerCorroborated ?? null,
     },
     revokedAt: null,
     revokedReason: null,

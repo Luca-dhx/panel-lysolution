@@ -120,8 +120,31 @@ const bindingSchema = new mongoose.Schema(
       stripeMetadataContractId: { type: String, default: null },
       /** La projection de contrat qui a corroboré, côté Panel. */
       matchedProjectionContractId: { type: String, default: null },
-      /** Qui a validé l'adoption. Une adoption reste un acte humain. */
+      /** Qui a validé l'adoption, quand elle relève d'un arbitrage humain. */
       approvedBy: { type: String, default: null },
+
+      /**
+       * LA FILIATION — d'où la ressource adoptée provient (L6.2F).
+       *
+       * ══ CE QUE CE CHAMP CHANGE PAR RAPPORT À L6.2A ═══════════════════════
+       *
+       * `approvedBy` supposait qu'une adoption serait toujours un acte humain :
+       * quelqu'un regarde des metadata, les compare à une projection, et
+       * tranche. C'était vrai de la seule adoption imaginable à l'époque.
+       *
+       * L'abonnement en offre une autre, et STRUCTURELLEMENT plus forte : la
+       * ressource est désignée par Stripe lui-même, sur un objet que nous
+       * possédons déjà. Le champ ci-dessous porte cet objet. Une adoption qui le
+       * renseigne n'a pas besoin d'un humain — elle a mieux qu'un avis.
+       */
+      derivedFromResourceType: { type: String, default: null },
+      derivedFromResourceId: { type: String, default: null },
+
+      /**
+       * Le client de la ressource d'origine était-il, lui aussi, à ce projet ?
+       * CORROBORATION : `false` n'empêche pas l'adoption, mais mérite d'être vu.
+       */
+      customerCorroborated: { type: Boolean, default: null },
     },
 
     /**

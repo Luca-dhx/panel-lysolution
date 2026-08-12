@@ -296,6 +296,26 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.BILLING_READ],
     migrationNote: null,
   }),
+  /**
+   * LA LECTURE D'UN ABONNEMENT — servie depuis L6.2F.
+   *
+   * `SAFE_RETRY` : une lecture rejouée ne produit aucun second acte. Comme la
+   * lecture de session, elle exige en revanche la preuve d'appartenance — et
+   * c'est cette exigence, et non l'octroi, qui empêche un projet de lire
+   * l'abonnement d'un autre.
+   */
+  'billing.subscription.retrieve': capability('billing.subscription.retrieve', {
+    provider: 'STRIPE',
+    label: 'Lire l’état d’un abonnement',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.subscription.retrieve'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.subscription.retrieve'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_READ],
+    migrationNote: null,
+  }),
+
   'billing.subscription.reconcile': capability('billing.subscription.reconcile', {
     provider: 'STRIPE',
     label: 'Réconcilier un abonnement',

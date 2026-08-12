@@ -1584,7 +1584,8 @@ locaux ne sont retirés qu'après le dernier lot.
 | **L6.2C** | `billing.checkout.retrieve` + routage webhook par appartenance | **PASS** |
 | **L6.2D** | `billing.customer.ensure` — le client d'un CONTRAT | **PASS** |
 | **L6.2E** | `billing.price.ensure` + checkout d'abonnement | **PASS** |
-| L6.2F | Ownership Subscription, puis résiliations | à faire |
+| **L6.2F** | Ownership Subscription — la première ADOPTION | **PASS** |
+| L6.2G | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
 | L6.3 | Cutover de l'endpoint webhook, retrait des credentials projet | à faire |
 
 **Les deux doctrines établies par ces lots**, et qui valent pour les suivants :
@@ -1603,6 +1604,13 @@ locaux ne sont retirés qu'après le dernier lot.
 > distincts. La cardinalité se mesure dans le code — clé d'idempotence, lieu de
 > stockage, lecture inverse — elle ne se suppose pas.
 
+> **Une ressource qu'on ne crée pas peut être possédée — par FILIATION.**
+> Stripe fabrique certains objets lui-même : un abonnement naît du paiement, pas
+> d'un appel qu'on contrôle. On ne l'adopte pourtant jamais sur la foi d'un
+> identifiant présenté — mais parce que le fournisseur, sur un objet dont nous
+> possédons déjà le lien, le désigne comme issu de cet objet. La règle n'est pas
+> assouplie : on a trouvé une seconde façon de la satisfaire.
+
 > **Une ressource IMMUABLE chez le fournisseur se remplace, jamais se corrige.**
 > Un tarif Stripe ne se modifie pas : changer de prix, c'est en créer un autre,
 > et l'ancien reste référencé par les engagements en cours. On n'affronte pas
@@ -1615,9 +1623,11 @@ locaux ne sont retirés qu'après le dernier lot.
 > permettrait d'en obtenir deux. Le Panel dérive alors l'identité de la clé
 > métier vérifiée, par une fonction pure.
 
-- **L'abonnement est migré** depuis L6.2E : le Panel possède le client, le
-  tarif et la session. Ce qui reste local relève d'autres familles — lectures
-  d'abonnement et de facture, portail, résiliations.
+- **L'abonnement est migré** depuis L6.2E, et **possédé** depuis L6.2F : le
+  Panel détient le client, le tarif, la session et l'abonnement lui-même. Ce qui
+  reste local : les résiliations, le portail, et les lectures de facture.
+- **`cancelSubscriptionNow` n'a toujours aucune clé d'idempotence** (risque L6.1
+  re-confirmé en L6.2F). C'est le premier point à traiter en L6.2G.
 - **La clé d'un tarif porte ses TERMES**, pas la version du contrat : cette
   version compte les sauvegardes de zones de signature, pas les engagements
   commerciaux. La lui adosser produisait des tarifs identiques démultipliés.

@@ -143,6 +143,8 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     // Panel au lieu d'être nommée. L6.2E — son TARIF, même doctrine.
     'billing.customer.ensure',
     'billing.price.ensure',
+    // L6.2F — la lecture d'un abonnement, servie parce qu'il est ADOPTABLE.
+    'billing.subscription.retrieve',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -164,7 +166,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * que le projet présente.
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('quatre capacités Stripe sont servies', stripeServies.length === 4);
+  check('cinq capacités Stripe sont servies', stripeServies.length === 5);
   /**
    * L6.2D — `billing.customer.ensure` est la SEULE dont l'identité d'acte est
    * dérivée. « Garantir » n'a qu'une réponse correcte par contrat ; laisser le

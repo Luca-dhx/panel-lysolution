@@ -57,7 +57,7 @@ Cinq objets sont régulièrement confondus. Ils sont distincts :
 `backend/src/services/capabilities/capabilityRegistry.js` — **code-first**.
 Rien en base ne peut ajouter, retirer ni modifier une capacité.
 
-Quinze capacités, neuf servies — et le catalogue se lit comme une carte de
+Quinze capacités, dix servies — et le catalogue se lit comme une carte de
 l'avancement :
 
 | Code | Fournisseur | Effet (L1.75) | Idempotence | Servie |
@@ -77,6 +77,28 @@ l'avancement :
 | `dns.zone.resolve` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
 | `dns.records.read` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
 | `dns.record.ensure` | HOSTINGER | INFRASTRUCTURE_WRITE | `UNKNOWN_ON_TIMEOUT` | **oui** |
+
+### Deux façons d'ancrer une ressource (L6.2F)
+
+La colonne « appartenance » suppose qu'une ressource ait un propriétaire prouvable.
+Jusqu'ici, la preuve venait d'une seule source : **le Panel l'a créée**.
+
+L'abonnement a forcé une seconde voie. Stripe le fabrique lui-même au moment du
+paiement — il n'existe aucune création à contrôler. Il est pourtant possédable,
+par **filiation** :
+
+```
+     Session possédée  →  session.subscription  →  Subscription adoptée
+```
+
+Ce n'est pas un assouplissement : c'est le fournisseur lui-même qui, sur un
+objet dont nous possédons déjà le lien, désigne la ressource comme issue de cet
+objet. Une adoption reste donc une preuve — et pour qu'elle le demeure, la
+fonction d'adoption **n'accepte aucun identifiant de ressource** : elle reçoit
+l'objet d'origine et extrait la filiation elle-même.
+
+Les metadata (`panelProjectId`, `contractId`) et la cohérence du client
+corroborent, et sont enregistrées dans la preuve du lien. Aucune ne décide.
 
 ### Une capacité peut en COMPOSER d'autres (L6.2E)
 
@@ -449,7 +471,7 @@ grandir.
 
 ## 14. Réserves
 
-1. **Neuf capacités sur quinze sont servies** (mise à jour L6.2E). Brevo et
+1. **Dix capacités sur quinze sont servies** (mise à jour L6.2F). Brevo et
    Hostinger sont migrés ; Stripe l'est pour l'ouverture et la lecture d'une
    session de paiement, le client d'un contrat et son tarif — donc l'abonnement
    entier. Restent sur le chemin local : les lectures d'abonnement et de facture

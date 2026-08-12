@@ -79,11 +79,12 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * servir reviendrait à faire confiance à l'identifiant que le projet fournit.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('quatre capacités servies', servies.length === 4);
+  check('cinq capacités servies', servies.length === 5);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
-  check('…et son tarif (L6.2E)', servies.includes('billing.price.ensure'));
+  check('…son tarif (L6.2E)', servies.includes('billing.price.ensure'));
+  check('…et la lecture d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
   /**
    * L6.2C lève la règle « aucune capacité servie n'exige de ressource
    * préexistante » — mais seulement pour la famille que le Panel CRÉE
@@ -94,11 +95,26 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
     STRIPE_CAPABILITIES['billing.checkout.retrieve'].requiresResourceOwnership === true);
   check('…et porte bien la famille SESSION',
     STRIPE_CAPABILITIES['billing.checkout.retrieve'].resourceKind === 'CHECKOUT_SESSION');
-  check('aucune capacité servie n’exige une famille que le Panel ne crée pas',
+  /**
+   * L6.2F CHANGE CETTE RÈGLE, ET C'EST LE CŒUR DU LOT.
+   *
+   * Jusqu'ici, une capacité exigeant une ressource préexistante n'était servie
+   * que si le Panel CRÉAIT cette famille — la preuve était par construction.
+   * L'abonnement n'entre dans aucune création : Stripe le fabrique au paiement.
+   *
+   * Il est pourtant servable, parce qu'il est ADOPTABLE depuis la session qui
+   * l'a produit, dont l'appartenance est déjà prouvée. La règle devient donc :
+   * on ne sert que les familles dont l'ancrage est PROUVABLE — par création ou
+   * par filiation — jamais celles qu'il faudrait croire sur parole.
+   */
+  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION'];
+  check('aucune capacité servie n’exige une famille non ancrable',
     servies.every((c) => {
       const d = STRIPE_CAPABILITIES[c];
-      return !d.requiresResourceOwnership || d.resourceKind === 'CHECKOUT_SESSION';
+      return !d.requiresResourceOwnership || ancrables.includes(d.resourceKind);
     }));
+  check('…et l’abonnement est ancré par FILIATION, pas par création',
+    STRIPE_CAPABILITIES['billing.subscription.retrieve'].requiresResourceOwnership === true);
   check('chaque capacité NON servie porte une note de migration',
     STRIPE_CAPABILITY_CODES
       .filter((c) => !STRIPE_CAPABILITIES[c].migrated)

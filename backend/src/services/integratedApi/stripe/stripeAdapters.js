@@ -43,6 +43,7 @@ import {
   retrieveCheckoutSession,
   createCustomer,
   retrieveCustomer,
+  retrieveSubscription,
   createProduct,
   createPrice,
   retrievePrice,
@@ -72,6 +73,7 @@ import {
   PriceAuthorityError,
   resolvePriceIntent,
 } from './stripePriceAuthority.js';
+import { adoptSubscriptionFromSession } from './stripeSubscriptionAdoption.js';
 import { STRIPE_CAPABILITIES } from './stripeCapabilities.js';
 
 /**
@@ -422,6 +424,25 @@ async function checkoutRetrieve({ definition, context, credentials, input, fetch
   }));
 
   const session = lu.session;
+
+  /**
+   * ── ADOPTION DE L'ABONNEMENT, AU PASSAGE (L6.2F) ──────────────────────────
+   *
+   * L'appartenance de la session vient d'être vérifiée : nous tenons donc la
+   * filiation qui rend l'adoption légitime. Si cette session a produit un
+   * abonnement, c'est le moment de le lier — sans quoi le seul chemin
+   * d'adoption serait le webhook, et un webhook perdu laisserait la ressource
+   * orpheline pour toujours.
+   *
+   * BEST-EFFORT ASSUMÉ : une adoption qui échoue ne doit pas faire échouer la
+   * lecture. Le projet a demandé l'état d'une session ; le lui refuser parce
+   * qu'une écriture annexe a échoué serait lui infliger notre problème.
+   */
+  if (session?.subscription) {
+    await adoptSubscriptionFromSession({
+      environment, session, source: BINDING_SOURCES.IMPORTED_WITH_PROOF,
+    }).catch(() => null);
+  }
   /**
    * LE LIEN AFFIRME, LE FOURNISSEUR DÉMENT — on ne tranche pas tout seul.
    *
@@ -470,6 +491,77 @@ function describeSessionView(session) {
     paymentIntentId: idOf(session.payment_intent),
     customerId: idOf(session.customer),
     subscriptionId: idOf(session.subscription),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  billing.subscription.retrieve                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Lit un abonnement — SI IL EST À CE PROJET.
+ *
+ * Même ordre que la lecture de session (L6.2C), et pour les mêmes trois
+ * raisons : ne pas payer un aller-retour pour une demande illégitime, ne pas
+ * laisser la durée de réponse trahir l'existence de la ressource, et ne pas
+ * faire reposer l'autorisation sur des metadata éditables.
+ *
+ * Cette capacité n'aurait rien pu vérifier avant ce lot : aucun abonnement
+ * n'avait de lien. C'est l'adoption qui la rend possible, et c'est aussi elle
+ * qui la rend UTILE — sans lecture, une adoption ne se constate pas.
+ */
+async function subscriptionRetrieve({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+
+  await guard(definition, () => assertOwnedResource({
+    projectId, environment, resourceType: STRIPE_RESOURCE_TYPES.SUBSCRIPTION,
+    resourceId: input.subscriptionId,
+  }));
+
+  const lu = await guard(definition, () => retrieveSubscription({
+    credentials, subscriptionId: input.subscriptionId,
+    timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  const abonnement = lu.subscription;
+  if (!abonnement?.id) {
+    /**
+     * Le lien affirme, le fournisseur dément. On ne révoque PAS : l'avis
+     * ponctuel d'un fournisseur ne fait pas une décision d'appartenance
+     * définitive, et la ressource deviendrait irrécupérable.
+     */
+    logger.error(
+      `[stripe] INCOHÉRENCE — ${maskResourceId(input.subscriptionId)} est lié à ${projectId} `
+      + `(${environment}) mais Stripe ne le rend pas. Lien CONSERVÉ.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : le fournisseur n’a rendu aucun abonnement exploitable.`,
+      { reason: 'BINDING_PROVIDER_DIVERGENCE' },
+    );
+  }
+
+  return describeSubscription(abonnement);
+}
+
+/**
+ * LE DTO — exactement ce que la projection du projet consomme.
+ *
+ * Établi sur `projectSubscription()` côté SB Auto : statut, période, résiliation
+ * différée, dernière facture, client. Rien d'autre ne traverse — ni les lignes
+ * d'abonnement, ni le moyen de paiement par défaut, ni les remises.
+ */
+function describeSubscription(abonnement) {
+  return {
+    subscriptionId: String(abonnement.id),
+    status: abonnement.status ?? null,
+    cancelAtPeriodEnd: Boolean(abonnement.cancel_at_period_end),
+    currentPeriodStart: Number.isFinite(abonnement.current_period_start)
+      ? abonnement.current_period_start : null,
+    currentPeriodEnd: Number.isFinite(abonnement.current_period_end)
+      ? abonnement.current_period_end : null,
+    latestInvoiceId: idOf(abonnement.latest_invoice),
+    customerId: idOf(abonnement.customer),
   };
 }
 
@@ -763,6 +855,14 @@ export const STRIPE_ADAPTERS = Object.freeze({
    * l'impose, mais elle reste UN acte métier : « ce contrat a-t-il son tarif ? ».
    */
   'billing.price.ensure': priceEnsure,
+  /**
+   * LA LECTURE D'UN ABONNEMENT — servie parce qu'il a enfin un propriétaire.
+   *
+   * Elle attendait depuis L6.1, non par prudence mais faute d'ancrage : lire un
+   * abonnement sans savoir à qui il est aurait donné à n'importe quel projet le
+   * droit de lire n'importe quel abonnement du compte.
+   */
+  'billing.subscription.retrieve': subscriptionRetrieve,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

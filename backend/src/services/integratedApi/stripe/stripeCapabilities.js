@@ -211,12 +211,26 @@ const invoiceListOutput = z.object({
   hasMore: z.boolean(),
 }).strict();
 
+/**
+ * VUE D'ABONNEMENT — établie sur ce que le projet PROJETTE, pas sur ce que
+ * Stripe expose (L6.2F).
+ *
+ * `projectSubscription()` côté SB Auto lit exactement : statut, résiliation
+ * différée, début et fin de période, dernière facture, client. `currency`
+ * disparaît du contrat L6.1 — personne ne la lisait, et un champ rendu « au cas
+ * où » finit par être utilisé comme une autorité.
+ *
+ * Ne traversent pas : les lignes d'abonnement, le moyen de paiement par défaut,
+ * les remises, l'historique de facturation.
+ */
 const subscriptionView = z.object({
   subscriptionId: z.string(),
-  status: z.string(),
+  status: z.string().nullable(),
   cancelAtPeriodEnd: z.boolean(),
+  currentPeriodStart: z.number().nullable(),
   currentPeriodEnd: z.number().nullable(),
-  currency: z.string().nullable(),
+  latestInvoiceId: z.string().nullable(),
+  customerId: z.string().nullable(),
 }).strict();
 
 /**
@@ -320,7 +334,16 @@ const checkoutCreateOutput = z.object({
  * Cette liste se lit comme une DETTE : chaque famille qui s'y ajoute débloque
  * les capacités qui l'exigeaient, et pas une de plus.
  */
-const BINDABLE_KINDS = Object.freeze([STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION]);
+const BINDABLE_KINDS = Object.freeze([
+  STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION,
+  /**
+   * L6.2F — l'abonnement entre dans la liste sans que le Panel n'en crée aucun.
+   * Il y entre parce qu'il est ADOPTABLE : la session qui le produit est
+   * possédée, et Stripe lui-même désigne la filiation. C'est la seule famille
+   * dont l'ancrage ne vient pas d'une création.
+   */
+  STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
+]);
 
 /**
  * Capacités dont l'identité d'acte est DÉRIVÉE par le Panel, pas fournie par le
@@ -395,7 +418,14 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     idempotency: 'SAFE_RETRY',
     requiredPermissions: ['billing:read'],
     resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
-    migrationNote: 'Contrat posé. Bloquée par l’absence de lien projet ↔ abonnement.',
+    /**
+     * SERVIE depuis L6.2F. Le lien qui lui manquait existe enfin — non parce
+     * que le Panel crée les abonnements (Stripe s'en charge au paiement), mais
+     * parce qu'il peut les ADOPTER depuis la session qui les a produits, dont
+     * l'appartenance était déjà prouvée.
+     */
+    migrated: true,
+    migrationNote: null,
   }),
 
   'billing.checkout.retrieve': capability('billing.checkout.retrieve', {

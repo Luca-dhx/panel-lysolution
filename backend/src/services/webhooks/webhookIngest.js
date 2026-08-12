@@ -44,6 +44,7 @@ import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './w
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
 import { resolveStripeEventOwnership, EVENT_OWNERSHIP } from './stripeEventRouting.js';
+import { adoptSubscriptionFromSession } from '../integratedApi/stripe/stripeSubscriptionAdoption.js';
 
 /** Issues d'une réception. Traduites en statut HTTP par le contrôleur. */
 export const INGEST_OUTCOME = Object.freeze({
@@ -187,6 +188,30 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     logger.error(`[webhooks] appartenance non résolue — ${err?.message ?? 'erreur inconnue'}.`);
     return null;
   });
+
+  /**
+   * ── ADOPTION DE L'ABONNEMENT (L6.2F) ────────────────────────────────────
+   *
+   * APRÈS que l'appartenance de la SESSION a été établie, et jamais avant :
+   * c'est elle qui fournit la filiation. Un abonnement ne doit à aucun moment
+   * être routé vers un projet dont on n'aurait pas d'abord prouvé qu'il possède
+   * la session qui l'a produit.
+   *
+   * L'adoption est donc ici, entre la résolution et l'enregistrement — et elle
+   * est BEST-EFFORT : un endpoint public qui lève produit une 500, et une 500
+   * fait rejouer le fournisseur en boucle.
+   */
+  if (appartenance?.ownership === EVENT_OWNERSHIP.OWNED
+    && appartenance.resourceType === 'CHECKOUT_SESSION') {
+    await adoptSubscriptionFromSession({
+      environment,
+      session: parsed?.data?.object ?? null,
+      source: 'LEARNED_FROM_WEBHOOK',
+    }).catch((err) => {
+      logger.error(`[webhooks] adoption d’abonnement impossible — ${err?.message ?? 'erreur inconnue'}.`);
+      return null;
+    });
+  }
 
   if (appartenance && appartenance.ownership !== EVENT_OWNERSHIP.NOT_ROUTABLE) {
     await PanelProviderWebhookEvent.updateOne(

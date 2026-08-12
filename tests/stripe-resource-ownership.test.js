@@ -471,13 +471,29 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
    */
   const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
-  check('une seule d’elles est servie', servies.length === 1);
-  check('…et c’est la lecture de session', servies[0] === 'billing.checkout.retrieve');
-  check('…dont la famille est bien celle que le Panel crée',
-    capabilities.STRIPE_CAPABILITIES[servies[0]].resourceKind
+  check('deux d’elles sont servies', servies.length === 2);
+  check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
+  check('…et celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
+
+  /**
+   * DEUX VOIES D'ANCRAGE, ET C'EST NOUVEAU.
+   *
+   * La session est ancrée parce que le Panel la CRÉE. L'abonnement, non : Stripe
+   * le fabrique au paiement. Il est ancré par FILIATION — la session qui l'a
+   * produit est possédée, et Stripe lui-même désigne le lien.
+   *
+   * C'est la première adoption du plan de contrôle, et elle reste une preuve :
+   * on n'a pas assoupli la règle, on a trouvé une seconde façon de la satisfaire.
+   */
+  check('la session est ancrée par CRÉATION',
+    capabilities.STRIPE_CAPABILITIES['billing.checkout.retrieve'].resourceKind
     === binding.STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION);
-  check('les trois autres restent fermées',
-    exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated).length === 3);
+  check('l’abonnement est ancré par FILIATION',
+    capabilities.STRIPE_CAPABILITIES['billing.subscription.retrieve'].resourceKind
+    === binding.STRIPE_RESOURCE_TYPES.SUBSCRIPTION);
+
+  check('les deux autres restent fermées',
+    exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated).length === 2);
 }
 
 await stopMemoryMongo();

@@ -159,6 +159,12 @@ export const CAPABILITY_EFFECTS = Object.freeze({
    * table est la SEULE autorité sur les effets réels.
    */
   'billing.checkout.retrieve': EFFECT.READ_ONLY,
+  /**
+   * Lire l'état d'un abonnement. READ_ONLY : rien n'est prélevé, rien n'est
+   * créé, et la rejouer n'a aucun effet observable. Servie depuis L6.2F, dès
+   * lors qu'un abonnement a un propriétaire prouvable.
+   */
+  'billing.subscription.retrieve': EFFECT.READ_ONLY,
   'billing.invoice.list': EFFECT.READ_ONLY,
   'billing.subscription.reconcile': EFFECT.READ_ONLY,
   // Créer un Customer ne débite rien et se supprime. L'interdire empêcherait
