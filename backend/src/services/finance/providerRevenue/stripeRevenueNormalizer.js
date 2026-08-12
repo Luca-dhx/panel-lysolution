@@ -75,6 +75,16 @@ export const NOT_A_FACT = Object.freeze({
 export const CANONICAL_TYPES = Object.freeze({
   INVOICE: 'INVOICE',
   CHECKOUT_SESSION: 'CHECKOUT_SESSION',
+  /**
+   * L10.4 — LE REMBOURSEMENT EST SON PROPRE OBJET CANONIQUE.
+   *
+   * Il ne pouvait pas emprunter l'identité du paiement : deux remboursements
+   * partiels du même paiement se confondraient, et l'index unique de la
+   * provenance n'en garderait qu'un — le ledger perdrait de l'argent rendu.
+   * `re_…` est unique chez Stripe, stable, et le même quelle que soit la voie
+   * par laquelle il nous parvient : réponse d'appel, webhook, ou rejeu.
+   */
+  REFUND: 'REFUND',
 });
 
 /**
@@ -172,10 +182,12 @@ export function normalizeStripeRevenueEvent({ eventType, payload, environment } 
 
   if (REFUND_EVENTS.includes(type)) {
     /**
-     * RECONNU, PAS PROJETÉ. L10.3 ne traite que les revenus ; un remboursement
-     * projeté aujourd'hui devrait l'être en `REFUND / OUTFLOW`, avec un lien
-     * vers le paiement d'origine que ce lot ne construit pas encore. Le rendre
-     * ici, classé, permet de le TRACER sans corrompre le registre.
+     * RECONNU ICI, TRAITÉ AILLEURS.
+     *
+     * Cette fonction rend UN fait ; un seul `charge.refunded` peut en porter
+     * plusieurs, un par remboursement du débit. L10.4 les normalise donc dans
+     * `normalizeStripeRefundEvent()`, qui rend une liste. Le classement est
+     * conservé tel quel pour que l'appelant sache qu'il doit l'y envoyer.
      */
     return { fact: null, reason: FACT_KIND.REFUND };
   }
@@ -366,6 +378,172 @@ function normalizeSession({ objet, payload, environment, eventType }) {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  L10.4 — LES REMBOURSEMENTS                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * UN OBJET REFUND STRIPE → UN FAIT.
+ *
+ * ══ POURQUOI CETTE FONCTION EST LE CŒUR DE LA NON-DUPLICATION ══════════════
+ *
+ * Un remboursement nous parvient par TROIS voies, souvent les trois : la
+ * réponse de l'appel qui l'a créé, le webhook `charge.refunded` qui suit, et un
+ * éventuel rejeu d'archive. Elles arrivent dans n'importe quel ordre, et la
+ * seconde précède parfois la première.
+ *
+ * Aucune règle d'ordonnancement ne rendrait cela sûr. Ce qui le rend sûr, c'est
+ * que les trois voies traversent CETTE fonction et en ressortent avec la même
+ * identité canonique — `re_…`, l'identifiant du remboursement chez Stripe.
+ * L'index unique de la provenance fait le reste : le second passage met à jour,
+ * il n'insère pas.
+ *
+ * ══ LE MONTANT EST POSITIF, ET CE N'EST PAS UNE ERREUR ═════════════════════
+ *
+ * Stripe rend `amount: 100` pour 1 € rendu, sans signe. Le ledger le garde tel
+ * quel : c'est le `flow: OUTFLOW` qui porte le sens, jamais le signe du montant
+ * (doctrine L10.1). Un montant négatif ici se soustrairait DEUX fois.
+ */
+export function normalizeStripeRefundObject({ refund, environment, chargeReceiptUrl = null } = {}) {
+  const refundId = idOf(refund);
+  if (!refundId || !refundId.startsWith('re_')) return { fact: null, reason: NOT_A_FACT.MALFORMED };
+
+  const amount = entier(refund.amount);
+  if (!amount || amount <= 0) return { fact: null, reason: NOT_A_FACT.NO_MONEY_MOVED };
+
+  /**
+   * `failed` et `canceled` n'ont RIEN rendu au client. Les projeter créerait
+   * une sortie d'argent qui n'a pas eu lieu. Ils sont reconnus, pas projetés.
+   */
+  const status = chaine(refund.status);
+  if (status === 'failed' || status === 'canceled') {
+    return { fact: null, reason: NOT_A_FACT.NO_MONEY_MOVED };
+  }
+
+  const paymentIntentId = idOf(refund.payment_intent);
+  const chargeId = idOf(refund.charge);
+
+  return {
+    fact: {
+      kind: FACT_KIND.REFUND,
+      environment,
+      objectType: CANONICAL_TYPES.REFUND,
+      objectId: refundId,
+
+      amountCents: amount,
+      currency: String(refund.currency ?? '').toUpperCase() || null,
+      /** La date où l'argent est REPARTI — elle décide de son mois comptable. */
+      occurredAt: instant(refund.created),
+      label: null,
+      periodStart: null,
+      periodEnd: null,
+
+      /**
+       * AUCUNE FILIATION D'APPARTENANCE ICI, ET C'EST DÉLIBÉRÉ.
+       *
+       * Un remboursement n'hérite pas d'une session ni d'un abonnement : il
+       * hérite du PAIEMENT qu'il défait, dont le Panel connaît déjà le
+       * propriétaire pour l'avoir projeté (L10.3). La résolution se fait donc
+       * sur nos propres écritures, par `paymentIntentId` — jamais sur une
+       * métadonnée, jamais par un appel fournisseur.
+       */
+      ownershipVia: null,
+
+      corroboration: {
+        subscriptionId: null,
+        paymentIntentId,
+        chargeId,
+        customerId: null,
+        checkoutSessionId: null,
+        invoiceNumber: null,
+        claimedProjectId: null,
+        contractId: null,
+        paymentType: null,
+      },
+
+      /**
+       * Un remboursement n'a PAS de facture, et n'en aura pas. Voir la doctrine
+       * documentaire : Stripe n'émet ni PDF ni page hébergée pour un `re_…`.
+       */
+      invoiceDocument: null,
+      /**
+       * Le reçu de la CHARGE — que Stripe réédite en y portant les sommes
+       * rendues. C'est le seul document réel de ce fait.
+       */
+      chargeReceiptUrl: chaine(chargeReceiptUrl) ?? chaine(refund.receipt_url),
+
+      refundStatus: status,
+      refundReason: chaine(refund.reason),
+
+      declaredLivemode: typeof refund.livemode === 'boolean' ? refund.livemode : null,
+    },
+    reason: null,
+  };
+}
+
+/**
+ * UN ÉVÉNEMENT DE REMBOURSEMENT → ZÉRO, UN OU PLUSIEURS FAITS.
+ *
+ * ══ POURQUOI UNE LISTE ══════════════════════════════════════════════════════
+ *
+ * `charge.refunded` porte le DÉBIT, pas le remboursement : son objet est la
+ * charge, et `refunds.data[]` en contient tous les remboursements — y compris
+ * ceux déjà connus. Un troisième remboursement partiel réémet donc un événement
+ * qui décrit aussi les deux premiers. Les rendre tous est correct et voulu :
+ * chacun porte son `re_…`, les deux anciens convergent sans rien dupliquer, et
+ * le nouveau entre. C'est le rattrapage gratuit d'un fait qu'on aurait manqué.
+ *
+ * ══ CE QUI RESTE HORS PÉRIMÈTRE, ET POURQUOI ═══════════════════════════════
+ *
+ * `charge.dispute.created` — un litige n'est pas un remboursement. L'argent
+ * n'est pas rendu, il est GELÉ le temps d'une contestation qui peut se conclure
+ * dans les deux sens. Le projeter en sortie inventerait une perte qui n'existe
+ * pas encore, et le rétablir ensuite demanderait un mouvement inverse d'un
+ * mouvement inverse. Il reste classé, non projeté.
+ *
+ * `credit_note.created` — un avoir est un acte COMPTABLE sur une facture, pas
+ * un mouvement de trésorerie. Il accompagne parfois un remboursement, qui a
+ * alors son propre `re_…` et entre par cette porte-ci. Le projeter aussi
+ * compterait l'argent rendu deux fois.
+ */
+export function normalizeStripeRefundEvent({ eventType, payload, environment } = {}) {
+  const type = String(eventType ?? '');
+  /**
+   * Les deux autres événements de la liste — litige et avoir — ressortent ici
+   * sans fait, pour les raisons énoncées plus haut. Ils sont VUS, pas oubliés.
+   */
+  if (type !== 'charge.refunded') return { facts: [], reason: NOT_A_FACT.NOT_FINANCIAL };
+
+  const charge = payload?.data?.object ?? null;
+  if (!charge) return { facts: [], reason: NOT_A_FACT.MALFORMED };
+
+  const liste = Array.isArray(charge.refunds?.data) ? charge.refunds.data : [];
+  if (liste.length === 0) return { facts: [], reason: NOT_A_FACT.MALFORMED };
+
+  const receiptUrl = chaine(charge.receipt_url);
+  const paymentIntentId = idOf(charge.payment_intent);
+  const chargeId = idOf(charge);
+
+  const facts = [];
+  for (const brut of liste) {
+    const { fact } = normalizeStripeRefundObject({
+      refund: brut, environment, chargeReceiptUrl: receiptUrl,
+    });
+    if (!fact) continue;
+    /**
+     * La charge porte des identités que l'objet imbriqué omet parfois selon la
+     * version d'API. On complète — sans jamais écraser ce que le remboursement
+     * affirme lui-même.
+     */
+    fact.corroboration.paymentIntentId = fact.corroboration.paymentIntentId ?? paymentIntentId;
+    fact.corroboration.chargeId = fact.corroboration.chargeId ?? chargeId;
+    fact.viaEventType = type;
+    facts.push(fact);
+  }
+
+  return { facts, reason: facts.length ? null : NOT_A_FACT.NO_MONEY_MOVED };
+}
+
 export default {
   FACT_KIND,
   NOT_A_FACT,
@@ -374,4 +552,6 @@ export default {
   REFUND_EVENTS,
   subscriptionIdOfInvoice,
   normalizeStripeRevenueEvent,
+  normalizeStripeRefundObject,
+  normalizeStripeRefundEvent,
 };

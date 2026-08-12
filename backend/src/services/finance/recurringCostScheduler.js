@@ -29,6 +29,7 @@
 import logger from '../../utils/logger.js';
 import { materializeAllDue } from './recurringCosts.service.js';
 import { convergePendingRevenue } from './providerRevenue/revenueProjection.service.js';
+import { convergePendingRefunds } from './refunds/refundOrchestration.service.js';
 
 const TICK_MS = 3_600_000;
 
@@ -75,7 +76,41 @@ export async function runRecurringCostCycle() {
       logger.info(`[finance] ${revenus.projected} revenu(s) fournisseur en attente projeté(s).`);
     }
 
-    return { ...rapport, revenueProjected: revenus.projected ?? 0 };
+    /**
+     * ── LES REMBOURSEMENTS INDÉTERMINÉS CONVERGENT ICI, ET NULLE PART AILLEURS
+     *   (L10.4) ─────────────────────────────────────────────────────────────
+     *
+     * ══ POURQUOI PAS À LA LECTURE, COMME LES DEUX AUTRES ══════════════════
+     *
+     * Parce que celle-ci PARLE À STRIPE. Les deux convergences précédentes
+     * rejouent une résolution sur des faits déjà reçus — aucun octet ne sort.
+     * Reprendre un remboursement dont l'issue est inconnue exige au contraire
+     * de relire les remboursements du paiement chez le fournisseur.
+     *
+     * La brancher sur l'ouverture d'un écran ferait exactement ce que L10.3 a
+     * interdit : « liste financière → appel provider live ». Un opérateur qui
+     * consulte le livret déclencherait des appels Stripe, et une page rafraîchie
+     * en boucle en déclencherait autant.
+     *
+     * L'ordonnanceur est le bon endroit : il tourne sans lecteur, il est borné,
+     * et un remboursement indéterminé n'a pas besoin d'être résolu à la seconde
+     * — il a besoin de l'être SÛREMENT. L'écran, lui, dit « vérification en
+     * cours » et refuse d'en proposer un second : c'est ce qui protège l'argent,
+     * pas la fraîcheur de la réponse.
+     */
+    const remboursements = await convergePendingRefunds({}).catch((err) => {
+      logger.warn(`[finance] Convergence des remboursements impossible : ${err.message}`);
+      return { settled: 0 };
+    });
+    if (remboursements.settled) {
+      logger.info(`[finance] ${remboursements.settled} remboursement(s) indéterminé(s) résolu(s).`);
+    }
+
+    return {
+      ...rapport,
+      revenueProjected: revenus.projected ?? 0,
+      refundsSettled: remboursements.settled ?? 0,
+    };
   } catch (err) {
     // Un cycle raté sera revu au suivant, et de toute façon à la prochaine
     // lecture d'écran. Inutile de bruire.

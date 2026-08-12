@@ -42,7 +42,17 @@ import {
 export const INVOCATION_SOURCES = Object.freeze({
   /** Un projet appairé, par la surface /bridge/v1. Le seul cas aujourd'hui. */
   PROJECT_BRIDGE: 'PROJECT_BRIDGE',
-  /** Le Panel pour lui-même (moteur de déploiement). Prévu, pas encore servi. */
+  /**
+   * Le Panel agissant POUR un projet, sans que le projet demande rien.
+   *
+   * Prévue de longue date pour le moteur de déploiement, cette source est
+   * servie depuis L10.4 par le remboursement Stripe : un opérateur clique dans
+   * l'onglet Finances d'un projet, et le projet n'a aucun pont dans l'affaire.
+   *
+   * Elle ne relâche qu'UNE chose dans la passerelle : l'octroi, qui répond à
+   * « ce projet peut-il demander ceci » — question sans objet ici. Le projet
+   * reste le périmètre entier : appartenance, monde, coffre et journal.
+   */
   PANEL_INTERNAL: 'PANEL_INTERNAL',
 });
 

@@ -28,6 +28,11 @@ import {
   describeProviderFact,
   listUnprojectedFacts,
 } from '../services/finance/providerRevenue/revenueProjection.service.js';
+import {
+  describeRefundEligibility,
+  listRefundRequests,
+  requestRefund,
+} from '../services/finance/refunds/refundOrchestration.service.js';
 
 /** L'auteur d'une écriture comptable. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -149,7 +154,61 @@ export async function transaction(req, res) {
   return ok(res, {
     transaction: mouvement,
     providerFact: await describeProviderFact(mouvement),
+    /**
+     * L10.4 — L'HISTORIQUE DES DEMANDES DE REMBOURSEMENT.
+     *
+     * Sur l'écran de détail seulement. Une liste n'a pas besoin de savoir qui a
+     * demandé quoi ni pourquoi — elle a besoin de l'ÉTAT, qui voyage déjà avec
+     * chaque mouvement. L'historique, lui, est ce qu'on vient chercher quand on
+     * enquête sur une ligne précise, y compris les tentatives échouées.
+     */
+    refundRequests: await listRefundRequests(req.params.transactionId),
   });
+}
+
+/* ── Remboursements (L10.4) ────────────────────────────────────────────────── */
+
+/**
+ * CE MOUVEMENT PEUT-IL ÊTRE REMBOURSÉ, ET DE COMBIEN ?
+ *
+ * L'écran l'interroge à l'ouverture de la fenêtre, pour afficher le montant
+ * initial, le déjà rendu et le restant — sans jamais les calculer lui-même. Le
+ * même verdict sert au refus côté serveur : une éligibilité évaluée deux fois
+ * finit par diverger, et c'est alors l'écran qui promet ce que le serveur nie.
+ */
+export async function refundEligibility(req, res) {
+  return ok(res, await describeRefundEligibility(req.params.transactionId));
+}
+
+/**
+ * REMBOURSE — le seul verbe de cette surface qui rende de l'argent.
+ *
+ * ══ CE QUE LE CORPS PORTE, ET CE QU'IL NE PEUT PAS PORTER ═══════════════════
+ *
+ * Un montant, deux raisons. RIEN d'autre : ni `paymentIntentId`, ni `chargeId`,
+ * ni `invoiceId`, ni environnement. Les accepter reviendrait à laisser un
+ * navigateur désigner la ressource Stripe à muter, et un champ modifié suffirait
+ * à rembourser le paiement d'un autre projet. Tout est résolu côté serveur,
+ * depuis le mouvement désigné par son identité INTERNE.
+ *
+ * ══ POURQUOI PAS `requirePanelDev` ══════════════════════════════════════════
+ *
+ * Rembourser un client est un acte de GESTION, pas d'infrastructure — la même
+ * logique que pour la saisie d'un mouvement (voir l'en-tête des routes). Le
+ * réserver aux DEV obligerait à passer par un développeur pour un geste
+ * commercial courant, et la protection réelle est ailleurs : appartenance
+ * prouvée, monde dérivé, idempotence, et une trace nominative qui ne s'efface
+ * jamais.
+ */
+export async function refund(req, res) {
+  const { amountCents = null, reason = null, note = null } = req.body ?? {};
+  return ok(res, await requestRefund({
+    transactionId: req.params.transactionId,
+    amountCents,
+    providerReason: reason,
+    operatorReason: note,
+    actor: actorOf(req),
+  }));
 }
 
 /**

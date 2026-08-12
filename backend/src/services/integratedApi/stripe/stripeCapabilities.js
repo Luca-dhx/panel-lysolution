@@ -22,11 +22,13 @@
 // pouvoir qu'il n'a jamais demandé — créer des produits arbitraires sur le
 // compte Stripe de la plateforme.
 //
-// De même, `billing.refund` n'est PAS déclarée : aucun code du parc n'appelle
-// `refunds.create`. L'événement `charge.refunded` est consommé — donc un
-// remboursement peut arriver, mais toujours depuis le tableau de bord Stripe.
-// Contractualiser un remboursement que personne n'émet créerait la capacité la
-// plus dangereuse du système pour un usage qui n'existe pas.
+// `billing.refund` a longtemps été absente pour cette même raison : aucun code
+// du parc n'appelait `refunds.create`, les remboursements se faisaient depuis le
+// tableau de bord Stripe, et contractualiser un acte que personne n'émet aurait
+// créé la capacité la plus dangereuse du système pour un usage inexistant.
+// L10.4 change ce fait : le Panel rembourse désormais depuis l'onglet Finances
+// d'un projet. La capacité entre donc au catalogue avec un appelant réel — et
+// c'est le seul motif d'entrée admis ici.
 import { z } from 'zod';
 
 import { getProviderDefinition } from '../providerRegistry.js';
@@ -51,6 +53,8 @@ const operationId = z.string().trim().min(16).max(96);
 const subscriptionId = z.string().trim().regex(/^sub_[A-Za-z0-9_]+$/, 'Identifiant d’abonnement invalide.');
 const customerId = z.string().trim().regex(/^cus_[A-Za-z0-9_]+$/, 'Identifiant de client invalide.');
 const checkoutSessionId = z.string().trim().regex(/^cs_[A-Za-z0-9_]+$/, 'Identifiant de session invalide.');
+/** L10.4 — refuser tôt : un `in_…` présenté là où on rembourse est une confusion. */
+const paymentIntentId = z.string().trim().regex(/^pi_[A-Za-z0-9_]+$/, 'Identifiant de paiement invalide.');
 
 /**
  * `strict()` partout. Les champs explicitement REFUSÉS, et pourquoi :
@@ -130,6 +134,74 @@ const checkoutCreateInput = z.object({
  * dérivée du monde et de l'abonnement.
  */
 const subscriptionCancelInput = z.object({ subscriptionId }).strict();
+
+/**
+ * `billing.refund` — LE SEUL CONTRAT QUI REND DE L'ARGENT (L10.4).
+ *
+ * ══ POURQUOI L'INTENTION DE PAIEMENT, ET PAS LA FACTURE ═════════════════════
+ *
+ * Le Panel projette des revenus depuis quatre objets Stripe différents — session
+ * de paiement, facture, intention, débit (L10.3). Un seul est commun à TOUS les
+ * encaissements et acceptable par `POST /v1/refunds` : l'intention. Rembourser
+ * « une facture » n'existe pas chez Stripe ; rembourser « un abonnement » non
+ * plus. Le contrat nomme donc ce qui est réellement remboursable.
+ *
+ * ══ POURQUOI L'APPARTENANCE PORTE SUR `pi_…` ════════════════════════════════
+ *
+ * `PAYMENT_INTENT` est une famille liable depuis L6.2A, mais rien n'en créait de
+ * lien. L10.4 en pose un À LA PROJECTION du revenu, par filiation de la session
+ * ou de l'abonnement possédé qui l'a produit — exactement le mécanisme d'adoption
+ * de L6.2F. La vérification d'appartenance porte donc ici sur la ressource même
+ * qu'on s'apprête à muter, sans détour ni raisonnement d'adaptateur.
+ *
+ * ══ LE MONTANT ══════════════════════════════════════════════════════════════
+ *
+ * Absent = remboursement TOTAL du restant. Ce n'est pas un raccourci : envoyer
+ * un total calculé chez nous ferait échouer l'acte si un autre remboursement
+ * s'est glissé entre notre lecture et notre écriture, là où l'omission converge.
+ */
+const refundInput = z.object({
+  paymentIntentId,
+  /** En centimes. Absent = total du restant remboursable, tranché par Stripe. */
+  amountCents: z.number().int().positive().max(100_000_000).optional(),
+  /**
+   * Les TROIS seuls motifs que Stripe accepte. La raison libre de l'opérateur
+   * n'est pas transmise au fournisseur : elle vit dans la demande de
+   * remboursement du Panel, où elle est lisible sans compte Stripe.
+   */
+  reason: z.enum(['duplicate', 'fraudulent', 'requested_by_customer']).optional(),
+  operationId,
+}).strict();
+
+/**
+ * `outcome` distingue l'acte NEUF du rejeu convergent — comme la résiliation.
+ *
+ * `ALREADY_REFUNDED` ne signifie pas « ce paiement était déjà remboursé » : il
+ * peut l'être partiellement et rester remboursable. Il signifie « CET acte-ci,
+ * sous CETTE identité, était déjà inscrit chez Stripe » — retrouvé par la
+ * métadonnée qu'on y appose. C'est la convergence hors fenêtre d'idempotence.
+ */
+const refundView = z.object({
+  refundId: z.string(),
+  status: z.string().nullable(),
+  amountCents: z.number().int(),
+  currency: z.string(),
+  paymentIntentId: z.string().nullable(),
+  chargeId: z.string().nullable(),
+  reason: z.string().nullable(),
+  createdAt: z.number().nullable(),
+  /**
+   * Le reçu Stripe de la CHARGE — pas du remboursement, qui n'a ni PDF ni page.
+   * Stripe le réédite après un remboursement et y affiche les sommes rendues :
+   * c'est le seul document que le fournisseur produise réellement ici.
+   */
+  receiptUrl: z.string().nullable(),
+  /** État du paiement APRÈS l'acte — ce qui reste remboursable. */
+  collectedCents: z.number().int(),
+  refundedCents: z.number().int(),
+  remainingCents: z.number().int(),
+  outcome: z.enum(['REFUNDED', 'ALREADY_REFUNDED']),
+}).strict();
 
 /**
  * `billing.customer.ensure` — LE SEUL CONTRAT SANS `operationId`, et c'est le
@@ -372,8 +444,8 @@ const checkoutCreateOutput = z.object({
  * l'identifiant que le projet présente.
  *
  * `CHECKOUT_SESSION` y entre parce que L6.2B en crée et les lie à la création.
- * `CUSTOMER`, `SUBSCRIPTION`, `INVOICE`, `PAYMENT_INTENT` n'y sont pas : le
- * Panel n'en a jamais créé, donc le registre de liens n'en contient aucun.
+ * `CUSTOMER` et `INVOICE` n'y sont pas : le Panel n'en a jamais créé ni adopté,
+ * donc le registre de liens n'en contient aucun.
  *
  * Cette liste se lit comme une DETTE : chaque famille qui s'y ajoute débloque
  * les capacités qui l'exigeaient, et pas une de plus.
@@ -387,6 +459,14 @@ const BINDABLE_KINDS = Object.freeze([
    * dont l'ancrage ne vient pas d'une création.
    */
   STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
+  /**
+   * L10.4 — l'intention de paiement, adoptée par la même filiation. Le Panel
+   * n'en crée pas davantage, mais il en PROJETTE le revenu (L10.3) : à ce
+   * moment-là, la session ou l'abonnement dont elle découle est déjà possédé, et
+   * le fait fournisseur — un webhook signé — désigne la filiation. Le lien est
+   * posé là, jamais sur un identifiant présenté par un navigateur.
+   */
+  STRIPE_RESOURCE_KINDS.PAYMENT_INTENT,
 ]);
 
 /**
@@ -613,6 +693,43 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: true,
     resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
+    migrated: true,
+    migrationNote: null,
+  }),
+
+  /**
+   * `billing.refund` — RENDRE L'ARGENT (L10.4).
+   *
+   * ══ CE QUI LA REND DIFFÉRENTE DE TOUTES LES AUTRES ══════════════════════
+   *
+   * Toutes les écritures précédentes engagent l'avenir : une session ouvre un
+   * paiement, une résiliation arrête un prélèvement. Celle-ci défait le passé,
+   * et rien ne la défait à son tour — on ne « dé-rembourse » pas.
+   *
+   * Elle est aussi la seule dont un rejeu tardif crée un acte RÉEL et
+   * SUPPLÉMENTAIRE. Résilier deux fois est refusé par Stripe ; rembourser deux
+   * fois 100 € est parfaitement accepté, parce que c'est parfois voulu. La
+   * convergence ne peut donc pas venir de l'état, et `PROVIDER_IDEMPOTENT`
+   * décrit ici la clé qu'on envoie plus la métadonnée qu'on appose — voir
+   * `stripeRefundAuthority.js`.
+   *
+   * ══ SON APPELANT ════════════════════════════════════════════════════════
+   *
+   * Aucun projet. C'est un acte d'OPÉRATEUR, émis depuis l'onglet Finances du
+   * Panel via `INVOCATION_SOURCES.PANEL_INTERNAL`. Le projet reste le
+   * périmètre — l'appartenance, les identifiants, le monde en dépendent — mais
+   * il ne demande rien. Un pont projet qui appellerait cette capacité serait
+   * refusé faute d'octroi, et c'est le comportement voulu.
+   */
+  'billing.refund': capability('billing.refund', {
+    label: 'Rembourser un paiement',
+    inputSchema: refundInput,
+    outputSchema: refundView,
+    timeoutMs: 20_000,
+    idempotency: 'PROVIDER_IDEMPOTENT',
+    requiredPermissions: ['billing:write'],
+    financial: true,
+    resourceKind: STRIPE_RESOURCE_KINDS.PAYMENT_INTENT,
     migrated: true,
     migrationNote: null,
   }),

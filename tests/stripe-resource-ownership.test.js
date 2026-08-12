@@ -462,7 +462,7 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    */
   const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
     .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
-  check('cinq capacités exigent une ressource préexistante', exigeantes.length === 5);
+  check('six capacités exigent une ressource préexistante', exigeantes.length === 6);
   /**
    * L6.2C en sert UNE : la lecture de session. Elle le peut parce que le Panel
    * crée et lie lui-même des sessions depuis L6.2B — l'appartenance est donc
@@ -471,9 +471,21 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
    */
   const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
-  check('quatre d’elles sont servies', servies.length === 4);
+  check('cinq d’elles sont servies', servies.length === 5);
   check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
   check('…celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
+  /**
+   * L10.4 — LE REMBOURSEMENT MUTE UNE INTENTION DE PAIEMENT.
+   *
+   * Famille que le Panel ne crée pas davantage qu'un abonnement, et qu'il
+   * n'accepte pas plus sur parole. Elle est ADOPTÉE à la projection du revenu
+   * (L10.3) par filiation de la session ou de l'abonnement possédé qui l'a
+   * produite — trois preuves réunies au même instant : ressource porteuse
+   * possédée, webhook signé, filiation désignée par Stripe. Aucune ne vient
+   * d'un navigateur, et c'est ce qui rend la famille servable.
+   */
+  check('…et le remboursement d’une intention de paiement (L10.4)',
+    servies.includes('billing.refund'));
   /**
    * L6.2G — LES DEUX RÉSILIATIONS S'APPUIENT SUR LA MÊME PREUVE.
    *

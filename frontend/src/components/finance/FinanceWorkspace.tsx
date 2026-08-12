@@ -24,9 +24,9 @@
  * période. Voir `useFinanceWorkspace` — afficher « Revenus : 0 € » au-dessus
  * d'une liste de coûts serait faux.
  *
- * Aucun sous-onglet n'invente de remboursement Stripe, de facture ni de coût
- * récurrent : ces vues fonctionnent avec les mouvements de L10.1, et rien
- * d'autre.
+ * Depuis L10.4, « Revenus » montre aussi les REMBOURSEMENTS — un mouvement de
+ * sortie, rattaché au paiement qu'il défait. « Coûts » ne les montre jamais :
+ * rendre de l'argent n'est pas une charge, et les y ranger fausserait la marge.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Card, EmptyState } from '@/components/ui';
@@ -42,6 +42,7 @@ import { TransactionForm } from '@/components/finance/TransactionForm';
 import type { ProjectChoice } from '@/components/finance/TransactionForm';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
+import { RefundModal } from '@/components/finance/RefundModal';
 import { RecurringCostList } from '@/components/finance/RecurringCostList';
 import { RecurringCostForm, StopRecurringDialog } from '@/components/finance/RecurringCostForm';
 import {
@@ -111,6 +112,14 @@ export function FinanceWorkspace({
   );
   const [detail, setDetail] = useState<FinancialTransaction | null>(null);
   const [aSupprimer, setASupprimer] = useState<FinancialTransaction | null>(null);
+  /**
+   * LE MOUVEMENT QU'ON S'APPRÊTE À REMBOURSER (L10.4).
+   *
+   * Un état à part, et non un mode du formulaire : rembourser n'est pas éditer.
+   * Les confondre aurait fait passer un acte irréversible par la fenêtre qu'on
+   * ouvre pour corriger une faute de frappe.
+   */
+  const [aRembourser, setARembourser] = useState<FinancialTransaction | null>(null);
   const [masse, setMasse] = useState(false);
   const [erreurAction, setErreurAction] = useState<string | null>(null);
 
@@ -147,7 +156,16 @@ export function FinanceWorkspace({
 
   const criteresListe: FinanceCriteria = useMemo(() => ({
     ...criteresResume,
-    category: sousOnglet === 'costs' ? 'COST' : sousOnglet === 'revenues' ? 'REVENUE' : null,
+    /**
+     * « REVENUS » MONTRE AUSSI LES REMBOURSEMENTS, « COÛTS » JAMAIS (L10.4).
+     *
+     * Un remboursement concerne un encaissement : le cacher de l'onglet des
+     * revenus afficherait 500 € encaissés sans dire que 100 sont repartis. Le
+     * ranger dans les coûts pour qu'il apparaisse quelque part serait pire — il
+     * gonflerait les charges et fausserait la marge. Il vit donc ici, en sortie
+     * bien visible, à côté du paiement qu'il défait.
+     */
+    category: sousOnglet === 'costs' ? 'COST' : sousOnglet === 'revenues' ? 'REVENUE,REFUND' : null,
     sort: tri,
   }), [criteresResume, sousOnglet, tri]);
 
@@ -443,10 +461,33 @@ export function FinanceWorkspace({
                       */}
                       {ligne.origin === 'STRIPE' ? (
                         <span className="cell-secondary">
-                          Encaissé via Stripe
+                          {ligne.category === 'REFUND' ? 'Remboursé via Stripe' : 'Encaissé via Stripe'}
                           {ligne.provenance?.environment === 'TEST' ? (
                             <span className="badge badge-warn finance-env-tag">TEST</span>
                           ) : null}
+                        </span>
+                      ) : null}
+                      {/*
+                        L'ÉTAT DÉRIVÉ DU REVENU — visible sur la ligne, parce que
+                        c'est la question qu'on se pose EN PARCOURANT le livret :
+                        « ce paiement est-il encore entier ? ». L'obliger à ouvrir
+                        chaque détail pour le savoir rendrait l'information
+                        inutilisable.
+
+                        L'encaissement, lui, n'a pas bougé : son montant reste
+                        celui de la colonne. C'est un état, pas une correction.
+                      */}
+                      {ligne.refund && ligne.refund.state !== 'NON_REMBOURSE' ? (
+                        <span className="cell-secondary">
+                          <span className={ligne.refund.state === 'REMBOURSE' ? 'badge badge-danger' : 'badge badge-warn'}>
+                            {ligne.refund.state === 'REMBOURSE' ? 'Remboursé' : 'Partiellement remboursé'}
+                          </span>
+                          {` ${formatCents(ligne.refund.refundedCents)} rendus`}
+                        </span>
+                      ) : null}
+                      {ligne.refund?.pending ? (
+                        <span className="cell-secondary">
+                          <span className="badge badge-warn">Vérification du remboursement en cours</span>
                         </span>
                       ) : null}
                     </td>
@@ -460,6 +501,25 @@ export function FinanceWorkspace({
                       <ReceiptCell transaction={ligne} onChanged={reload} compact />
                     </td>
                     <td className="row-actions">
+                      {/*
+                        « REMBOURSER » N'APPARAÎT QUE LÀ OÙ IL A UN SENS.
+
+                        Un revenu Stripe vivant, avec du restant, et aucune
+                        demande en suspens. Les trois conditions viennent du
+                        serveur (`ligne.refund`) : l'écran ne décide pas de
+                        l'éligibilité, il la lit. Et il la relit à l'ouverture de
+                        la fenêtre, parce qu'entre l'affichage de la liste et le
+                        clic, un webhook a pu passer.
+                      */}
+                      {ligne.refund && ligne.refund.remainingCents > 0 && !ligne.refund.pending ? (
+                        <button
+                          type="button"
+                          className="btn btn-small btn-danger"
+                          onClick={() => setARembourser(ligne)}
+                        >
+                          Rembourser
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="btn btn-small"
@@ -506,6 +566,14 @@ export function FinanceWorkspace({
       ) : null}
 
       {/* ── DIALOGUES ─────────────────────────────────────────────────── */}
+      {aRembourser ? (
+        <RefundModal
+          transactionId={aRembourser.transactionId}
+          onClose={() => setARembourser(null)}
+          onDone={() => { void reload(); }}
+        />
+      ) : null}
+
       {formulaire.open ? (
         <TransactionForm
           transaction={formulaire.cible}

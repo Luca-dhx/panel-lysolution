@@ -1,8 +1,10 @@
 # 62 — REGISTRE FINANCIER
 
-> Lots **L10.1** (fondation) et **L10.2** (coûts récurrents, justificatifs privés).
-> Indépendant de tout fournisseur. Le branchement Stripe arrive au lot L10.3, sur cette
-> fondation, sans la modifier.
+> Lots **L10.1** (fondation), **L10.2** (coûts récurrents, justificatifs privés),
+> **L10.3** (projection des revenus Stripe) et **L10.4** (remboursements Stripe).
+> Le registre est resté indépendant de tout fournisseur : Stripe est une ORIGINE, jamais
+> une catégorie. Les deux lots fournisseur se sont branchés sur la fondation de L10.1 sans
+> en modifier un seul axe.
 
 ---
 
@@ -219,7 +221,11 @@ référence *opaque*, pas une autorité.
 
 ---
 
-## 8. Remboursements futurs
+## 8. Remboursements — la doctrine
+
+> Posée en L10.1, **implémentée en L10.4**. Elle n'a pas eu à bouger d'une ligne : c'est le
+> meilleur signe que les deux axes de la taxonomie étaient les bons. Voir § 13 quinquies
+> pour le mécanisme.
 
 `parentTransactionId` porte le `transactionId` du mouvement d'origine — jamais un `_id`,
 pour qu'une reprise de base ne casse pas le lien.
@@ -236,8 +242,15 @@ net                                          +149 €
 Le net tombe à 149 € **par addition, jamais par mutation**. Et `byCategory.costCents` ne
 bouge pas d'un centime.
 
-L10.1 n'appelle pas Stripe et n'implémente aucun bouton « Rembourser ». Il garantit
-seulement que la doctrine restera possible.
+L10.1 n'appelait pas Stripe et n'implémentait aucun bouton « Rembourser ». Il garantissait
+seulement que la doctrine resterait possible. **L10.4 l'a exercée telle quelle** : le bouton
+existe, il produit exactement ces deux lignes, et l'encaissement d'origine n'est jamais
+touché.
+
+L'état du paiement — non remboursé, partiellement, totalement — n'est **stocké nulle part**.
+Il se calcule en sommant les enfants à la lecture. Un solde stocké se désynchronise à la
+première écriture arrivée par une voie imprévue ; une somme d'écritures ne le peut pas,
+puisqu'elle EST le registre.
 
 ---
 
@@ -812,26 +825,231 @@ ligne (`TEST`), et **jamais perdu**. Dans un Panel de recette, les montants de r
 la réalité de ce Panel : ils comptent dans ses totaux — et sa base n'est pas celle de la
 production.
 
-### Préparation de L10.4
+### Ce que L10.3 a tendu à L10.4
 
 `payment_intent` et `charge` sont conservés sur le **fait** — pas sur la transaction, dont
-L10.1 exige que la provenance reste maigre. Un remboursement les y trouvera.
+L10.1 exige que la provenance reste maigre. Le remboursement les y a trouvés, exactement là
+où ils avaient été posés.
 
-`charge.refunded`, `charge.dispute.created` et `credit_note.created` sont **reconnus et
-journalisés**, jamais projetés. Aucun `REFUND`, aucun `COST` d'origine fournisseur n'existe
-dans le registre à l'issue de ce lot.
+`charge.dispute.created` et `credit_note.created` restent **reconnus et non projetés**, et
+ce n'est pas une dette : voir § 13 quinquies, « Ce qui n'est pas un remboursement ».
+
+---
+
+## 13 quinquies. REMBOURSEMENTS STRIPE (L10.4)
+
+### Le seul chemin du parc qui rende de l'argent
+
+```
+Panel · Projet · Finances · Revenus
+        │  « Rembourser » — l'écran n'envoie qu'un transactionId et un montant
+        ▼
+refundOrchestration          éligibilité → DEMANDE DURABLE → appel → projection
+        │
+        ▼
+capabilityGateway            source PANEL_INTERNAL · politique · coffre · réservation
+        │
+        ▼
+stripeAdapters.refundCreate  APPARTENANCE → état → mutation
+        │
+        ▼
+Stripe   POST /v1/refunds    Idempotency-Key + metadata[ly_operation_id]
+        │
+        ├─ réponse ─────────► fait « re_… » → ledger
+        └─ webhook ─────────► MÊME fait « re_… » → converge, n'insère pas
+```
+
+Aucun écran financier n'appelle Stripe. La lecture du livret, le calcul du restant
+remboursable et l'affichage de l'état ne lisent que la base.
+
+### Ce que le navigateur peut dire, et ce qu'il ne peut pas
+
+Il envoie un `transactionId` — une identité **interne**, sans valeur chez Stripe — un
+montant, un motif et une note. C'est tout.
+
+Il n'envoie **jamais** `pi_…`, `ch_…`, `in_…`, ni `TEST`/`PROD`. Les accepter reviendrait à
+laisser un client désigner la ressource à muter chez le fournisseur : un champ modifié, et
+le projet B rembourse le paiement du projet A. Le serveur les résout depuis le fait
+fournisseur, né d'un webhook signé.
+
+### L'appartenance — l'intention de paiement devient une ressource possédée
+
+Rembourser mute un `payment_intent`. Prouver l'appartenance d'une ressource *cousine* — la
+session, l'abonnement — aurait été un raisonnement d'adaptateur, donc une exception à
+maintenir.
+
+`PAYMENT_INTENT` est donc **adopté**, par la filiation de L6.2F appliquée d'un cran plus
+bas. Le lien est posé à la **projection du revenu**, l'instant précis où trois preuves
+coexistent :
+
+1. la session ou l'abonnement porteur est déjà **possédé** ;
+2. le fait vient d'un **webhook signé** ;
+3. la filiation est désignée par **Stripe lui-même** sur la charge utile.
+
+Aucune n'est une métadonnée éditable, aucune ne vient d'un navigateur. Les revenus projetés
+avant L10.4 sont rattrapés par `adoptMissingPaymentIntents()`, à chaque convergence — pas
+par une migration, qui s'exécuterait une fois et laisserait manquant tout lien manqué après
+elle.
+
+### L'idempotence — pourquoi la clé ne suffit pas
+
+C'est la différence structurante avec la résiliation (L6.2G).
+
+| | Résiliation | Remboursement |
+|---|---|---|
+| Deux actes légitimes ? | Non — on ne coupe qu'une fois | **Oui** — deux partiels de 100 € sur 500 € |
+| L'état tranche ? | Oui, `status: canceled` | **Non** — 200 € rendus = un acte de 200 ou deux de 100 |
+| Stripe refuse le doublon ? | Oui | **Non**, il l'accepte : c'est parfois voulu |
+
+L'identité de l'acte ne peut donc pas être dérivée de la ressource. Elle vient de la
+**demande** :
+
+```
+PanelRefundRequest  écrite AVANT tout appel   → refundRequestId
+                                              → operationId = stripe-refund:<monde>:<id>
+                                              → clé d'idempotence Stripe
+                                              → metadata[ly_operation_id] sur le remboursement
+```
+
+Deux clics sur la même demande la rejouent ; deux demandes sont deux actes.
+
+La métadonnée est ce qui rend un rejeu sûr **hors de la fenêtre d'idempotence de Stripe**,
+qui est bornée à 24 h. Au-delà, rejouer la même clé ne converge plus : elle créerait un
+second remboursement bien réel. L'adaptateur commence donc par lister les remboursements du
+paiement et y chercher **sa propre identité**. S'il la trouve, il conclut sans rien émettre.
+
+> La doctrine L6.2A interdit à une métadonnée de décider de l'**appartenance**, parce qu'un
+> tiers peut en écrire une. Elle ne dit rien de l'identité d'un acte qu'on a soi-même émis,
+> sur une ressource dont l'appartenance est **déjà** prouvée. On ne demande pas « à qui
+> est-ce » mais « est-ce moi qui l'ai fait ». La première question a été tranchée avant.
+
+### INCONNU n'est pas ÉCHEC
+
+La distinction la plus importante du lot.
+
+| État | Ce qu'il affirme | Ce que l'écran fait |
+|---|---|---|
+| `FAILED` | Stripe a tranché : **rien n'est parti** | rouvre le bouton |
+| `UNKNOWN` | **on ne sait pas** | ferme le bouton, dit « vérification en cours » |
+
+Les confondre ferait proposer un second remboursement pour un premier peut-être abouti.
+
+On ne conclut `FAILED` que si le plan de contrôle l'affirme (`replaySafe`). Trois cas
+basculent en `UNKNOWN` :
+
+- un **timeout** — le silence ne dit rien ;
+- une **erreur non typée** — on ignore si elle précède ou suit l'appel ;
+- une **violation du contrat de sortie** — Stripe a remboursé, c'est notre lecture de sa
+  réponse qui a échoué. Ce cas a été trouvé en recette, et il est le plus insidieux : l'acte
+  réussit, la passerelle le rejette, et sans cette règle la demande se conclurait en échec
+  sur un argent bel et bien parti.
+
+La reprise est **automatique**, à l'ordonnanceur — jamais à la lecture d'un écran, car elle
+appelle réellement Stripe. Un livret consulté ne doit pas déclencher d'appel fournisseur.
+
+### Le document — ce que Stripe fournit vraiment
+
+Audit avant implémentation, cas par cas :
+
+| Cas | Ce que Stripe produit pour le remboursement |
+|---|---|
+| Abonnement facturé | **rien**. Une facture finalisée est immuable ; un avoir (`cn_…`) est un objet SÉPARÉ, à créer explicitement — un second acte financier |
+| Checkout non facturé | **rien** non plus |
+| Partiel / total | aucune différence : l'objet `Refund` n'a **ni PDF ni page hébergée** |
+
+Le seul document réel est le **reçu de la charge** (`charge.receipt_url`), que Stripe réédite
+en y portant les sommes rendues. Il est conservé sur le fait, sous `chargeReceiptUrl`.
+
+Ce que L10.4 ne fait **pas**, et pourquoi :
+
+- **aucun avoir créé** — ce serait un second acte financier chez le fournisseur, non demandé,
+  et impossible hors facture ;
+- **aucune « facture de remboursement »** — Stripe ne définit pas cet objet. L'appeler ainsi
+  serait un mensonge sur une pièce comptable ;
+- **aucun PDF interne généré** — s'il en fallait un, il serait nommé *document interne
+  L.Y Solution* et jamais présenté comme une pièce Stripe.
+
+Un justificatif peut toujours être **attaché à la main**, par le protocole Media privé de
+L10.2. Aucun stockage parallèle n'a été créé.
+
+### Ce qui n'est pas un remboursement
+
+`charge.dispute.created` — un litige **gèle** l'argent le temps d'une contestation qui peut
+se conclure dans les deux sens. Le projeter en sortie inventerait une perte qui n'existe pas
+encore, et la rétablir demanderait un mouvement inverse d'un mouvement inverse.
+
+`credit_note.created` — un avoir est un acte **comptable** sur une facture, pas un mouvement
+de trésorerie. Quand il accompagne un remboursement, celui-ci a son propre `re_…` et entre
+par la porte normale. Le projeter aussi compterait l'argent rendu deux fois.
+
+Un débit annonçant `amount_refunded: 10000` **sans** détail des remboursements ne produit
+rien : une somme ne porte aucune identité, donc aucun moyen de distinguer un remboursement
+neuf d'un rejeu du précédent.
+
+### Suppression — la falsification que la garde ferme
+
+Retirer un encaissement de 500 € qui porte un remboursement de 100 € ne produirait pas
+« rien » : il laisserait le −100 € seul, et le net afficherait une **perte de 100 €** sur une
+opération qui a rapporté 400. Pire qu'un chiffre faux — un chiffre faux **sans trace**.
+
+La suppression unitaire est donc **refusée** tant qu'un remboursement vivant s'y rattache.
+Pas de cascade : effacer automatiquement les enfants supprimerait un mouvement d'argent réel
+sur une décision que personne n'a prise.
+
+« Tout supprimer » n'a pas besoin de cette garde — un remboursement porte le **même
+`projectId`** que son encaissement, et aucune portée ne retient l'un sans l'autre. Il ne
+rembourse rien, n'annule rien chez Stripe, et ne détruit aucun fait fournisseur : les clés
+d'identité externe restent occupées par les pierres tombales, ce qui empêche un rejeu de
+webhook de ressusciter demain ce qu'on vient d'effacer.
+
+### Où le remboursement se voit
+
+| Écran | Ce qu'il montre |
+|---|---|
+| Projet · Finances · **Revenus** | l'encaissement **et** ses remboursements |
+| Projet · Finances · **Coûts** | **jamais**. Rendre de l'argent n'est pas une charge |
+| Général | net et graphique, remboursement compris |
+| Détail d'un mouvement | déjà rendu, restant, et l'historique des demandes — auteur, motif, tentatives échouées |
+| **SB Auto Manager** | le paiement passe « Remboursé », **sans aucune modification du projet** |
+
+Le dernier point mérite une phrase. SB Auto reçoit le webhook `charge.refunded` que Stripe
+émet pour le remboursement créé par le Panel, et sa chaîne existante — `markRefunded` →
+`status: REFUNDED` → badge — le traite depuis toujours. Deux consommateurs indépendants d'un
+même fait fournisseur : aucun couplage, aucune route nouvelle, aucun refactor.
+
+### La capacité
+
+`billing.refund` était **déclarée depuis L6** avec la note « premier usage NEUF du plan de
+contrôle : aucun code projet ne le fait ». C'est toujours vrai, et ce n'est plus un obstacle :
+l'appelant n'est pas un projet mais le **Panel lui-même**, en source `PANEL_INTERNAL`.
+
+Cette source ne relâche qu'**une** étape : l'octroi, qui répond à « ce projet peut-il
+demander ceci » — question sans objet quand aucun projet ne demande. Exiger l'octroi aurait
+obligé un opérateur à s'accorder à lui-même, sur la fiche du client, le droit d'utiliser son
+propre outil — puis à laisser ce droit ouvert, où il serait devenu exactement ce qu'il
+prétendait empêcher : un pont projet capable d'appeler `billing.refund`.
+
+Tout le reste s'applique à l'identique : politique commerciale, contrat d'entrée et de
+sortie, coffre, réservation d'opération, appartenance, journal.
 
 ---
 
 ## 14. Ce que ces lots n'ont PAS fait
 
-Aucun appel Stripe. Aucune modification de `bridgeContract`, `projectBridge`, des registres
-de capacités, de l'appartenance Stripe ou du routage de webhooks. **Aucun second stockage de
-fichiers** — le protocole Media existant a été étendu, pas dupliqué.
+**Aucun second stockage de fichiers** : le protocole Media existant a été étendu, pas
+dupliqué — et cela vaut toujours après L10.4.
 
-Hors lot, explicitement : import Stripe, revenus automatiques, remboursements, factures
-Stripe, prestations facturées, relances, page Manager, délai de grâce, retries et suspension
-d'abonnement. Ce sont les lots L10.3 et suivants.
+L10.1 et L10.2 n'ont touché ni `bridgeContract`, ni `projectBridge`, ni les registres de
+capacités, ni l'appartenance Stripe, ni le routage de webhooks. L10.3 a ajouté une seule
+prise à la réception des webhooks. **L10.4 est le premier lot financier à écrire dans le plan
+de contrôle** — une capacité, un adaptateur, une primitive de transport, et deux gestes
+délimités dans la passerelle (accepter une source, exempter l'octroi pour `PANEL_INTERNAL`).
+Aucun credential projet, aucun provider local, aucun contournement du plan de contrôle.
+
+Hors périmètre, explicitement : import Stripe de l'historique, prestations facturées,
+relances, délai de grâce, retries et suspension d'abonnement, création d'avoirs, génération
+de documents internes, restauration d'un mouvement supprimé, et le refactor de la
+facturation du Manager.
 
 ### Justificatifs — la réserve de L10.1 est levée
 
@@ -870,8 +1088,25 @@ services/finance/recurringCostScheduler.js      commodité horaire — jamais la
 services/finance/receipts.service.js            rattachement et autorisation d'une pièce
 services/upload/documentValidation.js           signatures d'octets, noms de fichiers
 services/upload/privateMedia.service.js         le média PRIVÉ — extension du protocole
+models/PanelProviderRevenueFact.model.js        l'inbox des faits fournisseur (L10.3)
+services/finance/providerRevenue/stripeRevenueNormalizer.js  PUR — l'objet canonique, revenus ET remboursements
+services/finance/providerRevenue/revenueProjection.service.js  fait → ledger, convergence, adoption du pi_
+models/PanelRefundRequest.model.js              l'INTENTION de rembourser — durable, écrite avant l'appel
+services/finance/refunds/refundOrchestration.service.js  éligibilité, état dérivé, issues, reprise
+services/integratedApi/stripe/stripeRefundAuthority.js   PUR — identité de l'acte, restant, convergence
 controllers/finances.controller.js
 routes/finances.routes.js                       montée sur /api/finances
+```
+
+**Plan de contrôle touché par L10.4** — délimité, et rien de plus
+
+```
+capabilities/capabilityRegistry.js     billing.refund passe migrated: true
+capabilities/capabilityGateway.service.js  accepte `source` ; exempte l'octroi pour PANEL_INTERNAL
+capabilities/invocationContext.js      PANEL_INTERNAL : de « prévue » à « servie »
+integratedApi/stripe/stripeCapabilities.js  le contrat d'entrée et de sortie
+integratedApi/stripe/stripeAdapters.js      appartenance → état → mutation
+integratedApi/stripe/stripeTransport.js     retrievePaymentIntent, listRefunds, createRefund
 ```
 
 **Frontend**
@@ -890,6 +1125,8 @@ components/finance/financeLabels.ts
 components/finance/RecurringCostForm.tsx        création, révision, arrêt — et leurs modales
 components/finance/RecurringCostList.tsx        le listing des RÈGLES, à côté du livret
 components/finance/ReceiptCell.tsx              déposer, télécharger, remplacer, retirer
+components/finance/ProviderFactPanel.tsx        le fait Stripe — écran de DÉTAIL seulement
+components/finance/RefundModal.tsx              rembourser : montants lus, monde en lecture seule
 pages/FinancesPage.tsx                          la page globale
 ```
 
@@ -899,6 +1136,8 @@ pages/FinancesPage.tsx                          la page globale
 tests/finance-core.test.js       138 contrôles — noyau, monnaie, périodes, portées, garde-fou
 tests/finance-recurring.test.js  105 contrôles — calendrier, idempotence, rattrapage, 3 modes, 2 arrêts
 tests/finance-receipts.test.js   105 contrôles — média privé, sécurité, survie de la pièce, persistance
-tests/finance-ui.test.js         156 contrôles — interface, dont les 5 états dégénérés du graphique
+tests/finance-stripe-revenue.test.js  142 contrôles — un paiement, une transaction, quatre annonces
+tests/finance-refunds.test.js    120 contrôles — double clic, réponse perdue, rejeu hors fenêtre, cloisonnement
+tests/finance-ui.test.js         187 contrôles — interface, dont les 5 états dégénérés du graphique
 tests/media-first-deployment.test.js  + 10 contrôles — un média privé n'est jamais publié
 ```

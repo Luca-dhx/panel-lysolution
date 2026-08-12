@@ -35,6 +35,7 @@ import type {
   BulkDeleteResult, BulkScopePreview, FinanceCriteria, FinanceListResult, FinanceProjectLine,
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
   ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
+  RefundEligibility, RefundOutcome, RefundRequest, StripeRefundReason,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -972,9 +973,39 @@ export const finances = {
    * donnée manquante.
    */
   detail: (transactionId: string) =>
-    request<{ transaction: FinancialTransaction; providerFact: ProviderFact | null }>(
-      `/api/finances/transactions/${transactionId}`,
-    ),
+    request<{
+      transaction: FinancialTransaction;
+      providerFact: ProviderFact | null;
+      refundRequests: RefundRequest[];
+    }>(`/api/finances/transactions/${transactionId}`),
+
+  /**
+   * PEUT-ON REMBOURSER, ET DE COMBIEN ? — aucun appel Stripe.
+   *
+   * Tout vient du registre : le montant encaissé, ce qui a déjà été rendu, ce
+   * qui reste. L'écran ne calcule RIEN lui-même — un restant calculé côté
+   * navigateur finirait par diverger de celui que le serveur oppose, et
+   * l'opérateur verrait un bouton actif sur un refus certain.
+   */
+  refundEligibility: (transactionId: string) =>
+    request<RefundEligibility>(`/api/finances/transactions/${transactionId}/refund`),
+
+  /**
+   * REMBOURSE — le seul appel du Panel qui rende de l'argent.
+   *
+   * Le corps ne porte qu'un montant et deux raisons. Aucun identifiant Stripe,
+   * aucun environnement : le serveur les résout depuis le mouvement, et les
+   * accepter d'ici reviendrait à laisser le navigateur désigner la ressource à
+   * muter chez le fournisseur.
+   *
+   * `amountCents: null` = remboursement TOTAL du restant.
+   */
+  refund: (
+    transactionId: string,
+    body: { amountCents: number | null; reason?: StripeRefundReason | null; note?: string | null },
+  ) => request<RefundOutcome>(`/api/finances/transactions/${transactionId}/refund`, {
+    method: 'POST', body,
+  }),
 
   /** La répartition par projet — la page globale, et elle seule. */
   byProject: (criteria: FinanceCriteria = {}) =>

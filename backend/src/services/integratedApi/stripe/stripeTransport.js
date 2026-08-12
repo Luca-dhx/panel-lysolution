@@ -557,6 +557,109 @@ export async function cancelSubscriptionNow({ credentials, subscriptionId, idemp
   return { outcome: OUTCOMES.DONE, subscription: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
+/* ── L10.4 — LE REMBOURSEMENT ─────────────────────────────────────────────── */
+
+/**
+ * `GET /v1/payment_intents/{id}` — lecture, charge étendue.
+ *
+ * `expand[]=latest_charge` évite un second aller-retour : c'est la charge, non
+ * l'intention, qui porte le reçu Stripe — le seul document que le fournisseur
+ * réédite après un remboursement.
+ */
+export async function retrievePaymentIntent({ credentials, paymentIntentId, timeoutMs, fetchImpl }) {
+  if (!paymentIntentId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de paiement manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`,
+    query: { expand: ['latest_charge'] }, timeoutMs, fetchImpl, retries: 2,
+  });
+  return { paymentIntent: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/refunds` — LA LECTURE QUI PORTE LA CONVERGENCE DURABLE.
+ *
+ * Elle sert deux questions que rien d'autre ne tranche : combien ce paiement
+ * a-t-il déjà rendu, et l'un de ces remboursements est-il DÉJÀ le nôtre — celui
+ * qu'on s'apprête à demander sous cette identité (`stripeRefundAuthority`).
+ *
+ * La borne de 100 est celle de Stripe. Au-delà, la somme serait fausse et le
+ * restant remboursable surévalué : l'appelant reçoit `truncated` et doit
+ * refuser d'affirmer plutôt que de rembourser à l'aveugle. Cent
+ * remboursements sur un même paiement n'a jamais de cause légitime.
+ */
+export async function listRefunds({ credentials, paymentIntentId, limit = 100, timeoutMs, fetchImpl }) {
+  if (!paymentIntentId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de paiement manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: '/v1/refunds',
+    query: { payment_intent: paymentIntentId, limit: Math.min(limit, 100) },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  const data = Array.isArray(res.json?.data) ? res.json.data : null;
+  return {
+    refunds: data,
+    truncated: res.json?.has_more === true,
+    requestId: res.requestId,
+    durationMs: res.durationMs,
+  };
+}
+
+/**
+ * `POST /v1/refunds` — L'ÉCRITURE FINANCIÈRE LA MOINS RÉVERSIBLE DU PARC.
+ *
+ * ══ CE QUE STRIPE GARANTIT, ET CE QU'IL NE GARANTIT PAS ═════════════════════
+ *
+ * Il garantit qu'on ne rendra jamais plus que ce qui a été encaissé : au-delà,
+ * il refuse. C'est la seule protection ATOMIQUE contre deux remboursements
+ * partiels concurrents — notre calcul du restant est une courtoisie
+ * d'interface, jamais un verrou. Deux opérateurs qui cliquent en même temps
+ * verront le second refus venir du fournisseur, et c'est correct.
+ *
+ * Il ne garantit PAS, en revanche, de refuser un second remboursement partiel
+ * identique : deux fois 100 € sur 500 € encaissés sont deux actes parfaitement
+ * valides. La clé d'idempotence protège la fenêtre courte ; au-delà, seule
+ * `metadata[ly_operation_id]` permet de reconnaître notre propre acte. Elle est
+ * donc APPOSÉE ICI, et son absence rendrait tout rejeu tardif dangereux.
+ *
+ * ══ LE MONTANT ══════════════════════════════════════════════════════════════
+ *
+ * `amountCents` absent = remboursement TOTAL du restant, décidé par Stripe.
+ * On ne calcule pas le total nous-mêmes pour l'envoyer : entre notre lecture et
+ * l'écriture, un autre remboursement a pu passer, et un montant figé
+ * échouerait là où l'omission converge.
+ */
+export async function createRefund({
+  credentials, paymentIntentId, amountCents, reason, metadata,
+  idempotencyKey, timeoutMs, fetchImpl,
+}) {
+  if (!paymentIntentId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de paiement manquant.');
+  }
+  if (amountCents !== undefined && amountCents !== null
+    && (!Number.isInteger(amountCents) || amountCents <= 0)) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Montant de remboursement invalide.');
+  }
+
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/refunds',
+    body: {
+      payment_intent: paymentIntentId,
+      ...(Number.isInteger(amountCents) ? { amount: amountCents } : {}),
+      ...(reason ? { reason } : {}),
+      ...(metadata && Object.keys(metadata).length ? { metadata } : {}),
+    },
+    idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(
+    `[stripe] remboursement émis — ${res.json?.id ?? '(sans id)'} `
+    + `sur ${paymentIntentId} (req ${res.requestId ?? '—'})`,
+  );
+  return { outcome: OUTCOMES.DONE, refund: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
 /**
  * Faut-il, et peut-on, réessayer ?
  *

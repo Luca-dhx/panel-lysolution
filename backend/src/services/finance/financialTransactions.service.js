@@ -377,6 +377,8 @@ export async function softDeleteTransaction(transactionId, { reason = null } = {
   const document = await loadOrThrow(transactionId);
   if (document.deletedAt) return document;
 
+  await assertNoLivingRefunds(document);
+
   document.deletedAt = new Date();
   document.deletedBy = actor.email ?? null;
   document.deletionReason = reason ? String(reason).trim() : null;
@@ -388,6 +390,48 @@ export async function softDeleteTransaction(transactionId, { reason = null } = {
     extra: { reason: document.deletionReason },
   });
   return document;
+}
+
+/**
+ * UN ENCAISSEMENT REMBOURSÉ NE SE RETIRE PAS SEUL (L10.4).
+ *
+ * ══ LA FALSIFICATION QUE CETTE GARDE FERME ══════════════════════════════════
+ *
+ * Un revenu de 500 €, remboursé de 100 €, laisse deux lignes : `+500 INFLOW` et
+ * `−100 OUTFLOW`. Retirer la première sans la seconde ne produit pas « rien » —
+ * il produit un net de **−100 €** sur une opération qui, dans la réalité, a
+ * rapporté 400 €. Le registre affirmerait alors une perte qui n'a jamais eu
+ * lieu, et personne ne saurait d'où elle vient : la ligne qui l'expliquait a
+ * disparu.
+ *
+ * C'est pire qu'un chiffre faux — c'est un chiffre faux SANS trace. La
+ * suppression est donc refusée tant qu'un remboursement vivant s'y rattache.
+ *
+ * ══ POURQUOI PAS UNE CASCADE ════════════════════════════════════════════════
+ *
+ * Retirer automatiquement les enfants effacerait un mouvement d'argent RÉEL —
+ * les 100 € sont bien repartis chez le client — sur une décision que personne
+ * n'a prise explicitement. Une cascade silencieuse sur des sommes est
+ * exactement ce qu'un registre comptable ne doit jamais faire. On refuse, on
+ * nomme, et l'opérateur tranche.
+ */
+async function assertNoLivingRefunds(document) {
+  if (document.category === CATEGORIES.REFUND) return;
+
+  const vivants = await PanelFinancialTransaction.countDocuments({
+    parentTransactionId: document.transactionId,
+    category: CATEGORIES.REFUND,
+    deletedAt: null,
+  });
+  if (vivants === 0) return;
+
+  throw ApiError.conflict(
+    'PANEL_FINANCE_TRANSACTION_HAS_REFUNDS',
+    `Ce mouvement porte ${vivants} remboursement(s) : le retirer laisserait des sorties `
+    + 'sans l’encaissement qui les explique, et le résultat afficherait une perte qui n’a '
+    + 'pas eu lieu. Retirez d’abord les remboursements, si c’est bien ce que vous voulez.',
+    { refunds: vivants },
+  );
 }
 
 /** Le mot que l'utilisateur doit RETAPER pour une suppression en masse. */
@@ -420,6 +464,29 @@ export const BULK_CONFIRMATION = 'SUPPRIMER';
  * appuieraient sur le même bouton et n'effaceraient pas la même chose. L'écran
  * annonce donc le nombre EXACT de lignes concernées, tel que rendu par
  * `countBulkScope`, avant de demander confirmation.
+ *
+ * ══ POURQUOI ELLE N'A PAS BESOIN DE LA GARDE UNITAIRE (L10.4) ═══════════════
+ *
+ * La suppression d'une seule ligne refuse de retirer un encaissement qui porte
+ * des remboursements vivants : elle laisserait des sorties orphelines, et le
+ * résultat afficherait une perte qui n'a pas eu lieu.
+ *
+ * Ici, le problème ne se pose pas — et ce n'est pas une chance, c'est la portée
+ * qui le garantit. Un remboursement porte le MÊME `projectId` que l'encaissement
+ * qu'il défait : il n'existe aucune portée (`project`, `company`, `all`) qui
+ * retienne l'un sans l'autre. Le couple part ensemble, ou reste ensemble, et le
+ * net ne peut donc pas basculer du mauvais côté.
+ *
+ * ══ CE QUE « TOUT SUPPRIMER » NE FAIT PAS, ET NE PEUT PAS FAIRE ═════════════
+ *
+ * Il ne rembourse rien, il n'annule rien chez Stripe, et il ne « défait » aucun
+ * remboursement déjà émis. L'argent rendu l'est resté. Vider le livret retire
+ * des LIGNES d'un registre ; le monde extérieur, lui, ne s'en aperçoit pas.
+ *
+ * Il ne détruit pas non plus les faits fournisseur : ceux-ci vivent dans leur
+ * propre inbox, et leur clé d'identité externe reste occupée par la pierre
+ * tombale de la transaction. C'est ce qui empêche un rejeu de webhook de
+ * ressusciter demain ce qu'on vient d'effacer — voir `upsertTransaction`.
  */
 export async function bulkSoftDelete({ scope, projectId = null, reason = null, confirm } = {}, actor = {}) {
   const { filtre, cible } = await bulkScopeFilter(scope, projectId);
@@ -590,15 +657,31 @@ export async function buildQueryFilter({
   const resolved = resolvePeriod({ period, start, end, now });
   Object.assign(filtre, dateFilterFor(resolved));
 
+  /**
+   * UNE CATÉGORIE, OU PLUSIEURS SÉPARÉES PAR UNE VIRGULE (L10.4).
+   *
+   * ══ POURQUOI CE PLURIEL EST DEVENU NÉCESSAIRE ═════════════════════════════
+   *
+   * Le sous-onglet « Revenus » filtrait sur `REVENUE`, et cela suffisait tant
+   * que rien d'autre ne concernait un encaissement. Un remboursement est
+   * pourtant de catégorie `REFUND` : sur ce filtre-là, il devient INVISIBLE, et
+   * l'écran des revenus montre 500 € encaissés sans dire que 100 sont repartis.
+   *
+   * L'alternative aurait été de le ranger en `COST` pour qu'il apparaisse
+   * quelque part. C'est précisément ce que la doctrine interdit : il gonflerait
+   * les charges et fausserait toute analyse de marge. Le filtre s'élargit donc,
+   * plutôt que la taxonomie ne se déforme.
+   */
   if (category) {
-    const valeur = String(category).toUpperCase();
-    if (!CATEGORY_VALUES.includes(valeur)) {
+    const valeurs = String(category).split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);
+    const inconnue = valeurs.find((v) => !CATEGORY_VALUES.includes(v));
+    if (inconnue || valeurs.length === 0) {
       throw ApiError.badRequest(
         'PANEL_FINANCE_CATEGORY_UNKNOWN',
-        `Catégorie inconnue : ${valeur}.`,
+        `Catégorie inconnue : ${inconnue ?? category}.`,
       );
     }
-    filtre.category = valeur;
+    filtre.category = valeurs.length === 1 ? valeurs[0] : { $in: valeurs };
   }
 
   if (flow) {
@@ -634,7 +717,7 @@ export async function listTransactions(demande = {}) {
   ]);
 
   return {
-    items: await withReceipts(items.map(toPublicTransaction)),
+    items: await decorate(items.map(toPublicTransaction)),
     // `total` compte TOUT ce que le filtre retient ; `items` s'arrête à la
     // borne. L'écran doit pouvoir dire « 200 des 431 » plutôt que laisser
     // croire que le registre s'arrête là.
@@ -648,7 +731,7 @@ export async function listTransactions(demande = {}) {
 /** Un mouvement, par son identité publique. */
 export async function getTransaction(transactionId) {
   const document = await loadOrThrow(transactionId);
-  const [enrichi] = await withReceipts([toPublicTransaction(document.toObject())]);
+  const [enrichi] = await decorate([toPublicTransaction(document.toObject())]);
   return enrichi;
 }
 
@@ -669,6 +752,28 @@ export async function getTransaction(transactionId) {
  * ligne ferait un N+1 sur un livret de coûts, qui est précisément l'écran où
  * les justificatifs sont nombreux.
  */
+/**
+ * L'ENRICHISSEMENT COMPLET D'UNE LECTURE — justificatif, puis remboursements.
+ *
+ * ══ POURQUOI L'ÉTAT DE REMBOURSEMENT N'EST PAS SUR LA TRANSACTION ══════════
+ *
+ * Parce qu'il n'est pas une propriété du mouvement : c'est une SOMME de ses
+ * enfants. Le stocker ferait un solde, et un solde se désynchronise à la
+ * première écriture arrivée par une voie imprévue — un webhook, un rejeu, une
+ * suppression. Il se recalcule donc à la lecture, en une requête pour toute la
+ * page, exactement comme la jointure des justificatifs juste au-dessus.
+ *
+ * ══ AUCUN APPEL FOURNISSEUR ═══════════════════════════════════════════════
+ *
+ * Tout vient du registre. Un écran financier ne parle jamais à Stripe — la
+ * règle centrale de L10.3, et L10.4 ne l'entame pas.
+ */
+async function decorate(transactions) {
+  const avecPieces = await withReceipts(transactions);
+  const { withRefundState } = await import('./refunds/refundOrchestration.service.js');
+  return withRefundState(avecPieces);
+}
+
 async function withReceipts(transactions) {
   const ids = transactions.map((t) => t.receipt?.mediaId).filter(Boolean);
   if (ids.length === 0) return transactions;

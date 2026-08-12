@@ -49,6 +49,9 @@ import {
   retrievePrice,
   cancelSubscriptionAtPeriodEnd,
   cancelSubscriptionNow,
+  retrievePaymentIntent,
+  listRefunds,
+  createRefund,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
@@ -83,6 +86,15 @@ import {
   describeCancelledSubscription,
   logConvergence,
 } from './stripeSubscriptionCancellation.js';
+import {
+  REFUND_ACT_STATE,
+  REFUND_OPERATION_METADATA_KEY,
+  findOwnRefund,
+  describeRefundableAmount,
+  chargeOfPaymentIntent,
+  receiptUrlOfCharge,
+  describeRefund,
+} from './stripeRefundAuthority.js';
 import { STRIPE_CAPABILITIES } from './stripeCapabilities.js';
 
 /**
@@ -934,6 +946,190 @@ async function subscriptionCancelNow(args) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  billing.refund                                                            */
+/* -------------------------------------------------------------------------- */
+
+const PAYMENT_INTENT = STRIPE_RESOURCE_TYPES.PAYMENT_INTENT;
+
+/**
+ * REMBOURSE — une fois par intention, jamais deux, y compris un an après.
+ *
+ * ══ L'ORDRE, ET IL N'EST PAS NÉGOCIABLE ═════════════════════════════════════
+ *
+ *   1. APPARTENANCE   avant tout contact fournisseur. Un paiement qui n'est pas
+ *                     au projet ne doit pas même être LU — sinon la durée de
+ *                     réponse trahirait son existence.
+ *   2. ÉTAT           NOTRE acte est-il déjà inscrit ? On ne demande pas « ce
+ *                     paiement est-il remboursé » : la question n'a pas de
+ *                     réponse utile, un paiement pouvant l'être plusieurs fois.
+ *                     On cherche notre identité dans la métadonnée.
+ *   3. MUTATION       seulement si notre acte n'existe pas encore.
+ *
+ * ══ CE QUE L'ÉTAPE 2 ACHÈTE ════════════════════════════════════════════════
+ *
+ * La fenêtre d'idempotence de Stripe est bornée à 24 h. Au-delà, rejouer la
+ * même clé ne converge plus : elle crée un SECOND remboursement, bien réel.
+ * C'est le pire défaut que ce lot puisse produire, et la seule protection est
+ * de reconnaître notre propre acte dans la liste des remboursements — ce que
+ * `metadata[ly_operation_id]`, apposé à l'étape 3, rend possible pour toujours.
+ *
+ * ══ CE QU'ON NE VERROUILLE PAS, ET POURQUOI C'EST CORRECT ═══════════════════
+ *
+ * Le restant remboursable calculé à l'étape 2 est une COURTOISIE : entre sa
+ * lecture et l'écriture, un autre opérateur peut rembourser. Aucun verrou
+ * applicatif ne fermerait cette fenêtre — le fournisseur est la seule autorité
+ * sur les sommes. Stripe refuse tout dépassement de façon atomique ; deux
+ * remboursements partiels concurrents produisent donc au pire un refus propre,
+ * jamais un excédent.
+ */
+async function refundCreate({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+  const { paymentIntentId, amountCents, reason, operationId } = input;
+
+  // ── 1. L'APPARTENANCE, AVANT TOUT CONTACT ────────────────────────────────
+  await guard(definition, () => assertOwnedResource({
+    projectId, environment, resourceType: PAYMENT_INTENT, resourceId: paymentIntentId,
+  }));
+
+  // ── 2. L'ÉTAT — notre acte est-il déjà inscrit ? ─────────────────────────
+  const lu = await guard(definition, () => retrievePaymentIntent({
+    credentials, paymentIntentId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const liste = await guard(definition, () => listRefunds({
+    credentials, paymentIntentId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  if (liste.truncated) {
+    /**
+     * Plus de cent remboursements sur un paiement : la somme serait fausse et
+     * notre acte pourrait se cacher dans la page suivante. On ne mute PAS.
+     */
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : l’historique de remboursement est trop long pour être lu d’un bloc.`,
+      { reason: 'REFUND_HISTORY_TRUNCATED' },
+    );
+  }
+
+  const { charge } = chargeOfPaymentIntent(lu.paymentIntent);
+  const receiptUrl = receiptUrlOfCharge(charge);
+  const deja = findOwnRefund({ refunds: liste.refunds, operationId });
+
+  if (deja.state === REFUND_ACT_STATE.ALREADY_DONE) {
+    /**
+     * CONVERGENCE PAR L'IDENTITÉ — le cas qui justifie tout le module.
+     *
+     * Réponse perdue, double clic, reprise après redémarrage, rejeu hors
+     * fenêtre : tous arrivent ici, et aucun n'émet un second remboursement.
+     */
+    logger.info(
+      `[stripe-refund] CONVERGENCE — ${maskResourceId(paymentIntentId)} porte déjà `
+      + `l’acte ${operationId} (${environment}, projet ${projectId}). Aucune mutation.`,
+    );
+    const montants = describeRefundableAmount({ paymentIntent: lu.paymentIntent, refunds: liste.refunds });
+    return {
+      ...vueContractuelle(describeRefund(deja.refund, { receiptUrl })),
+      ...(montants ?? { collectedCents: 0, refundedCents: 0, remainingCents: 0 }),
+      outcome: 'ALREADY_REFUNDED',
+    };
+  }
+
+  const avant = describeRefundableAmount({ paymentIntent: lu.paymentIntent, refunds: liste.refunds });
+  if (!avant) {
+    /**
+     * Le lien affirme, le fournisseur ne rend rien de chiffrable. On ne mute
+     * PAS : rembourser sans savoir combien est entré est exactement ce que ce
+     * module existe pour empêcher.
+     */
+    logger.error(
+      `[stripe-refund] INCOHÉRENCE — ${maskResourceId(paymentIntentId)} est lié à ${projectId} `
+      + `(${environment}) mais ses montants sont illisibles. AUCUN remboursement émis.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      `« ${definition.code} » : les montants du paiement ne sont pas lisibles, aucun remboursement n’a été tenté.`,
+      { reason: 'PAYMENT_AMOUNTS_UNREADABLE' },
+    );
+  }
+
+  if (avant.remainingCents <= 0) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.INPUT_INVALID,
+      `« ${definition.code} » : ce paiement a déjà été intégralement remboursé.`,
+      { reason: 'NOTHING_LEFT_TO_REFUND' },
+    );
+  }
+  if (Number.isInteger(amountCents) && amountCents > avant.remainingCents) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.INPUT_INVALID,
+      `« ${definition.code} » : le montant demandé dépasse le remboursable restant.`,
+      { reason: 'REFUND_EXCEEDS_REMAINING' },
+    );
+  }
+
+  // ── 3. LA MUTATION ───────────────────────────────────────────────────────
+  const idempotencyKey = deriveIdempotencyKey({
+    environment, projectId, capability: definition.code, operationId,
+  });
+
+  const mute = await guard(definition, () => createRefund({
+    credentials,
+    paymentIntentId,
+    amountCents,
+    reason,
+    /** L'identité de l'acte, déposée CHEZ STRIPE. Sans elle, pas de rejeu sûr. */
+    metadata: { [REFUND_OPERATION_METADATA_KEY]: operationId },
+    idempotencyKey,
+    timeoutMs: definition.timeoutMs,
+    fetchImpl,
+  }));
+
+  const fait = describeRefund(mute.refund, { receiptUrl });
+  if (!fait) {
+    /**
+     * 2xx sans remboursement exploitable : l'argent est PEUT-ÊTRE parti. On ne
+     * conclut pas — la reprise relira la liste, où la métadonnée tranchera.
+     */
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `Stripe a répondu à « ${definition.code} » sans remboursement exploitable : issue indéterminée.`,
+    );
+  }
+
+  const rendu = avant.refundedCents + fait.amountCents;
+  return {
+    ...vueContractuelle(fait),
+    collectedCents: avant.collectedCents,
+    refundedCents: rendu,
+    remainingCents: Math.max(0, avant.collectedCents - rendu),
+    outcome: 'REFUNDED',
+  };
+}
+
+/**
+ * NE REND QUE CE QUE LE CONTRAT DÉCLARE.
+ *
+ * `describeRefund` porte aussi `operationId` — utile au diagnostic interne,
+ * absent du contrat de sortie, et refusé par un schéma `strict()`. Le laisser
+ * passer faisait échouer la VALIDATION APRÈS que Stripe eut remboursé : l'acte
+ * réussissait, la passerelle le rejetait, et la demande se concluait en échec
+ * sur un argent bel et bien parti. Une projection explicite ferme ce piège.
+ */
+function vueContractuelle(fait) {
+  return {
+    refundId: fait.refundId,
+    status: fait.status,
+    amountCents: fait.amountCents,
+    currency: fait.currency,
+    paymentIntentId: fait.paymentIntentId,
+    chargeId: fait.chargeId,
+    reason: fait.reason,
+    createdAt: fait.createdAt,
+    receiptUrl: fait.receiptUrl,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -981,6 +1177,12 @@ export const STRIPE_ADAPTERS = Object.freeze({
    */
   'billing.subscription.cancel_at_period_end': subscriptionCancelAtPeriodEnd,
   'billing.subscription.cancel_now': subscriptionCancelNow,
+  /**
+   * LE REMBOURSEMENT — la seule écriture du parc qui RENDE de l'argent, et la
+   * seule dont aucun code projet n'a jamais existé. Elle ne migre rien : elle
+   * naît dans le plan de contrôle, appelée par le Panel pour un projet.
+   */
+  'billing.refund': refundCreate,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

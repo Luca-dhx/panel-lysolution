@@ -150,6 +150,14 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     // possédait plusieurs appelants.
     'billing.subscription.cancel_at_period_end',
     'billing.subscription.cancel_now',
+    /**
+     * L10.4 — LA PREMIÈRE CAPACITÉ SERVIE QUI NE MIGRE AUCUN CODE EXISTANT.
+     *
+     * Toutes les autres ont repris un appel qu'un projet faisait déjà. Celle-ci
+     * n'en remplace aucun : son appelant est le Panel lui-même, en source
+     * `PANEL_INTERNAL`, depuis l'onglet Finances d'un projet.
+     */
+    'billing.refund',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -171,7 +179,14 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * création (L6.2B/D/E) ou par filiation (L6.2F).
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('sept capacités Stripe sont servies', stripeServies.length === 7);
+  check('huit capacités Stripe sont servies', stripeServies.length === 8);
+  /**
+   * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
+   * par la même filiation : l'intention de paiement est adoptée à la projection
+   * du revenu, depuis la session ou l'abonnement possédé qui l'a produite.
+   */
+  check('…dont le remboursement, ancré sur une intention adoptée (L10.4)',
+    stripeServies.some((c) => c.code === 'billing.refund'));
   /**
    * QUATRE capacités dérivent leur identité d'acte : les deux `ensure` (L6.2D/E)
    * et les deux résiliations (L6.2G). Le point commun n'est pas le verbe, c'est

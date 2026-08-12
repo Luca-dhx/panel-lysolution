@@ -18,7 +18,7 @@ import { useEffect, useState } from 'react';
 import { finances } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { ProviderFactPanel } from '@/components/finance/ProviderFactPanel';
-import type { ProviderFact } from '@/types.finance';
+import type { ProviderFact, RefundRequest } from '@/types.finance';
 import { formatCents, formatFlowCents } from '@/lib/money';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
@@ -28,6 +28,27 @@ import {
 import type { FinancialTransaction } from '@/types.finance';
 
 const DATE_SEULE = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeZone: 'Europe/Paris' });
+
+/**
+ * LES CINQ ÉTATS D'UNE DEMANDE DE REMBOURSEMENT (L10.4).
+ *
+ * `UNKNOWN` ne se lit PAS « Échec ». C'est la traduction la plus importante de
+ * ce fichier : un échec dit que l'argent n'est pas parti, un inconnu dit qu'on
+ * ne sait pas. Écrire « Échec » ferait recommencer, et l'argent partirait deux
+ * fois.
+ */
+const ETIQUETTE_DEMANDE: Record<RefundRequest['status'], { label: string; tone: string }> = {
+  REQUESTED: { label: 'Demandé', tone: 'badge' },
+  PROCESSING: { label: 'En cours', tone: 'badge badge-warn' },
+  SUCCEEDED: { label: 'Remboursé', tone: 'badge badge-ok' },
+  /**
+   * « le fournisseur » et non « Stripe » : cet écran décrit un MOUVEMENT, et le
+   * registre est fournisseur-agnostique depuis L10.1. Le nom du fournisseur vit
+   * dans le panneau du fait, à côté des identifiants qu'il produit.
+   */
+  FAILED: { label: 'Refusé par le fournisseur', tone: 'badge badge-danger' },
+  UNKNOWN: { label: 'Vérification en cours', tone: 'badge badge-warn' },
+};
 
 function Ligne({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -67,11 +88,24 @@ export function TransactionDetail({
    * toujours `null` est un appel de trop.
    */
   const [fait, setFait] = useState<ProviderFact | null>(null);
+  /**
+   * L'HISTORIQUE DES DEMANDES DE REMBOURSEMENT (L10.4).
+   *
+   * Ici, et nulle part ailleurs. La liste porte déjà l'ÉTAT — combien a été
+   * rendu, s'il reste quelque chose — parce que c'est ce qu'on lit en
+   * parcourant. Le détail répond à la question suivante : QUI a demandé, QUAND,
+   * pour quelle raison, et ce qu'il est advenu des tentatives qui ont échoué.
+   */
+  const [demandes, setDemandes] = useState<RefundRequest[]>([]);
   useEffect(() => {
     if (!transaction.provenance) return undefined;
     let vivant = true;
     finances.detail(transaction.transactionId)
-      .then((res) => { if (vivant) setFait(res.providerFact); })
+      .then((res) => {
+        if (!vivant) return;
+        setFait(res.providerFact);
+        setDemandes(res.refundRequests ?? []);
+      })
       // Un détail fournisseur indisponible ne doit pas casser l'écran : le
       // mouvement lui-même est déjà là, et c'est lui qui compte.
       .catch(() => null);
@@ -193,6 +227,53 @@ export function TransactionDetail({
         identifiants Stripe viennent après, pour qui les cherche.
       */}
       {fait ? <ProviderFactPanel fact={fait} /> : null}
+
+      {/*
+        ── L'ÉTAT DE REMBOURSEMENT DE CET ENCAISSEMENT ────────────────────────
+
+        Le montant affiché plus haut ne bouge PAS. C'est un principe, pas un
+        oubli : l'encaissement de 500 € a bien eu lieu, et le corriger à 400
+        effacerait un fait. Ce bloc dit ce qui en est reparti, et rien d'autre.
+      */}
+      {transaction.refund && transaction.refund.count > 0 ? (
+        <div className="finance-detail-block">
+          <h3>Remboursements</h3>
+          <div className="finance-detail-grid">
+            <Ligne label="Déjà remboursé">{formatCents(transaction.refund.refundedCents)}</Ligne>
+            <Ligne label="Remboursable restant">{formatCents(transaction.refund.remainingCents)}</Ligne>
+          </div>
+        </div>
+      ) : null}
+
+      {transaction.refund?.pending ? (
+        <div className="alert alert-warning">
+          Un remboursement est en cours de vérification : son issue n’est pas encore
+          connue. Aucun second remboursement ne sera créé.
+        </div>
+      ) : null}
+
+      {demandes.length > 0 ? (
+        <details className="finance-technical">
+          <summary>Demandes de remboursement ({demandes.length})</summary>
+          <ul className="finance-refund-history">
+            {demandes.map((d) => (
+              <li key={d.refundRequestId}>
+                <span className={ETIQUETTE_DEMANDE[d.status].tone}>
+                  {ETIQUETTE_DEMANDE[d.status].label}
+                </span>
+                {' · '}
+                {d.amountCents === null ? 'Totalité du restant' : formatCents(d.amountCents)}
+                {' · '}
+                <span className="muted">{formatDateTime(d.requestedAt)}</span>
+                {d.requestedBy.email ? <span className="muted"> · {d.requestedBy.email}</span> : null}
+                {d.operatorReason ? <div className="cell-secondary">{d.operatorReason}</div> : null}
+                {/* L'identité du REMBOURSEMENT (re_…), jamais celle du paiement. */}
+                {d.refundId ? <div className="cell-secondary"><code>{d.refundId}</code></div> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       {!transaction.editable && !supprime ? (
         <p className="field-hint muted">{transaction.notEditableReason}</p>

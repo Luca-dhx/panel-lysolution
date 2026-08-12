@@ -72,7 +72,22 @@ import {
  * @returns {Promise<{capability, provider, environment, outcome, result, requestId, durationMs}>}
  * @throws {CapabilityError}
  */
-export async function invokeCapability({ code, panelProject, payload = {}, requestId, fetchImpl }) {
+export async function invokeCapability({
+  code, panelProject, payload = {}, requestId, fetchImpl,
+  /**
+   * QUI DEMANDE — et c'est la seule chose que L10.4 ajoute à cette passerelle.
+   *
+   * `PROJECT_BRIDGE` par défaut : toute la logique de ce fichier a été écrite
+   * pour un projet qui parle par le pont, et ce défaut garantit qu'aucun
+   * appelant existant ne change de comportement.
+   *
+   * `PANEL_INTERNAL` est le Panel agissant POUR un projet sans que le projet
+   * demande rien — le remboursement depuis l'onglet Finances. Le projet reste
+   * le périmètre entier : appartenance, monde, identifiants et journal en
+   * dépendent. Une seule étape change, l'octroi — voir plus bas.
+   */
+  source = INVOCATION_SOURCES.PROJECT_BRIDGE,
+}) {
   // ── 1. LA CAPACITÉ EXISTE-T-ELLE ? ────────────────────────────────────────
   // Avant même de savoir qui parle : un code inconnu ne mérite ni contexte, ni
   // lecture de fiche, ni journal d'invocation.
@@ -94,7 +109,7 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
    */
   let context;
   try {
-    context = buildInvocationContext({ panelProject, payload, requestId });
+    context = buildInvocationContext({ panelProject, payload, requestId, source });
   } catch (error) {
     await audit(fallbackContext(panelProject, requestId), definition, {
       outcome: error instanceof CapabilityError ? error.outcome : CAPABILITY_OUTCOMES.FAILED,
@@ -107,7 +122,24 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
 
   try {
     // ── 4. A-T-IL LE DROIT ? ────────────────────────────────────────────────
-    assertGranted(context, definition);
+    /**
+     * L'OCTROI RÉPOND À « CE PROJET PEUT-IL DEMANDER CECI ? », ET RIEN D'AUTRE.
+     *
+     * Quand le Panel agit lui-même (L10.4), aucun projet ne demande. Exiger
+     * l'octroi reviendrait à obliger un opérateur à s'accorder à lui-même, sur
+     * la fiche du client, le droit d'utiliser son propre outil — puis à laisser
+     * ce droit ouvert, où il deviendrait exactement ce qu'il prétendait
+     * empêcher : un pont projet capable d'appeler `billing.refund`.
+     *
+     * Le contraire est donc plus sûr. Un pont projet reste refusé faute
+     * d'octroi, et la source interne, elle, n'est atteignable que par une route
+     * du Panel derrière l'authentification opérateur. AUCUNE autre étape n'est
+     * sautée : politique commerciale, migration, contrat, coffre, réservation,
+     * appartenance et journal s'appliquent à l'identique.
+     */
+    if (context.source !== INVOCATION_SOURCES.PANEL_INTERNAL) {
+      assertGranted(context, definition);
+    }
 
     // ── 5. LE COMMERCE EST-IL OUVERT POUR CET EFFET ? ───────────────────────
     // Rien n'a encore été lu du coffre, aucun adaptateur n'a été atteint : un

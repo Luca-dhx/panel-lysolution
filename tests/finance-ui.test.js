@@ -187,9 +187,20 @@ section('5. Les trois sous-onglets, et ce qu’ils filtrent');
     && workspace.includes("key: 'revenues'"));
   check('« Coûts » filtre sur la catégorie COST',
     /sousOnglet === 'costs' \? 'COST'/.test(workspace));
-  check('« Revenus » filtre sur la catégorie REVENUE',
-    /sousOnglet === 'revenues' \? 'REVENUE'/.test(workspace));
-  check('« Général » ne filtre rien', /'REVENUE' : null/.test(workspace));
+  /**
+   * L10.4 — « REVENUS » RETIENT AUSSI LES REMBOURSEMENTS.
+   *
+   * Un remboursement est de catégorie REFUND : sur l'ancien filtre, il devenait
+   * invisible, et l'écran des revenus montrait 500 € encaissés sans dire que
+   * 100 étaient repartis. Le ranger en COST pour qu'il apparaisse quelque part
+   * aurait gonflé les charges — c'est le filtre qui s'élargit, jamais la
+   * taxonomie qui se déforme.
+   */
+  check('« Revenus » retient les encaissements ET les remboursements',
+    /sousOnglet === 'revenues' \? 'REVENUE,REFUND'/.test(workspace));
+  check('…et « Coûts » ne retient QUE les coûts',
+    !/sousOnglet === 'costs' \? '[A-Z,]*REFUND/.test(workspace));
+  check('« Général » ne filtre rien', /'REVENUE,REFUND' : null/.test(workspace));
 
   check('le graphique n’apparaît que sur « Général »',
     /sousOnglet === 'general' \?[\s\S]{0,200}<NetChart/.test(workspace));
@@ -350,12 +361,25 @@ section('11. Responsive, thème et accessibilité');
   check('les choix de catégorie annoncent leur état', formulaire.includes('aria-pressed'));
 }
 
-section('12. Le client d’API ne connaît ni Stripe, ni remboursement, ni import');
+section('12. Le client d’API — un seul verbe fournisseur, et il passe par le Panel');
 {
   const bloc = api.slice(api.indexOf('export const finances'), api.indexOf('export function errorMessage'));
   check('le client financier existe', bloc.length > 0);
-  check('aucun verbe de remboursement', !/refund/i.test(bloc));
-  check('aucun verbe Stripe', !/stripe/i.test(bloc));
+  /**
+   * CE CONTRÔLE INTERDISAIT « refund ». L10.4 l'ajoute, et l'interdiction change
+   * d'objet plutôt que de disparaître : ce qui ne doit JAMAIS entrer dans ce
+   * client, c'est une adresse Stripe, une clé, ou un identifiant fournisseur
+   * construit côté navigateur. Le verbe, lui, est légitime — il s'adresse au
+   * Panel, sur une identité INTERNE de mouvement.
+   */
+  check('le remboursement s’adresse au Panel, sous la transaction',
+    bloc.includes('/refund') && bloc.includes('transactions/${transactionId}/refund'));
+  check('…et son corps ne porte qu’un montant et deux raisons',
+    /amountCents: number \| null; reason\?/.test(bloc));
+  check('AUCUNE adresse Stripe', !/api\.stripe|stripe\.com/i.test(bloc));
+  check('…aucune clé', !/sk_live|sk_test|secretKey/i.test(bloc));
+  check('…aucun identifiant fournisseur construit ici',
+    !/'pi_|'ch_|'re_|'cs_|'in_/.test(bloc));
   check('aucun import automatique', !/\bimport(er)?From|synchronis/i.test(bloc));
   check('la suppression est bien un retrait LOGIQUE annoncé comme tel',
     /Suppression LOGIQUE/.test(bloc));

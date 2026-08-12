@@ -445,14 +445,37 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     }),
     migrationNote: null,
   }),
+  /**
+   * LE PREMIER USAGE NEUF DU PLAN DE CONTRÔLE (L10.4).
+   *
+   * Sa note de migration l'annonçait depuis L6 : « aucun code projet ne le
+   * fait ». C'est toujours vrai, et ce n'est plus un obstacle — l'appelant
+   * n'est pas un projet mais le Panel lui-même, depuis l'onglet Finances, via
+   * `INVOCATION_SOURCES.PANEL_INTERNAL`. Toutes les autres capacités servies
+   * ont migré un appel qui existait déjà ailleurs ; celle-ci n'en remplace
+   * aucun. Elle naît directement dans le plan de contrôle.
+   *
+   * ══ SON IDENTITÉ D'ACTE N'EST PAS DÉRIVÉE, ET C'EST VOULU ═══════════════
+   *
+   * Les résiliations la dérivent parce qu'on ne résilie qu'une fois. Un
+   * paiement de 500 € accepte en revanche deux remboursements partiels de
+   * 100 € : dériver de `(monde, paiement)` rendrait le second impossible à
+   * nommer. L'appelant nomme donc l'acte — et cet appelant étant le Panel, il
+   * le nomme depuis une demande de remboursement DURABLE, écrite avant tout
+   * contact fournisseur (`refundOperationId`). Deux clics rejouent la même
+   * demande ; deux demandes sont deux actes.
+   */
   'billing.refund': capability('billing.refund', {
     provider: 'STRIPE',
     label: 'Rembourser',
-    migrated: false,
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.refund'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.refund'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
-    migrationNote: 'L6. Premier usage NEUF du plan de contrôle : aucun code projet ne le fait.',
+    correlationField: 'refundId',
+    migrationNote: null,
   }),
 
   /* ── Yousign — audité, pas migré (L7) ───────────────────────────────────── */
@@ -643,9 +666,10 @@ export function assertRegistryAlignment() {
    * Le catalogue Stripe de L6.1 est la source du contrat financier.
    *
    * On n'y impose PAS la symétrie complète des deux autres : le registre porte
-   * quatre codes Stripe (`billing.customer.ensure`, `billing.subscription.
-   * reconcile`, `billing.refund`, et la réconciliation) que L6.1 a délibérément
-   * refusé de contractualiser — aucun code du parc ne les appelle. Ce qu'on
+   * des codes Stripe (`billing.subscription.reconcile` et la réconciliation)
+   * que L6.1 a délibérément refusé de contractualiser — aucun code du parc ne
+   * les appelle. `billing.refund` en faisait partie jusqu'à ce que L10.4 lui
+   * donne un appelant réel : elle tient désormais son contrat. Ce qu'on
    * exige, c'est que toute capacité Stripe déclarée SERVIE tienne son contrat
    * du catalogue, et le MÊME objet : deux schémas qui se ressemblent
    * divergeraient au premier ajout de champ, et la divergence porterait sur

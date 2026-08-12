@@ -660,21 +660,37 @@ section('17. Vue globale et renommage de projet');
     t.projectId === PROJET_A);
 }
 
-section('18. Préparation du lot L10.4 — sans rien implémenter');
+section('18. Ce que L10.3 fournit au remboursement — et ce qu’il n’invente pas');
 {
+  /**
+   * CETTE SECTION VÉRIFIAIT QUE RIEN N'ÉTAIT IMPLÉMENTÉ. L10.4 l'a implémenté,
+   * et ce qu'elle défend a changé de nature sans changer d'esprit : L10.3 doit
+   * TENDRE au lot suivant les identités dont il aura besoin, et ne rien
+   * fabriquer par-dessus. Le comportement du remboursement lui-même est éprouvé
+   * dans « finance-refunds.test.js », où il a sa place.
+   */
   const fait = await PanelProviderRevenueFact.findOne({ objectId: 'in_abo_septembre' }).lean();
   check('l’identité nécessaire à un remboursement est conservée',
     fait.corroboration.paymentIntentId === 'pi_abo_septembre'
     && fait.corroboration.chargeId === 'ch_abo_septembre');
 
-  check('AUCUN mouvement de catégorie REFUND n’a été créé',
+  check('AUCUN mouvement de catégorie REFUND n’a été créé par la voie des revenus',
     (await PanelFinancialTransaction.countDocuments({ category: 'REFUND' })) === 0);
   check('…ni aucun COST issu d’un fournisseur',
     (await PanelFinancialTransaction.countDocuments({ category: 'COST', origin: 'STRIPE' })) === 0);
 
+  /**
+   * UN DÉBIT QUI DIT « 100 € ONT ÉTÉ RENDUS » SANS DIRE LESQUELS.
+   *
+   * `amount_refunded` est une SOMME : elle ne porte aucun `re_…`, donc aucune
+   * identité canonique, donc aucun moyen de distinguer un remboursement neuf
+   * d'un rejeu du précédent. En fabriquer un mouvement produirait un doublon au
+   * premier événement suivant. On n'écrit rien, et c'est la bonne réponse.
+   */
   const remboursement = await projeter('charge.refunded', { id: 'ch_abo_septembre', amount_refunded: 10_000 });
-  check('un événement de remboursement est reconnu…', remboursement.reason === 'REFUND');
-  check('…et ne produit AUCUNE transaction',
+  check('un débit sans détail de remboursement ne produit RIEN',
+    remboursement.recorded === false);
+  check('…et aucune transaction n’apparaît',
     (await PanelFinancialTransaction.countDocuments({ category: 'REFUND' })) === 0);
 
   const taxonomie = await PanelFinancialTransaction.distinct('category');

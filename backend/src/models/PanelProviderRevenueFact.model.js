@@ -152,6 +152,40 @@ const providerRevenueFactSchema = new mongoose.Schema(
       pdfUrl: { type: String, default: null },
     },
 
+    /**
+     * L10.4 — LE REÇU STRIPE DE LA CHARGE.
+     *
+     * Il ne vit pas dans `invoiceDocument` parce qu'il n'est pas une facture :
+     * c'est une page hébergée que Stripe RÉÉDITE après un remboursement, en y
+     * portant les sommes rendues. C'est, pour un `re_…`, le seul document que
+     * le fournisseur produise réellement — il n'existe ni PDF ni page propre au
+     * remboursement. Voir la doctrine documentaire de L10.4.
+     */
+    chargeReceiptUrl: { type: String, default: null },
+
+    /**
+     * L10.4 — L'ÉTAT DU REMBOURSEMENT CHEZ STRIPE.
+     *
+     * `pending` n'est PAS un échec : sur prélèvement ou virement, un
+     * remboursement reste en attente plusieurs jours. Il est conservé pour que
+     * l'écran puisse le dire, jamais pour décider de projeter ou non — un
+     * remboursement en cours est un engagement pris, et il compte.
+     */
+    refundStatus: { type: String, default: null },
+    /** Le motif Stripe (`duplicate`, `fraudulent`, `requested_by_customer`). */
+    refundReason: { type: String, default: null },
+    /**
+     * LE FAIT QUE CE REMBOURSEMENT DÉFAIT.
+     *
+     * L'identité canonique du paiement d'origine, résolue sur nos propres
+     * écritures par `corroboration.paymentIntentId`. Elle porte l'appartenance
+     * et la filiation comptable — c'est d'elle que la transaction tirera son
+     * `parentTransactionId`.
+     */
+    refundOfObjectType: { type: String, default: null },
+    refundOfObjectId: { type: String, default: null },
+    refundOfTransactionId: { type: String, default: null },
+
     // ── PROJECTION ────────────────────────────────────────────────────────
     projectionStatus: {
       type: String,
@@ -211,6 +245,19 @@ providerRevenueFactSchema.index(
 
 /** Diagnostic : « qu'a-t-on reçu pour ce projet, et dans quel état ? ». */
 providerRevenueFactSchema.index({ projectId: 1, occurredAt: -1 }, { name: 'project_recent' });
+
+/**
+ * L10.4 — « QUEL PAIEMENT CETTE INTENTION A-T-ELLE PRODUIT ? ».
+ *
+ * C'est la question que pose chaque remboursement en arrivant, et elle est sur
+ * le chemin critique : sans elle, résoudre l'appartenance d'un `re_…`
+ * balaierait toute la collection. Elle sert aussi à l'écran, qui doit savoir
+ * pour un revenu s'il reste quelque chose à rendre.
+ */
+providerRevenueFactSchema.index(
+  { environment: 1, 'corroboration.paymentIntentId': 1 },
+  { name: 'by_payment_intent', sparse: true },
+);
 
 export const PanelProviderRevenueFact = mongoose.model(
   'PanelProviderRevenueFact',

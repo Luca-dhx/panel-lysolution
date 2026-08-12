@@ -38,10 +38,16 @@
  *
  * ══ AUCUNE ROUTE NE PARLE À UN FOURNISSEUR ══════════════════════════════════
  *
- * Il n'y a volontairement ni « importer depuis Stripe », ni « rembourser », ni
- * « synchroniser ». Ces verbes appartiennent aux lots suivants, et ils
- * n'entreront pas par cette porte : ils produiront des mouvements via le
- * service, sous une origine qui n'est pas `MANUAL`.
+ * Il n'y a volontairement ni « importer depuis Stripe », ni « synchroniser ».
+ * Aucune route ne construit d'appel fournisseur, ne lit de clé, ne connaît
+ * d'URL d'API : les mouvements automatiques entrent par le service, sous une
+ * origine qui n'est pas `MANUAL`.
+ *
+ * « Rembourser » fait exception depuis L10.4, et l'exception confirme la règle :
+ * la route ne parle pas à Stripe non plus. Elle demande un acte au PLAN DE
+ * CONTRÔLE, qui vérifie l'appartenance, réserve l'opération et porte la clé
+ * d'idempotence. Le registre financier, lui, reçoit ensuite un fait — comme
+ * pour n'importe quel encaissement.
  */
 import { Router } from 'express';
 import multer from 'multer';
@@ -59,6 +65,8 @@ import {
   editTransaction,
   recurringCost,
   recurringCosts,
+  refund,
+  refundEligibility,
   removeAll,
   removeReceipt,
   removeTransaction,
@@ -124,6 +132,27 @@ router.get('/transactions', asyncHandler(transactions));
 router.get('/provider-revenue/unprojected', requirePanelDev, asyncHandler(unprojectedRevenue));
 // APRÈS les chemins fixes : `/summary` ne doit jamais être lu comme un identifiant.
 router.get('/transactions/:transactionId', asyncHandler(transaction));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   REMBOURSEMENTS (L10.4) — le seul verbe de cette surface qui rende de l'argent.
+
+   ══ POURQUOI SOUS LA TRANSACTION, ET NON SOUS UNE SURFACE « /refunds » ══════
+
+   Parce que le CHEMIN porte la preuve. Un remboursement ne se demande pas dans
+   l'absolu : il se demande SUR un encaissement précis, dont le serveur tire le
+   projet, le monde et l'intention de paiement. Une surface autonome aurait dû
+   accepter ces trois-là dans un corps de requête — c'est-à-dire laisser un
+   navigateur désigner la ressource Stripe à muter.
+
+   ══ AUCUN IDENTIFIANT FOURNISSEUR N'ENTRE PAR ICI ═══════════════════════════
+
+   Ni « pi_ », ni « ch_ », ni « in_ », ni « TEST/PROD ». L'en-tête de ce fichier
+   annonçait qu'aucune route ne parlerait à un fournisseur ; celle-ci le fait
+   désormais, mais elle passe par le PLAN DE CONTRÔLE — appartenance vérifiée,
+   opération réservée, clé d'idempotence — jamais par un appel direct.
+   ══════════════════════════════════════════════════════════════════════════ */
+router.get('/transactions/:transactionId/refund', asyncHandler(refundEligibility));
+router.post('/transactions/:transactionId/refund', asyncHandler(refund));
 
 /* ── Écriture ──────────────────────────────────────────────────────────────── */
 router.post('/transactions', asyncHandler(addTransaction));

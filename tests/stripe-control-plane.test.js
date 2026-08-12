@@ -67,7 +67,8 @@ const reponse = (status, body) => ({
 section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 /* ========================================================================== */
 {
-  check('huit capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 8);
+  // NEUF depuis L10.4, qui contractualise enfin le remboursement.
+  check('neuf capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 9);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
@@ -80,12 +81,21 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * demanderait une liste plus large que son dû.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('sept capacités servies', servies.length === 7);
+  check('huit capacités servies', servies.length === 8);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
   check('…son tarif (L6.2E)', servies.includes('billing.price.ensure'));
   check('…et la lecture d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
+  /**
+   * L10.4 — LE REMBOURSEMENT, ET IL NE MIGRE RIEN.
+   *
+   * Les sept précédentes ont repris un appel qui existait déjà dans un projet.
+   * Celle-ci n'en remplace aucun : son appelant est le PANEL lui-même, depuis
+   * l'onglet Finances, en source `PANEL_INTERNAL`. C'est le premier usage neuf
+   * du plan de contrôle, annoncé par sa note de migration depuis L6.
+   */
+  check('…et le remboursement (L10.4)', servies.includes('billing.refund'));
   /**
    * L6.2C lève la règle « aucune capacité servie n'exige de ressource
    * préexistante » — mais seulement pour la famille que le Panel CRÉE
@@ -108,7 +118,13 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * on ne sert que les familles dont l'ancrage est PROUVABLE — par création ou
    * par filiation — jamais celles qu'il faudrait croire sur parole.
    */
-  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION'];
+  /**
+   * L10.4 ajoute PAYMENT_INTENT — par la MÊME filiation que l'abonnement, et
+   * d'un cran plus bas : l'intention est adoptée à la projection du revenu,
+   * depuis la session ou l'abonnement possédé qui l'a produite. Le Panel n'en
+   * crée toujours aucune ; il n'en croit aucune sur parole non plus.
+   */
+  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION', 'PAYMENT_INTENT'];
   check('aucune capacité servie n’exige une famille non ancrable',
     servies.every((c) => {
       const d = STRIPE_CAPABILITIES[c];
@@ -121,9 +137,17 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
       .filter((c) => !STRIPE_CAPABILITIES[c].migrated)
       .every((c) => Boolean(STRIPE_CAPABILITIES[c].migrationNote)));
 
-  // Le remboursement n'est PAS contractualisé : aucun code du parc ne l'émet.
-  check('billing.refund n’est PAS déclarée (aucun usage réel)',
-    !capabilities.isStripeCapability('billing.refund'));
+  /**
+   * LE REMBOURSEMENT EST DÉSORMAIS CONTRACTUALISÉ (L10.4).
+   *
+   * Ce contrôle affirmait l'inverse, et il avait raison de le faire : jusqu'ici
+   * aucun code du parc n'appelait `refunds.create`, et contractualiser un acte
+   * que personne n'émet aurait créé la capacité la plus dangereuse du système
+   * pour un usage inexistant. L10.4 lui donne un appelant réel — et c'est le
+   * seul motif d'entrée admis au catalogue.
+   */
+  check('billing.refund est déclarée, et elle a un appelant',
+    capabilities.isStripeCapability('billing.refund'));
   // Ni les primitives internes de tarification.
   for (const absent of ['billing.product.create', 'billing.price.create', 'billing.portal.create']) {
     check(`${absent} n’est pas contractualisée`, !capabilities.isStripeCapability(absent));
@@ -176,6 +200,10 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
               // `price.ensure` : leur identité d'acte est DÉRIVÉE. Le projet ne
               // nomme pas une coupure, sinon il pourrait en fabriquer deux.
               : /^billing\.subscription\.cancel_/.test(code) ? { subscriptionId: 'sub_1' }
+              // L10.4 — le remboursement, lui, NOMME son acte : deux
+              // remboursements partiels du même paiement sont deux actes
+              // légitimes, qu'une identité dérivée confondrait.
+              : code === 'billing.refund' ? { paymentIntentId: 'pi_1', operationId: OP }
                 : { subscriptionId: 'sub_1', operationId: OP };
     check(`${code} : l’entrée nominale est acceptée`, schema.safeParse(base).success === true);
     const refuses = interdits.filter((champ) => schema.safeParse({ ...base, [champ]: 'x' }).success === false);
@@ -208,7 +236,13 @@ section('3. COMMERCIAL READINESS — l’écriture financière avant l’ouvertu
    * titre qu'un paiement : elle met fin à un encaissement récurrent, et se
    * tromper de projet coûte aussi cher que d'encaisser deux fois.
    */
-  check('trois écritures financières contractualisées', financieres.length === 3);
+  check('quatre écritures financières contractualisées', financieres.length === 4);
+  /**
+   * Et la QUATRIÈME est la seule qui rende de l'argent. Toutes les autres
+   * engagent l'avenir ; celle-ci défait le passé, et rien ne la défait à son
+   * tour — on ne « dé-rembourse » pas.
+   */
+  check('…dont le remboursement (L10.4)', financieres.includes('billing.refund'));
   check('…l’ouverture de session', financieres.includes('billing.checkout.create'));
   check('…et les deux résiliations',
     financieres.includes('billing.subscription.cancel_now')

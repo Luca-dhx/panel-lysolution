@@ -106,6 +106,15 @@ export const EVENT_RESOURCE_MATRIX = Object.freeze({
 export const UNROUTABLE_EVENTS = Object.freeze([
   'payment_intent.succeeded',
   'payment_intent.payment_failed',
+  /**
+   * L10.4 — PROJETÉ FINANCIÈREMENT, ET POURTANT TOUJOURS NON ROUTABLE ICI.
+   *
+   * Les deux ne se contredisent pas. Ce fichier répond à « de quel projet cet
+   * ÉVÉNEMENT relève-t-il, d'après une ressource liée ? » — et un débit n'en a
+   * aucune. Le remboursement, lui, n'a pas besoin de cette réponse : il hérite
+   * du propriétaire du PAIEMENT qu'il défait, déjà projeté dans le registre. Le
+   * chemin financier passe donc outre, et il a raison.
+   */
   'charge.refunded',
   /**
    * Les factures restent hors de portée : elles portent un `subscription`, mais

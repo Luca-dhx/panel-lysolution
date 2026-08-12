@@ -91,6 +91,96 @@ export interface FinancialTransaction {
   cycleKey: string | null;
   sourceRevision: number | null;
   receipt: TransactionReceipt | null;
+
+  /* ── L10.4 ─────────────────────────────────────────────────────────────── */
+  /**
+   * L'ÉTAT DE REMBOURSEMENT — présent SEULEMENT sur un revenu Stripe vivant.
+   *
+   * Absent partout ailleurs, et c'est voulu : un coût n'a pas d'état de
+   * remboursement, et lui en donner un vide obligerait chaque écran à
+   * distinguer « nul » de « zéro rendu ».
+   */
+  refund?: TransactionRefundState;
+}
+
+export type RefundState = 'NON_REMBOURSE' | 'PARTIELLEMENT_REMBOURSE' | 'REMBOURSE';
+
+export interface TransactionRefundState {
+  state: RefundState;
+  /** Somme des remboursements VIVANTS rattachés. Calculée, jamais stockée. */
+  refundedCents: number;
+  remainingCents: number;
+  count: number;
+  /**
+   * UNE DEMANDE NON CONCLUE — ce qui interdit d'en lancer une seconde.
+   *
+   * Tant qu'elle est là, l'écran dit « vérification en cours ». Il ne dit
+   * JAMAIS « échec », et il ne propose surtout pas de recommencer : l'argent
+   * est peut-être déjà parti.
+   */
+  pending: {
+    refundRequestId: string;
+    status: RefundRequestStatus;
+    amountCents: number | null;
+    requestedAt: string;
+  } | null;
+}
+
+export type RefundRequestStatus =
+  | 'REQUESTED' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+
+/** Les trois motifs que Stripe accepte. Aucun autre n'existe côté fournisseur. */
+export type StripeRefundReason = 'duplicate' | 'fraudulent' | 'requested_by_customer';
+
+export interface RefundRequest {
+  refundRequestId: string;
+  status: RefundRequestStatus;
+  amountCents: number | null;
+  currency: string;
+  /** `re_…` — l'identité du REMBOURSEMENT, jamais celle du paiement. */
+  refundId: string | null;
+  providerStatus: string | null;
+  transactionId: string | null;
+  environment: 'TEST' | 'PROD';
+  providerReason: string | null;
+  operatorReason: string | null;
+  failureCode: string | null;
+  requestedAt: string;
+  settledAt: string | null;
+  attempts: number;
+  requestedBy: { email: string | null; name: string | null };
+}
+
+/** Le verdict d'éligibilité — le même que celui dont le serveur se sert. */
+export interface RefundEligibility {
+  eligible: boolean;
+  code: string | null;
+  reason: string | null;
+  transactionId: string;
+  refund: {
+    state: RefundState;
+    collectedCents: number;
+    refundedCents: number;
+    remainingCents: number;
+    currency: string;
+    /** DÉRIVÉ du paiement d'origine. Jamais un choix offert à l'écran. */
+    environment: 'TEST' | 'PROD';
+    pending: TransactionRefundState['pending'];
+  } | null;
+}
+
+export interface RefundOutcome {
+  refundRequestId: string;
+  status: RefundRequestStatus;
+  refundId: string | null;
+  providerStatus?: string | null;
+  amountCents?: number;
+  currency?: string;
+  transactionId?: string | null;
+  remainingCents?: number | null;
+  converged?: boolean;
+  code?: string;
+  message?: string;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -290,7 +380,15 @@ export interface FinanceCriteria {
   period?: FinancePeriodKey;
   start?: string;
   end?: string;
-  category?: FinanceCategory | null;
+  /**
+   * UNE CATÉGORIE, OU PLUSIEURS SÉPARÉES PAR UNE VIRGULE (L10.4).
+   *
+   * Le pluriel existe pour un seul écran : « Revenus », qui doit montrer les
+   * encaissements ET les remboursements qui les défont. Ranger un remboursement
+   * en `COST` pour le rendre visible aurait gonflé les charges — le filtre
+   * s'élargit donc, plutôt que la taxonomie ne se déforme.
+   */
+  category?: FinanceCategory | `${FinanceCategory},${FinanceCategory}` | null;
   flow?: FinanceFlow | null;
   search?: string | null;
   sort?: FinanceSort;

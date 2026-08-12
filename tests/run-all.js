@@ -49,6 +49,14 @@ const TESTS = [
   // le désordre de livraison (facture avant adoption), la suppression suivie
   // d'un rejeu, et le parcours réel depuis un webhook signé.
   'finance-stripe-revenue.test.js',
+  // L10.4 — LE SEUL CHEMIN DU PARC QUI REND DE L'ARGENT. Ce que cette suite
+  // garde tient en une phrase : un clic, un remboursement, quoi qu'il arrive.
+  // Elle éprouve le double clic, la réponse perdue, le webhook qui double la
+  // réponse, et le rejeu APRÈS expiration de la fenêtre d'idempotence de
+  // Stripe — le seul cas où une clé ne protège plus rien et où seule la
+  // métadonnée apposée sur le remboursement empêche d'en créer un second.
+  // Elle vérifie aussi que rendre 100 € n'ajoute pas 100 € de charges.
+  'finance-refunds.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',
