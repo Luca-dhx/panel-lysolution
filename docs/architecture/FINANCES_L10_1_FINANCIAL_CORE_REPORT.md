@@ -712,8 +712,10 @@ frontend/src/lib/api.ts                     export const finances
 frontend/src/pages/ProjectDetailPage.tsx    onglet Finances
 frontend/src/components.css                 styles du registre (un seul hunk)
 tests/panel-ux.test.js                      3 attentes mises à jour, justifiées sur place
-tests/run-all.js                            inscription des 2 suites (hunk isolé)
 ```
+
+`tests/run-all.js` porte aussi l'inscription des deux suites, mais il **ne figure pas dans
+le commit de ce lot** : le hunk a été absorbé par `e3f70b8` (§A).
 
 `tests/panel-ux.test.js` **n'est pas** un fichier du chantier L6.2E : il ne figure pas dans
 sa liste (§B). Le modifier n'absorbe donc rien.
@@ -722,7 +724,74 @@ sa liste (§B). Le modifier n'absorbe donc rien.
 
 ## AD. Commit / push
 
-*(complété après exécution — voir la section ci-dessous)*
+### Suite complète
+
+Premier passage : **99/100 fichiers** — 4 contrôles rouges dans `panel-ux.test.js`, tous des
+attentes épinglant l'état antérieur du Panel (détail au §AB).
+
+Après mise à jour justifiée de ces attentes : **`════ Suite : 100/100 fichiers OK ════`**.
+
+Typecheck `tsc -b` : vert. Build `vite build` : vert (117 modules).
+
+### Isolation avant commit
+
+`git status --short`, puis `git diff` **fichier par fichier**. Aucun `UNKNOWN`.
+
+Au moment du staging, le chantier voisin venait de committer `e3f70b8` : ses modifications
+avaient donc quitté l'arbre de travail, et **tous** les fichiers restants étaient à 100 % de
+ce lot. Le staging par hunk préparé pour `tests/run-all.js` est devenu sans objet (§A).
+
+Staging **nommé fichier par fichier** — jamais `git add -A`, jamais `git add .` :
+
+```
+git add backend/package.json backend/src/app.js backend/src/models/PanelSupervision.model.js \
+        backend/src/models/PanelFinancialTransaction.model.js \
+        backend/src/controllers/finances.controller.js backend/src/routes/finances.routes.js \
+        backend/src/services/finance/{money,period,financialTransactions.service,financialSummary.service}.js
+git add frontend/src/{App.tsx,components.css,config/nav.ts,lib/api.ts,pages/ProjectDetailPage.tsx}
+git add frontend/src/{pages/FinancesPage.tsx,types.finance.ts,lib/{money,netChartScale,useFinances}.ts}
+git add frontend/src/components/finance/
+git add tests/{finance-core,finance-ui,panel-ux}.test.js
+git add docs/architecture/{62_FINANCIAL_LEDGER,FINANCES_L10_1_FINANCIAL_CORE_REPORT}.md
+```
+
+### Contrôle du diff stagé
+
+`git diff --cached` audité par recherche de territoire voisin
+(`stripeXxx`, `capabilityRegistry`, `providerRegistry`, `commercialReadiness`,
+`bridgeContract`, `ProjectBridgeClient`).
+
+Les seules occurrences sont **de la prose de ce lot** : le §C du présent rapport qui
+*décrit* les fichiers L6.2E, les regex du garde-fou de recette, et des phrases affirmant
+qu'aucune dépendance n'existe. **Aucun fichier voisin stagé, aucune ligne de code voisine.**
+
+### Commit
+
+```
+7bde5d0  feat(finances): le bénéfice est une somme de mouvements, jamais un champ
+         31 fichiers, 6 697 insertions, 6 suppressions
+```
+
+Parent : `e3f70b8` (commit L6.2E). Aucun rebase nécessaire — les fichiers des deux lots sont
+disjoints.
+
+### Push
+
+`git fetch` : **1 en avance, 0 en retard**. Push **en avance rapide** sur
+`feat/generic-deployment-engine` :
+
+```
+e3f70b8..7bde5d0  feat/generic-deployment-engine -> feat/generic-deployment-engine
+```
+
+Aucun `--force`, aucune réécriture d'historique.
+
+### État final
+
+| Dépôt | HEAD | Arbre | Remote |
+|---|---|---|---|
+| Panel | `7bde5d0` | **propre** | à jour (0 en avance) |
+| SB Auto 06 | `ef43487` (L6.2E) | **propre** | inchangé par ce lot |
 
 ---
 
@@ -791,3 +860,38 @@ ajoute **une**.
 Aucun de ces lots n'a été commencé.
 
 ---
+
+## Critères de passage (Phase 28)
+
+| Critère | État |
+|---|---|
+| modèle financier canonique créé | ✅ `PanelFinancialTransaction`, fournisseur-agnostique |
+| monnaie exacte | ✅ centimes entiers, saisie refusée plutôt qu'arrondie |
+| transactions manuelles revenu/coût | ✅ |
+| transaction projet ET transaction L.Y Solution | ✅ |
+| agrégats exacts | ✅ en base, `Σ(series) === net` |
+| net exact | ✅ `Σ(INFLOW) − Σ(OUTFLOW)` |
+| filtres / périodes | ✅ 7 périodes, catégorie, sens, projet, recherche, 4 tris |
+| suppression auditable | ✅ logique, imputée, motivée, journalisée |
+| onglet Finances projet | ✅ trois sous-onglets, graphique, liste, saisie |
+| page Finances globale | ✅ même moteur + répartition par projet |
+| détails transaction | ✅ sans aucun champ fournisseur vide |
+| permissions contrôlées | ✅ lecture et tenue de livres ouvertes, masse réservée DEV |
+| aucun appel Stripe ajouté | ✅ **0**, vérifié statiquement |
+| aucun bridge financier ajouté | ✅ **0** |
+| aucun fichier Stripe parallèle absorbé | ✅ **0** |
+| tests verts | ✅ 249 assertions dédiées ; suite Panel **100/100** |
+| build / typecheck verts | ✅ |
+| commit / push propres | ✅ `7bde5d0`, avance rapide, sans réécriture |
+
+**Écart assumé et documenté** : les justificatifs ne sont pas livrés (§T). Le CDC les
+demande pour un coût ; la décision, motivée par l'exposition publique de `/uploads`, est de
+poser le contrat et de renvoyer le branchement à L10.2 — conformément à la consigne de
+Phase 14, qui prévoit explicitement cette issue quand l'intégration n'est pas propre et
+isolée.
+
+Aucune partie UI du périmètre L10.1 n'est inachevée.
+
+---
+
+FINANCIAL CORE L10.1: PASS
