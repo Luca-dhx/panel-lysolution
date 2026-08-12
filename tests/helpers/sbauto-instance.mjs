@@ -103,6 +103,14 @@ const uiLiveRoutes = (await import(SB('src/routes/uiLive.routes.js'))).default;
  * le contrôleur hors de la preuve.
  */
 const integratedApiRoutes = (await import(SB('src/routes/integratedApi.routes.js'))).default;
+/**
+ * LES WEBHOOKS ENTRANTS (L6.3A) — le vrai routeur du projet.
+ *
+ * Sans lui, on pourrait prouver qu'un endpoint a été créé sans jamais prouver
+ * qu'un événement signé arrive encore jusqu'au métier. C'est pourtant la seule
+ * question qui compte quand on déplace le provisionnement.
+ */
+const webhookRoutes = (await import(SB('src/routes/webhook.routes.js'))).default;
 const { errorHandler } = await import(SB('src/middlewares/error.middleware.js'));
 const { PanelCompanyConfiguration } = await import(
   SB('src/models/PanelConfiguration.model.js')
@@ -248,6 +256,12 @@ async function wire() {
 /** La surface HTTP que le Panel interroge — le vrai routeur, les vraies gardes. */
 function serve(portVoulu = 0) {
   const app = express();
+  /**
+   * AVANT `express.json()`, exactement comme dans `app.js` du projet : une
+   * signature Stripe se vérifie sur le corps BRUT. Le parser JSON le
+   * consommerait, et toute vérification échouerait — y compris les vraies.
+   */
+  app.use('/api/webhooks', webhookRoutes);
   app.use(express.json());
   app.use('/api/project-bridge/v1', projectBridgeRoutes);
   app.use('/api/live', uiLiveRoutes);
@@ -556,6 +570,59 @@ const COMMANDS = {
    * les collections encore déclarées. Une collection orpheline (celle d'un
    * modèle supprimé, justement) doit apparaître ici.
    */
+  /**
+   * Le catalogue IntegratedAPI du projet — ce que `bootstrap()` sème en vrai.
+   *
+   * L'instance de test câble le bootstrap sans le rejouer entièrement ; sans
+   * cette graine, le registre local est vide et le projet n'a nulle part où
+   * ranger son secret de vérification. Le semer ICI, par la fonction RÉELLE,
+   * évite d'inventer un état que la production n'aurait pas.
+   */
+  async seedIntegratedApis() {
+    const { seedIntegratedApis } = await import(SB('src/config/integratedApiBootstrap.js'));
+    await seedIntegratedApis();
+    return { ok: true };
+  },
+
+  /**
+   * LE VRAI CHEMIN DE PROVISIONNEMENT DU PROJET (L6.3A).
+   *
+   * On n'invoque pas la capacité à la main : on appelle le service que le
+   * bootstrap appelle. C'est lui qui décide de rapatrier le secret, et c'est
+   * cette décision-là qu'il faut éprouver — pas la capacité seule.
+   */
+  async ensureStripeWebhook({ mode = 'TEST', publicBackendUrl }) {
+    const { ensureStripeWebhookViaPanel } = await import(
+      SB('src/services/webhooks/panelWebhookProvisioning.js'),
+    );
+    try {
+      return { ok: true, data: await ensureStripeWebhookViaPanel({ mode, publicBackendUrl }) };
+    } catch (err) {
+      return { ok: false, code: err?.code ?? null, message: err?.message ?? '' };
+    }
+  },
+
+  /** Le secret de vérification réellement rangé dans le coffre local. */
+  async readCredential({ provider, field, mode = 'TEST' }) {
+    const { tryGetCredential } = await import(SB('src/services/integratedApi.service.js'));
+    return (await tryGetCredential(provider, field, { mode })) ?? null;
+  },
+
+  /**
+   * POSTe un webhook sur la VRAIE route du projet — signature comprise.
+   *
+   * C'est le seul moyen de prouver la non-régression métier : que l'endpoint
+   * existe ne dit rien tant qu'un événement signé n'a pas traversé la
+   * vérification et atteint la logique du projet.
+   */
+  async postWebhook({ path, body, headers }) {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}${path}`, {
+      method: 'POST', headers, body,
+    });
+    const texte = await res.text().catch(() => '');
+    return { status: res.status, body: texte.slice(0, 500) };
+  },
+
   async dbDump() {
     const collections = await mongoose.connection.db.listCollections().toArray();
     const dump = {};

@@ -48,11 +48,14 @@ section('Chemins du contrat PanelBridge (servis par le Panel)');
 {
   const inSpec = specPaths(panelSpec, /^ {2}(\/bridge\/v1\/[^\s:]+):\s*$/gm).sort();
   const inMirror = Object.values(contract.PANEL_API_ROUTES).sort();
-  // 7 depuis le contrat 1.5.0 : la passerelle de capacités (L3) ajoute
-  // /bridge/v1/capabilities/{code}/invoke. Le nombre est écrit en dur à
-  // dessein — un chemin qui apparaît sans qu'on l'ait voulu doit faire échouer
-  // ce test, pas se fondre dans un comptage dynamique.
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 7);
+  // 8 depuis L6.3A, qui ajoute le canal étroit du secret de vérification. Le
+  // nombre est écrit en dur à dessein — un chemin qui apparaît sans qu'on l'ait
+  // voulu doit faire échouer ce test, pas se fondre dans un comptage dynamique.
+  // C'est la raison d'être de cette ligne : un canal qui livre un secret ne
+  // doit jamais pouvoir apparaître discrètement.
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 8);
+  check('le canal de vérification est au contrat',
+    inMirror.includes('/bridge/v1/webhooks/{provider}/verification-secret'));
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
   check('la passerelle de capacités est au contrat',
     inMirror.includes('/bridge/v1/capabilities/{code}/invoke'));

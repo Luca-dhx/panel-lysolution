@@ -46,6 +46,11 @@ import {
   SECRET_DELIVERY,
 } from './webhookRegistry.js';
 import { resolveWebhookCallback, assertCallbackEnvironment, sameCallback } from './webhookCallback.js';
+import { WEBHOOK_DESTINATION } from '../../models/PanelIntegratedApiWebhookBinding.model.js';
+import {
+  hasProjectVerificationSecret,
+  storeProjectVerificationSecret,
+} from './projectWebhookSecrets.js';
 import { webhookAdapterFor } from './providerWebhookAdapters.js';
 import { descriptionFor, mintOwnershipToken, partitionRemote, mayDelete } from './webhookOwnership.js';
 import {
@@ -97,12 +102,54 @@ function serialize(key, work) {
  * `$setOnInsert` frappe le jeton d'appartenance : il précède donc TOUT appel
  * distant, ce qui est la condition de la sûreté au crash (propriété 2).
  */
-async function ensureBinding(provider, environment, capability) {
+/**
+ * LA PORTÉE D'UNE RÉCONCILIATION (L6.3A).
+ *
+ * Jusqu'ici il n'y avait rien à décider : un endpoint était celui du Panel, son
+ * adresse se calculait depuis la configuration canonique, et son secret allait
+ * au coffre du Panel. Une seule réponse à chaque question, donc aucune question
+ * posée.
+ *
+ * Stripe en introduit une seconde — un endpoint qui pointe vers un PROJET —
+ * sans rien changer au reste : c'est toujours le Panel qui crée, avec sa clé,
+ * qui reconnaît ses endpoints à son jeton d'appartenance, qui gère la dérive et
+ * le plafond. Seules trois réponses diffèrent :
+ *
+ *   à qui appartient le binding   →  destination + projectId
+ *   quelle adresse enregistrer    →  resolveCallback()
+ *   où ranger le secret capturé   →  hasSecret() / storeSecret()
+ *
+ * Le moteur les reçoit au lieu de les déduire. C'est ce qui permet de servir
+ * les deux cas avec UN réconciliateur — donc une seule règle de dérive, une
+ * seule stratégie de rotation, un seul préflight de plafond — plutôt qu'avec
+ * deux systèmes destinés à diverger.
+ */
+export const PANEL_SECRET_POLICY = Object.freeze({
+  has: (provider, environment) => hasWebhookSecret(provider, environment),
+  store: (provider, environment, secret) => rotateWebhookSecret(provider, environment, secret),
+});
+
+export const PANEL_SCOPE = Object.freeze({
+  destination: WEBHOOK_DESTINATION.PANEL,
+  projectId: null,
+  projectPublicUrl: '',
+});
+
+async function ensureBinding(provider, environment, capability, scope = PANEL_SCOPE) {
   const at = nowIso();
   return PanelIntegratedApiWebhookBinding.findOneAndUpdate(
-    { provider, environment },
     {
-      $set: { callbackSlug: capability.callbackSlug, updatedAt: at },
+      provider,
+      environment,
+      destination: scope.destination,
+      projectId: scope.projectId,
+    },
+    {
+      $set: {
+        callbackSlug: capability.callbackSlug,
+        updatedAt: at,
+        ...(scope.projectPublicUrl ? { projectPublicUrl: scope.projectPublicUrl } : {}),
+      },
       $setOnInsert: {
         bindingId: randomUUID(),
         ownershipToken: mintOwnershipToken(),
@@ -248,9 +295,183 @@ export async function reconcileProviderWebhook({
     runReconciliation({ capability, environment, fetchImpl, allowCreate, allowDelete }));
 }
 
-async function runReconciliation({ capability, environment, fetchImpl, allowCreate, allowDelete }) {
+/**
+ * GARANTIR L'ENDPOINT D'UN PROJET — le geste du lot L6.3A.
+ *
+ * ══ CE QUI CHANGE, ET CE QUI NE CHANGE PAS ══════════════════════════════════
+ *
+ * Ne change pas : la clé qui parle au fournisseur est celle du Panel, la
+ * reconnaissance des endpoints se fait au jeton d'appartenance, la dérive se
+ * calcule pareil, le plafond se vérifie avant de créer, et un secret que le
+ * fournisseur ne rend qu'à la création se récupère en recréant — dans l'ordre
+ * créer, puis retirer, pour ne jamais laisser de fenêtre sans écoute.
+ *
+ * Change : l'adresse enregistrée est celle du PROJET, et le secret capturé va
+ * dans le coffre du projet plutôt que dans celui du Panel.
+ *
+ * ══ POURQUOI LE PROJET NE FOURNIT QUE SON ADRESSE ═══════════════════════════
+ *
+ * Il ne nomme ni l'endpoint, ni le compte, ni les événements. S'il pouvait
+ * désigner un `we_…`, il désignerait celui d'un autre — et le Panel lui
+ * rendrait un secret qui n'est pas le sien. S'il choisissait ses événements, il
+ * pourrait en retirer un dont le métier dépend, et personne ne le verrait avant
+ * qu'un paiement ne remonte plus.
+ *
+ * L'adresse elle-même est vérifiée : c'est la seule chose qu'il apporte, donc
+ * la seule par laquelle il pourrait détourner la réception de quelqu'un.
+ *
+ * @param {object} args
+ * @param {string} args.projectId          le projet — vient du jeton de pont
+ * @param {string} args.publicBackendUrl   son adresse publique, telle qu'il la voit
+ * @param {'TEST'|'PROD'} [args.environment]
+ */
+export async function ensureProjectWebhookEndpoint({
+  provider,
+  projectId,
+  publicBackendUrl,
+  callbackPath: cheminCallback,
+  environment = runtimeEnvironment(),
+  fetchImpl,
+  allowCreate = true,
+  allowDelete = true,
+} = {}) {
+  const capability = webhookCapability(provider);
+  if (!capability) {
+    throw ApiError.notFound(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_PROVIDER_UNKNOWN,
+      `Provisionnement impossible : « ${provider} » n’est pas au registre.`,
+    );
+  }
+  if (!capability.supported) {
+    throw ApiError.badRequest(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_UNSUPPORTED,
+      `${capability.provider} n’expose aucune administration de webhook.`,
+    );
+  }
+  if (!projectId) {
+    throw ApiError.badRequest('PANEL_PROJECT_UNKNOWN', 'Projet non identifié.');
+  }
+
+  const adresse = normalizeProjectCallback(publicBackendUrl, cheminCallback, environment);
+
+  // FAIL CLOSED, comme pour le Panel : une callback PROD ne s'enregistre jamais
+  // depuis une instance TEST, quel que soit le destinataire.
+  assertCallbackEnvironment(environment);
+
+  const scope = Object.freeze({
+    destination: WEBHOOK_DESTINATION.PROJECT,
+    projectId,
+    projectPublicUrl: adresse.publicBackendUrl,
+  });
+
+  /**
+   * LE COFFRE DU PROJET, JAMAIS CELUI DU PANEL.
+   *
+   * Se tromper ici écraserait le secret de l'endpoint du Panel avec celui d'un
+   * projet : le Panel cesserait de vérifier ses propres événements, et
+   * l'incident serait attribué au fournisseur.
+   */
+  const secretPolicy = Object.freeze({
+    has: (prov, env, portee) => hasProjectVerificationSecret({
+      projectId: portee.projectId, provider: prov, environment: env,
+    }),
+    store: async (prov, env, secret, portee) => {
+      const r = await storeProjectVerificationSecret({
+        projectId: portee.projectId, provider: prov, environment: env, secret,
+      });
+      // Le moteur attend la forme d'une rotation ; ici il n'y a jamais de
+      // fenêtre à ouvrir, puisque le projet ne détient qu'un secret à la fois.
+      return { rotated: false, at: r.storedAt, role: r.role };
+    },
+  });
+
+  /**
+   * SÉRIALISÉ PAR PROJET, et c'est ce qui rend huit demandes simultanées
+   * inoffensives : elles s'attendent, la première crée, les suivantes
+   * constatent. L'index unique du binding est le second filet, pour le cas où
+   * deux processus du Panel serviraient le même projet.
+   */
+  const rapport = await serialize(`${capability.provider}:${environment}:${projectId}`, () =>
+    runReconciliation({
+      capability, environment, fetchImpl, allowCreate, allowDelete,
+      scope, secretPolicy,
+      callbackOverride: { ready: true, url: adresse.url },
+    }));
+
+  /**
+   * LE RAPPORT DU MOTEUR DIT CE QU'IL A FAIT ; LE LIEN DIT CE QUI EST.
+   *
+   * `runReconciliation` rend un compte rendu d'action — créé, corrigé, dérive
+   * constatée — parce que son appelant historique est une tâche de fond qui
+   * journalise. L'appelant d'ici est un projet, qui a besoin de l'ÉTAT :
+   * quel endpoint, à quelle adresse, pour quels événements.
+   *
+   * On relit donc le lien plutôt que de gonfler le rapport, pour ne pas
+   * modifier ce que les autres consommateurs reçoivent déjà.
+   */
+  const lien = await PanelIntegratedApiWebhookBinding.findOne({
+    provider: capability.provider,
+    environment,
+    destination: WEBHOOK_DESTINATION.PROJECT,
+    projectId,
+  }).lean();
+
+  return {
+    ...rapport,
+    remoteWebhookId: lien?.remoteWebhookId ?? null,
+    observedUrl: lien?.observedUrl ?? '',
+    desiredUrl: lien?.desiredUrl ?? adresse.url,
+    desiredEvents: lien?.desiredEvents ?? [],
+    secretConfigured: Boolean(lien?.secretConfigured),
+  };
+}
+
+/**
+ * Valide l'adresse publique d'un projet et en dérive l'URL à enregistrer.
+ *
+ * En PROD, HTTPS est exigé : un endpoint en clair exposerait des événements de
+ * paiement sur le réseau, et Stripe refuserait de toute façon. En TEST, un
+ * tunnel local en HTTP reste accepté — c'est le monde où l'on éprouve.
+ */
+function normalizeProjectCallback(publicBackendUrl, cheminCallback, environment) {
+  let parsed;
+  try {
+    parsed = new URL(String(publicBackendUrl ?? ''));
+  } catch {
+    throw ApiError.badRequest(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC,
+      'Adresse publique du projet illisible : rien ne peut être enregistré.',
+    );
+  }
+  if (environment === 'PROD' && parsed.protocol !== 'https:') {
+    throw ApiError.badRequest(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC,
+      'Une adresse de production doit être en HTTPS.',
+    );
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw ApiError.badRequest(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC,
+      'Seules les adresses HTTP(S) peuvent recevoir un webhook.',
+    );
+  }
+  const racine = `${parsed.origin}`;
+  const chemin = String(cheminCallback ?? '').trim();
+  if (!chemin.startsWith('/')) {
+    throw ApiError.badRequest(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC,
+      'Le chemin de réception du projet doit être une route absolue.',
+    );
+  }
+  return { publicBackendUrl: racine, url: `${racine}${chemin}` };
+}
+
+async function runReconciliation({
+  capability, environment, fetchImpl, allowCreate, allowDelete,
+  scope = PANEL_SCOPE, secretPolicy = PANEL_SECRET_POLICY, callbackOverride = null,
+}) {
   const provider = capability.provider;
-  const binding = await ensureBinding(provider, environment, capability);
+  const binding = await ensureBinding(provider, environment, capability, scope);
 
   const outcome = {
     provider,
@@ -278,7 +499,13 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
   };
 
   // ── 1. L'adresse à enregistrer ─────────────────────────────────────────
-  const callback = await resolveWebhookCallback(provider, { environment });
+  /**
+   * L'adresse d'un endpoint de PROJET ne se calcule pas : elle est fournie et
+   * validée en amont. La calculer donnerait celle du Panel, et le
+   * réconciliateur « corrigerait » l'endpoint du projet vers le Panel — coupant
+   * net sa réception. C'est exactement le piège que la portée évite.
+   */
+  const callback = callbackOverride ?? await resolveWebhookCallback(provider, { environment });
   if (!callback.ready) {
     return fail(
       callback.code ?? WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC,
@@ -351,7 +578,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
     );
   }
 
-  let secretPresent = await hasWebhookSecret(provider, environment);
+  let secretPresent = await secretPolicy.has(provider, environment, scope);
 
   try {
     // ── 5. Aucun endpoint à nous : créer ────────────────────────────────
@@ -367,7 +594,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
         outcome.severity = severityFor(provider, outcome.status);
         return outcome;
       }
-      const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding });
+      const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, secretPolicy, scope });
       outcome.created = true;
       outcome.secretCaptured = created.secretCaptured;
       secretPresent = secretPresent || created.secretCaptured;
@@ -387,7 +614,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
             'Endpoint présent, secret de vérification absent : recréation nécessaire, non demandée.',
           );
         }
-        const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding });
+        const created = await createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, secretPolicy, scope });
         outcome.created = true;
         outcome.secretCaptured = created.secretCaptured;
         secretPresent = created.secretCaptured;
@@ -414,6 +641,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
         }
         await rotateSecretOnEndpoint({
           adapter, ctx, capability, desired, environment, provider, binding, remoteId: keeper.id,
+          secretPolicy, scope,
         });
         outcome.updated = true;
         outcome.secretRotated = true;
@@ -455,7 +683,7 @@ async function runReconciliation({ capability, environment, fetchImpl, allowCrea
 
     // ── 9. Conclure sur ce qui est OBSERVÉ, jamais sur ce qu'on a voulu ──
     const drift = computeDrift(keeper, desired, capability);
-    secretPresent = await hasWebhookSecret(provider, environment);
+    secretPresent = await secretPolicy.has(provider, environment, scope);
 
     const status = !keeper || drift.length
       ? WEBHOOK_STATUS.DRIFTED
@@ -535,7 +763,7 @@ function pickKeeper(owned, desired, capability) {
  * de rendre la main garantit qu'un crash immédiatement après ne laisse jamais
  * un endpoint vivant que nous serions incapables de vérifier.
  */
-async function createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding }) {
+async function createOwnedEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, secretPolicy = PANEL_SECRET_POLICY, scope = PANEL_SCOPE }) {
   const supplied = secretToSupplyAtCreation(capability);
   const result = await adapter.create(ctx, { ...desired, environment, secret: supplied });
 
@@ -551,7 +779,7 @@ async function createOwnedEndpoint({ adapter, ctx, capability, desired, environm
      * tous ; les faire reculer d'un cran les sauve, pour le temps borné de la
      * fenêtre.
      */
-    const outcome = await rotateWebhookSecret(provider, environment, secret);
+    const outcome = await secretPolicy.store(provider, environment, secret, scope);
     secretCaptured = true;
     if (outcome.rotated && binding?.bindingId) {
       await patchBinding(binding.bindingId, { secretRotatedAt: outcome.at });
@@ -575,10 +803,10 @@ async function createOwnedEndpoint({ adapter, ctx, capability, desired, environm
  * l'ancien jeton continue de vérifier les appels — l'inverse nous laisserait
  * avec un secret que le fournisseur n'utilise pas.
  */
-async function rotateSecretOnEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, remoteId }) {
+async function rotateSecretOnEndpoint({ adapter, ctx, capability, desired, environment, provider, binding, remoteId, secretPolicy = PANEL_SECRET_POLICY, scope = PANEL_SCOPE }) {
   const secret = generateSharedSecret();
   await adapter.update(ctx, remoteId, { ...desired, environment, secret });
-  const outcome = await rotateWebhookSecret(provider, environment, secret);
+  const outcome = await secretPolicy.store(provider, environment, secret, scope);
   await patchBinding(binding.bindingId, { secretRotatedAt: outcome.at });
   logger.info(`[webhooks] ${provider}/${environment} : jeton de webhook renouvelé sur l’endpoint existant.`);
   return outcome;

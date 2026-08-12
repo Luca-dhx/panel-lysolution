@@ -49,6 +49,14 @@ export const PANEL_API_ROUTES = Object.freeze({
    * qui existe, et le contrat n'a pas à le savoir.
    */
   capabilityInvoke: '/bridge/v1/capabilities/{code}/invoke',
+  /**
+   * LE SECRET DE VÉRIFICATION D'UN PROJET (L6.3A).
+   *
+   * Le seul chemin par lequel un secret descend vers un projet — et il ne
+   * transporte que celui-là. Aucun identifiant de projet dans l'URL : celui qui
+   * fait autorité vient du jeton de pont.
+   */
+  webhookVerificationSecret: '/bridge/v1/webhooks/{provider}/verification-secret',
 });
 
 // Chemins exposés par chaque projet (contrat ProjectBridge), consommés par

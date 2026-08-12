@@ -200,6 +200,103 @@ function assertValueShape(text, path) {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  LE CANAL DE VÉRIFICATION — UNE PORTE, PAS UNE BRÈCHE (L6.3A)              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Les rôles qui NE SERVENT QU'À VÉRIFIER — dérivés du registre, jamais listés.
+ */
+export function verificationOnlyRoles() {
+  const codes = new Set();
+  for (const definition of listProviderDefinitions()) {
+    for (const role of definition.credentialRoles) {
+      if (role.secret && role.verificationOnly) codes.add(role.code.toLowerCase());
+    }
+  }
+  return codes;
+}
+
+/** Un rôle de vérification livré au projet ressemble-t-il à ce qu'il prétend ? */
+const VERIFICATION_VALUE_PATTERNS = Object.freeze([/^whsec_[A-Za-z0-9_-]{8,}$/]);
+
+export class VerificationChannelViolation extends Error {
+  constructor(reason, path) {
+    super(
+      `Livraison refusée : ${reason} en « ${path} ». Le canal de vérification ne `
+      + 'transporte QU’un secret de signature, et rien d’autre (lot L6.3A).',
+    );
+    this.name = 'VerificationChannelViolation';
+    this.code = 'PANEL_BRIDGE_VERIFICATION_CHANNEL_VIOLATION';
+    this.path = path;
+    this.reason = reason;
+  }
+}
+
+/**
+ * LA GARDE DU CANAL ÉTROIT.
+ *
+ * ══ CE QU'ELLE N'EST PAS ════════════════════════════════════════════════════
+ *
+ * Elle n'assouplit RIEN. `assertNoProviderSecrets` reste absolue partout où
+ * elle était posée — journal de synchronisation, résultat de capacité,
+ * appairage. Aucun `allowSecrets`, aucune exception « sauf Stripe », aucun
+ * drapeau qui se propage.
+ *
+ * ══ CE QU'ELLE EST ══════════════════════════════════════════════════════════
+ *
+ * Une garde PLUS STRICTE, posée sur une seule route, qui exige que la charge
+ * utile soit exactement :
+ *
+ *     { <rôle de vérification> : "<valeur de la bonne forme>" }
+ *
+ * et rien de plus. Un champ en trop, un rôle qui n'est pas déclaré
+ * `verificationOnly` au registre, une valeur qui n'a pas la forme attendue,
+ * une clé d'API glissée à côté : tout est refusé.
+ *
+ * Le renversement est le point : ailleurs on interdit une liste de choses ;
+ * ici on n'autorise qu'une seule chose. Une porte dont on connaît la forme
+ * exacte est plus sûre qu'un mur percé d'une exception, parce qu'elle ne peut
+ * pas servir à faire passer autre chose.
+ *
+ * @param {unknown} payload
+ * @param {{label?: string}} [options]
+ * @throws {VerificationChannelViolation}
+ */
+export function assertVerificationSecretOnly(payload, { label = 'delivery' } = {}) {
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new VerificationChannelViolation('la charge n’est pas un objet simple', label);
+  }
+  const permis = verificationOnlyRoles();
+  const entrees = Object.entries(payload);
+  if (entrees.length !== 1) {
+    throw new VerificationChannelViolation(
+      `la charge porte ${entrees.length} champs au lieu d’un seul`, label,
+    );
+  }
+  const [cle, valeur] = entrees[0];
+  const chemin = `${label}.${cle}`;
+  if (!permis.has(String(cle).toLowerCase())) {
+    throw new VerificationChannelViolation(
+      `« ${cle} » n’est pas un rôle de vérification déclaré au registre`, chemin,
+    );
+  }
+  if (typeof valeur !== 'string' || !valeur) {
+    throw new VerificationChannelViolation('la valeur n’est pas une chaîne non vide', chemin);
+  }
+  if (!VERIFICATION_VALUE_PATTERNS.some((re) => re.test(valeur))) {
+    /**
+     * La forme est vérifiée pour empêcher le cas qui compte : un `sk_…` rangé
+     * sous le nom `webhookSecret`. Le nom autorise, la forme confirme — les
+     * deux, parce que l'un sans l'autre se contourne.
+     */
+    throw new VerificationChannelViolation(
+      'la valeur n’a pas la forme d’un secret de signature', chemin,
+    );
+  }
+  return payload;
+}
+
 /**
  * Variante NON levante — pour un diagnostic ou un test qui veut constater
  * plutôt qu'interrompre.
@@ -229,6 +326,9 @@ export default {
   inspectForProviderSecrets,
   forbiddenCredentialRoles,
   publishableCredentialRoles,
+  verificationOnlyRoles,
+  assertVerificationSecretOnly,
   ProviderSecretLeakError,
+  VerificationChannelViolation,
   GUARD_VOCABULARY,
 };

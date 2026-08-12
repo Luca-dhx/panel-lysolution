@@ -189,6 +189,17 @@ export const CAPABILITY_EFFECTS = Object.freeze({
    * engageante ; cela la rend seulement irréversible plus tôt.
    */
   'billing.subscription.cancel_now': EFFECT.FINANCIAL_WRITE,
+  /**
+   * Garantir l'endpoint webhook d'un projet (L6.3A). CONFIGURATION, et non
+   * écriture financière : elle n'encaisse rien, ne rembourse rien, et se défait
+   * en supprimant l'endpoint.
+   *
+   * Elle doit d'ailleurs pouvoir s'exécuter AVANT l'ouverture commerciale — un
+   * projet en pré-ouverture reçoit déjà des événements de test, et exiger
+   * l'ouverture pour brancher la réception obligerait à ouvrir pour éprouver,
+   * c'est-à-dire à ouvrir avant d'être sûr.
+   */
+  'webhook.endpoint.ensure': EFFECT.CONFIGURATION,
   'billing.refund': EFFECT.FINANCIAL_WRITE,
 
   // ── Brevo ────────────────────────────────────────────────────────────────

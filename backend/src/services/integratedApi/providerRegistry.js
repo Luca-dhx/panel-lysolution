@@ -106,6 +106,29 @@ function role(code, label, options = {}) {
     code,
     label,
     secret: options.secret !== false,
+    /**
+     * CE RÔLE NE SERT-IL QU'À VÉRIFIER ? (L6.3A)
+     *
+     * Deux secrets peuvent être également confidentiels sans avoir le même
+     * POUVOIR, et les confondre a un coût asymétrique :
+     *
+     *   `sk_…`     permet d'APPELER le fournisseur — donc de déplacer de
+     *              l'argent, de créer, de supprimer. Il ne sort jamais du
+     *              coffre, sous aucun prétexte.
+     *
+     *   `whsec_…`  permet UNIQUEMENT de constater qu'un message reçu vient
+     *              bien du fournisseur. Il ne sait rien émettre. Le détenir
+     *              n'autorise rien : cela permet seulement de ne pas être
+     *              trompé.
+     *
+     * Cette distinction n'assouplit RIEN. La frontière L4 reste absolue pour
+     * tout le reste, et un rôle de vérification ne franchit le pont que par un
+     * canal dédié qui, lui, refuse tout ce qui n'est pas exactement cela.
+     * Sans ce marquage, le seul moyen de livrer un secret de signature à un
+     * projet aurait été d'ouvrir une brèche générique — c'est-à-dire de perdre
+     * la garde pour tous les autres.
+     */
+    verificationOnly: options.verificationOnly === true,
     required: options.required === true,
     autoManaged: options.autoManaged === true,
     internal: options.internal === true,
@@ -162,6 +185,10 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       'billing.subscription.reconcile',
       'billing.invoice.list',
       'billing.refund',
+      // L6.3A — administrer l'endpoint webhook d'un projet. Le seul verbe
+      // Stripe qui ne touche pas à l'argent : il garantit le chemin par lequel
+      // le projet apprend qu'il en a reçu.
+      'webhook.endpoint.ensure',
     ]),
     credentialRoles: Object.freeze([
       role('secretKey', 'Clé secrète', {
@@ -178,6 +205,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       }),
       role('webhookSecret', 'Secret de signature webhook', {
         secret: true,
+        // L6.3A — il VÉRIFIE, il n'appelle pas. Voir `role()`.
+        verificationOnly: true,
         required: false,
         autoManaged: true,
         prefixHint: 'whsec_',
@@ -185,6 +214,7 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       }),
       role('webhookSecretPrevious', 'Secret de webhook retiré', {
         secret: true,
+        verificationOnly: true,
         required: false,
         autoManaged: true,
         internal: true,

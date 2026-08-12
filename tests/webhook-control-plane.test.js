@@ -578,8 +578,24 @@ section('13-15 · Le secret vit dans le coffre, et n’en sort par aucune porte'
   check('safeMessage tronque', safeMessage('x'.repeat(1000)).length <= 300);
 }
 
-section('15b · Le pont ne connaît pas les webhooks');
+section('15b · Le pont ne LIT ni n’ÉCRIT le coffre de webhooks du Panel');
 {
+  /**
+   * L6.3A NUANCE CETTE RÈGLE, ET LA REND PLUS PRÉCISE.
+   *
+   * Elle disait « aucun fichier du pont ne prononce le mot secret de webhook ».
+   * C'était une bonne approximation tant que rien n'avait à en traverser.
+   *
+   * Depuis L6.3A, un secret de VÉRIFICATION descend légitimement vers son
+   * projet — il ne permet aucun appel sortant, seulement de constater qu'un
+   * message reçu vient bien de Stripe. Le pont doit donc pouvoir le nommer.
+   *
+   * Ce qu'il ne doit toujours pas faire, et c'est cela qu'on vérifie
+   * maintenant : toucher au coffre du PANEL. `storeWebhookSecret` et
+   * `loadVerificationSecrets` servent les endpoints du Panel ; les appeler
+   * depuis le pont livrerait à un projet de quoi vérifier — ou pire, de quoi
+   * écraser — les événements du Panel lui-même.
+   */
   const fs = await import('node:fs');
   const path = await import('node:path');
   const url = await import('node:url');
@@ -590,11 +606,29 @@ section('15b · Le pont ne connaît pas les webhooks');
       const complet = path.join(dossier, entree.name);
       if (entree.isDirectory()) { parcourir(complet); continue; }
       if (!entree.name.endsWith('.js')) continue;
-      if (/webhookSecret|loadVerificationSecrets|storeWebhookSecret/.test(fs.readFileSync(complet, 'utf8'))) fuites += 1;
+      const source = fs.readFileSync(complet, 'utf8');
+      if (/loadVerificationSecrets|storeWebhookSecret|rotateWebhookSecret|hasWebhookSecret/.test(source)) fuites += 1;
     }
   };
   parcourir(racine);
-  check('aucun fichier du pont ne manipule un secret de webhook', fuites === 0);
+  check('aucun fichier du pont ne touche au coffre de webhooks du Panel', fuites === 0);
+
+  /**
+   * ET LA PORTE ÉTROITE EST BIEN UNE PORTE : elle n'autorise qu'une seule
+   * forme, au lieu d'exempter une famille. C'est ce renversement qui empêche
+   * qu'elle serve un jour à faire passer autre chose.
+   */
+  const { assertVerificationSecretOnly } = await import('../backend/src/bridge/providerSecretGuard.js');
+  const refuse = (charge) => {
+    try { assertVerificationSecretOnly(charge); return false; } catch { return true; }
+  };
+  check('un secret de signature seul passe',
+    !refuse({ webhookSecret: 'whsec_L63A_canal_etroit_0001' }));
+  check('…une clé d’appel rangée sous ce nom est refusée par sa FORME',
+    refuse({ webhookSecret: SK_TEST }));
+  check('…un champ en plus est refusé', refuse({ webhookSecret: 'whsec_L63A_canal_etroit_0001', secretKey: '' }));
+  check('…un rôle non déclaré « vérification » est refusé', refuse({ apiKey: 'whsec_L63A_canal_etroit_0001' }));
+  check('…une charge vide est refusée', refuse({}));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -928,8 +962,18 @@ section('L5.1 · Isolation — un binding par (fournisseur, environnement), jama
   check('UN SEUL binding en base', (await Binding.countDocuments({ provider: 'STRIPE' })) === 1);
 
   const binding = await Binding.findOne({ provider: 'STRIPE' }).lean();
-  check('le binding ne porte AUCUN projectId — il n’est pas par projet',
-    !('projectId' in binding));
+  /**
+   * L6.3A AJOUTE UNE DIMENSION SANS RETIRER LA RÈGLE.
+   *
+   * Le binding porte désormais un `projectId` — mais il vaut `null` pour un
+   * endpoint du PANEL, et c'est précisément ce `null` qui, dans l'index unique,
+   * préserve « un seul endpoint Panel par fournisseur et par monde ».
+   *
+   * L'invariant d'origine n'est donc pas affaibli : il est devenu conditionnel
+   * à la destination, et on le vérifie là où il s'applique.
+   */
+  check('un endpoint du Panel n’est rattaché à AUCUN projet',
+    binding.destination === 'PANEL' && binding.projectId === null);
   check('sa clé est bien (fournisseur, environnement)',
     binding.provider === 'STRIPE' && binding.environment === 'TEST');
 

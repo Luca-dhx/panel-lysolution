@@ -96,6 +96,16 @@ import {
   describeRefund,
 } from './stripeRefundAuthority.js';
 import { STRIPE_CAPABILITIES } from './stripeCapabilities.js';
+import { ensureProjectWebhookEndpoint } from '../../webhooks/webhookReconciler.js';
+/**
+ * LA ROUTE DE RÉCEPTION DU PROJET — décidée ici, jamais par le projet.
+ *
+ * Elle double la convention de SB Auto (`/api/webhooks/stripe`). La recopier
+ * plutôt que de l'accepter en entrée est délibéré : un projet qui choisirait
+ * son chemin pourrait faire enregistrer une route qui ne vérifie aucune
+ * signature, et Stripe y déverserait des événements en clair.
+ */
+const PROJECT_STRIPE_WEBHOOK_PATH = '/api/webhooks/stripe';
 
 /**
  * LES ACTES COMPOSÉS GARDENT LEUR PROPRE IDENTITÉ.
@@ -1138,7 +1148,68 @@ function vueContractuelle(fait) {
  * suivants, et `assertAdapterAlignment()` vérifie qu'aucune capacité Stripe
  * déclarée servie n'y manque — ni l'inverse.
  */
+/**
+ * GARANTIR L'ENDPOINT WEBHOOK DU PROJET (L6.3A).
+ *
+ * L'adaptateur est volontairement MINCE : il traduit l'entrée validée en un
+ * appel au réconciliateur de webhooks, qui possède déjà toute la doctrine —
+ * reconnaissance par jeton d'appartenance, dérive, préflight du plafond, et la
+ * stratégie de secret « rendu à la création seulement ».
+ *
+ * Écrire ici une seconde logique de convergence aurait produit deux vérités sur
+ * la même question, destinées à diverger au premier cas limite.
+ *
+ * ── CE QU'IL NE FAIT PAS TRANSITER ──────────────────────────────────────────
+ *
+ * Le secret capturé ne remonte PAS dans le résultat. Il est rangé par le
+ * réconciliateur dans le coffre du projet, et le projet ira le chercher par la
+ * route dédiée. Ce que l'on rend ici est un CONSTAT — y compris « il y a un
+ * secret à relire », qui n'en dit pas la valeur.
+ */
+async function webhookEndpointEnsure({ context, input, fetchImpl }) {
+  const resultat = await ensureProjectWebhookEndpoint({
+    provider: 'STRIPE',
+    projectId: context.projectId,
+    publicBackendUrl: input.publicBackendUrl,
+    callbackPath: PROJECT_STRIPE_WEBHOOK_PATH,
+    environment: context.environment,
+    fetchImpl,
+  });
+
+  /**
+   * UN ÉCHEC DE RÉCONCILIATION N'EST PAS UN SUCCÈS SILENCIEUX.
+   *
+   * Le réconciliateur ne lève pas : il rend un diagnostic, parce que son
+   * appelant historique est une tâche de fond qui doit continuer. Ici,
+   * l'appelant est un projet qui attend une réponse — lui rendre `ok` avec un
+   * endpoint absent le laisserait croire qu'il peut recevoir des événements.
+   */
+  if (!resultat.remoteWebhookId && !resultat.created) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+      resultat.message || 'Endpoint webhook non garanti chez le fournisseur.',
+      { reason: resultat.code || 'WEBHOOK_ENDPOINT_NOT_ENSURED' },
+    );
+  }
+
+  return {
+    endpointId: resultat.remoteWebhookId ?? null,
+    url: resultat.observedUrl || resultat.desiredUrl || '',
+    events: resultat.desiredEvents ?? [],
+    status: String(resultat.status ?? ''),
+    created: Boolean(resultat.created),
+    updated: Boolean(resultat.updated),
+    secretAvailable: Boolean(resultat.secretConfigured),
+    secretRenewed: Boolean(resultat.secretCaptured),
+  };
+}
+
 export const STRIPE_ADAPTERS = Object.freeze({
+  /**
+   * L6.3A — le seul verbe qui n'agit pas sur de l'argent : il administre
+   * l'endpoint par lequel le projet apprendra qu'il en a reçu.
+   */
+  'webhook.endpoint.ensure': webhookEndpointEnsure,
   'billing.checkout.create': checkoutCreate,
   /**
    * LA LECTURE, SERVIE PARCE QU'ELLE A ENFIN UN PROPRIÉTAIRE À VÉRIFIER.

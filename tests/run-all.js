@@ -141,6 +141,13 @@ const TESTS = [
   // Stripe REFUSE de servir deux fois), la réponse perdue, et l'état illisible —
   // qui ne devient jamais une seconde mutation.
   'stripe-subscription-cancellation-e2e.test.js',
+  // L6.3A — LE PROVISIONNEMENT CHANGE DE MAIN. Le Panel enregistre l'endpoint
+  // du PROJET chez Stripe avec SA clé, puis lui livre le seul secret de
+  // VÉRIFICATION — par un canal qui n'accepte qu'une forme, à côté d'une
+  // frontière L4 restée intacte. La section qui compte est la dernière : un
+  // événement signé traverse encore la vérification du projet et atteint son
+  // métier. « L'endpoint est créé » n'aurait rien prouvé.
+  'stripe-webhook-provisioning-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

@@ -83,6 +83,15 @@ export const PERMISSIONS = Object.freeze({
   SIGNATURE_READ: 'signature:read',
   SIGNATURE_WRITE: 'signature:write',
   DNS_WRITE: 'dns:write',
+  /**
+   * L6.3A — administrer l'endpoint webhook d'un projet chez le fournisseur.
+   *
+   * Une famille à part, et non `billing:write` : ce verbe ne déplace pas
+   * d'argent, et le ranger avec ceux qui en déplacent obligerait à accorder le
+   * paiement pour obtenir la réception. Un projet peut légitimement avoir l'un
+   * sans l'autre — c'est même l'ordre naturel, la réception d'abord.
+   */
+  WEBHOOKS_MANAGE: 'webhooks:manage',
 });
 
 /* -------------------------------------------------------------------------- */
@@ -314,6 +323,32 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_READ],
+    migrationNote: null,
+  }),
+
+  /**
+   * L'ENDPOINT WEBHOOK DU PROJET — provisionné par le Panel (L6.3A).
+   *
+   * Elle ne ressemble à aucune autre capacité Stripe : elle n'agit pas sur
+   * l'argent, mais sur le CHEMIN par lequel le projet apprend que de l'argent a
+   * bougé. Sans elle, le projet devait garder une clé d'API pour enregistrer sa
+   * propre adresse — c'est-à-dire garder le pouvoir d'appeler Stripe pour tout
+   * le reste.
+   *
+   * `SAFE_RETRY` parce qu'elle est convergente : elle compare l'état désiré au
+   * réel avant d'agir. Deux appels ne produisent pas deux endpoints, et huit
+   * appels simultanés non plus — le binding porte un index unique par projet et
+   * par monde.
+   */
+  'webhook.endpoint.ensure': capability('webhook.endpoint.ensure', {
+    provider: 'STRIPE',
+    label: 'Garantir l’endpoint webhook du projet',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['webhook.endpoint.ensure'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['webhook.endpoint.ensure'].outputSchema,
+    timeoutMs: 30_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.WEBHOOKS_MANAGE],
     migrationNote: null,
   }),
 

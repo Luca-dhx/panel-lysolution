@@ -98,6 +98,14 @@ export async function startSbAutoInstance({
     state() { return send('state'); },
     raw() { return send('raw'); },
     /** TOUTE la base de l'instance — le seul moyen de prouver une absence. */
+    /** Sème le catalogue IntegratedAPI, comme le bootstrap réel. */
+    seedIntegratedApis() { return send('seedIntegratedApis'); },
+    /** Le VRAI chemin de provisionnement du projet (L6.3A). */
+    ensureStripeWebhook(args) { return send('ensureStripeWebhook', args); },
+    /** Ce que le coffre local contient réellement — pour prouver une livraison. */
+    readCredential(args) { return send('readCredential', args); },
+    /** POSTe un webhook signé sur la vraie route du projet. */
+    postWebhook(args) { return send('postWebhook', args); },
     dbDump() { return send('dbDump'); },
     collectionNames() { return send('collectionNames'); },
     identity() { return send('identity'); },

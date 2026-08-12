@@ -158,6 +158,15 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
      * `PANEL_INTERNAL`, depuis l'onglet Finances d'un projet.
      */
     'billing.refund',
+    /**
+     * L6.3A — LE PROVISIONNEMENT DE L'ENDPOINT WEBHOOK DU PROJET.
+     *
+     * La seule capacité Stripe qui ne touche pas à l'argent : elle garantit le
+     * CHEMIN par lequel le projet apprend que de l'argent a bougé. Sans elle, le
+     * projet devait garder une clé d'API pour enregistrer sa propre adresse —
+     * donc le pouvoir d'appeler Stripe pour tout le reste.
+     */
+    'webhook.endpoint.ensure',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -179,7 +188,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * création (L6.2B/D/E) ou par filiation (L6.2F).
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('huit capacités Stripe sont servies', stripeServies.length === 8);
+  check('neuf capacités Stripe sont servies', stripeServies.length === 9);
   /**
    * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
    * par la même filiation : l'intention de paiement est adoptée à la projection

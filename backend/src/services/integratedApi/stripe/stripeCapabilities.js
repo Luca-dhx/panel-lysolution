@@ -136,6 +136,64 @@ const checkoutCreateInput = z.object({
 const subscriptionCancelInput = z.object({ subscriptionId }).strict();
 
 /**
+ * `webhook.endpoint.ensure` — GARANTIR L'ENDPOINT D'UN PROJET (L6.3A).
+ *
+ * ══ CE QUE LE PROJET APPORTE, ET C'EST TOUT ═════════════════════════════════
+ *
+ * Son adresse publique. Rien d'autre.
+ *
+ * Pas d'identifiant d'endpoint : s'il pouvait désigner un `we_…`, il
+ * désignerait celui d'un autre projet, et le Panel finirait par lui livrer un
+ * secret qui n'est pas le sien.
+ *
+ * Pas la liste des événements : il pourrait en retirer un dont son propre
+ * métier dépend, et personne ne s'en apercevrait avant qu'un paiement ne
+ * remonte plus. Le Panel la connaît, et c'est lui qui la pose.
+ *
+ * Pas le monde, pas le compte, pas la clé — comme partout ailleurs.
+ *
+ * ══ POURQUOI `ensure` ═══════════════════════════════════════════════════════
+ *
+ * L'appelant n'exprime pas « crée » mais « fais en sorte que ». Il ne sait pas,
+ * et n'a pas à savoir, si l'endpoint existe déjà, s'il a dérivé, ou si son
+ * adresse a changé depuis hier. Un projet redémarre, un tunnel bouge : la même
+ * phrase doit convenir dans tous les cas, et converger vers un seul endpoint.
+ */
+const webhookEndpointEnsureInput = z.object({
+  /**
+   * L'adresse RACINE, pas la route de réception : le chemin est décidé par le
+   * Panel à partir du registre. Un projet qui choisirait son chemin pourrait
+   * faire pointer l'endpoint vers une route qui ne vérifie rien.
+   */
+  publicBackendUrl: z.string().url().max(2_048),
+}).strict();
+
+/**
+ * CE QUE LE PANEL REND — et ce qu'il ne rend PAS.
+ *
+ * Le secret de vérification N'EST PAS ICI, et son absence est le cœur du lot :
+ * le résultat d'une capacité traverse la garde L4, qui refuse tout identifiant
+ * fournisseur. Le secret voyage par une route dédiée qui ne transporte que
+ * cela — voir `webhookVerification.controller.js`.
+ *
+ * `secretAvailable` dit seulement s'il y a quelque chose à aller chercher. Le
+ * projet peut donc savoir qu'il doit rafraîchir sans qu'aucun secret n'ait
+ * transité par ce canal.
+ */
+const webhookEndpointView = z.object({
+  endpointId: z.string().nullable(),
+  url: z.string(),
+  events: z.array(z.string()),
+  status: z.string(),
+  created: z.boolean(),
+  updated: z.boolean(),
+  /** Un secret courant existe-t-il côté Panel pour ce projet ? */
+  secretAvailable: z.boolean(),
+  /** A-t-il été (re)posé pendant CET appel ? Le projet sait qu'il doit relire. */
+  secretRenewed: z.boolean(),
+}).strict();
+
+/**
  * `billing.refund` — LE SEUL CONTRAT QUI REND DE L'ARGENT (L10.4).
  *
  * ══ POURQUOI L'INTENTION DE PAIEMENT, ET PAS LA FACTURE ═════════════════════
@@ -485,6 +543,17 @@ const DERIVED_OPERATION_IDENTITY = Object.freeze([
    */
   'billing.subscription.cancel_at_period_end',
   'billing.subscription.cancel_now',
+  /**
+   * L6.3A — « garantis MON endpoint » n'a qu'une réponse correcte par projet et
+   * par monde. Laisser le projet nommer l'acte lui permettrait d'en fabriquer
+   * deux, donc de faire enregistrer deux endpoints là où un seul doit exister.
+   *
+   * L'identité est ici portée par la portée elle-même — (projet, monde) — et
+   * garantie par l'index unique du binding plutôt que par le registre
+   * d'opérations : la convergence se fait sur l'ÉTAT réel chez le fournisseur,
+   * pas sur une fenêtre d'idempotence.
+   */
+  'webhook.endpoint.ensure',
 ]);
 
 const PROPOSED_EFFECTS = Object.freeze({
@@ -693,6 +762,36 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: true,
     resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
+    migrated: true,
+    migrationNote: null,
+  }),
+
+  /**
+   * `webhook.endpoint.ensure` — LE PANEL PROVISIONNE POUR LE PROJET (L6.3A).
+   *
+   * Première capacité qui ne déplace ni argent ni donnée métier : elle
+   * administre une ressource du COMPTE Stripe, pour le compte d'un projet.
+   *
+   * Elle n'est pas financière — elle ne peut rien encaisser ni rembourser —
+   * mais elle n'est pas anodine non plus : mal ciblée, elle ferait pointer les
+   * événements d'un projet vers un autre. D'où une appartenance qui n'est pas
+   * celle des autres capacités : ce n'est pas une ressource Stripe préexistante
+   * qu'il faut posséder, c'est l'ADRESSE annoncée qu'il faut valider, puisque
+   * c'est la seule chose que l'appelant apporte.
+   */
+  'webhook.endpoint.ensure': capability('webhook.endpoint.ensure', {
+    label: 'Garantir l’endpoint webhook du projet',
+    inputSchema: webhookEndpointEnsureInput,
+    outputSchema: webhookEndpointView,
+    timeoutMs: 30_000,
+    /**
+     * Convergente par nature : elle compare l'état désiré à l'état réel avant
+     * d'agir, exactement comme une résiliation relit avant de couper. Deux
+     * appels de suite ne produisent pas deux endpoints.
+     */
+    idempotency: 'SAFE_RETRY',
+    requiredPermissions: ['webhooks:manage'],
+    financial: false,
     migrated: true,
     migrationNote: null,
   }),

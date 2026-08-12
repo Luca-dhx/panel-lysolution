@@ -15,6 +15,7 @@ import {
   unpair,
 } from '../controllers/bridge.controller.js';
 import { invoke as invokeCapability } from '../controllers/capabilities.controller.js';
+import { fetchVerificationSecret } from '../controllers/webhookVerification.controller.js';
 
 const router = Router();
 
@@ -37,5 +38,21 @@ router.get('/sync/pull', asyncHandler(syncPull));
  * capacité anonyme, donc adressable par n'importe qui.
  */
 router.post('/capabilities/:code/invoke', asyncHandler(invokeCapability));
+
+/**
+ * LE SECRET DE VÉRIFICATION D'UN PROJET (L6.3A) — montée ici, et pas ailleurs.
+ *
+ * Sous `requireBridgeAuth`, comme les capacités : le projet dont on rend le
+ * secret est celui du JETON. Il n'y a pas de `:projectId` dans l'URL, et c'est
+ * délibéré — un identifiant dans le chemin serait un identifiant que l'appelant
+ * choisit, donc une invitation à demander celui du voisin.
+ *
+ * En GET, parce que la demande ne change rien chez le fournisseur : elle relit
+ * ce que le provisionnement a déjà rangé.
+ */
+router.get(
+  '/webhooks/:provider/verification-secret',
+  asyncHandler(fetchVerificationSecret),
+);
 
 export default router;

@@ -406,6 +406,77 @@ paths:
               schema:
                 $ref: '#/components/schemas/CapabilityErrorResponse'
 
+  /bridge/v1/webhooks/{provider}/verification-secret:
+    get:
+      operationId: fetchWebhookVerificationSecret
+      tags: [webhooks]
+      summary: Récupère le secret de VÉRIFICATION du webhook de ce projet.
+      description: >
+        LE SEUL CANAL PAR LEQUEL UN SECRET DESCEND VERS UN PROJET, et il ne
+        transporte que celui-là.
+
+        Un secret de vérification (`whsec_…`) ne permet AUCUN appel sortant : il
+        sert uniquement à constater qu'un message reçu vient bien du
+        fournisseur. C'est cette impuissance, et elle seule, qui autorise sa
+        traversée — une clé d'API ne franchira jamais le pont.
+
+        Le Panel refuse d'écrire ici toute charge qui ne serait pas exactement
+        un champ, portant un rôle déclaré « vérification seule » au registre des
+        fournisseurs, et dont la valeur a la forme d'un secret de signature. Ce
+        n'est donc pas une exception à la règle « aucun secret ne traverse » :
+        c'est une porte dont on connaît la forme exacte, à côté d'un mur resté
+        intact.
+
+        Le projet ne nomme pas le projet dont il veut le secret : celui qui fait
+        autorité est déduit du bridgeToken. Il ne peut demander que le sien.
+
+        Prérequis : l'endpoint doit avoir été provisionné par le Panel
+        (capacité `webhook.endpoint.ensure`). Sinon 404 — jamais un secret vide.
+
+        Compatible 1.0.x à 1.5.x : un projet qui ignore cet endpoint reste
+        pleinement conforme, un Panel qui ne le sert pas aussi.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: provider
+          in: path
+          required: true
+          description: >
+            Code du fournisseur, par exemple `STRIPE`. Liste FERMÉE côté Panel :
+            seuls les fournisseurs dont les événements vont directement au
+            projet sont livrables. Tout autre répond 404.
+          schema: { type: string }
+      responses:
+        '200':
+          description: >
+            Secret de vérification courant. UN SEUL champ, jamais davantage.
+          headers:
+            X-Bridge-Contract-Version:
+              $ref: '#/components/headers/ContractVersionHeader'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [webhookSecret]
+                properties:
+                  webhookSecret:
+                    type: string
+                    description: >
+                      Secret de signature (`whsec_…`). À ranger chiffré, à ne
+                      jamais journaliser, à n'utiliser que pour vérifier une
+                      signature entrante.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >
+            Aucun secret enregistré pour ce projet
+            (PANEL_WEBHOOK_VERIFICATION_SECRET_MISSING), ou fournisseur non
+            livrable (PANEL_WEBHOOK_VERIFICATION_UNAVAILABLE).
+        '409':
+          description: Version majeure du contrat non supportée.
+
 components:
   securitySchemes:
     bridgeToken:

@@ -67,8 +67,8 @@ const reponse = (status, body) => ({
 section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 /* ========================================================================== */
 {
-  // NEUF depuis L10.4, qui contractualise enfin le remboursement.
-  check('neuf capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 9);
+  // DIX depuis L6.3A, qui ajoute l'administration de l'endpoint webhook.
+  check('dix capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 10);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
@@ -81,7 +81,7 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * demanderait une liste plus large que son dû.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('huit capacités servies', servies.length === 8);
+  check('neuf capacités servies', servies.length === 9);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
@@ -199,7 +199,10 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
               // L6.2G — les deux résiliations rejoignent `customer.ensure` et
               // `price.ensure` : leur identité d'acte est DÉRIVÉE. Le projet ne
               // nomme pas une coupure, sinon il pourrait en fabriquer deux.
-              : /^billing\.subscription\.cancel_/.test(code) ? { subscriptionId: 'sub_1' }
+              // L6.3A — le provisionnement n'apporte QUE l'adresse du projet.
+              : code === 'webhook.endpoint.ensure'
+                ? { publicBackendUrl: 'https://projet.exemple.test' }
+                : /^billing\.subscription\.cancel_/.test(code) ? { subscriptionId: 'sub_1' }
               // L10.4 — le remboursement, lui, NOMME son acte : deux
               // remboursements partiels du même paiement sont deux actes
               // légitimes, qu'une identité dérivée confondrait.
