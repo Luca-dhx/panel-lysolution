@@ -142,6 +142,37 @@ const customerEnsureInput = z.object({
   }).strict(),
 }).strict();
 
+/**
+ * `billing.price.ensure` — même forme que `customer.ensure`, même raison.
+ *
+ * Le projet apporte UNE référence de contrat, et rien d'autre. Ni montant, ni
+ * devise, ni périodicité : le Panel les lit dans sa projection, dont il est
+ * l'autorité. Ni `productId`, ni `priceId` : proposer une ressource à adopter
+ * reviendrait à faire du registre d'appartenance un registre de déclarations.
+ *
+ * Aucun `operationId` non plus — l'identité de l'acte est DÉRIVÉE des termes du
+ * contrat. « Ce contrat a-t-il son tarif ? » n'a qu'une réponse correcte.
+ */
+const priceEnsureInput = z.object({
+  contractRef: z.string().trim().min(1).max(64),
+}).strict();
+
+/**
+ * SORTIE — ce que le checkout d'abonnement consomme, plus de quoi se relire.
+ *
+ * `amount`, `currency` et `interval` sont RENDUS et non reçus : le projet peut
+ * vérifier que le Panel a bien retenu les termes qu'il croit avoir publiés,
+ * sans jamais pouvoir les imposer. C'est une reddition de comptes, pas un canal.
+ */
+const priceEnsureOutput = z.object({
+  priceId: z.string(),
+  productId: z.string(),
+  status: z.enum(['CREATED', 'EXISTING']),
+  interval: z.enum(['month', 'year']),
+  amount: z.number().int().positive(),
+  currency: z.string(),
+}).strict();
+
 const customerEnsureOutput = z.object({
   customerId: z.string(),
   /**
@@ -210,6 +241,8 @@ const checkoutView = z.object({
   expiresAt: z.number().nullable(),
   paymentIntentId: z.string().nullable(),
   customerId: z.string().nullable(),
+  /** L'abonnement ouvert par cette session, quand elle en a ouvert un (L6.2E). */
+  subscriptionId: z.string().nullable(),
 }).strict();
 
 const checkoutCreateOutput = z.object({
@@ -246,6 +279,12 @@ const checkoutCreateOutput = z.object({
    */
   paymentIntentId: z.string().nullable(),
   customerId: z.string().nullable(),
+  /**
+   * L'ABONNEMENT que la session a ouvert (L6.2E). `null` tant qu'elle n'est pas
+   * complétée — Stripe ne le crée qu'au paiement. Sans lui, la réconciliation
+   * du projet marquerait un abonnement actif sans savoir lequel.
+   */
+  subscriptionId: z.string().nullable(),
   /** `REUSED` quand l'acte avait déjà produit sa session — voir L6.2B §reprise. */
   creation: z.enum(['CREATED', 'REUSED']),
   operationId: z.string(),
@@ -289,7 +328,7 @@ const BINDABLE_KINDS = Object.freeze([STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION]);
  * générale, et chaque entrée doit pouvoir se justifier par « il n'existe qu'une
  * réponse correcte, et le projet n'a rien à en décider ».
  */
-const DERIVED_OPERATION_IDENTITY = Object.freeze(['billing.customer.ensure']);
+const DERIVED_OPERATION_IDENTITY = Object.freeze(['billing.customer.ensure', 'billing.price.ensure']);
 
 const PROPOSED_EFFECTS = Object.freeze({
   'billing.checkout.retrieve': 'READ_ONLY',
@@ -444,6 +483,26 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * contrepartie est qu'il doit être lié immédiatement, sans quoi le contrat
      * suivant en créerait un second.
      */
+    resourceKind: null,
+    migrated: true,
+    migrationNote: null,
+  }),
+
+  /**
+   * `billing.price.ensure` — REVERSIBLE_EXTERNAL_WRITE, comme le client.
+   *
+   * Créer un Product et un Price ne débite personne : ce sont des entrées de
+   * catalogue. Ce qui engage, c'est la session qui les utilise — et celle-là
+   * reste FINANCIAL_WRITE, donc bloquée en pré-ouverture.
+   */
+  'billing.price.ensure': capability('billing.price.ensure', {
+    label: 'Garantir le tarif Stripe d’un contrat',
+    inputSchema: priceEnsureInput,
+    outputSchema: priceEnsureOutput,
+    timeoutMs: 25_000,
+    idempotency: 'PROVIDER_IDEMPOTENT',
+    requiredPermissions: ['billing:write'],
+    financial: false,
     resourceKind: null,
     migrated: true,
     migrationNote: null,

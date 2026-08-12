@@ -38,6 +38,7 @@ import {
 } from '../integratedApi/hostinger/hostingerCapabilities.js';
 import { STRIPE_CAPABILITIES } from '../integratedApi/stripe/stripeCapabilities.js';
 import { customerOperationId } from '../integratedApi/stripe/stripeCustomerAuthority.js';
+import { productOperationId } from '../integratedApi/stripe/stripePriceAuthority.js';
 
 /* -------------------------------------------------------------------------- */
 /*  IDEMPOTENCE                                                               */
@@ -338,6 +339,36 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
    * Elle reste FINANCIAL_WRITE : la pré-ouverture la refuse, migrée ou non, et
    * ce refus tombe avant le coffre comme avant l'adaptateur.
    */
+  /**
+   * LE TARIF D'UN CONTRAT — servi depuis L6.2E.
+   *
+   * L'identité déclarée ici est celle du PRODUCT, pas du Price : c'est elle qui
+   * réserve l'opération au goulot de la passerelle, et elle est stable pour un
+   * contrat donné. L'adaptateur dérive ensuite l'identité du Price à partir des
+   * TERMES lus dans la projection — que la passerelle n'a pas à connaître.
+   *
+   * Conséquence voulue : deux appels concurrents pour le même contrat se
+   * bloquent l'un l'autre même si les termes ont changé entre-temps. C'est le
+   * bon arbitrage — mieux vaut sérialiser deux changements de tarif que les
+   * laisser courir ensemble.
+   */
+  'billing.price.ensure': capability('billing.price.ensure', {
+    provider: 'STRIPE',
+    label: 'Garantir le tarif Stripe d’un contrat',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.price.ensure'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.price.ensure'].outputSchema,
+    timeoutMs: 25_000,
+    idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
+    requiredPermissions: [PERMISSIONS.BILLING_WRITE],
+    correlationField: 'priceId',
+    deriveOperationId: (context, input) => productOperationId({
+      environment: context.environment,
+      contractId: input.contractRef,
+    }),
+    migrationNote: null,
+  }),
+
   'billing.checkout.create': capability('billing.checkout.create', {
     provider: 'STRIPE',
     label: 'Ouvrir une session de paiement',

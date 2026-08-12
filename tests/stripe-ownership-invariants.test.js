@@ -28,6 +28,8 @@ const sansCommentaires = (source) => source
 const adaptateurs = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeAdapters.js'));
 const routage = sansCommentaires(lire('backend/src/services/webhooks/stripeEventRouting.js'));
 const autoriteClient = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCustomerAuthority.js'));
+const autoriteTarif = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripePriceAuthority.js'));
+const transport = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeTransport.js'));
 const ingest = sansCommentaires(lire('backend/src/services/webhooks/webhookIngest.js'));
 
 /* ========================================================================== */
@@ -294,9 +296,146 @@ section('10. AUCUN CLIENT CRÉÉ LOCALEMENT (SB Auto)');
     check('aucun court-circuit sur le champ historique',
       !/if \(contract\.stripe\.customerId\) return/.test(abonnement));
 
-    // Le champ historique reste RENSEIGNÉ : les parcours métier le lisent.
+    /**
+     * Le champ historique reste RENSEIGNÉ — la facturation locale le relit
+     * (`billing.service.js`). Depuis L6.2E, il est écrit à partir du client
+     * que le PANEL rend avec la session d'abonnement : son sens a changé, il
+     * porte une référence de l'autorité et non plus un identifiant fabriqué ici.
+     */
     check('…mais le champ historique est toujours écrit',
-      /contract\.stripe\.customerId = customerId/.test(abonnement));
+      /contract\.stripe\.customerId = session\.customerId/.test(abonnement));
+  }
+}
+
+/* ========================================================================== */
+section('11. UN PRICE NE SE MODIFIE JAMAIS (L6.2E)');
+/* ========================================================================== */
+{
+  /**
+   * PRICE_MUTATION_PRIMITIVES = 0.
+   *
+   * Stripe interdit de changer le montant, la devise ou la périodicité d'un
+   * Price : changer de tarif, c'est en créer un autre. Cette contrainte est
+   * aussi la bonne sémantique métier — un abonnement souscrit à 249 € doit
+   * continuer de référencer 249 €.
+   *
+   * L'invariant se lit sur les PRIMITIVES disponibles : si le transport n'offre
+   * aucune mise à jour de Price, personne ne pourra en écrire une par
+   * inadvertance. On ne défend pas une discipline, on retire l'outil.
+   */
+  /**
+   * On cherche une ÉCRITURE ciblant un Price précis — c'est la seule forme
+   * qu'aurait une mutation. Lire un Price (`GET /v1/prices/{id}`) est au
+   * contraire indispensable à la reprise, et ne doit pas être confondu avec elle.
+   */
+  const ecrituresCiblees = [...transport.matchAll(/method: '(\w+)', path: `\/v1\/prices\/\$\{[^`]*`/g)]
+    .map((m) => m[1]);
+  check('le transport ne sait pas mettre à jour un Price',
+    !/updatePrice/.test(transport) && ecrituresCiblees.every((m) => m === 'GET'));
+  check('…ni archiver ou supprimer un Price', !/deletePrice|archivePrice/.test(transport));
+  check('il ne sait que CRÉER et LIRE',
+    /export async function createPrice/.test(transport)
+    && /export async function retrievePrice/.test(transport));
+}
+
+/* ========================================================================== */
+section('12. LA CLÉ DU TARIF PORTE LES TERMES, PAS LA VERSION (L6.2E)');
+/* ========================================================================== */
+{
+  /**
+   * L'audit du parc a établi que `signatureConfiguration.version` s'incrémente
+   * à CHAQUE sauvegarde des zones de signature : c'est un compteur de document,
+   * pas une version commerciale. Y adosser l'identité d'un tarif produit des
+   * Price identiques mais démultipliés.
+   *
+   * La clé porte donc les TERMES — et chacun d'eux, sans quoi un changement
+   * passerait inaperçu. La devise en particulier : la garde locale historique
+   * l'oubliait, et réutilisait un Price pour une autre devise.
+   */
+  for (const terme of ['interval', 'amount', 'currency']) {
+    check(`la clé du Price porte « ${terme} »`,
+      new RegExp(`priceOperationId[\s\S]{0,300}\$\{${terme}`).test(autoriteTarif)
+      || new RegExp(`\{ environment, contractId, interval, amount, currency \}`).test(autoriteTarif));
+  }
+  check('…et le monde', /stripe-price:\$\{environment\}/.test(autoriteTarif));
+  check('…mais PAS la version du contrat',
+    !/stripe-price:[^`]*version/i.test(autoriteTarif));
+
+  /**
+   * Le Product, lui, ne porte PAS les termes : c'est un contenant, et les
+   * tarifs successifs d'un contrat doivent s'y accrocher. L'y faire dépendre du
+   * montant créerait un Product par changement de prix.
+   */
+  check('la clé du Product porte le contrat', /stripe-product:\$\{environment\}:\$\{contractId\}/.test(autoriteTarif));
+  check('…et rien d’autre', !/stripe-product:[^`]*(amount|interval|currency)/.test(autoriteTarif));
+
+  // La devise est normalisée : deux graphies produiraient deux Price identiques.
+  check('la devise est normalisée dans la clé',
+    /String\(currency\)\.toLowerCase\(\)/.test(autoriteTarif));
+}
+
+/* ========================================================================== */
+section('13. LE MONTANT NE VIENT JAMAIS DU PROJET (L6.2E)');
+/* ========================================================================== */
+{
+  const catalogue = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCapabilities.js'));
+  const debut = catalogue.indexOf('const priceEnsureInput');
+  check('le contrat d’entrée du tarif existe', debut > 0);
+  const schema = catalogue.slice(debut, catalogue.indexOf('}).strict();', debut));
+
+  /**
+   * L'entrée ne porte QUE la référence de contrat. Chaque champ absent ferme
+   * une porte : un montant transmis puis comparé resterait un montant transmis,
+   * et la comparaison finirait par devenir une tolérance.
+   */
+  for (const interdit of ['amount', 'currency', 'interval', 'priceId', 'productId', 'operationId']) {
+    check(`aucun « ${interdit} » dans l’entrée du tarif`, !new RegExp(interdit).test(schema));
+  }
+  check('…seule la référence de contrat est acceptée', /contractRef/.test(schema));
+
+  // Et les termes sont lus dans la projection, pas ailleurs.
+  check('les termes viennent de la projection de contrat',
+    /projection\.pricing\?\.subscription/.test(autoriteTarif));
+}
+
+/* ========================================================================== */
+section('14. LE PARCOURS ABONNEMENT N’ÉCRIT PLUS CHEZ STRIPE (SB Auto)');
+/* ========================================================================== */
+{
+  const voisin = path.resolve(RACINE, '..', 'SB Auto 06', 'backend', 'src', 'services');
+  if (!fs.existsSync(voisin)) {
+    check('SB Auto absent — contrôle sauté proprement', true);
+  } else {
+    const abonnement = sansCommentaires(fs.readFileSync(path.join(voisin, 'subscription.service.js'), 'utf8'));
+    const service = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.service.js'), 'utf8'));
+
+    /**
+     * LOCAL_RUNTIME_SUBSCRIPTION_CHECKOUT_WRITES = 0.
+     *
+     * Les trois écritures du parcours — client, produit/tarif, session — ont
+     * disparu du service d'abonnement, et le constructeur de session
+     * d'abonnement a disparu du service Stripe.
+     */
+    for (const ecriture of ['createCustomer', 'createProduct', 'createPrice']) {
+      check(`aucun ${ecriture} local`, !new RegExp(`provider\.${ecriture}`).test(abonnement));
+    }
+    check('aucune session d’abonnement construite localement',
+      !/createSubscriptionCheckout\(/.test(service));
+    check('…et le service ne l’exporte plus',
+      !/export async function createSubscriptionCheckout/.test(service));
+
+    check('le parcours demande la capacité',
+      /createSubscriptionCheckoutViaPanel/.test(abonnement));
+    check('aucun repli local en cas d’échec',
+      !/catch[\s\S]{0,200}provider\.create/.test(abonnement));
+
+    /**
+     * Le pilote garde `createCheckoutSession` : plus aucun parcours ne
+     * l'appelle, mais on ne retire pas un pilote encore requis par d'autres
+     * verbes (portail, résiliations, lectures).
+     */
+    const pilote = sansCommentaires(fs.readFileSync(path.join(voisin, 'stripe', 'stripe.provider.js'), 'utf8'));
+    check('le pilote reste complet', /async createCheckoutSession/.test(pilote));
   }
 }
 

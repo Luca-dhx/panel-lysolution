@@ -261,8 +261,13 @@ section('4. A lit SA session');
    * moyens de paiement et le total facturé : les relayer ferait traverser au
    * pont des données que personne n'a demandées.
    */
-  const attendus = ['checkoutSessionId', 'status', 'paymentStatus', 'url', 'expiresAt', 'paymentIntentId', 'customerId'].sort();
-  check('le DTO porte EXACTEMENT les sept champs contractés',
+  /**
+   * HUIT depuis L6.2E : `subscriptionId` s'ajoute pour la même raison que
+   * `paymentIntentId` en L6.2C — sans lui, la réconciliation d'un abonnement
+   * marquerait un contrat actif sans savoir quel abonnement le porte.
+   */
+  const attendus = ['checkoutSessionId', 'status', 'paymentStatus', 'url', 'expiresAt', 'paymentIntentId', 'customerId', 'subscriptionId'].sort();
+  check('le DTO porte EXACTEMENT les huit champs contractés',
     JSON.stringify(Object.keys(lu.data.result).sort()) === JSON.stringify(attendus));
   check('…l’identifiant de session', lu.data.result.checkoutSessionId === sessionA);
   check('…son état', lu.data.result.status === 'open');
@@ -592,8 +597,18 @@ section('14. billing.checkout.create n’a pas bougé');
       operationId: 'op-l62c-abonnement-00001',
     },
   });
-  check('l’abonnement refuse toujours explicitement',
-    abo.panelDetails?.reason === 'SUBSCRIPTION_PREREQUISITES_NOT_MIGRATED');
+  /**
+   * L6.2E — l'abonnement N'EST PLUS refusé au titre de ses prérequis : le Panel
+   * possède désormais le client et le tarif. Ce faux Stripe-ci n'implémente ni
+   * `/v1/customers` ni `/v1/prices` (il date de L6.2C), donc l'appel échoue chez
+   * le fournisseur — et c'est exactement ce qu'on veut constater : le refus a
+   * CHANGÉ DE NATURE, il ne vient plus d'une lacune de migration.
+   *
+   * La preuve que le parcours aboutit vit dans
+   * `stripe-subscription-cutover-e2e.test.js`, avec un fournisseur complet.
+   */
+  check('l’abonnement n’est plus refusé pour prérequis manquants',
+    abo.panelDetails?.reason !== 'SUBSCRIPTION_PREREQUISITES_NOT_MIGRATED');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

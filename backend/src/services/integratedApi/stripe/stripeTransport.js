@@ -440,6 +440,50 @@ export async function createCustomer({ credentials, params, idempotencyKey, time
   return { outcome: OUTCOMES.DONE, customer: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
+/**
+ * `POST /v1/products` — le CONTENANT d'un tarif (L6.2E).
+ *
+ * Un Product ne porte aucun montant : il nomme ce qu'on vend. C'est le Price
+ * qui porte les termes commerciaux, et c'est lui qui est immuable.
+ */
+export async function createProduct({ credentials, params, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/products',
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] product créé — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, product: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `POST /v1/prices` — LES TERMES COMMERCIAUX, et ils sont IMMUABLES.
+ *
+ * Stripe interdit de modifier le montant, la devise ou la périodicité d'un Price
+ * existant : changer de tarif, c'est en créer un autre. Cette contrainte du
+ * fournisseur est aussi la bonne sémantique métier — un abonnement souscrit à
+ * 249 € doit continuer de référencer 249 €, quoi qu'il advienne du catalogue.
+ *
+ * On ne l'affronte donc jamais : il n'existe volontairement aucune primitive de
+ * mise à jour de Price dans ce transport.
+ */
+export async function createPrice({ credentials, params, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/prices',
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] price créé — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, price: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/** `GET /v1/prices/{id}` — lecture INTERNE de reprise. Aucun effet. */
+export async function retrievePrice({ credentials, priceId, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/prices/${encodeURIComponent(priceId)}`,
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { outcome: OUTCOMES.DONE, price: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
 /** `GET /v1/customers/{id}` — lecture INTERNE de reprise. Aucun effet. */
 export async function retrieveCustomer({ credentials, customerId, timeoutMs, fetchImpl }) {
   const res = await stripeFetch({
@@ -508,6 +552,9 @@ export function describeRetryDecision(error) {
 export default {
   createCustomer,
   retrieveCustomer,
+  createProduct,
+  createPrice,
+  retrievePrice,
   STRIPE_API_VERSION,
   DEFAULT_TIMEOUT_MS,
   OUTCOMES,

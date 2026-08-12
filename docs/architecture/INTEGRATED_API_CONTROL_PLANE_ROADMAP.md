@@ -1583,8 +1583,8 @@ locaux ne sont retirés qu'après le dernier lot.
 | **L6.2B** | `billing.checkout.create` — première écriture financière servie | **PASS** |
 | **L6.2C** | `billing.checkout.retrieve` + routage webhook par appartenance | **PASS** |
 | **L6.2D** | `billing.customer.ensure` — le client d'un CONTRAT | **PASS** |
-| L6.2E | `billing.price.ensure` + checkout d'abonnement | à faire |
-| L6.2F | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
+| **L6.2E** | `billing.price.ensure` + checkout d'abonnement | **PASS** |
+| L6.2F | Ownership Subscription, puis résiliations | à faire |
 | L6.3 | Cutover de l'endpoint webhook, retrait des credentials projet | à faire |
 
 **Les deux doctrines établies par ces lots**, et qui valent pour les suivants :
@@ -1603,18 +1603,27 @@ locaux ne sont retirés qu'après le dernier lot.
 > distincts. La cardinalité se mesure dans le code — clé d'idempotence, lieu de
 > stockage, lecture inverse — elle ne se suppose pas.
 
+> **Une ressource IMMUABLE chez le fournisseur se remplace, jamais se corrige.**
+> Un tarif Stripe ne se modifie pas : changer de prix, c'est en créer un autre,
+> et l'ancien reste référencé par les engagements en cours. On n'affronte pas
+> cette contrainte — on retire l'outil, en n'exposant aucune primitive de mise
+> à jour dans le transport.
+
 > **Certaines identités d'acte se DÉRIVENT.** Presque partout, le projet nomme
 > son acte : lui seul sait que deux clics sont la même intention. Mais un verbe
 > `ensure` n'a qu'une réponse correcte, et laisser le projet le nommer lui
 > permettrait d'en obtenir deux. Le Panel dérive alors l'identité de la clé
 > métier vérifiée, par une fonction pure.
 
-- **Ce qui bloque encore l'abonnement** — le seul **Price**. Le Customer est
-  lié depuis L6.2D ; il reste `billing.price.ensure` (Product + Price, montant
-  lu dans la projection, cardinalité par contrat / version / périodicité /
-  montant), après quoi le refus explicite du checkout d'abonnement tombe.
-- Neuf des treize événements webhook souscrits restent non attribuables : leurs
-  familles n'ont pas encore de lien.
+- **L'abonnement est migré** depuis L6.2E : le Panel possède le client, le
+  tarif et la session. Ce qui reste local relève d'autres familles — lectures
+  d'abonnement et de facture, portail, résiliations.
+- **La clé d'un tarif porte ses TERMES**, pas la version du contrat : cette
+  version compte les sauvegardes de zones de signature, pas les engagements
+  commerciaux. La lui adosser produisait des tarifs identiques démultipliés.
+- Les événements webhook portant un `subscription`, un `invoice`, un
+  `payment_intent` ou un `charge` restent non attribuables : leurs familles
+  n'ont pas encore de lien.
 - **GO L6.3** — sept jours sans appel Stripe local en journal sur les parcours
   migrés, et zéro événement `UNOWNED` non expliqué.
 

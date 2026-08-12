@@ -22,6 +22,16 @@ const TESTS = [
   'bridge-conformity.test.js',
   'contract-actions.test.js',
   'events.test.js',
+  // L10.1 — LA FONDATION FINANCIÈRE, indépendante de tout fournisseur.
+  // Deux suites, parce qu'elles ne prouvent pas la même chose :
+  //   · le NOYAU — centimes entiers, bornes de période dans un fuseau nommé,
+  //     agrégats exacts, suppression logique, portées étanches, et le
+  //     garde-fou qui interdit à Stripe d'entrer dans le code financier ;
+  //   · l'INTERFACE — les cinq états dégénérés du graphique (réellement
+  //     exécutés, pas relus), le signe des montants, et la confirmation forte
+  //     de « tout supprimer ».
+  'finance-core.test.js',
+  'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',
   'panel-timeline-ui.test.js',
@@ -92,6 +102,10 @@ const TESTS = [
   // L6.2D — le client d'un CONTRAT, et non du projet. L'identité de l'acte est
   // dérivée du contrat : le projet ne peut pas en obtenir deux.
   'stripe-customer-ownership-e2e.test.js',
+  // L6.2E — le TARIF, puis l'abonnement. La clé d'un Price porte ses TERMES et
+  // non la version du contrat : cette version compte les sauvegardes de zones
+  // de signature, pas les engagements commerciaux.
+  'stripe-subscription-cutover-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

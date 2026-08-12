@@ -121,27 +121,17 @@ export async function resolveCheckoutIntent({
   projectId, environment, input, lookupContract = defaultLookupContract,
 }) {
   /**
-   * L'ABONNEMENT EST REFUSÉ ICI, ET LE REFUS EST STRUCTUREL.
+   * L'ABONNEMENT EST SERVI DEPUIS L6.2E.
    *
-   * Une session `mode: subscription` référence un Price et un Customer Stripe
-   * créés AVANT elle. Ces trois créations — `createCustomer`, `createProduct`,
-   * `createPrice` — sont explicitement hors du périmètre de ce lot. Les laisser
-   * s'exécuter avec la clé du projet pendant que la session part avec celle du
-   * Panel produirait une session qui référence des objets d'un AUTRE compte :
-   * Stripe la refuserait, et l'échec surviendrait au pire moment — devant un
-   * client qui paie.
+   * Il était refusé ici tant qu'une session `mode: subscription` aurait
+   * référencé un client et un tarif créés avec la clé du PROJET pendant que la
+   * session partait avec celle du Panel — deux comptes possibles, et un échec
+   * devant un client qui paie.
    *
-   * Ce refus n'est donc pas une lacune de la migration : c'est la migration qui
-   * refuse d'être à moitié faite. Il tombe AVANT toute lecture de projection et
-   * avant tout contact fournisseur.
+   * Le Panel possède désormais les deux : `billing.customer.ensure` (L6.2D) et
+   * `billing.price.ensure` (L6.2E). La session peut donc être construite
+   * entièrement de son côté — c'est l'adaptateur qui compose les trois actes.
    */
-  if (input.paymentType === 'SUBSCRIPTION') {
-    throw new CheckoutAuthorityError(
-      CHECKOUT_REFUSALS.SUBSCRIPTION_NOT_MIGRATED,
-      'L’abonnement exige un client et un tarif Stripe que le Panel ne possède pas encore.',
-    );
-  }
-
   const projection = await lookupContract(projectId);
   const contractId = projection?.sourceContractId ?? null;
 
@@ -151,6 +141,47 @@ export async function resolveCheckoutIntent({
       CHECKOUT_REFUSALS.CONTRACT_NOT_OWNED,
       'Aucun contrat de ce projet ne correspond à cette référence.',
     );
+  }
+
+  const reference = projection.reference ?? null;
+  const metadata = buildMetadata({ projectId, environment, contractId, input });
+
+  /**
+   * ── L'ABONNEMENT : LES TERMES SONT DÉJÀ FIGÉS DANS UN PRICE ───────────────
+   *
+   * Une session d'abonnement ne porte PAS de montant : elle référence un Price,
+   * qui les porte et qui est immuable. C'est même préférable à `price_data`
+   * inline — un tarif nommé se retrouve dans le catalogue Stripe, se rapproche
+   * d'une facture, et ne peut pas dériver d'une session à l'autre.
+   *
+   * Le client et le tarif ne sont pas connus ICI : ils sont garantis par
+   * l'adaptateur, qui compose les trois actes. On rend donc une fabrique plutôt
+   * que des paramètres fermés — c'est la seule façon d'écrire l'ordre
+   * « d'abord les ressources, ensuite la session » sans le dupliquer.
+   */
+  if (input.paymentType === 'SUBSCRIPTION') {
+    return {
+      contractId,
+      reference,
+      /** Le montant vit dans le Price. Aucun chiffre ne transite par la session. */
+      amountIncludingTax: null,
+      currency: null,
+      paramsFor: ({ customerId, priceId }) => ({
+        mode: 'subscription',
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: input.successUrl,
+        cancel_url: input.cancelUrl,
+        metadata,
+        /**
+         * Les metadata sont RECOPIÉES sur l'abonnement lui-même : les
+         * événements `customer.subscription.*` et `invoice.*` ne les héritent
+         * pas de la session, et sans elles un webhook d'abonnement arriverait
+         * sans aucun rattachement lisible.
+         */
+        subscription_data: { metadata },
+      }),
+    };
   }
 
   const fee = projection.pricing?.launchFee ?? null;
@@ -168,9 +199,6 @@ export async function resolveCheckoutIntent({
       'La projection de contrat ne porte pas de frais de lancement exploitable.',
     );
   }
-
-  const reference = projection.reference ?? null;
-  const metadata = buildMetadata({ projectId, environment, contractId, input });
 
   return {
     contractId,

@@ -778,9 +778,16 @@ section('11. L’abonnement refuse plutôt que de produire une session bancale')
       operationId: 'op-l62b-abonnement-00001',
     },
   });
-  check('SUBSCRIPTION → refusé', abo.ok === false);
-  check('…motif nommé, jamais silencieux',
-    abo.panelDetails?.reason === 'SUBSCRIPTION_PREREQUISITES_NOT_MIGRATED');
+  /**
+   * L6.2E a levé ce refus : le Panel possède le client et le tarif. Ce faux
+   * Stripe-ci, écrit en L6.2B, n'implémente ni `/v1/customers` ni `/v1/prices`,
+   * donc l'appel échoue plus loin — chez le fournisseur, et non plus faute de
+   * migration. Ce qui compte pour CE lot reste vrai : aucune session n'est
+   * ouverte tant que ses prérequis ne sont pas réunis.
+   */
+  check('SUBSCRIPTION → refusé (fournisseur incomplet ici)', abo.ok === false);
+  check('…et ce n’est plus un refus de prérequis',
+    abo.panelDetails?.reason !== 'SUBSCRIPTION_PREREQUISITES_NOT_MIGRATED');
   check('…et aucune session créée', parId.size === avantParId);
 }
 

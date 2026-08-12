@@ -148,6 +148,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     /** Capacités PRÉVUES (L3). Aucune n'est invocable en L1. */
     capabilities: Object.freeze([
       'billing.customer.ensure',
+      // L6.2E — le tarif d'un contrat : Product + Price, une seule capacité.
+      'billing.price.ensure',
       'billing.checkout.create',
       // L6.2C — la lecture d'une session, servie dès lors que l'appartenance
       // de la ressource est prouvable (elle l'est depuis L6.2B).

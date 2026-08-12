@@ -57,7 +57,7 @@ Cinq objets sont régulièrement confondus. Ils sont distincts :
 `backend/src/services/capabilities/capabilityRegistry.js` — **code-first**.
 Rien en base ne peut ajouter, retirer ni modifier une capacité.
 
-Quatorze capacités, huit servies — et le catalogue se lit comme une carte de
+Quinze capacités, neuf servies — et le catalogue se lit comme une carte de
 l'avancement :
 
 | Code | Fournisseur | Effet (L1.75) | Idempotence | Servie |
@@ -68,6 +68,7 @@ l'avancement :
 | `billing.checkout.retrieve` | STRIPE | READ_ONLY | `SAFE_RETRY` | **oui** · **appartenance** |
 | `billing.subscription.reconcile` | STRIPE | READ_ONLY | `SAFE_RETRY` | non |
 | `billing.customer.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **acte dérivé** |
+| `billing.price.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **acte dérivé** |
 | `billing.checkout.create` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** |
 | `billing.subscription.cancel_at_period_end` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non · **appartenance** |
 | `billing.refund` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
@@ -76,6 +77,19 @@ l'avancement :
 | `dns.zone.resolve` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
 | `dns.records.read` | HOSTINGER | READ_ONLY | `SAFE_RETRY` | **oui** |
 | `dns.record.ensure` | HOSTINGER | INFRASTRUCTURE_WRITE | `UNKNOWN_ON_TIMEOUT` | **oui** |
+
+### Une capacité peut en COMPOSER d'autres (L6.2E)
+
+`billing.checkout.create` en mode abonnement enchaîne `customer.ensure` puis
+`price.ensure` avant d'ouvrir la session : Stripe refuse une session qui
+référencerait un objet inexistant, et cet échec surviendrait devant un client
+qui paie.
+
+Composer n'est pas fusionner. Chaque acte garde **sa** définition, donc **sa**
+clé d'idempotence — un client déjà garanti n'est pas recréé parce qu'un tarif
+manquait. Le piège est précis : passer la définition de l'appelant à l'acte
+composé ferait dériver une clé différente de celle d'un appel direct, et
+produirait un second client pour le même contrat. Invisible en test nominal.
 
 ### L'octroi ne suffit pas : certaines capacités exigent une APPARTENANCE (L6.2C)
 
@@ -435,11 +449,11 @@ grandir.
 
 ## 14. Réserves
 
-1. **Huit capacités sur quatorze sont servies** (mise à jour L6.2D). Brevo et
+1. **Neuf capacités sur quinze sont servies** (mise à jour L6.2E). Brevo et
    Hostinger sont migrés ; Stripe l'est pour l'ouverture et la lecture d'une
-   session de paiement, et le client d'un contrat. Restent sur le chemin local :
-   le TARIF de l'abonnement et la session qui en dépend, les résiliations, et
-   Yousign (L7).
+   session de paiement, le client d'un contrat et son tarif — donc l'abonnement
+   entier. Restent sur le chemin local : les lectures d'abonnement et de facture
+   (aucun lien pour ces familles), le portail, les résiliations, et Yousign (L7).
 2. **`PROD project → PROD credentials` n'est prouvé qu'en processus séparé.** Un
    Panel ne sert qu'un monde par processus ; l'E2E complet en PROD exigerait deux
    instances de Panel. `capability-preopening` couvre le versant PROD, l'E2E le

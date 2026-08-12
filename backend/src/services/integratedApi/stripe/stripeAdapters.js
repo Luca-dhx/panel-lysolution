@@ -43,6 +43,9 @@ import {
   retrieveCheckoutSession,
   createCustomer,
   retrieveCustomer,
+  createProduct,
+  createPrice,
+  retrievePrice,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
@@ -65,6 +68,32 @@ import {
   CustomerAuthorityError,
   resolveCustomerIntent,
 } from './stripeCustomerAuthority.js';
+import {
+  PriceAuthorityError,
+  resolvePriceIntent,
+} from './stripePriceAuthority.js';
+import { STRIPE_CAPABILITIES } from './stripeCapabilities.js';
+
+/**
+ * LES ACTES COMPOSÉS GARDENT LEUR PROPRE IDENTITÉ.
+ *
+ * Quand le checkout d'abonnement appelle `customerEnsure`, il doit lui passer
+ * la définition de `billing.customer.ensure` — pas la sienne. La clé
+ * d'idempotence Stripe dérive du CODE DE CAPACITÉ : la lui laisser hériter du
+ * checkout produirait une clé différente de celle qu'un appel direct à
+ * `customer.ensure` aurait utilisée, donc un SECOND client pour le même
+ * contrat. Le défaut serait invisible en test nominal et coûteux en production.
+ */
+const COMPOSEES = Object.freeze({
+  CUSTOMER: Object.freeze({
+    code: 'billing.customer.ensure',
+    timeoutMs: STRIPE_CAPABILITIES['billing.customer.ensure'].timeoutMs,
+  }),
+  PRICE: Object.freeze({
+    code: 'billing.price.ensure',
+    timeoutMs: STRIPE_CAPABILITIES['billing.price.ensure'].timeoutMs,
+  }),
+});
 
 /* -------------------------------------------------------------------------- */
 /*  TRADUCTION DES REFUS                                                      */
@@ -100,7 +129,9 @@ function translateStripeError(error, definition) {
     return capabilityResourceNotOwned(definition.code);
   }
 
-  if (error instanceof CheckoutAuthorityError || error instanceof CustomerAuthorityError) {
+  if (error instanceof CheckoutAuthorityError
+    || error instanceof CustomerAuthorityError
+    || error instanceof PriceAuthorityError) {
     /**
      * Un refus d'AUTORITÉ n'est pas une panne : la demande est recevable dans
      * sa forme et refusée dans son fond. `NOT_AVAILABLE` porte le motif, et
@@ -191,6 +222,7 @@ function describeSession(session, creation, operationId) {
      */
     paymentIntentId: idOf(session?.payment_intent),
     customerId: idOf(session?.customer),
+    subscriptionId: idOf(session?.subscription),
     creation,
     operationId,
   };
@@ -215,6 +247,36 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
    * contact fournisseur : un refus ici ne laisse aucune trace chez Stripe.
    */
   const intent = await guard(definition, () => resolveCheckoutIntent({ projectId, environment, input }));
+
+  /**
+   * ── L'ABONNEMENT COMPOSE TROIS ACTES, DANS CET ORDRE (L6.2E) ───────────────
+   *
+   * Une session `mode: subscription` référence un client et un tarif qui doivent
+   * exister AVANT elle. Le Panel les garantit lui-même, avec sa clé, et les lie
+   * — c'est ce qui rend l'abonnement migrable là où il ne l'était pas.
+   *
+   * L'ordre n'est pas négociable : Stripe refuse une session qui référence un
+   * objet inexistant, et cet échec surviendrait devant un client qui paie.
+   *
+   * Chacun de ces deux actes porte SA propre identité dérivée, donc sa propre
+   * convergence : un client déjà garanti n'est pas recréé parce qu'un tarif
+   * manquait. On ne compose pas trois actes en un seul — on les enchaîne, et
+   * chacun reste idempotent pour son compte.
+   */
+  let params = intent.params;
+  let customerId = null;
+  if (input.paymentType === 'SUBSCRIPTION') {
+    const client = await customerEnsure({
+      definition: COMPOSEES.CUSTOMER, context, credentials, fetchImpl,
+      input: { contractRef: input.contractRef, customer: {} },
+    });
+    const tarif = await priceEnsure({
+      definition: COMPOSEES.PRICE, context, credentials, fetchImpl,
+      input: { contractRef: input.contractRef },
+    });
+    customerId = client.customerId;
+    params = intent.paramsFor({ customerId: client.customerId, priceId: tarif.priceId });
+  }
 
   /**
    * ── BARRIÈRE 1 : LE LIEN ───────────────────────────────────────────────────
@@ -261,7 +323,7 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
 
   const created = await guard(definition, () => createCheckoutSession({
     credentials,
-    params: intent.params,
+    params,
     idempotencyKey,
     timeoutMs: definition.timeoutMs,
     fetchImpl,
@@ -311,7 +373,14 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
     );
   });
 
-  return describeSession(session, 'CREATED', input.operationId);
+  const vue = describeSession(session, 'CREATED', input.operationId);
+  /**
+   * `customer` n'est pas toujours renvoyé par Stripe sur une session fraîche ;
+   * pour un abonnement, nous SAVONS lequel a été attaché puisque nous venons de
+   * le garantir. Le rendre permet au projet de tenir son journal sans avoir à
+   * relire la session — et sans jamais choisir le client lui-même.
+   */
+  return customerId ? { ...vue, customerId: vue.customerId ?? customerId } : vue;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -400,6 +469,7 @@ function describeSessionView(session) {
     expiresAt: Number.isFinite(session.expires_at) ? session.expires_at : null,
     paymentIntentId: idOf(session.payment_intent),
     customerId: idOf(session.customer),
+    subscriptionId: idOf(session.subscription),
   };
 }
 
@@ -523,6 +593,144 @@ async function customerEnsure({ definition, context, credentials, input, fetchIm
 }
 
 /* -------------------------------------------------------------------------- */
+/*  billing.price.ensure                                                      */
+/* -------------------------------------------------------------------------- */
+
+const PRODUCT = STRIPE_RESOURCE_TYPES.PRODUCT;
+const PRICE = STRIPE_RESOURCE_TYPES.PRICE;
+
+/**
+ * GARANTIT une ressource Stripe créée par le Panel, et son lien.
+ *
+ * ══ POURQUOI CE GÉNÉRIQUE EXISTE ════════════════════════════════════════════
+ *
+ * Product et Price posent EXACTEMENT le même problème : un acte externe dont la
+ * trace locale peut manquer, et dont on veut une seule instance par identité
+ * métier. Écrire deux fois la même séquence de trois barrières donnerait deux
+ * occasions de diverger — et c'est toujours la copie oubliée qui duplique.
+ *
+ * Les trois barrières de L6.2B, dans l'ordre :
+ *
+ *   1. LE LIEN, définitif — `createdByOperationId` répond « cet acte a-t-il
+ *      déjà produit sa ressource ? » sans interroger personne.
+ *   2. LA CLÉ D'IDEMPOTENCE, dans la fenêtre du fournisseur.
+ *   3. LE REGISTRE D'OPÉRATIONS, en amont, qui empêche N appels concurrents.
+ */
+async function ensureBoundResource({
+  definition, projectId, environment, resourceType, operationId,
+  params, credentials, fetchImpl, create, idOf: extraireId,
+}) {
+  const connu = await findBindingByOperation({
+    projectId, environment, resourceType, operationId,
+  });
+  if (connu && !connu.revokedAt) {
+    return { id: connu.resourceId, status: 'EXISTING' };
+  }
+  if (connu?.revokedAt) {
+    /**
+     * Lien révoqué : on a cessé de reconnaître cette ressource. En créer une
+     * seconde donnerait deux tarifs pour des termes identiques — précisément ce
+     * que la clé métier empêche. Un humain tranche.
+     */
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `« ${definition.code} » : une ressource de cet acte a été révoquée.`,
+      { reason: 'BINDING_REVOKED' },
+    );
+  }
+
+  const idempotencyKey = deriveIdempotencyKey({
+    environment, projectId, capability: definition.code, operationId,
+  });
+
+  const reponse = await guard(definition, () => create({
+    credentials, params, idempotencyKey, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const id = extraireId(reponse);
+  if (!id) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `Stripe a répondu à « ${definition.code} » sans identifiant : issue indéterminée.`,
+    );
+  }
+
+  await bindResource({
+    projectId, environment, resourceType, resourceId: id,
+    source: BINDING_SOURCES.PANEL_CREATED,
+    createdByOperationId: operationId,
+  }).catch((error) => {
+    logger.error(
+      `[stripe] ${resourceType} ${maskResourceId(id)} créé mais NON LIÉ `
+      + `(${projectId}, ${environment}) : ${error?.code ?? 'UNEXPECTED'}.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `« ${definition.code} » : la ressource a été créée mais le Panel n’a pas pu enregistrer `
+      + 'son appartenance. La reprise de la même opération la retrouvera.',
+      { reason: 'BINDING_WRITE_FAILED' },
+    );
+  });
+
+  return { id, status: 'CREATED' };
+}
+
+/**
+ * Garantit le tarif d'un contrat — Product PUIS Price, les deux liés.
+ *
+ * ══ POURQUOI UNE SEULE CAPACITÉ POUR DEUX RESSOURCES ════════════════════════
+ *
+ * L6.1 l'avait déjà tranché : `createProduct` et `createPrice` « ne sont jamais
+ * un but, seulement les deux étapes que `ensureProductAndPrice` traverse ». Les
+ * exposer séparément donnerait au projet le pouvoir de créer des produits
+ * arbitraires sur le compte de la plateforme, pour un usage qui n'existe pas.
+ *
+ * ══ L'ORDRE EST IMPOSÉ PAR STRIPE ═══════════════════════════════════════════
+ *
+ * Un Price référence son Product : il ne peut pas exister avant lui. La fenêtre
+ * « Product créé, Price pas encore » est donc structurelle, et c'est la barrière
+ * 1 qui la referme au passage suivant — le Product est retrouvé par son lien,
+ * et seul le Price manquant est créé.
+ */
+async function priceEnsure({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+
+  // ── BARRIÈRE 0 : L'AUTORITÉ — le contrat, et SES termes ───────────────────
+  const intent = await guard(definition, () => resolvePriceIntent({
+    projectId, environment, contractRef: input.contractRef,
+  }));
+
+  const product = await ensureBoundResource({
+    definition, projectId, environment,
+    resourceType: PRODUCT,
+    operationId: intent.productOperationId,
+    params: intent.productParams,
+    credentials, fetchImpl,
+    create: createProduct,
+    idOf: (r) => r.product?.id ?? null,
+  });
+
+  const price = await ensureBoundResource({
+    definition, projectId, environment,
+    resourceType: PRICE,
+    operationId: intent.priceOperationId,
+    params: intent.priceParamsFor(product.id),
+    credentials, fetchImpl,
+    create: createPrice,
+    idOf: (r) => r.price?.id ?? null,
+  });
+
+  return {
+    priceId: price.id,
+    productId: product.id,
+    /** `EXISTING` dès que le TARIF était déjà là : c'est lui qui compte. */
+    status: price.status,
+    interval: intent.interval,
+    amount: intent.amount,
+    currency: intent.currency,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -549,6 +757,12 @@ export const STRIPE_ADAPTERS = Object.freeze({
    * la session référence un client et un tarif créés avant elle.
    */
   'billing.customer.ensure': customerEnsure,
+  /**
+   * LE TARIF — dernière ressource qui manquait au checkout d'abonnement. Elle
+   * crée DEUX objets Stripe (Product puis Price) parce que le fournisseur
+   * l'impose, mais elle reste UN acte métier : « ce contrat a-t-il son tarif ? ».
+   */
+  'billing.price.ensure': priceEnsure,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

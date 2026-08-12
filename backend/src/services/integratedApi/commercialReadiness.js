@@ -164,6 +164,16 @@ export const CAPABILITY_EFFECTS = Object.freeze({
   // Créer un Customer ne débite rien et se supprime. L'interdire empêcherait
   // de préparer le dossier d'un client avant son ouverture, sans rien protéger.
   'billing.customer.ensure': EFFECT.REVERSIBLE_EXTERNAL_WRITE,
+  /**
+   * Créer un catalogue et un tarif ne débite personne, et se désactive. Ce qui
+   * engage, c'est la session de paiement qui les utilise — et celle-là reste
+   * FINANCIAL_WRITE.
+   *
+   * Les interdire en pré-ouverture empêcherait de préparer le tarif d'un client
+   * avant son ouverture, sans rien protéger — même raisonnement que pour le
+   * client lui-même.
+   */
+  'billing.price.ensure': EFFECT.REVERSIBLE_EXTERNAL_WRITE,
   'billing.checkout.create': EFFECT.FINANCIAL_WRITE,
   'billing.subscription.cancel_at_period_end': EFFECT.FINANCIAL_WRITE,
   'billing.refund': EFFECT.FINANCIAL_WRITE,
