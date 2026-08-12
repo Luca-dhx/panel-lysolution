@@ -37,6 +37,7 @@ import {
   HOSTINGER_CAPABILITY_CODES,
 } from '../integratedApi/hostinger/hostingerCapabilities.js';
 import { STRIPE_CAPABILITIES } from '../integratedApi/stripe/stripeCapabilities.js';
+import { customerOperationId } from '../integratedApi/stripe/stripeCustomerAuthority.js';
 
 /* -------------------------------------------------------------------------- */
 /*  IDEMPOTENCE                                                               */
@@ -197,6 +198,17 @@ function capability(code, options) {
      * d'un fournisseur entre dans un fichier qui n'en connaît aucun.
      */
     correlationField: options.correlationField ?? null,
+    /**
+     * L'identité de l'ACTE, quand elle n'est PAS fournie par le projet.
+     *
+     * Fonction PURE de `(context, input)` : la passerelle l'évalue avant de
+     * réserver l'opération, sans lecture de base. Une dérivation qui aurait
+     * besoin d'interroger Mongo serait faite deux fois — ici et dans
+     * l'adaptateur — et les deux pourraient diverger.
+     *
+     * `null` = le projet nomme l'acte, comme partout ailleurs.
+     */
+    deriveOperationId: options.deriveOperationId ?? null,
   });
 }
 
@@ -292,15 +304,28 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.BILLING_READ],
     migrationNote: 'L6. Réparation d’un webhook perdu : doit rester rejouable.',
   }),
+  /**
+   * LE CLIENT D'UN CONTRAT — servi depuis L6.2D.
+   *
+   * Son identité d'acte est DÉRIVÉE, et c'est la seule du registre dans ce cas :
+   * « garantir » n'a qu'une réponse correcte par contrat, et laisser le projet
+   * nommer l'acte lui permettrait d'en obtenir deux.
+   */
   'billing.customer.ensure': capability('billing.customer.ensure', {
     provider: 'STRIPE',
-    label: 'Garantir l’existence d’un client',
-    migrated: false,
-    timeoutMs: 15_000,
-    // Stripe accepte `Idempotency-Key` : la déduplication est chez lui.
+    label: 'Garantir le client Stripe d’un contrat',
+    migrated: true,
+    inputSchema: STRIPE_CAPABILITIES['billing.customer.ensure'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.customer.ensure'].outputSchema,
+    timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
-    migrationNote: 'L6.',
+    correlationField: 'customerId',
+    deriveOperationId: (context, input) => customerOperationId({
+      environment: context.environment,
+      contractId: input.contractRef,
+    }),
+    migrationNote: null,
   }),
   /**
    * LA PREMIÈRE CAPACITÉ FINANCIÈRE RÉELLEMENT SERVIE (L6.2B).
@@ -559,7 +584,15 @@ export function assertRegistryAlignment() {
      * inventer les deux, et une exigence qu'on satisfait en inventant ne
      * protège plus rien.
      */
-    if (catalogue.financial) {
+    /**
+     * `billing.customer.ensure` n'est pas FINANCIÈRE — créer un client ne
+     * débite rien — mais elle CRÉE un objet chez le fournisseur. Les deux
+     * exigences suivantes valent donc pour toute écriture qui produit une
+     * ressource, financière ou non : sans idempotence on la duplique, sans
+     * poignée de corrélation on la perd.
+     */
+    const ecritureCreatrice = catalogue.financial || Boolean(capability.correlationField);
+    if (ecritureCreatrice) {
       if (capability.idempotency !== IDEMPOTENCY.PROVIDER_IDEMPOTENT) {
         problems.push(`« ${capability.code} » est une écriture Stripe servie sans idempotence fournisseur.`);
       }

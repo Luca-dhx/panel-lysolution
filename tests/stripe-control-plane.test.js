@@ -67,7 +67,7 @@ const reponse = (status, body) => ({
 section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 /* ========================================================================== */
 {
-  check('cinq capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 5);
+  check('six capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 6);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
@@ -79,9 +79,10 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * servir reviendrait à faire confiance à l'identifiant que le projet fournit.
    */
   const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
-  check('deux capacités servies', servies.length === 2);
+  check('trois capacités servies', servies.length === 3);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
-  check('…et sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
+  check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
+  check('…et le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
   /**
    * L6.2C lève la règle « aucune capacité servie n'exige de ressource
    * préexistante » — mais seulement pour la famille que le Panel CRÉE
@@ -146,7 +147,11 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
       ? { contractRef: 'CTR-1', paymentType: 'LAUNCH_FEE', successUrl: 'https://a.fr', cancelUrl: 'https://b.fr', operationId: OP }
       : code === 'billing.invoice.list' ? { customerId: 'cus_1', operationId: OP }
         : code === 'billing.checkout.retrieve' ? { checkoutSessionId: 'cs_1', operationId: OP }
-          : { subscriptionId: 'sub_1', operationId: OP };
+          // L6.2D — le SEUL contrat sans `operationId` : son identité d'acte est
+          // dérivée du contrat par le Panel, pas nommée par le projet.
+          : code === 'billing.customer.ensure'
+            ? { contractRef: 'CTR-1', customer: { email: 'client@garage.fr', name: 'Garage' } }
+            : { subscriptionId: 'sub_1', operationId: OP };
     check(`${code} : l’entrée nominale est acceptée`, schema.safeParse(base).success === true);
     const refuses = interdits.filter((champ) => schema.safeParse({ ...base, [champ]: 'x' }).success === false);
     check(`${code} : les ${interdits.length} champs interdits sont refusés`, refuses.length === interdits.length);

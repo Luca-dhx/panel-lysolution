@@ -41,6 +41,8 @@ import {
 import {
   createCheckoutSession,
   retrieveCheckoutSession,
+  createCustomer,
+  retrieveCustomer,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
@@ -59,6 +61,10 @@ import {
   deriveIdempotencyKey,
   resolveCheckoutIntent,
 } from './stripeCheckoutAuthority.js';
+import {
+  CustomerAuthorityError,
+  resolveCustomerIntent,
+} from './stripeCustomerAuthority.js';
 
 /* -------------------------------------------------------------------------- */
 /*  TRADUCTION DES REFUS                                                      */
@@ -94,7 +100,7 @@ function translateStripeError(error, definition) {
     return capabilityResourceNotOwned(definition.code);
   }
 
-  if (error instanceof CheckoutAuthorityError) {
+  if (error instanceof CheckoutAuthorityError || error instanceof CustomerAuthorityError) {
     /**
      * Un refus d'AUTORITÉ n'est pas une panne : la demande est recevable dans
      * sa forme et refusée dans son fond. `NOT_AVAILABLE` porte le motif, et
@@ -398,6 +404,125 @@ function describeSessionView(session) {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  billing.customer.ensure                                                   */
+/* -------------------------------------------------------------------------- */
+
+const CUSTOMER = STRIPE_RESOURCE_TYPES.CUSTOMER;
+
+/**
+ * Garantit qu'un contrat a UN client Stripe — et un seul.
+ *
+ * ══ LES TROIS BARRIÈRES, REPRISES DE L6.2B ══════════════════════════════════
+ *
+ * Le problème est le même qu'à l'ouverture d'un paiement : un acte externe dont
+ * la trace locale peut manquer. La réponse est donc la même, dans le même
+ * ordre — et c'est délibéré : deux mécanismes de convergence pour un même
+ * problème finiraient par diverger.
+ *
+ *   1. LE LIEN. `createdByOperationId` porte l'identité DÉRIVÉE du contrat.
+ *      Il répond « ce contrat a-t-il déjà son client ? » sans interroger
+ *      personne, et il répond encore un an après.
+ *   2. LA CLÉ D'IDEMPOTENCE. Si le lien manque, la création est retentée avec
+ *      la MÊME clé : Stripe rend son client d'origine au lieu d'en créer un
+ *      second.
+ *   3. LE REGISTRE D'OPÉRATIONS. Il empêche huit appels concurrents de partir
+ *      ensemble, et borne la reprise à la fenêtre du fournisseur.
+ *
+ * ══ CE QU'IL NE FAIT PAS : ADOPTER ══════════════════════════════════════════
+ *
+ * Un contrat peut déjà porter un `customerId` historique. Ce module ne le
+ * regarde même pas, et le projet ne peut pas le transmettre — voir le contrat
+ * d'entrée. Lier un identifiant sur la seule foi de celui qui le présente
+ * transformerait le registre d'appartenance en registre de déclarations.
+ */
+async function customerEnsure({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+
+  // ── BARRIÈRE 0 : L'AUTORITÉ — ce contrat est-il le sien ? ─────────────────
+  const intent = await guard(definition, () => resolveCustomerIntent({ projectId, environment, input }));
+
+  // ── BARRIÈRE 1 : LE LIEN ──────────────────────────────────────────────────
+  const connu = await findBindingByOperation({
+    projectId, environment, resourceType: CUSTOMER, operationId: intent.operationId,
+  });
+  if (connu && !connu.revokedAt) {
+    /**
+     * On RELIT le client chez Stripe plutôt que de rendre l'identifiant tel
+     * quel. Le coût est un aller-retour ; le gain est de constater une
+     * suppression côté fournisseur au lieu de rendre un identifiant mort que
+     * l'abonnement suivant utiliserait.
+     */
+    const relu = await guard(definition, () => retrieveCustomer({
+      credentials, customerId: connu.resourceId, timeoutMs: definition.timeoutMs, fetchImpl,
+    }));
+    if (relu.customer?.deleted === true) {
+      logger.error(
+        `[stripe] INCOHÉRENCE — ${maskResourceId(connu.resourceId)} est lié à ${projectId} `
+        + `(${environment}) mais Stripe le déclare supprimé. Lien CONSERVÉ.`,
+      );
+      throw new CapabilityError(
+        CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE,
+        `« ${definition.code} » : le client de ce contrat n’existe plus chez le fournisseur.`,
+        { reason: 'BINDING_PROVIDER_DIVERGENCE' },
+      );
+    }
+    return { customerId: connu.resourceId, status: 'EXISTING' };
+  }
+  if (connu?.revokedAt) {
+    /**
+     * Lien révoqué : on a cessé de reconnaître ce client. En créer un second
+     * ferait deux clients pour un contrat — précisément ce que le verbe
+     * empêche. Un humain tranche.
+     */
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `« ${definition.code} » : le client de ce contrat a été révoqué.`,
+      { reason: 'BINDING_REVOKED' },
+    );
+  }
+
+  // ── BARRIÈRE 2 : LA CLÉ ───────────────────────────────────────────────────
+  const idempotencyKey = deriveIdempotencyKey({
+    environment, projectId, capability: definition.code, operationId: intent.operationId,
+  });
+
+  const cree = await guard(definition, () => createCustomer({
+    credentials, params: intent.params, idempotencyKey, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  const customer = cree.customer;
+  if (!customer?.id) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `Stripe a répondu à « ${definition.code} » sans identifiant de client : issue indéterminée.`,
+    );
+  }
+
+  // ── LE LIEN, IMMÉDIATEMENT ────────────────────────────────────────────────
+  await bindResource({
+    projectId,
+    environment,
+    resourceType: CUSTOMER,
+    resourceId: customer.id,
+    source: BINDING_SOURCES.PANEL_CREATED,
+    createdByOperationId: intent.operationId,
+  }).catch((error) => {
+    logger.error(
+      `[stripe] client ${maskResourceId(customer.id)} créé mais NON LIÉ `
+      + `(${projectId}, ${environment}) : ${error?.code ?? 'UNEXPECTED'}.`,
+    );
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.TIMEOUT,
+      `« ${definition.code} » : le client a été créé mais le Panel n’a pas pu enregistrer `
+      + 'son appartenance. La reprise de la même opération le retrouvera.',
+      { reason: 'BINDING_WRITE_FAILED' },
+    );
+  });
+
+  return { customerId: customer.id, status: 'CREATED' };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -418,6 +543,12 @@ export const STRIPE_ADAPTERS = Object.freeze({
    * chose à vérifier.
    */
   'billing.checkout.retrieve': checkoutRetrieve,
+  /**
+   * LE CLIENT — première ressource Stripe que le Panel crée pour un CONTRAT,
+   * et non pour un acte ponctuel. C'est elle qui débloquera l'abonnement, dont
+   * la session référence un client et un tarif créés avant elle.
+   */
+  'billing.customer.ensure': customerEnsure,
 });
 
 export default { STRIPE_ADAPTERS, translateStripeError };

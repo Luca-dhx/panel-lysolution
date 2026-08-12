@@ -156,8 +156,22 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
      * l'issue devient INDÉCIDABLE en cas de silence méritent ce coût — c'est
      * exactement ce que déclare `UNKNOWN_ON_TIMEOUT`.
      */
+    /**
+     * L'IDENTITÉ DE L'ACTE — fournie par le projet, ou DÉRIVÉE par le Panel.
+     *
+     * Presque toutes les capacités laissent le projet nommer son acte : lui
+     * seul sait que deux clics sont la même intention. Quelques verbes n'ont
+     * pourtant qu'une réponse correcte — « garantir que ce contrat a un
+     * client » — et pour ceux-là, laisser nommer l'acte permettrait d'en
+     * obtenir deux. Le registre déclare alors une dérivation PURE, évaluée ici,
+     * avant toute réservation.
+     */
+    const actId = definition.deriveOperationId
+      ? definition.deriveOperationId(context, input)
+      : input.operationId;
+
     const reservation = requiresReservation(definition)
-      ? await reserve(context, definition, input)
+      ? await reserve(context, definition, input, actId)
       : null;
 
     // Déjà exécutée : on rend ce qui avait été mémorisé, et RIEN ne part.
@@ -166,7 +180,7 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
       await audit(context, definition, {
         outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
         durationMs,
-        operationId: input.operationId,
+        operationId: actId,
         errorCode: 'REPLAYED',
       });
       return {
@@ -174,7 +188,7 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
         provider: definition.provider,
         environment: context.environment,
         outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
-        operationId: input.operationId,
+        operationId: actId,
         requestId: context.requestId,
         durationMs,
         result: reservation.memoized,
@@ -241,7 +255,7 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
     await audit(context, definition, {
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
       durationMs,
-      operationId: input.operationId ?? null,
+      operationId: actId ?? null,
     });
 
     return {
@@ -249,7 +263,7 @@ export async function invokeCapability({ code, panelProject, payload = {}, reque
       provider: definition.provider,
       environment: context.environment,
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
-      operationId: input.operationId ?? null,
+      operationId: actId ?? null,
       requestId: context.requestId,
       durationMs,
       result,
@@ -341,11 +355,11 @@ function convergenceFor(definition) {
  * @throws {CapabilityError} si une autre exécution la détient, ou si l'issue
  *   d'une tentative antérieure reste inconnue.
  */
-async function reserve(context, definition, input) {
+async function reserve(context, definition, input, actId) {
   const outcome = await claimOperation({
     projectId: context.projectId,
     capability: definition.code,
-    operationId: input.operationId,
+    operationId: actId,
     environment: context.environment,
     provider: definition.provider,
     templateCode: input.templateRef ?? null,
@@ -386,15 +400,15 @@ async function reserve(context, definition, input) {
         memoized: {
           status: 'ALREADY_SENT',
           providerMessageId: outcome.operation.providerMessageId ?? null,
-          operationId: input.operationId,
+          operationId: actId,
         },
       };
 
     case CLAIM.UNRESOLVED:
-      throw capabilityOperationUnresolved(definition.code, input.operationId);
+      throw capabilityOperationUnresolved(definition.code, actId);
 
     default:
-      throw capabilityOperationInFlight(definition.code, input.operationId);
+      throw capabilityOperationInFlight(definition.code, actId);
   }
 }
 

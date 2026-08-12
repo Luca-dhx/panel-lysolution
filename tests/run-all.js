@@ -89,6 +89,9 @@ const TESTS = [
   // l'appartenance AVANT de parler au fournisseur, et le webhook trouve son
   // destinataire dans le registre de liens — jamais dans les metadata.
   'stripe-checkout-read-webhook-e2e.test.js',
+  // L6.2D — le client d'un CONTRAT, et non du projet. L'identité de l'acte est
+  // dérivée du contrat : le projet ne peut pas en obtenir deux.
+  'stripe-customer-ownership-e2e.test.js',
   'stripe-ownership-invariants.test.js',
   // L9 — Hostinger : un compte global, et le contrôle qui empêche un jeton
   // global de devenir une autorisation globale.

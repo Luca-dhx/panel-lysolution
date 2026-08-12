@@ -27,6 +27,7 @@ const sansCommentaires = (source) => source
 
 const adaptateurs = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeAdapters.js'));
 const routage = sansCommentaires(lire('backend/src/services/webhooks/stripeEventRouting.js'));
+const autoriteClient = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCustomerAuthority.js'));
 const ingest = sansCommentaires(lire('backend/src/services/webhooks/webhookIngest.js'));
 
 /* ========================================================================== */
@@ -195,6 +196,107 @@ section('7. PLUS AUCUNE LECTURE LOCALE SUR LE PARCOURS MIGRÉ (SB Auto)');
     const abonnement = sansCommentaires(fs.readFileSync(path.join(voisin, 'subscription.service.js'), 'utf8'));
     check('l’abonnement lit encore localement — périmètre assumé',
       /provider\.retrieveCheckoutSession/.test(abonnement));
+  }
+}
+
+/* ========================================================================== */
+section('8. LE CLIENT N’EST PAS UN SINGLETON DU PROJET (L6.2D)');
+/* ========================================================================== */
+{
+  /**
+   * CUSTOMER_OWNERSHIP_IS_NOT_PROJECT_SINGLETON.
+   *
+   * L'audit du parc établit la cardinalité RÉELLE : un client Stripe par
+   * CONTRAT, pas par projet. Trois faits indépendants la prouvent — la clé
+   * d'idempotence historique `customer-<contractId>-<mode>`, le stockage sur
+   * `Contract.stripe.customerId`, et la lecture inverse de la facturation qui
+   * suppose au plus un contrat par client.
+   *
+   * L'invariant se lit donc sur la DÉRIVATION de l'identité d'acte : elle doit
+   * porter le contrat. Une dérivation qui porterait le projet fusionnerait les
+   * historiques de facturation de contrats distincts.
+   */
+  check('l’identité d’acte du client porte le CONTRAT',
+    /customerOperationId\(\{ environment, contractId \}\)/.test(autoriteClient));
+  check('…et le MONDE', /stripe-customer:\$\{environment\}:\$\{contractId\}/.test(autoriteClient));
+  check('…mais PAS le projet',
+    !/stripe-customer:[^`]*projectId/.test(autoriteClient));
+
+  /**
+   * Et la recherche du client existant doit être faite PAR ACTE, jamais par
+   * projet : `findBinding({projectId, resourceType: CUSTOMER})` rendrait le
+   * premier client venu du projet, c'est-à-dire potentiellement celui d'un
+   * autre contrat.
+   */
+  const debut = adaptateurs.indexOf('async function customerEnsure');
+  check('la capacité existe', debut > 0);
+  const corps = adaptateurs.slice(debut, adaptateurs.indexOf('\n}', debut));
+  check('le client existant est cherché PAR ACTE', /findBindingByOperation/.test(corps));
+  check('…et jamais par simple appartenance au projet',
+    !/listOwnedResourceIds|findBinding\(\{[^}]*resourceType: CUSTOMER[^}]*\}\)/.test(corps));
+}
+
+/* ========================================================================== */
+section('9. LE PROJET NE NOMME PAS L’ACTE, ET N’ADOPTE RIEN (L6.2D)');
+/* ========================================================================== */
+{
+  const catalogue = sansCommentaires(lire('backend/src/services/integratedApi/stripe/stripeCapabilities.js'));
+  const debut = catalogue.indexOf('const customerEnsureInput');
+  check('le contrat d’entrée existe', debut > 0);
+  const schema = catalogue.slice(debut, catalogue.indexOf('}).strict();', debut));
+
+  /**
+   * Deux absences, et chacune ferme une porte :
+   *
+   *   `operationId`  laisserait le projet nommer deux fois le même acte, donc
+   *                  obtenir deux clients pour un contrat ;
+   *   `customerId`   laisserait le projet DÉSIGNER la ressource à adopter — un
+   *                  identifiant présenté n'est pas une preuve de propriété.
+   */
+  check('aucun operationId dans l’entrée', !/operationId/.test(schema));
+  check('aucun customerId dans l’entrée', !/customerId/.test(schema));
+  check('…et le schéma reste strict', /\}\)\.strict\(\)/.test(catalogue.slice(debut, debut + 900)));
+
+  const registre = sansCommentaires(lire('backend/src/services/capabilities/capabilityRegistry.js'));
+  check('l’identité est DÉRIVÉE côté Panel', /deriveOperationId: \(context, input\)/.test(registre));
+
+  /**
+   * La dérivation doit rester PURE. Une dérivation qui lirait la base serait
+   * faite deux fois — ici et dans l'adaptateur — et les deux pourraient
+   * diverger sans que rien ne le signale.
+   */
+  const derivation = registre.slice(registre.indexOf('deriveOperationId: (context, input)'), registre.indexOf('deriveOperationId: (context, input)') + 200);
+  check('…et PURE : aucune lecture de base dans la dérivation',
+    !/await|findOne|Model/.test(derivation));
+}
+
+/* ========================================================================== */
+section('10. AUCUN CLIENT CRÉÉ LOCALEMENT (SB Auto)');
+/* ========================================================================== */
+{
+  const voisin = path.resolve(RACINE, '..', 'SB Auto 06', 'backend', 'src', 'services');
+  if (!fs.existsSync(voisin)) {
+    check('SB Auto absent — contrôle sauté proprement', true);
+  } else {
+    const abonnement = sansCommentaires(fs.readFileSync(path.join(voisin, 'subscription.service.js'), 'utf8'));
+    check('le service d’abonnement ne crée plus de client',
+      !/provider\.createCustomer/.test(abonnement));
+    check('…il demande la capacité', /ensureCustomerViaPanel/.test(abonnement));
+    check('aucun repli local en cas d’échec',
+      !/catch[\s\S]{0,200}createCustomer/.test(abonnement));
+
+    /**
+     * Le court-circuit `if (contract.stripe.customerId) return …` a disparu :
+     * il rendait un identifiant sans jamais vérifier qu'il existe encore, ni à
+     * qui il appartient. Le garder ferait dépendre le cas nominal d'une valeur
+     * que personne ne vérifie.
+     */
+    check('aucun court-circuit sur le champ historique',
+      !/if \(contract\.stripe\.customerId\) return/.test(abonnement));
+
+    // Le champ historique reste RENSEIGNÉ : les parcours métier le lisent.
+    check('…mais le champ historique est toujours écrit',
+      /contract\.stripe\.customerId = customerId/.test(abonnement));
   }
 }
 

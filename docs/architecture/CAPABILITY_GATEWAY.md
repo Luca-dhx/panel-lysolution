@@ -57,7 +57,7 @@ Cinq objets sont régulièrement confondus. Ils sont distincts :
 `backend/src/services/capabilities/capabilityRegistry.js` — **code-first**.
 Rien en base ne peut ajouter, retirer ni modifier une capacité.
 
-Quatorze capacités, sept servies — et le catalogue se lit comme une carte de
+Quatorze capacités, huit servies — et le catalogue se lit comme une carte de
 l'avancement :
 
 | Code | Fournisseur | Effet (L1.75) | Idempotence | Servie |
@@ -67,7 +67,7 @@ l'avancement :
 | `billing.invoice.list` | STRIPE | READ_ONLY | `SAFE_RETRY` | non · **appartenance** |
 | `billing.checkout.retrieve` | STRIPE | READ_ONLY | `SAFE_RETRY` | **oui** · **appartenance** |
 | `billing.subscription.reconcile` | STRIPE | READ_ONLY | `SAFE_RETRY` | non |
-| `billing.customer.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
+| `billing.customer.ensure` | STRIPE | REVERSIBLE_EXTERNAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** · **acte dérivé** |
 | `billing.checkout.create` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | **oui** |
 | `billing.subscription.cancel_at_period_end` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non · **appartenance** |
 | `billing.refund` | STRIPE | FINANCIAL_WRITE | `PROVIDER_IDEMPOTENT` | non |
@@ -108,6 +108,26 @@ Une capacité marquée « appartenance » mais non servie l'est pour une raison
 précise : sa famille de ressources n'a **encore aucun lien** parce que le Panel
 n'en a jamais créé. La colonne se lit donc comme une dette, et elle se résorbe
 famille par famille.
+
+### L'identité de l'acte : fournie, ou DÉRIVÉE (L6.2D)
+
+Presque toutes les capacités reçoivent leur `operationId` du projet — lui seul
+sait que deux clics sont la même intention, et le Panel ne peut que le constater
+trop tard.
+
+Un verbe `ensure` est différent par nature. « Garantir que ce contrat a un
+client » n'a **qu'une réponse correcte**, déterminée par le contrat. Accepter une
+identité fournie permettrait d'appeler deux fois sous deux noms et d'obtenir deux
+clients : exactement ce que le verbe promet d'empêcher.
+
+Le registre déclare alors `deriveOperationId`, une fonction **pure** de
+`(context, input)` que la passerelle évalue avant de réserver l'opération. Pure,
+parce qu'une dérivation qui interrogerait la base serait faite deux fois — à la
+réservation et dans l'adaptateur — et les deux pourraient diverger sans que rien
+ne le signale.
+
+Le contrat d'entrée d'une telle capacité **refuse** `operationId` : un champ
+décoratif qui ressemble à une autorité finit par en devenir une.
 
 **Déclarée ≠ servie.** Une capacité non migrée est *connue* : sa politique, son
 effet et son fournisseur sont établis, et l'écran l'annonce. Elle n'est
@@ -415,10 +435,11 @@ grandir.
 
 ## 14. Réserves
 
-1. **Sept capacités sur quatorze sont servies** (mise à jour L6.2C). Brevo et
+1. **Huit capacités sur quatorze sont servies** (mise à jour L6.2D). Brevo et
    Hostinger sont migrés ; Stripe l'est pour l'ouverture et la lecture d'une
-   session de paiement. Restent sur le chemin local : l'abonnement Stripe et
-   ses prérequis (client, tarif), les résiliations, et Yousign (L7).
+   session de paiement, et le client d'un contrat. Restent sur le chemin local :
+   le TARIF de l'abonnement et la session qui en dépend, les résiliations, et
+   Yousign (L7).
 2. **`PROD project → PROD credentials` n'est prouvé qu'en processus séparé.** Un
    Panel ne sert qu'un monde par processus ; l'E2E complet en PROD exigerait deux
    instances de Panel. `capability-preopening` couvre le versant PROD, l'E2E le

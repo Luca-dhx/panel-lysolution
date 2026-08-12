@@ -1582,8 +1582,9 @@ locaux ne sont retirés qu'après le dernier lot.
 | **L6.2A** | Appartenance des ressources — `unique(environment, type, id)` | **PASS** |
 | **L6.2B** | `billing.checkout.create` — première écriture financière servie | **PASS** |
 | **L6.2C** | `billing.checkout.retrieve` + routage webhook par appartenance | **PASS** |
-| L6.2D | `billing.customer.ensure` → débloque l'abonnement | à faire |
-| L6.2E | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
+| **L6.2D** | `billing.customer.ensure` — le client d'un CONTRAT | **PASS** |
+| L6.2E | `billing.price.ensure` + checkout d'abonnement | à faire |
+| L6.2F | Résiliations (`cancel_at_period_end`, `cancel_now`) | à faire |
 | L6.3 | Cutover de l'endpoint webhook, retrait des credentials projet | à faire |
 
 **Les deux doctrines établies par ces lots**, et qui valent pour les suivants :
@@ -1596,9 +1597,24 @@ locaux ne sont retirés qu'après le dernier lot.
 > notre registre de liens prouve à qui appartient la ressource. Les metadata
 > corroborent, et perdent quand elles contredisent le lien.
 
-- **Ce qui bloque L6.2D+** — une session d'abonnement référence un Customer et
-  un Price créés avant elle, et ces familles n'ont aucun lien. Neuf des treize
-  événements webhook souscrits restent pour la même raison non attribuables.
+> **La ressource appartient à l'ENTITÉ MÉTIER, pas au projet.** Le client Stripe
+> est rattaché au CONTRAT : un projet ayant eu trois contrats a trois clients.
+> Écrire `projectId → customerId` fusionnerait des historiques de facturation
+> distincts. La cardinalité se mesure dans le code — clé d'idempotence, lieu de
+> stockage, lecture inverse — elle ne se suppose pas.
+
+> **Certaines identités d'acte se DÉRIVENT.** Presque partout, le projet nomme
+> son acte : lui seul sait que deux clics sont la même intention. Mais un verbe
+> `ensure` n'a qu'une réponse correcte, et laisser le projet le nommer lui
+> permettrait d'en obtenir deux. Le Panel dérive alors l'identité de la clé
+> métier vérifiée, par une fonction pure.
+
+- **Ce qui bloque encore l'abonnement** — le seul **Price**. Le Customer est
+  lié depuis L6.2D ; il reste `billing.price.ensure` (Product + Price, montant
+  lu dans la projection, cardinalité par contrat / version / périodicité /
+  montant), après quoi le refus explicite du checkout d'abonnement tombe.
+- Neuf des treize événements webhook souscrits restent non attribuables : leurs
+  familles n'ont pas encore de lien.
 - **GO L6.3** — sept jours sans appel Stripe local en journal sur les parcours
   migrés, et zéro événement `UNOWNED` non expliqué.
 

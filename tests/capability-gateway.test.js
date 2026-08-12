@@ -139,6 +139,9 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     // L6.2C — sa LECTURE, première capacité dont l'autorisation repose sur une
     // appartenance prouvée plutôt que sur le seul octroi.
     'billing.checkout.retrieve',
+    // L6.2D — le CLIENT d'un contrat, et la seule capacité du registre dont
+    // l'identité d'acte est dérivée par le Panel au lieu d'être nommée.
+    'billing.customer.ensure',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -160,7 +163,21 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * que le projet présente.
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
-  check('deux capacités Stripe sont servies', stripeServies.length === 2);
+  check('trois capacités Stripe sont servies', stripeServies.length === 3);
+  /**
+   * L6.2D — `billing.customer.ensure` est la SEULE dont l'identité d'acte est
+   * dérivée. « Garantir » n'a qu'une réponse correcte par contrat ; laisser le
+   * projet nommer l'acte lui permettrait d'en obtenir deux.
+   */
+  const derivees = registry.listCapabilityDefinitions().filter((c) => c.deriveOperationId);
+  check('une seule capacité dérive son identité d’acte', derivees.length === 1);
+  check('…et c’est le client d’un contrat', derivees[0]?.code === 'billing.customer.ensure');
+  check('…sa dérivation est PURE (contexte + entrée, sans base)',
+    derivees[0].deriveOperationId({ environment: 'TEST' }, { contractRef: 'c-1' })
+    === 'stripe-customer:TEST:c-1');
+  check('…et le monde en fait partie',
+    derivees[0].deriveOperationId({ environment: 'PROD' }, { contractRef: 'c-1' })
+    !== derivees[0].deriveOperationId({ environment: 'TEST' }, { contractRef: 'c-1' }));
   const creation = stripeServies.find((c) => c.code === CHECKOUT);
   const lecture = stripeServies.find((c) => c.code === 'billing.checkout.retrieve');
   check('…l’ouverture de session', Boolean(creation));

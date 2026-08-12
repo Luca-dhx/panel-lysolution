@@ -424,6 +424,32 @@ export async function listInvoices({ credentials, customer, subscription, limit 
 }
 
 /**
+ * `POST /v1/customers` — création d'un client (L6.2D).
+ *
+ * ÉCRITURE, donc clé d'idempotence OBLIGATOIRE : sans elle, un rejeu après un
+ * doute réseau créerait un second client pour la même personne, et l'abonnement
+ * suivant se rattacherait au mauvais. Réversible chez Stripe — un client se
+ * supprime — mais un doublon non détecté ne se répare pas tout seul.
+ */
+export async function createCustomer({ credentials, params, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/customers',
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] customer créé — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, customer: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/** `GET /v1/customers/{id}` — lecture INTERNE de reprise. Aucun effet. */
+export async function retrieveCustomer({ credentials, customerId, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/customers/${encodeURIComponent(customerId)}`,
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { outcome: OUTCOMES.DONE, customer: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
  * `POST /v1/checkout/sessions` — ÉCRITURE FINANCIÈRE.
  *
  * La clé d'idempotence est OBLIGATOIRE et vient de l'appelant : c'est elle, et
@@ -480,6 +506,8 @@ export function describeRetryDecision(error) {
 }
 
 export default {
+  createCustomer,
+  retrieveCustomer,
   STRIPE_API_VERSION,
   DEFAULT_TIMEOUT_MS,
   OUTCOMES,

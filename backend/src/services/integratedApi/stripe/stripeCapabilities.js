@@ -109,6 +109,49 @@ const checkoutCreateInput = z.object({
 
 const subscriptionCancelInput = z.object({ subscriptionId, operationId }).strict();
 
+/**
+ * `billing.customer.ensure` — LE SEUL CONTRAT SANS `operationId`, et c'est le
+ * cœur de sa sémantique (L6.2D).
+ *
+ * ══ POURQUOI LE PROJET NE NOMME PAS CET ACTE ════════════════════════════════
+ *
+ * Partout ailleurs, le projet fournit l'identité de l'acte : lui seul sait que
+ * deux clics sont la même intention. `ensure` ne pose pas cette question — elle
+ * affirme « converge vers l'unique client de ce contrat ». La réponse correcte
+ * est déterminée par le contrat, et il n'y en a qu'une.
+ *
+ * Accepter une identité fournie permettrait d'appeler deux fois avec deux
+ * identités pour le même contrat et d'obtenir deux clients : exactement ce que
+ * le verbe promet d'empêcher. L'identité est donc DÉRIVÉE côté Panel, du
+ * contrat VÉRIFIÉ — voir `stripeCustomerAuthority.customerOperationId()`.
+ *
+ * ══ CE QUE LE PROJET APPORTE, ET RIEN DE PLUS ═══════════════════════════════
+ *
+ * L'identité de la personne à facturer. Le Panel ne peut pas la déduire : sa
+ * projection de contrat ne porte pas les signataires. Il n'y a ni adresse, ni
+ * téléphone, ni moyen de paiement — le code historique n'en envoyait aucun.
+ *
+ * `customerId` est ABSENT du schéma, délibérément : un projet ne propose jamais
+ * la ressource à adopter. Voir le § adoption du rapport L6.2D.
+ */
+const customerEnsureInput = z.object({
+  contractRef: z.string().trim().min(1).max(64),
+  customer: z.object({
+    email: z.string().trim().toLowerCase().email().max(320).optional(),
+    name: z.string().trim().min(1).max(160).optional(),
+  }).strict(),
+}).strict();
+
+const customerEnsureOutput = z.object({
+  customerId: z.string(),
+  /**
+   * `CREATED` — le Panel vient de le créer. `EXISTING` — ce contrat en avait
+   * déjà un, retrouvé par son lien. Il n'y a PAS de troisième valeur : aucune
+   * adoption d'un identifiant présenté par le projet n'est possible.
+   */
+  status: z.enum(['CREATED', 'EXISTING']),
+}).strict();
+
 /* -------------------------------------------------------------------------- */
 /*  SORTIES                                                                   */
 /* -------------------------------------------------------------------------- */
@@ -240,6 +283,14 @@ const checkoutCreateOutput = z.object({
  */
 const BINDABLE_KINDS = Object.freeze([STRIPE_RESOURCE_KINDS.CHECKOUT_SESSION]);
 
+/**
+ * Capacités dont l'identité d'acte est DÉRIVÉE par le Panel, pas fournie par le
+ * projet. Fermée, et volontairement courte : c'est une exception à la règle
+ * générale, et chaque entrée doit pouvoir se justifier par « il n'existe qu'une
+ * réponse correcte, et le projet n'a rien à en décider ».
+ */
+const DERIVED_OPERATION_IDENTITY = Object.freeze(['billing.customer.ensure']);
+
 const PROPOSED_EFFECTS = Object.freeze({
   'billing.checkout.retrieve': 'READ_ONLY',
   'billing.subscription.retrieve': 'READ_ONLY',
@@ -366,6 +417,38 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     migrationNote: null,
   }),
 
+  /**
+   * `billing.customer.ensure` — REVERSIBLE_EXTERNAL_WRITE, et non FINANCIAL.
+   *
+   * Créer un client ne débite rien et se supprime. C'est la table de L1.75 qui
+   * le classe ainsi, avec sa raison : l'interdire en pré-ouverture empêcherait
+   * de préparer le dossier d'un client avant son ouverture, sans rien protéger.
+   * Ce lot ne touche pas cette classification — il la sert.
+   */
+  'billing.customer.ensure': capability('billing.customer.ensure', {
+    label: 'Garantir le client Stripe d’un contrat',
+    inputSchema: customerEnsureInput,
+    outputSchema: customerEnsureOutput,
+    timeoutMs: 20_000,
+    /** Stripe déduplique sur `Idempotency-Key` : la clé est dérivée du contrat. */
+    idempotency: 'PROVIDER_IDEMPOTENT',
+    requiredPermissions: ['billing:write'],
+    /**
+     * `financial: false` — l'acte n'engage aucune somme. Le drapeau pilote la
+     * doctrine de rejeu, pas la politique commerciale : un client se recrée
+     * sans conséquence pour personne, contrairement à une session de paiement.
+     */
+    financial: false,
+    /**
+     * Aucune ressource préexistante à posséder : le client est CRÉÉ. Sa
+     * contrepartie est qu'il doit être lié immédiatement, sans quoi le contrat
+     * suivant en créerait un second.
+     */
+    resourceKind: null,
+    migrated: true,
+    migrationNote: null,
+  }),
+
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     label: 'Résilier un abonnement en fin de période',
     inputSchema: subscriptionCancelInput,
@@ -454,8 +537,21 @@ export function validateStripeCapabilities() {
         problems.push(`${code} : « ${forbidden} » ne peut pas venir du projet (§ montant).`);
       }
     }
-    if (!Object.hasOwn(shape, 'operationId')) {
-      problems.push(`${code} : toute capacité financière doit porter un operationId.`);
+    /**
+     * TOUTE CAPACITÉ DOIT AVOIR UNE IDENTITÉ D'ACTE — fournie ou DÉRIVÉE.
+     *
+     * La règle disait « doit porter un operationId ». Elle visait juste : sans
+     * identité, deux appels indiscernables produisent deux effets. Mais elle
+     * confondait l'exigence (une identité existe) avec sa forme (le projet la
+     * fournit).
+     *
+     * `billing.customer.ensure` dérive la sienne du contrat, et c'est PLUS
+     * fort : le projet ne peut pas fabriquer deux identités pour un même
+     * contrat. `DERIVED_OPERATION_IDENTITY` recense ces cas, un par un — la
+     * liste est fermée pour qu'aucun verbe ne s'y glisse par commodité.
+     */
+    if (!Object.hasOwn(shape, 'operationId') && !DERIVED_OPERATION_IDENTITY.includes(code)) {
+      problems.push(`${code} : aucune identité d’acte, ni fournie ni dérivée.`);
     }
     // Une ÉCRITURE financière sans idempotence fournisseur est un doublon en
     // attente. Une lecture n'a pas ce problème : la rejouer ne produit rien.
