@@ -17,6 +17,9 @@ import { seedPlatformTemplates } from './services/email/panelEmailTemplate.servi
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
+import {
+  startRecurringCostScheduler, stopRecurringCostScheduler,
+} from './services/finance/recurringCostScheduler.js';
 import { migrateLegacyEvents, migrateParticipants } from './services/events/eventsMigration.js';
 import { installProcessGuards } from './services/deployment/forensics/processGuard.js';
 import { recoverOrphanRuns } from './services/deployment/forensics/runSteps.service.js';
@@ -218,6 +221,16 @@ async function start() {
   // Panel ouvert. La détection est donc ici, pas dans un navigateur.
   startEventScheduler();
 
+  /**
+   * COÛTS RÉCURRENTS — premier passage AU DÉMARRAGE, et c'est ce qui rattrape.
+   *
+   * Un Panel arrêté quatre mois retrouve ses quatre occurrences ici, avant
+   * qu'aucun écran ne soit ouvert. Ce n'est pas la garantie — la lecture
+   * financière matérialise aussi — mais c'est le moment où le rattrapage a lieu
+   * pour un système que personne ne regarde encore.
+   */
+  startRecurringCostScheduler();
+
   const app = createApp();
   const server = app.listen(config.port, () => {
     logger.success(
@@ -258,6 +271,7 @@ async function start() {
   const shutdown = (signal) => {
     logger.info(`${signal} reçu : arrêt du serveur…`);
     stopEventScheduler();
+    stopRecurringCostScheduler();
     server.close(async () => {
       await disconnectDatabase();
       process.exit(0);

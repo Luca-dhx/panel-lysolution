@@ -59,6 +59,60 @@ const mediaSchema = new mongoose.Schema(
     role: { type: String, default: null },
 
     /**
+     * QUI A LE DROIT DE LIRE CE FICHIER — ajouté au lot L10.2.
+     *
+     * ══ POURQUOI CE CHAMP EXISTE SUR LE MÉDIA, ET NON DANS LES FINANCES ═════
+     *
+     * Le protocole Media n'avait servi qu'à des images PUBLIABLES : un logo, un
+     * favicon, un portrait — des fichiers dont tout l'intérêt est d'être servis
+     * à des visiteurs anonymes, depuis `/uploads`, en statique.
+     *
+     * Un justificatif de coût est l'exact opposé : une facture fournisseur ne
+     * doit jamais être joignable par une URL devinable. Le lot L10.1 avait
+     * refusé de la livrer pour cette raison précise.
+     *
+     * Il aurait été plus rapide d'écrire un stockage de fichiers propre aux
+     * finances. C'eût été une seconde pile : deux façons de nommer un objet,
+     * deux façons d'en mesurer l'empreinte, deux dossiers à sauvegarder — et le
+     * jour où un contrat ou une facture client aurait eu le même besoin, une
+     * troisième. Le manque n'était pas un service de fichiers : c'était UN
+     * CHAMP. On l'ajoute là où il manquait.
+     *
+     * ══ CE QUE CHAQUE VALEUR ENGAGE ═════════════════════════════════════════
+     *
+     *   PUBLIC   le fichier vit sous `uploads/`, est servi en statique, et peut
+     *            être transféré vers la destination d'un déploiement pour être
+     *            affiché par les projets. C'est le défaut, et c'est ce qu'ÉTAIENT
+     *            tous les médias existants — d'où la valeur par défaut, qui rend
+     *            la reprise des documents antérieurs inutile.
+     *
+     *   PRIVATE  le fichier vit sous `storage/media/`, qu'aucun bloc `location`
+     *            d'Nginx ne dessert et qu'aucun `express.static` ne monte. Il ne
+     *            sort QUE par une route authentifiée, décidée par le domaine
+     *            qui le possède. Il n'est jamais transféré vers `shared/uploads`
+     *            — voir `publishPanelMediaOnDestination`.
+     *
+     * La visibilité n'est pas modifiable après coup : un fichier privé qui
+     * deviendrait public par une écriture de champ resterait, lui, dans le
+     * dossier privé — l'état annoncé et l'emplacement réel divergeraient. Un
+     * changement de visibilité est un nouvel import.
+     */
+    visibility: { type: String, enum: ['PUBLIC', 'PRIVATE'], default: 'PUBLIC', index: true },
+
+    /**
+     * LE NOM QUE L'UTILISATEUR A DÉPOSÉ — pour le lui rendre au téléchargement.
+     *
+     * Il n'est JAMAIS un chemin : la clé d'objet est calculée
+     * (`<mediaId>-<empreinte>.<ext>`), et ce champ ne sert qu'à remplir
+     * l'en-tête `Content-Disposition`. Confondre les deux — écrire le fichier
+     * sous le nom fourni — est la faille de traversée de répertoire classique.
+     *
+     * `null` pour les images du parc : leur nom d'origine n'a jamais eu de
+     * lecteur, et personne ne les télécharge.
+     */
+    originalFilename: { type: String, default: null },
+
+    /**
      * L'ENVIRONNEMENT PROPRIÉTAIRE — TEST ou PROD, jamais les deux.
      *
      * ── POURQUOI IL EST OBLIGATOIRE ──────────────────────────────────────

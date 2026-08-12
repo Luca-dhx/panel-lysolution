@@ -2641,3 +2641,107 @@ body {
   .finance-form-row { grid-template-columns: minmax(0, 1fr); }
   .finance-filters > * { flex: 1 1 100%; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COÛTS RÉCURRENTS ET JUSTIFICATIFS (L10.2)
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Une règle arrêtée reste LISIBLE : elle s'efface, elle ne disparaît pas.
+   La masquer ferait croire qu'elle n'a jamais existé, alors que ses
+   occurrences passées comptent toujours dans les totaux. */
+.finance-row-muted td { opacity: 0.62; }
+
+/* La fréquence : un nombre étroit collé à son unité, sur une seule ligne. */
+.finance-recurrence-row {
+  display: flex;
+  gap: var(--p-space-2);
+  align-items: center;
+}
+
+.finance-interval {
+  width: 5rem;
+  flex: 0 0 auto;
+}
+
+/*
+  LE CHOIX D'UNE PORTÉE TEMPORELLE — des cartes, pas des boutons radio.
+
+  « Prochaine récurrence », « Récurrence précédente », « Depuis le début » ne se
+  distinguent pas par leur libellé : c'est leur CONSÉQUENCE qui diffère, et elle
+  demande une phrase. Un groupe de radios alignés forcerait cette phrase hors du
+  choix, là où personne ne la lit avant de cliquer.
+*/
+.finance-mode-list {
+  display: grid;
+  gap: var(--p-space-2);
+}
+
+.finance-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-1);
+  padding: var(--p-space-3);
+  text-align: left;
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+  color: var(--p-text);
+  cursor: pointer;
+}
+
+.finance-mode:hover { border-color: var(--p-border-strong); }
+
+.finance-mode-on {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+}
+
+.finance-mode:focus-visible { outline: 2px solid var(--p-primary); outline-offset: 1px; }
+
+.finance-mode-label { font-weight: 600; font-size: var(--p-text-sm); }
+
+.finance-mode-detail {
+  color: var(--p-text-muted);
+  font-size: var(--p-text-xs);
+  line-height: 1.45;
+}
+
+/* ---------- Justificatif ---------- */
+
+.finance-receipt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+/*
+  Le nom du fichier peut être long et sans espace. Il se tronque plutôt que
+  d'élargir la colonne : un tableau qui déborde devient illisible pour toutes
+  ses lignes, pas seulement celle qui a un nom à rallonge.
+*/
+.finance-receipt-name {
+  min-width: 0;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+/* L'erreur reste À CÔTÉ de l'action qui l'a produite : la renvoyer en haut de
+   page obligerait à chercher quelle ligne a échoué. */
+.finance-receipt-error {
+  flex-basis: 100%;
+  font-size: var(--p-text-xs);
+  color: var(--p-danger);
+}
+
+@media (max-width: 40rem) {
+  .finance-receipt-name { max-width: 100%; flex-basis: 100%; }
+  .finance-recurrence-row { flex-wrap: wrap; }
+  .finance-interval { width: 100%; }
+}

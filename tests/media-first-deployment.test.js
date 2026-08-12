@@ -312,6 +312,77 @@ section('AUCUN MÉLANGE D’ENVIRONNEMENTS À LA MIGRATION');
     (await PanelMedia.findOne({ objectKey: enProd.filename }).lean()).publicationState === 'LOCAL_ONLY');
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('UN MÉDIA PRIVÉ N’EST JAMAIS PUBLIÉ PAR UN DÉPLOIEMENT (L10.2)');
+{
+  /**
+   * ══ CE QUE CE CONTRÔLE PROTÈGE ════════════════════════════════════════════
+   *
+   * Cette étape copie les médias vers le `shared/uploads` de la destination —
+   * c'est-à-dire dans le dossier que le backend sert en STATIQUE et qu'Nginx
+   * proxifie sous `location /uploads/`.
+   *
+   * Depuis L10.2, la même collection accueille des documents PRIVÉS : les
+   * justificatifs financiers. Sans la clause d'exclusion, la première mise en
+   * ligne suivant l'ajout d'une facture la publierait à une adresse publique et
+   * devinable — la réserve qui avait fait reporter les justificatifs au lot
+   * L10.1, réintroduite par la porte du déploiement.
+   *
+   * Le contrôle vit ICI, dans la suite canonique du protocole Media, et non
+   * dans une recette financière : c'est le protocole qui porte la garantie, et
+   * c'est lui qui doit la prouver — y compris pour les documents que d'autres
+   * domaines lui confieront demain.
+   */
+  await PanelMedia.deleteMany({});
+  config.env = 'TEST';
+
+  const logoPublic = await upload.processImage(await image(9, 9, 9), { role: 'logo' });
+
+  // Un document privé, écrit par la MÊME primitive que les justificatifs.
+  const { storePrivateDocument, privateMediaDir } = await import(
+    '../backend/src/services/upload/privateMedia.service.js'
+  );
+  const dossierPrive = await fs.mkdtemp(path.join(os.tmpdir(), 'panel-prive-'));
+  config.paths = { ...(config.paths ?? {}), privateMedia: dossierPrive };
+
+  const prive = await storePrivateDocument({
+    buffer: Buffer.concat([Buffer.from('%PDF-1.7\n'), Buffer.from('facture confidentielle')]),
+    scope: 'FINANCIAL_RECEIPT',
+    role: 'receipt',
+    filename: 'facture.pdf',
+  });
+
+  check('le document privé est bien enregistré au protocole Media',
+    prive.visibility === 'PRIVATE' && prive.environment === 'TEST');
+  check('…hors du dossier public', privateMediaDir() === dossierPrive);
+
+  const transport = serveurVierge();
+  const rapport = await descripteurs.publishPanelMediaOnDestination({
+    transport, sharedUploads: PARTAGE, host: HOTE, environment: 'TEST',
+  });
+
+  check('SEUL le média public est examiné', rapport.scanned === 1);
+  check('…et transféré', rapport.transferred.length === 1
+    && rapport.transferred[0] === logoPublic.filename);
+  check('LE DOCUMENT PRIVÉ N’EST PAS TRANSFÉRÉ vers shared/uploads',
+    !transport.files.has(`${PARTAGE}/${prive.objectKey}`));
+  check('…aucun envoi ne le concerne',
+    !transport.uploads.some((u) => u.remotePath.includes(prive.objectKey)));
+  check('…il n’apparaît pas non plus comme « introuvable »',
+    !rapport.missing.includes(prive.objectKey));
+  check('…et il n’est JAMAIS marqué publié',
+    (await PanelMedia.findOne({ mediaId: prive.mediaId }).lean()).publicationState === 'LOCAL_ONLY');
+
+  // Le point unique : le protocole refuse d'en dériver la moindre adresse.
+  const resolue = await descripteurs.resolvePanelMediaUrl(
+    await PanelMedia.findOne({ mediaId: prive.mediaId }).lean(), 'TEST',
+  );
+  check('aucune adresse n’est dérivable d’un média privé', resolue.url === null);
+  check('…et la raison est nommée', resolue.reason === 'MEDIA_PRIVE');
+
+  await fs.rm(dossierPrive, { recursive: true, force: true });
+}
+
 await fs.rm(DOSSIER, { recursive: true, force: true });
 await stopMemoryMongo();
 finish();

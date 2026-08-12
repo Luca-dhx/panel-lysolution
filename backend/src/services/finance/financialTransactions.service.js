@@ -465,7 +465,21 @@ export async function bulkSoftDelete({ scope, projectId = null, reason = null, c
     },
   });
 
-  return { deleted, scope, projectId: cible };
+  /**
+   * LES RÈGLES RÉCURRENTES SURVIVENT — et le résultat le dit.
+   *
+   * Vider le livret n'arrête aucun abonnement. Les occurrences déjà produites
+   * ne ressuscitent pas (leur clé de cycle reste occupée, voir l'index unique),
+   * mais les cycles À VENIR seront matérialisés normalement. L'appelant reçoit
+   * le nombre de règles concernées pour pouvoir le dire à l'écran.
+   */
+  const { PanelRecurringCost, RECURRING_STATUS } = await import('../../models/PanelRecurringCost.model.js');
+  const activeRecurringCosts = await PanelRecurringCost.countDocuments({
+    ...filtre,
+    status: RECURRING_STATUS.ACTIVE,
+  });
+
+  return { deleted, scope, projectId: cible, activeRecurringCosts };
 }
 
 /**
@@ -498,10 +512,32 @@ async function bulkScopeFilter(scope, projectId) {
   }
 }
 
-/** Combien de lignes une suppression en masse retirerait — sans rien retirer. */
+/**
+ * CE QU'UNE SUPPRESSION EN MASSE RETIRERAIT — et ce qu'elle NE retirerait PAS.
+ *
+ * ══ POURQUOI LES RÈGLES RÉCURRENTES SONT COMPTÉES ICI (L10.2) ═══════════════
+ *
+ * « Tout supprimer » vide le LEDGER. Il ne touche pas aux règles de coût
+ * récurrent : une règle n'est pas un mouvement, et l'arrêter serait une seconde
+ * décision, que personne n'a prise en cliquant sur ce bouton.
+ *
+ * La conséquence est contre-intuitive, et c'est précisément pour cela qu'elle
+ * doit être ANNONCÉE : les règles actives continueront de produire des coûts
+ * après le vidage, et la première relecture d'écran en matérialisera de
+ * nouveaux. Un utilisateur qui découvre ça tout seul conclut à un bogue.
+ *
+ * On ne « corrige » donc pas le comportement — on le dit. Arrêter une règle
+ * reste un geste explicite, avec son propre choix de portée temporelle.
+ */
 export async function countBulkScope({ scope, projectId = null } = {}) {
   const { filtre } = await bulkScopeFilter(scope, projectId);
-  return PanelFinancialTransaction.countDocuments({ ...filtre, deletedAt: null });
+  const { PanelRecurringCost, RECURRING_STATUS } = await import('../../models/PanelRecurringCost.model.js');
+
+  const [count, activeRecurringCosts] = await Promise.all([
+    PanelFinancialTransaction.countDocuments({ ...filtre, deletedAt: null }),
+    PanelRecurringCost.countDocuments({ ...filtre, status: RECURRING_STATUS.ACTIVE }),
+  ]);
+  return { count, activeRecurringCosts };
 }
 
 /* ── Lecture ───────────────────────────────────────────────────────────────── */
@@ -598,7 +634,7 @@ export async function listTransactions(demande = {}) {
   ]);
 
   return {
-    items: items.map(toPublicTransaction),
+    items: await withReceipts(items.map(toPublicTransaction)),
     // `total` compte TOUT ce que le filtre retient ; `items` s'arrête à la
     // borne. L'écran doit pouvoir dire « 200 des 431 » plutôt que laisser
     // croire que le registre s'arrête là.
@@ -612,7 +648,54 @@ export async function listTransactions(demande = {}) {
 /** Un mouvement, par son identité publique. */
 export async function getTransaction(transactionId) {
   const document = await loadOrThrow(transactionId);
-  return toPublicTransaction(document.toObject());
+  const [enrichi] = await withReceipts([toPublicTransaction(document.toObject())]);
+  return enrichi;
+}
+
+/**
+ * COMPLÈTE les mouvements avec le DESCRIPTEUR de leur justificatif.
+ *
+ * ══ POURQUOI UNE JOINTURE PLUTÔT QU'UNE RECOPIE ═════════════════════════════
+ *
+ * Le nom du fichier, son type et son poids appartiennent au protocole Media.
+ * Les recopier sur la transaction au moment du rattachement en ferait une
+ * seconde vérité, qui divergerait dès le premier remplacement de pièce — et
+ * l'écran afficherait alors « facture-aout.pdf » sur un document qui n'existe
+ * plus sous ce nom.
+ *
+ * ══ UNE SEULE REQUÊTE POUR TOUTE LA PAGE ════════════════════════════════════
+ *
+ * Les identifiants sont collectés puis interrogés en un `$in`. Une requête par
+ * ligne ferait un N+1 sur un livret de coûts, qui est précisément l'écran où
+ * les justificatifs sont nombreux.
+ */
+async function withReceipts(transactions) {
+  const ids = transactions.map((t) => t.receipt?.mediaId).filter(Boolean);
+  if (ids.length === 0) return transactions;
+
+  const PanelMedia = (await import('../../models/PanelMedia.model.js')).default;
+  const medias = await PanelMedia.find({ mediaId: { $in: ids } })
+    .select('mediaId originalFilename mime size sha256 createdAt createdBy deletedAt')
+    .lean();
+  const par = new Map(medias.map((m) => [m.mediaId, m]));
+
+  return transactions.map((t) => {
+    if (!t.receipt?.mediaId) return t;
+    const media = par.get(t.receipt.mediaId);
+    // Un descripteur introuvable ou supprimé ne fait pas disparaître le
+    // rattachement : l'écran doit pouvoir dire « pièce référencée, document
+    // indisponible » plutôt que « aucune pièce », qui serait faux.
+    return {
+      ...t,
+      receipt: {
+        ...t.receipt,
+        filename: media?.originalFilename ?? null,
+        mime: media?.mime ?? null,
+        size: media?.size ?? null,
+        available: Boolean(media) && !media.deletedAt,
+      },
+    };
+  });
 }
 
 /**
@@ -649,6 +732,34 @@ export function toPublicTransaction(document) {
         environment: provenance.environment ?? null,
         externalId: provenance.externalId ?? null,
         externalKind: provenance.externalKind ?? null,
+      }
+      : null,
+
+    /* ── L10.2 — l'occurrence et sa pièce ─────────────────────────────── */
+
+    /** La règle qui a produit ce mouvement, `null` pour une saisie manuelle. */
+    sourceId: document.sourceId ?? null,
+    /** Le cycle matérialisé — c'est aussi la moitié de sa clé d'unicité. */
+    cycleKey: document.cycleKey ?? null,
+    sourceRevision: document.sourceRevision ?? null,
+
+    /**
+     * LE JUSTIFICATIF — une RÉFÉRENCE, jamais une adresse.
+     *
+     * `null` quand il n'y en a pas : un objet vide se lirait comme « une pièce
+     * existe mais n'a pas chargé ». Le détail du document (nom, type, poids)
+     * est ajouté par `withReceipts`, qui interroge le protocole Media — il
+     * n'est pas recopié sur la transaction, qui divergerait au premier
+     * remplacement.
+     *
+     * Il n'y a AUCUN champ d'URL ici, et il ne doit jamais y en avoir : un
+     * justificatif ne se télécharge que par la route authentifiée du mouvement.
+     */
+    receipt: document.receipt?.mediaId
+      ? {
+        mediaId: document.receipt.mediaId,
+        attachedAt: toIso(document.receipt.attachedAt),
+        attachedBy: document.receipt.attachedBy ?? null,
       }
       : null,
     deletedAt: toIso(document.deletedAt),

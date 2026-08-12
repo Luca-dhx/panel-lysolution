@@ -1,5 +1,6 @@
 // REGISTRE FINANCIER — surface interne /api. Aucun pont, aucun fournisseur :
 // ces mouvements appartiennent au Panel, et à personne d'autre.
+import ApiError from '../utils/ApiError.js';
 import { ok, created } from '../utils/apiResponse.js';
 import {
   bulkSoftDelete,
@@ -11,6 +12,17 @@ import {
   updateManualTransaction,
 } from '../services/finance/financialTransactions.service.js';
 import { summarize, summarizeByProject } from '../services/finance/financialSummary.service.js';
+import {
+  createRecurringCost,
+  getRecurringCost,
+  listRecurringCosts,
+  materializeAllDue,
+  reviseRecurringCost,
+  stopRecurringCost,
+} from '../services/finance/recurringCosts.service.js';
+import {
+  attachReceipt, detachReceipt, readReceipt,
+} from '../services/finance/receipts.service.js';
 
 /** L'auteur d'une écriture comptable. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -46,9 +58,48 @@ const criteriaOf = (req) => {
   };
 };
 
+/**
+ * LA CONVERGENCE A LIEU AVANT CHAQUE LECTURE FINANCIÈRE — et c'est la garantie.
+ *
+ * ══ POURQUOI ICI, ET PAS SEULEMENT DANS UN ORDONNANCEUR ═════════════════════
+ *
+ * Un ordonnanceur qui serait la seule source de matérialisation ferait dépendre
+ * l'exactitude d'un bilan de la disponibilité d'un processus à un instant
+ * précis. Une minute d'arrêt à minuit, un redéploiement, une panne : le cycle
+ * du mois manquerait, et rien ne le rattraperait avant le mois suivant.
+ *
+ * En matérialisant à la LECTURE, on obtient l'inverse : ce que quelqu'un
+ * regarde est, par construction, à jour au moment où il le regarde. Le
+ * rattrapage de quatre mois d'arrêt se fait à la première ouverture d'écran.
+ *
+ * L'ordonnanceur reste utile — il écrit même sans lecteur — mais il n'est plus
+ * la garantie, seulement une commodité.
+ *
+ * ── LE COÛT, ET POURQUOI IL EST NÉGLIGEABLE ─────────────────────────────────
+ * Sans cycle dû, la fonction lit les règles actives de la portée et n'écrit
+ * rien. Avec des cycles dus, elle écrit exactement ce qui manque, une fois.
+ *
+ * ── L'ÉCHEC N'EMPÊCHE PAS DE LIRE ───────────────────────────────────────────
+ * Une matérialisation impossible ne doit pas rendre le livret illisible : on
+ * journalise et l'on sert ce qui existe. Le passage suivant réessaiera.
+ */
+async function converge(req) {
+  const q = req.query ?? {};
+  try {
+    await materializeAllDue({
+      scope: q.scope ?? null,
+      projectId: q.projectId ?? null,
+    });
+  } catch (err) {
+    const { default: logger } = await import('../utils/logger.js');
+    logger.warn(`[finance] Convergence des récurrences impossible : ${err.message}`);
+  }
+}
+
 /* ── Lecture ───────────────────────────────────────────────────────────────── */
 
 export async function transactions(req, res) {
+  await converge(req);
   return ok(res, await listTransactions(criteriaOf(req)));
 }
 
@@ -65,10 +116,12 @@ export async function transaction(req, res) {
  * pour afficher vingt lignes.
  */
 export async function summary(req, res) {
+  await converge(req);
   return ok(res, await summarize(criteriaOf(req)));
 }
 
 export async function byProject(req, res) {
+  await converge(req);
   return ok(res, { items: await summarizeByProject(criteriaOf(req)) });
 }
 
@@ -82,7 +135,10 @@ export async function byProject(req, res) {
 export async function bulkScope(req, res) {
   const scope = req.query?.scope;
   const projectId = req.query?.projectId ?? null;
-  return ok(res, { scope, projectId, count: await countBulkScope({ scope, projectId }) });
+  const { count, activeRecurringCosts } = await countBulkScope({ scope, projectId });
+  // `activeRecurringCosts` n'est pas décoratif : vider le livret n'arrête aucun
+  // abonnement, et l'écran doit le dire AVANT le clic, pas après.
+  return ok(res, { scope, projectId, count, activeRecurringCosts });
 }
 
 /* ── Écriture ──────────────────────────────────────────────────────────────── */
@@ -113,4 +169,130 @@ export async function removeTransaction(req, res) {
 export async function removeAll(req, res) {
   const { scope, projectId = null, reason = null, confirm } = req.body ?? {};
   return ok(res, await bulkSoftDelete({ scope, projectId, reason, confirm }, actorOf(req)));
+}
+
+/* ── Coûts récurrents — les RÈGLES, distinctes du ledger ───────────────────── */
+
+export async function recurringCosts(req, res) {
+  await converge(req);
+  const q = req.query ?? {};
+  return ok(res, {
+    items: await listRecurringCosts({
+      scope: q.scope ?? 'all',
+      projectId: q.projectId ?? null,
+      includeStopped: q.includeStopped !== 'false',
+    }),
+  });
+}
+
+export async function recurringCost(req, res) {
+  return ok(res, { recurringCost: await getRecurringCost(req.params.recurringCostId) });
+}
+
+export async function addRecurringCost(req, res) {
+  const definition = await createRecurringCost(req.body ?? {}, actorOf(req));
+  return created(res, { recurringCost: definition });
+}
+
+/**
+ * MODIFIER — le corps porte le MODE d'application, et il est obligatoire.
+ *
+ * Il n'y a pas de défaut : « à partir de quand ? » n'a pas de réponse évidente,
+ * et en choisir une à la place de l'utilisateur reviendrait à réécrire son
+ * historique sans le lui demander.
+ */
+export async function editRecurringCost(req, res) {
+  const resultat = await reviseRecurringCost(
+    req.params.recurringCostId,
+    req.body ?? {},
+    actorOf(req),
+  );
+  return ok(res, {
+    recurringCost: await getRecurringCost(req.params.recurringCostId),
+    revision: resultat.revision,
+    revisedOccurrences: resultat.revisedOccurrences,
+    unchanged: resultat.unchanged,
+  });
+}
+
+export async function stopRecurring(req, res) {
+  const { mode, reason = null } = req.body ?? {};
+  const resultat = await stopRecurringCost(
+    req.params.recurringCostId,
+    { mode, reason },
+    actorOf(req),
+  );
+  return ok(res, {
+    recurringCost: await getRecurringCost(req.params.recurringCostId),
+    untilCycleKey: resultat.untilCycleKey,
+    cancelledOccurrences: resultat.cancelled,
+  });
+}
+
+/* ── Justificatifs — protocole Media PRIVÉ ─────────────────────────────────── */
+
+export async function uploadReceipt(req, res) {
+  if (!req.file) {
+    throw ApiError.badRequest('PANEL_DOCUMENT_EMPTY', 'Aucun fichier reçu.');
+  }
+  const { transaction } = await attachReceipt(
+    req.params.transactionId,
+    { buffer: req.file.buffer, filename: req.file.originalname },
+    actorOf(req),
+  );
+  return created(res, { transaction: await getTransaction(transaction.transactionId) });
+}
+
+/**
+ * TÉLÉCHARGE le justificatif — la SEULE voie de sortie d'un document privé.
+ *
+ * ══ CE QUE CETTE RÉPONSE NE CONTIENT JAMAIS ═════════════════════════════════
+ *
+ * Aucun chemin disque, aucune clé d'objet, aucune URL. L'octet du fichier et le
+ * nom que l'utilisateur a déposé — rien de plus. Révéler la clé d'objet
+ * n'ouvrirait aucune porte (le dossier n'est servi par personne) mais
+ * renseignerait sur l'arborescence, ce qui n'apporte rien à personne d'honnête.
+ *
+ * `attachment` et `nosniff` sont là pour la même raison : un document ne doit
+ * jamais s'ouvrir DANS l'origine du Panel. Un PDF ou une image y seraient
+ * inoffensifs ; le jour où un type s'ajoutera à la table, l'en-tête sera déjà
+ * en place.
+ */
+export async function downloadReceipt(req, res) {
+  const { media, buffer } = await readReceipt(req.params.transactionId);
+  const nom = (media.originalFilename || 'justificatif').replace(/"/g, '');
+
+  /**
+   * DEUX FORMES DE NOM, ET IL FAUT LES DEUX (RFC 6266 / RFC 5987).
+   *
+   * ══ LE DÉFAUT QUE CELA FERME ═══════════════════════════════════════════
+   *
+   * Un en-tête HTTP transporte des OCTETS interprétés en latin-1. Écrire
+   * `filename="Facture Août.pdf"` y place de l'UTF-8 brut, que le navigateur
+   * relit caractère par caractère : l'utilisateur enregistre
+   * « Facture AoÃ»t.pdf ». Le fichier est intact, son nom ne l'est pas — et
+   * c'est le cas NORMAL en français, pas un cas limite.
+   *
+   *   `filename`   repli ASCII, pour les clients anciens. Tout octet non
+   *                imprimable y devient `_` : lisible, sans promesse fausse.
+   *   `filename*`  la forme encodée, que tous les navigateurs actuels
+   *                préfèrent quand elle est présente.
+   *
+   * Les deux sont émises : la seconde seule perdrait les clients qui ne la
+   * connaissent pas, la première seule perdrait les accents.
+   */
+  const repliAscii = nom.replace(/[^ -~]/g, '_');
+  res.setHeader('Content-Type', media.mime);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${repliAscii}"; filename*=UTF-8''${encodeURIComponent(nom)}`,
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.send(buffer);
+}
+
+export async function removeReceipt(req, res) {
+  const { transaction } = await detachReceipt(req.params.transactionId, actorOf(req));
+  return ok(res, { transaction: await getTransaction(transaction.transactionId) });
 }

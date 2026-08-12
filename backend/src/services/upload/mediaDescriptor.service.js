@@ -110,6 +110,21 @@ export async function resolvePanelMediaUrl(media, environment) {
   }
   if (media.deletedAt) return { url: null, absolute: false, reason: 'MEDIA_SUPPRIME' };
 
+  /**
+   * UN MÉDIA PRIVÉ N'A PAS D'ADRESSE — et c'est le point unique qui le garantit.
+   *
+   * Cette fonction est la SEULE autorisée à produire une URL de média. Poser le
+   * refus ici, plutôt que chez chacun de ses appelants, rend la garantie
+   * structurelle : aucun écran, aucune projection, aucun descripteur publié ne
+   * peut obtenir l'adresse d'un document privé, même en la demandant.
+   *
+   * Un justificatif se lit par la route authentifiée de l'objet métier qui le
+   * possède. Il n'existe aucune adresse à publier, pas même relative.
+   */
+  if (media.visibility === 'PRIVATE') {
+    return { url: null, absolute: false, reason: 'MEDIA_PRIVE' };
+  }
+
   const chemin = media.path ?? `${UPLOADS_PUBLIC_PREFIX}/${media.objectKey}`;
   const env = media.environment ?? environment;
   const destination = await activePanelDestination(env);
@@ -551,7 +566,35 @@ export async function publishPanelMediaOnDestination({
   const pathMod = await import('node:path');
   const { uploadsDir } = await import('./upload.service.js');
 
-  const medias = await PanelMedia.find({ environment, deletedAt: null }).lean();
+  /**
+   * LES MÉDIAS PRIVÉS SONT EXCLUS — c'est une clause de SÉCURITÉ, pas un filtre.
+   *
+   * ══ CE QUE SON ABSENCE PROVOQUERAIT ═══════════════════════════════════════
+   *
+   * Cette fonction copie les fichiers vers le `shared/uploads` de la
+   * destination, c'est-à-dire dans le dossier que le backend sert en STATIQUE
+   * et qu'Nginx proxifie sous `location /uploads/`. Sans cette clause, la
+   * première mise en ligne suivant l'ajout d'un justificatif publierait la
+   * facture d'un fournisseur à une adresse publique et devinable — exactement
+   * la réserve qui a fait reporter les justificatifs au lot L10.1, réintroduite
+   * par la porte du déploiement.
+   *
+   * Le filtre porte sur `$ne: 'PRIVATE'` plutôt que sur `'PUBLIC'` : les
+   * descripteurs antérieurs au champ ne le portent pas encore, et les exclure
+   * cesserait de publier des logos qui le sont aujourd'hui.
+   *
+   * ══ UN MÉDIA PRIVÉ NE « MANQUE » DONC JAMAIS ══════════════════════════════
+   *
+   * Il n'est pas transféré, il n'est pas compté, il n'apparaît pas dans les
+   * introuvables. Il vit dans le stockage persistant de l'instance qui l'a reçu
+   * — au même titre que la transaction qu'il justifie, qui vit dans la base de
+   * cette instance et ne voyage pas davantage.
+   */
+  const medias = await PanelMedia.find({
+    environment,
+    deletedAt: null,
+    visibility: { $ne: 'PRIVATE' },
+  }).lean();
   rapport.scanned = medias.length;
 
   for (const media of medias) {

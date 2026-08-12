@@ -44,23 +44,68 @@
  * service, sous une origine qui n'est pas `MANUAL`.
  */
 import { Router } from 'express';
+import multer from 'multer';
 import asyncHandler from '../utils/asyncHandler.js';
+import ApiError from '../utils/ApiError.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
+import { MAX_INPUT_BYTES, humanBytes } from '../services/upload/mediaPolicy.js';
 import {
+  addRecurringCost,
   addTransaction,
   bulkScope,
   byProject,
+  downloadReceipt,
+  editRecurringCost,
   editTransaction,
+  recurringCost,
+  recurringCosts,
   removeAll,
+  removeReceipt,
   removeTransaction,
+  stopRecurring,
   summary,
   transaction,
   transactions,
+  uploadReceipt,
 } from '../controllers/finances.controller.js';
 
 const router = Router();
 
 router.use(asyncHandler(requirePanelUser));
+
+/**
+ * RÉCEPTION D'UN JUSTIFICATIF — en mémoire, jamais sur disque avant contrôle.
+ *
+ * Le fichier ne touche le disque qu'APRÈS avoir été validé sur ses octets et
+ * nommé par le protocole Media. `multer` avec un stockage disque écrirait
+ * d'abord, sous un nom qu'il choisit, dans un dossier temporaire — trois choses
+ * dont on ne veut aucune.
+ *
+ * AUCUN filtre de type ici : `file.mimetype` est DÉCLARÉ par le navigateur
+ * d'après l'extension, donc il ne prouve rien. Le vrai contrôle lit la
+ * signature du contenu (`documentValidation.js`). Un filtre sur le type déclaré
+ * donnerait l'illusion d'une barrière là où il n'y en aurait pas.
+ */
+const receptionJustificatif = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_INPUT_BYTES },
+});
+
+/** Traduit les refus de `multer` en erreurs métier — jamais en « erreur interne ». */
+function traduireRefusUpload(err, req, res, next) {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return next(new ApiError(
+        413,
+        'PANEL_DOCUMENT_TOO_LARGE',
+        `Ce document dépasse la taille maximale acceptée (${humanBytes(MAX_INPUT_BYTES)}).`,
+        { maxBytes: MAX_INPUT_BYTES },
+      ));
+    }
+    return next(ApiError.badRequest('PANEL_DOCUMENT_INVALID', `Envoi de fichier invalide (${err.code}).`));
+  }
+  return next(err);
+}
 
 /* ── Lecture ───────────────────────────────────────────────────────────────── */
 router.get('/summary', asyncHandler(summary));
@@ -84,5 +129,53 @@ router.delete('/transactions/:transactionId', asyncHandler(removeTransaction));
  * désignée par son adresse — il n'y a d'ailleurs aucune adresse à désigner.
  */
 router.post('/transactions/bulk-delete', requirePanelDev, asyncHandler(removeAll));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COÛTS RÉCURRENTS (L10.2) — les RÈGLES.
+
+   Surface distincte de `/transactions`, et c'est le point : une règle n'est pas
+   un mouvement. Les loger sous la même adresse aurait fini par faire lister des
+   dépenses futures à côté de dépenses réelles.
+
+   Mêmes permissions que le reste du registre : lire et tenir les livres est le
+   travail de l'équipe (§ en-tête). Arrêter une récurrence n'est PAS réservé aux
+   DEV — c'est un acte de gestion courant, et il est parfaitement réversible en
+   créant une nouvelle règle. Seule la suppression EN MASSE du livret reste un
+   cran au-dessus.
+   ══════════════════════════════════════════════════════════════════════════ */
+router.get('/recurring-costs', asyncHandler(recurringCosts));
+router.get('/recurring-costs/:recurringCostId', asyncHandler(recurringCost));
+router.post('/recurring-costs', asyncHandler(addRecurringCost));
+router.patch('/recurring-costs/:recurringCostId', asyncHandler(editRecurringCost));
+router.post('/recurring-costs/:recurringCostId/stop', asyncHandler(stopRecurring));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   JUSTIFICATIFS — attachés à une OCCURRENCE, jamais à une règle.
+
+   ══ POURQUOI L'ADRESSE PASSE PAR LA TRANSACTION ═════════════════════════════
+
+   Il aurait été plus court d'exposer `/api/media/private/:mediaId`. Cette
+   surface-là ne peut être autorisée que par une table d'ACL parallèle : un
+   média, seul, ne sait pas à qui il appartient.
+
+   Ici, le CHEMIN porte le contexte. On charge la transaction, on vérifie que le
+   document demandé est bien le sien, et l'autorisation devient une conséquence
+   de l'objet métier plutôt qu'une liste à maintenir. Un identifiant de média
+   récupéré ailleurs ne mène nulle part.
+
+   ══ AUCUNE ROUTE STATIQUE, AUCUNE URL PUBLIQUE ══════════════════════════════
+
+   Ces documents vivent sous `storage/media/`, qu'aucun bloc `location` d'Nginx
+   ne dessert et qu'aucun `express.static` ne monte. Il n'existe pas d'adresse
+   publique à deviner : c'est cette route, avec le jeton du Panel, ou rien.
+   ══════════════════════════════════════════════════════════════════════════ */
+router.post(
+  '/transactions/:transactionId/receipt',
+  receptionJustificatif.single('file'),
+  traduireRefusUpload,
+  asyncHandler(uploadReceipt),
+);
+router.get('/transactions/:transactionId/receipt', asyncHandler(downloadReceipt));
+router.delete('/transactions/:transactionId/receipt', asyncHandler(removeReceipt));
 
 export default router;

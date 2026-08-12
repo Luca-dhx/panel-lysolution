@@ -43,11 +43,18 @@ const code = (source) => source
   .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
   .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
+/** Alias lisible pour les sections L10.2, qui décommentent beaucoup. */
+const code2 = code;
+
 const money = await import('@/lib/money');
 const echelle = await import('@/lib/netChartScale');
 const libelles = await import('@/components/finance/financeLabels');
 
 const workspace = lire('frontend/src/components/finance/FinanceWorkspace.tsx');
+const formRegle = lire('frontend/src/components/finance/RecurringCostForm.tsx');
+const listeRegles = lire('frontend/src/components/finance/RecurringCostList.tsx');
+const recu = lire('frontend/src/components/finance/ReceiptCell.tsx');
+const libelles2 = lire('frontend/src/components/finance/financeLabels.ts');
 const formulaire = lire('frontend/src/components/finance/TransactionForm.tsx');
 const detail = lire('frontend/src/components/finance/TransactionDetail.tsx');
 const graphique = lire('frontend/src/components/finance/NetChart.tsx');
@@ -344,6 +351,138 @@ section('12. Le client d’API ne connaît ni Stripe, ni remboursement, ni impor
     /Suppression LOGIQUE/.test(bloc));
   check('la portée de la suppression en masse est un paramètre EXIGÉ',
     /scope: FinanceScope; projectId\?: string \| null; confirm: string/.test(bloc));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L10.2 — COÛTS RÉCURRENTS ET JUSTIFICATIFS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+section('13. Les règles vivent À CÔTÉ du livret, jamais dedans');
+{
+  check('le listing des règles n’apparaît que sous « Coûts »',
+    /sousOnglet === 'costs' \?[\s\S]{0,400}<RecurringCostList/.test(workspace));
+  check('il porte montant, fréquence, prochaine échéance, état',
+    /Fréquence/.test(listeRegles) && /Prochaine/.test(listeRegles)
+    && /frequenceLabel/.test(listeRegles) && /badge-ok/.test(listeRegles));
+  check('…et les actions Modifier / Stopper',
+    />\s*Modifier\s*</.test(listeRegles) && />\s*Stopper\s*</.test(listeRegles));
+
+  check('la PRÉVISION est nommée comme telle, jamais comptée',
+    /prévision — non comptabilisée/.test(listeRegles));
+  check('…et le texte dit que seuls les mouvements comptent',
+    /seuls ces mouvements comptent dans les\s+totaux/.test(listeRegles));
+
+  check('une règle arrêtée reste visible, atténuée',
+    /finance-row-muted/.test(listeRegles) && /finance-row-muted td \{ opacity/.test(css));
+
+  check('une occurrence est identifiée dans le livret',
+    /origin === 'RECURRING_COST'[\s\S]{0,160}cycle \$\{ligne\.cycleKey\}/.test(workspace));
+}
+
+section('14. Modifier : le bouton n’apparaît qu’après un changement, et il POSE une question');
+{
+  const code = code2(formRegle);
+  check('« Enregistrer » n’existe que si quelque chose a changé',
+    /!modification \|\| modifie \?/.test(code));
+  check('…et il ouvre la question du moment, il n’enregistre pas',
+    /if \(modification\) setMode\('NEXT'\)/.test(code));
+
+  check('les TROIS modes sont proposés',
+    /value: 'NEXT'/.test(code) && /value: 'CURRENT'/.test(code) && /value: 'FROM_START'/.test(code));
+  check('…avec les libellés du cahier des charges',
+    /Prochaine récurrence/.test(formRegle)
+    && /Récurrence précédente/.test(formRegle)
+    && /Depuis le début/.test(formRegle));
+  check('…et chacun explique CE QUI BOUGE',
+    /ne bougent pas/.test(formRegle)
+    && /est corrigée, ainsi que toutes les suivantes/.test(formRegle)
+    && /depuis la première/.test(formRegle));
+  check('« depuis le début » promet explicitement de garder les pièces',
+    /justificatifs déjà attachés sont conservés/.test(formRegle));
+
+  check('la fréquence et l’ancre ne se modifient PAS après création',
+    /disabled=\{modification\}/.test(code));
+  check('…et l’écran dit pourquoi', /ancrent toute la suite des échéances/.test(formRegle));
+
+  check('la règle du jour impossible est annoncée à la saisie',
+    /dernier jour du mois/.test(formRegle));
+
+  check('AUCUN justificatif dans le formulaire de définition',
+    !/type="file"/.test(code) && !/uploadReceipt|ReceiptCell/.test(code));
+}
+
+section('15. Stopper : deux choix, et leurs conséquences écrites');
+{
+  check('la modale d’arrêt existe', /StopRecurringDialog/.test(formRegle));
+  check('…avec « Actuelle » et « Prochaine »',
+    /label: 'Actuelle'/.test(formRegle) && /label: 'Prochaine'/.test(formRegle));
+  check('« Actuelle » annonce le RETRAIT du cycle en cours',
+    /retiré des totaux/.test(formRegle));
+  check('…et promet que la ligne reste auditable, avec sa pièce',
+    /reste consultable pour l’audit, avec son justificatif/.test(formRegle));
+  check('« Prochaine » annonce que le cycle en cours RESTE',
+    /Le cycle en cours reste comptabilisé/.test(formRegle));
+  check('les cycles antérieurs ne sont jamais touchés — c’est dit',
+    /cycles antérieurs ne sont jamais touchés/.test(formRegle));
+  check('l’immuabilité après arrêt est annoncée',
+    /ne se modifie plus et ne se réactive pas/.test(formRegle));
+}
+
+section('16. Justificatifs : aucun lien, aucune URL, jamais');
+{
+  const code = code2(recu);
+  check('la cellule de justificatif existe', /ReceiptCell/.test(recu));
+  check('elle est branchée dans le LIVRET, ligne par ligne',
+    /<th scope="col">Justificatif<\/th>/.test(workspace)
+    && /<ReceiptCell transaction=\{ligne\}/.test(workspace));
+  check('…et dans le détail d’un mouvement', /<ReceiptCell/.test(detail));
+
+  check('AUCUN `<a href>` vers un document', !/<a\s[^>]*href/.test(code));
+  check('…aucune URL, même relative',
+    !/https?:\/\//.test(code) && !/\/uploads/.test(code) && !/storage\//.test(code));
+  check('le téléchargement passe par l’appel AUTHENTIFIÉ',
+    /finances\.downloadReceipt/.test(code));
+  check('…et l’envoi aussi', /finances\.uploadReceipt/.test(code));
+
+  check('les quatre gestes sont offerts',
+    /Ajouter un justificatif/.test(recu) && /Télécharger/.test(recu)
+    && /Remplacer/.test(recu) && /Retirer/.test(recu));
+  check('un mouvement supprimé garde la LECTURE, perd l’écriture',
+    /supprime \?[\s\S]{0,120}—/.test(recu) && /!supprime \?/.test(recu));
+
+  check('`accept` est présenté comme une commodité, pas un contrôle',
+    /ACCEPTED_RECEIPT_MIMES/.test(recu)
+    && /COMMODIT./i.test(libelles2) && /pas un contr.le/i.test(libelles2));
+  check('…le vrai contrôle est annoncé côté serveur',
+    /signature des octets[\s\S]{0,12}c.t. serveur/i.test(libelles2));
+
+  check('le champ fichier est vidé après usage — redéposer le même marche',
+    /e\.target\.value = ''/.test(code));
+}
+
+section('17. Le client d’API respecte la doctrine du document privé');
+{
+  const bloc = api.slice(api.indexOf('export const finances'), api.indexOf('export function errorMessage'));
+  check('l’envoi est multipart, sans Content-Type posé à la main',
+    /uploadReceipt/.test(bloc) && !/'Content-Type': 'multipart/.test(bloc));
+  check('le téléchargement lit la forme ENCODÉE du nom en premier',
+    /UTF-8''/.test(bloc));
+  check('…puis retombe sur la forme simple', /filename="\(\[\^"\]\+\)"/.test(bloc));
+  check('l’URL objet est révoquée APRÈS le clic, jamais avant',
+    /lien\.click\(\)[\s\S]{0,200}revokeObjectURL/.test(bloc));
+  check('aucune adresse permanente n’est fabriquée',
+    !/receiptUrl|\/uploads\//.test(bloc));
+}
+
+section('18. « Tout supprimer » prévient que les règles survivent');
+{
+  check('le décompte lit aussi les règles actives',
+    /activeRecurringCosts/.test(workspace));
+  check('…et l’écran le DIT avant le clic',
+    /restent ACTIFS sur cette portée|reste ACTIF sur cette portée/.test(workspace));
+  check('…en précisant que vider le livret n’arrête rien',
+    /Vider le livret n’arrête\s+aucun abonnement/.test(workspace));
+  check('…et où aller pour arrêter', /arrêtez chaque récurrence depuis l’onglet Coûts/.test(workspace));
 }
 
 finish();

@@ -17,6 +17,7 @@
 import { formatDateTime } from '@/lib/format';
 import { formatCents, formatFlowCents } from '@/lib/money';
 import { FinanceModal } from '@/components/finance/FinanceModal';
+import { ReceiptCell } from '@/components/finance/ReceiptCell';
 import {
   CATEGORY_LABELS, FLOW_LABELS, ORIGIN_LABELS, STATUS_LABELS, ownershipLabel,
 } from '@/components/finance/financeLabels';
@@ -39,12 +40,14 @@ export function TransactionDetail({
   onClose,
   onEdit,
   onDelete,
+  onReceiptChanged,
 }: {
   transaction: FinancialTransaction;
   projectNames: Map<string, string>;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onReceiptChanged: () => Promise<void> | void;
 }) {
   const supprime = transaction.deletedAt !== null;
 
@@ -108,6 +111,28 @@ export function TransactionDetail({
             <code className="inline-code">{transaction.parentTransactionId}</code>
           </Ligne>
         ) : null}
+
+        {/*
+          L'OCCURRENCE DIT SA RÈGLE ET SON CYCLE — les deux moitiés de son
+          identité métier, et la raison pour laquelle elle ne se modifie pas ici.
+        */}
+        {transaction.cycleKey ? (
+          <Ligne label="Cycle">
+            {transaction.cycleKey}
+            {transaction.sourceRevision ? (
+              <span className="muted"> · version {transaction.sourceRevision} de la règle</span>
+            ) : null}
+          </Ligne>
+        ) : null}
+
+        {/*
+          LE JUSTIFICATIF — présent même sur un mouvement supprimé, en lecture.
+          Un cycle annulé garde sa facture : c'est elle qui explique pourquoi il
+          a existé, et c'est exactement ce qu'on cherchera plus tard.
+        */}
+        <Ligne label="Justificatif">
+          <ReceiptCell transaction={transaction} onChanged={onReceiptChanged} />
+        </Ligne>
 
         <Ligne label="Identifiant interne">
           <code className="inline-code">{transaction.transactionId}</code>

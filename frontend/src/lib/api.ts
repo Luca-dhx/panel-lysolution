@@ -32,8 +32,9 @@ import type {
   DeployStreamEvent,
 } from '@/types.deployment';
 import type {
-  BulkDeleteResult, FinanceCriteria, FinanceListResult, FinanceProjectLine, FinanceScope,
-  FinanceSummary, FinancialTransaction, ManualTransactionInput,
+  BulkDeleteResult, BulkScopePreview, FinanceCriteria, FinanceListResult, FinanceProjectLine,
+  FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
+  RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -992,7 +993,7 @@ export const finances = {
    * n'est pas une question à laquelle on peut répondre.
    */
   bulkScope: (scope: FinanceScope, projectId?: string | null) =>
-    request<{ scope: FinanceScope; projectId: string | null; count: number }>(
+    request<BulkScopePreview>(
       `/api/finances/bulk-scope?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
     ),
 
@@ -1001,6 +1002,128 @@ export const finances = {
     scope: FinanceScope; projectId?: string | null; confirm: string; reason?: string;
   }) =>
     request<BulkDeleteResult>('/api/finances/transactions/bulk-delete', { method: 'POST', body }),
+
+  /* ── COÛTS RÉCURRENTS — les RÈGLES, jamais des mouvements ─────────────── */
+
+  recurringCosts: (criteria: { scope?: FinanceScope; projectId?: string | null } = {}) =>
+    request<{ items: RecurringCost[] }>(
+      `/api/finances/recurring-costs${financeQuery(criteria)}`,
+    ),
+
+  createRecurringCost: (body: RecurringCostInput) =>
+    request<{ recurringCost: RecurringCost }>('/api/finances/recurring-costs', {
+      method: 'POST', body,
+    }),
+
+  /**
+   * MODIFIER — `mode` est obligatoire, et il n'a pas de défaut.
+   * « À partir de quand ? » est une décision de l'utilisateur ; en choisir une
+   * à sa place réécrirait son historique sans le lui demander.
+   */
+  reviseRecurringCost: (recurringCostId: string, body: RecurringCostPatch) =>
+    request<{ recurringCost: RecurringCost; revisedOccurrences: number; unchanged: boolean }>(
+      `/api/finances/recurring-costs/${recurringCostId}`,
+      { method: 'PATCH', body },
+    ),
+
+  stopRecurringCost: (recurringCostId: string, mode: RecurringStopMode, reason?: string) =>
+    request<{ recurringCost: RecurringCost; cancelledOccurrences: number }>(
+      `/api/finances/recurring-costs/${recurringCostId}/stop`,
+      { method: 'POST', body: { mode, reason: reason ?? null } },
+    ),
+
+  /* ── JUSTIFICATIFS — protocole Media PRIVÉ ────────────────────────────── */
+
+  /**
+   * DÉPOSE ou REMPLACE un justificatif.
+   *
+   * `multipart`, donc hors du chemin JSON : le `Content-Type` n'est PAS posé à
+   * la main — le navigateur doit y écrire la frontière du multipart, et
+   * l'imposer rendrait le corps illisible au serveur. Même geste que
+   * `uploadImage`, plus haut.
+   */
+  async uploadReceipt(transactionId: string, file: File): Promise<FinancialTransaction> {
+    const form = new FormData();
+    form.append('file', file);
+    const headers: Record<string, string> = {};
+    const token = tokenStore.get();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    let res: Response;
+    try {
+      res = await fetch(`/api/finances/transactions/${transactionId}/receipt`, {
+        method: 'POST', headers, body: form,
+      });
+    } catch {
+      throw new ApiError(0, 'Impossible de contacter le serveur du Panel.');
+    }
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || payload?.success !== true) {
+      throw new ApiError(
+        res.status,
+        payload?.message ?? 'Le justificatif n’a pas pu être enregistré.',
+        payload?.code,
+      );
+    }
+    return payload.data.transaction as FinancialTransaction;
+  },
+
+  /**
+   * TÉLÉCHARGE le justificatif — par la route AUTHENTIFIÉE, jamais un lien nu.
+   *
+   * ── POURQUOI PAS UN SIMPLE `<a href>` ─────────────────────────────────
+   * La route exige le jeton du Panel, et un lien n'en porte aucun. Le flux est
+   * donc récupéré ici, puis l'enregistrement est déclenché : le fichier ne fait
+   * que passer, et aucune adresse permanente n'existe.
+   *
+   * Le nom vient du serveur (`Content-Disposition`, forme encodée d'abord) : il
+   * sait s'il rend un PDF ou une image, et sous quel nom l'utilisateur l'a
+   * déposé. Même mécanique que le document contractuel, plus haut.
+   */
+  async downloadReceipt(transactionId: string, fallbackName = 'justificatif'): Promise<void> {
+    const token = tokenStore.get();
+    const res = await fetch(`/api/finances/transactions/${transactionId}/receipt`, {
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const corps = await res.json().catch(() => null);
+      throw new ApiError(
+        res.status,
+        corps?.message ?? 'Le justificatif n’a pas pu être récupéré.',
+        corps?.code,
+      );
+    }
+
+    const disposition = res.headers.get('content-disposition') ?? '';
+    // La forme encodée (RFC 5987) d'abord : c'est elle qui porte les accents.
+    const encode = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    const simple = /filename="([^"]+)"/i.exec(disposition);
+    const nom = encode
+      ? decodeURIComponent(encode[1].trim())
+      : (simple ? simple[1].trim() : fallbackName);
+
+    const blob = await res.blob();
+    if (blob.size === 0) throw new ApiError(502, 'Le justificatif reçu est vide.');
+
+    const url = URL.createObjectURL(blob);
+    const lien = document.createElement('a');
+    lien.href = url;
+    lien.download = nom;
+    lien.rel = 'noopener';
+    lien.style.display = 'none';
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    // Après le clic, jamais avant : révoquer trop tôt annule un téléchargement
+    // que le navigateur n'a pas encore commencé.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  },
+
+  removeReceipt: (transactionId: string) =>
+    request<{ transaction: FinancialTransaction }>(
+      `/api/finances/transactions/${transactionId}/receipt`,
+      { method: 'DELETE' },
+    ),
 };
 
 export function errorMessage(err: unknown, fallback: string): string {

@@ -63,8 +63,15 @@ const FORMATTER = new Intl.DateTimeFormat('en-CA', {
   second: '2-digit',
 });
 
-/** Éclate un instant en composantes de calendrier LOCAL (Europe/Paris). */
-function localParts(instant) {
+/**
+ * Éclate un instant en composantes de calendrier LOCAL (Europe/Paris).
+ *
+ * EXPORTÉ depuis L10.2 : le moteur de récurrence raisonne sur le même
+ * calendrier que les périodes. Deux implémentations du « quel jour est-on à
+ * Paris ? » finiraient par répondre différemment une nuit de changement
+ * d'heure — et un cycle mensuel tomberait alors dans le mauvais mois.
+ */
+export function localParts(instant) {
   const parts = {};
   for (const part of FORMATTER.formatToParts(instant)) {
     if (part.type !== 'literal') parts[part.type] = Number(part.value);
@@ -90,7 +97,7 @@ function offsetAt(instant) {
  * décalage réellement en vigueur à cette estimation. Sans elle, la nuit du
  * passage à l'heure d'hiver, « aujourd'hui » commencerait à 01h00.
  */
-function startOfLocalDay(year, month, day) {
+export function startOfLocalDay(year, month, day) {
   const naif = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
   const premiere = new Date(naif - offsetAt(new Date(naif)));
   return new Date(naif - offsetAt(premiere));

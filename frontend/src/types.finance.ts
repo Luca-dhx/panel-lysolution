@@ -34,6 +34,25 @@ export interface FinanceProvenance {
   externalKind: string | null;
 }
 
+/**
+ * LE JUSTIFICATIF, VU DE L'ÉCRAN — une référence, jamais une adresse.
+ *
+ * Il n'y a délibérément aucun champ d'URL : un document privé ne se télécharge
+ * que par la route authentifiée de son mouvement. Un `url` ici finirait dans un
+ * `<a href>`, et ce lien-là serait copié hors de toute session.
+ */
+export interface TransactionReceipt {
+  mediaId: string;
+  attachedAt: string | null;
+  attachedBy: string | null;
+  /** Le nom que l'utilisateur a déposé — pour l'afficher, pas pour ouvrir. */
+  filename: string | null;
+  mime: string | null;
+  size: number | null;
+  /** Faux quand le descripteur a disparu : « référencé, indisponible ». */
+  available: boolean;
+}
+
 export interface FinancialTransaction {
   transactionId: string;
   /** `null` = mouvement propre à L.Y Solution. C'est un rattachement, pas un vide. */
@@ -64,6 +83,103 @@ export interface FinancialTransaction {
   updatedAt: string;
   editable: boolean;
   notEditableReason: string | null;
+
+  /* ── L10.2 ─────────────────────────────────────────────────────────────── */
+  /** La règle qui a produit ce mouvement. `null` pour une saisie manuelle. */
+  sourceId: string | null;
+  /** Le cycle matérialisé (`AAAA-MM-JJ`), moitié de sa clé d'unicité. */
+  cycleKey: string | null;
+  sourceRevision: number | null;
+  receipt: TransactionReceipt | null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   COÛTS RÉCURRENTS — des RÈGLES, pas des mouvements.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export type RecurrenceUnit = 'DAY' | 'MONTH' | 'YEAR';
+export type RecurringScope = 'PROJECT' | 'COMPANY';
+export type RecurringStatus = 'ACTIVE' | 'STOPPED';
+
+/**
+ * QUAND UNE MODIFICATION PREND EFFET.
+ *
+ *   NEXT        prochaine échéance — rien de matérialisé ne bouge
+ *   CURRENT     cycle courant — l'occurrence existante est RÉVISÉE
+ *   FROM_START  premier cycle — toutes les occurrences vivantes sont révisées
+ */
+export type RecurringEditMode = 'CURRENT' | 'NEXT' | 'FROM_START';
+
+/**
+ * QUAND UN ARRÊT PREND EFFET.
+ *
+ *   CURRENT  le cycle courant QUITTE les totaux, et plus rien n'est produit
+ *   NEXT     le cycle courant reste, plus rien après lui
+ */
+export type RecurringStopMode = 'CURRENT' | 'NEXT';
+
+export interface RecurringRevision {
+  revision: number;
+  effectiveFromCycleKey: string;
+  label: string;
+  description: string;
+  amountCents: number;
+  mode: RecurringEditMode | null;
+  reason: string | null;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+export interface RecurringCost {
+  recurringCostId: string;
+  scope: RecurringScope;
+  projectId: string | null;
+  projectNameSnapshot: string | null;
+  /** Valeurs COURANTES — résolues depuis la dernière révision. */
+  label: string;
+  description: string;
+  amountCents: number;
+  currency: string;
+  recurrence: { unit: RecurrenceUnit; interval: number };
+  startAt: string;
+  status: RecurringStatus;
+  /**
+   * PROCHAINE ÉCHÉANCE — affichage seulement.
+   * Elle ne pèse sur aucun agrégat tant qu'elle n'est pas matérialisée.
+   */
+  nextOccurrenceAt: string | null;
+  nextOccurrenceCycleKey: string | null;
+  lastMaterializedCycleKey: string | null;
+  effectiveUntilCycleKey: string | null;
+  stoppedAt: string | null;
+  stoppedBy: string | null;
+  stopMode: RecurringStopMode | null;
+  /** L'historique complet — c'est LUI l'archive durable, pas la chronologie. */
+  revisions: RecurringRevision[];
+  createdAt: string;
+  createdBy: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+export interface RecurringCostInput {
+  scope: RecurringScope;
+  projectId?: string | null;
+  label: string;
+  description?: string;
+  amount: string;
+  recurrence: { unit: RecurrenceUnit; interval: number };
+  /** `AAAA-MM-JJ` — l'ancre, et la première échéance. */
+  startAt: string;
+}
+
+export interface RecurringCostPatch {
+  /** OBLIGATOIRE : « à partir de quand ? » n'a pas de réponse par défaut. */
+  mode: RecurringEditMode;
+  label?: string;
+  description?: string;
+  amount?: string;
+  reason?: string;
 }
 
 export interface FinancePeriod {
@@ -152,4 +268,19 @@ export interface BulkDeleteResult {
   deleted: number;
   scope: FinanceScope;
   projectId: string | null;
+  /**
+   * LES RÈGLES QUI SURVIVENT au vidage du livret.
+   *
+   * Vider le ledger n'arrête aucun abonnement : les règles actives
+   * continueront de produire des coûts. Le nombre est rendu pour que l'écran
+   * puisse le dire — un utilisateur qui le découvre seul conclut à un bogue.
+   */
+  activeRecurringCosts: number;
+}
+
+export interface BulkScopePreview {
+  scope: FinanceScope;
+  projectId: string | null;
+  count: number;
+  activeRecurringCosts: number;
 }

@@ -686,7 +686,26 @@ section('14. Performance : les agrégats ne remontent pas les documents');
   check('un index sert la fiche projet',
     indexes.includes('projectId,deletedAt,effectiveDate'));
   check('un index sert la page globale', indexes.includes('deletedAt,effectiveDate'));
-  check('…et pas quinze index spéculatifs', indexes.length <= 3);
+
+  /**
+   * L'INVENTAIRE EST ÉNUMÉRÉ, PAS COMPTÉ.
+   *
+   * Le contrôle vérifiait `length <= 3`. Un nombre nu ne dit pas QUELS index
+   * sont justifiés : il refuse le quatrième sans distinguer l'index
+   * d'idempotence du lot L10.2 — indispensable, il rend un doublon
+   * structurellement impossible — d'un index spéculatif ajouté « au cas où ».
+   *
+   * La liste fermée pose la même exigence en la rendant lisible : un index de
+   * plus doit être inscrit ici, ce qui oblige à dire à quelle requête il sert.
+   */
+  const INDEX_ATTENDUS = [
+    'transactionId',                          // identité publique, unique
+    'projectId,deletedAt,effectiveDate',      // le livret d'un projet
+    'deletedAt,effectiveDate',                // le livret global
+    'sourceId,cycleKey',                      // L10.2 — l'unicité d'une occurrence
+  ].sort();
+  check(`les index sont exactement ceux prévus — ${indexes.join(' · ')}`,
+    JSON.stringify([...indexes].sort()) === JSON.stringify(INDEX_ATTENDUS));
 
   const plan = await PanelFinancialTransaction.aggregate([
     { $match: { projectId: PROJET_A, deletedAt: null } },

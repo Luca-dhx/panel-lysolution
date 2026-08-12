@@ -271,6 +271,70 @@ const financialTransactionSchema = new mongoose.Schema(
 
     provenance: { type: provenanceSchema, default: () => ({}) },
 
+    /* ── L10.2 — CE QUI RELIE UNE OCCURRENCE À SA RÈGLE ──────────────────── */
+
+    /**
+     * LA DÉFINITION QUI A PRODUIT CE MOUVEMENT — `null` pour une saisie.
+     *
+     * `origin` dit DE QUEL GENRE de source il vient (`RECURRING_COST`) ;
+     * `sourceId` dit LAQUELLE. Les deux sont nécessaires : le genre seul ne
+     * permet pas de remonter à la règle, et l'identifiant seul ne dirait pas
+     * dans quelle collection le chercher.
+     */
+    sourceId: { type: String, default: null },
+
+    /**
+     * LE CYCLE QUE CE MOUVEMENT MATÉRIALISE — `AAAA-MM-JJ`, ou `null`.
+     *
+     * ══ C'EST LA MOITIÉ DE LA CLÉ D'IDEMPOTENCE ═══════════════════════════
+     *
+     * Avec `sourceId`, il forme l'identité métier d'une occurrence. L'index
+     * unique posé plus bas rend structurellement impossible d'écrire deux fois
+     * « Brevo, cycle 2026-09 » — quel que soit ce qui l'a tenté : un
+     * redémarrage, deux ouvertures d'écran simultanées, un second worker, une
+     * reprise après coupure, un redéploiement.
+     *
+     * Une vérification `findOne` suivie d'un `create` n'aurait rien garanti :
+     * deux requêtes concurrentes passent toutes deux le `findOne` avant que
+     * l'une n'écrive. La garantie doit vivre dans la base.
+     */
+    cycleKey: { type: String, default: null },
+
+    /**
+     * LA RÉVISION APPLIQUÉE LORS DE LA MATÉRIALISATION.
+     *
+     * Ce n'est pas une relation vivante : les valeurs financières de ce
+     * mouvement (`label`, `description`, `amountCents`) sont un INSTANTANÉ pris
+     * au moment où il a été créé ou révisé. Ce numéro dit seulement laquelle
+     * des révisions de la règle a produit cet instantané — de quoi expliquer
+     * un écart sans avoir à le recalculer.
+     */
+    sourceRevision: { type: Number, default: null },
+
+    /**
+     * LE JUSTIFICATIF — une RÉFÉRENCE au protocole Media, jamais un chemin.
+     *
+     * ══ POURQUOI SEULEMENT UN `mediaId` ══════════════════════════════════
+     *
+     * Le nom du fichier, son type, son poids et son empreinte vivent dans
+     * `PanelMedia` : les recopier ici en ferait une seconde vérité, qui
+     * divergerait au premier remplacement de pièce. La transaction dit QUEL
+     * document la justifie ; le protocole Media dit ce QU'EST ce document.
+     *
+     * Il n'y a délibérément AUCUN champ d'URL, de chemin ni de nom de fichier.
+     * Un `receiptUrl` en `/uploads/…` rendrait la facture publique — c'est
+     * exactement la réserve qui a fait reporter les justificatifs au lot L10.1,
+     * et un contrôle de recette interdit désormais d'en réintroduire un.
+     *
+     * `attachedAt`/`attachedBy` sont ici, et non dans le média : ils datent
+     * l'ACTE de rattachement à CETTE ligne, qui n'est pas l'import du fichier.
+     */
+    receipt: {
+      mediaId: { type: String, default: null },
+      attachedAt: { type: Date, default: null },
+      attachedBy: { type: String, default: null },
+    },
+
     /**
      * SUPPRESSION LOGIQUE — un fait financier ne s'efface pas.
      *
@@ -314,6 +378,41 @@ const financialTransactionSchema = new mongoose.Schema(
 financialTransactionSchema.index({ projectId: 1, deletedAt: 1, effectiveDate: -1 });
 // La page globale : « tous les mouvements, sur cette période ».
 financialTransactionSchema.index({ deletedAt: 1, effectiveDate: -1 });
+
+/**
+ * L'INDEX QUI REND UN DOUBLON IMPOSSIBLE (L10.2).
+ *
+ * ══ CE QU'IL GARANTIT, ET POURQUOI IL FALLAIT LA BASE POUR LE FAIRE ═════════
+ *
+ * Une occurrence est identifiée par sa règle et son cycle. Cet index rend
+ * l'écriture d'un second « Brevo · 2026-09-01 » structurellement impossible :
+ * la base refuse, quelle que soit la course. Deux matérialiseurs simultanés,
+ * un redémarrage au mauvais moment, un retry, deux onglets — tous se heurtent
+ * au même mur, et le second reçoit une erreur de clé dupliquée que le service
+ * traite comme « déjà fait ».
+ *
+ * ══ IL COUVRE AUSSI LES OCCURRENCES SUPPRIMÉES, ET C'EST ESSENTIEL ══════════
+ *
+ * Aucun `deletedAt: null` dans le filtre partiel. Un cycle annulé par un
+ * « arrêt actuel » garde donc sa clé occupée : le matérialiseur ne peut pas le
+ * recréer au passage suivant. Filtrer sur les vivants aurait fait ressusciter,
+ * à la première relecture, exactement le coût que l'utilisateur venait de
+ * retirer de ses totaux.
+ *
+ * Le filtre partiel ne retient que les documents qui portent RÉELLEMENT les
+ * deux champs : les saisies manuelles, qui les ont à `null`, sont hors index —
+ * sans quoi elles entreraient toutes en collision sur `(null, null)`.
+ */
+financialTransactionSchema.index(
+  { sourceId: 1, cycleKey: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      sourceId: { $type: 'string' },
+      cycleKey: { $type: 'string' },
+    },
+  },
+);
 
 export const PanelFinancialTransaction = mongoose.model(
   'PanelFinancialTransaction',

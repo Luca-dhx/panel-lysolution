@@ -31,6 +31,16 @@ const TESTS = [
   //     exécutés, pas relus), le signe des montants, et la confirmation forte
   //     de « tout supprimer ».
   'finance-core.test.js',
+  // L10.2 — LES COÛTS RÉCURRENTS ET LEURS JUSTIFICATIFS. Deux suites de plus,
+  // parce qu'elles gardent deux invariants sans rapport :
+  //   · le CALENDRIER et l'IDEMPOTENCE — le 31 janvier revient au 31 mars, un
+  //     Panel arrêté quatre mois produit quatre lignes, et huit matérialiseurs
+  //     simultanés n'en produisent jamais une de trop ;
+  //   · le DOCUMENT PRIVÉ — aucune adresse publique, aucun transfert vers
+  //     shared/uploads au déploiement, et la pièce survit aux révisions
+  //     rétroactives comme à l'annulation du cycle courant.
+  'finance-recurring.test.js',
+  'finance-receipts.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',

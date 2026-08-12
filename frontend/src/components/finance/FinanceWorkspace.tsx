@@ -41,12 +41,15 @@ import { TransactionDetail } from '@/components/finance/TransactionDetail';
 import { TransactionForm } from '@/components/finance/TransactionForm';
 import type { ProjectChoice } from '@/components/finance/TransactionForm';
 import { FinanceModal } from '@/components/finance/FinanceModal';
+import { ReceiptCell } from '@/components/finance/ReceiptCell';
+import { RecurringCostList } from '@/components/finance/RecurringCostList';
+import { RecurringCostForm, StopRecurringDialog } from '@/components/finance/RecurringCostForm';
 import {
   LY_SOLUTION, PERIOD_LABELS, PERIOD_ORDER, SORT_LABELS, SORT_ORDER, ownershipLabel,
 } from '@/components/finance/financeLabels';
 import type {
   FinanceCriteria, FinancePeriodKey, FinanceScope, FinanceSort, FinancialTransaction,
-  ManualTransactionInput,
+  ManualTransactionInput, RecurringCost, RecurringCostInput, RecurringCostPatch,
 } from '@/types.finance';
 
 type SousOnglet = 'general' | 'costs' | 'revenues';
@@ -111,6 +114,15 @@ export function FinanceWorkspace({
   const [masse, setMasse] = useState(false);
   const [erreurAction, setErreurAction] = useState<string | null>(null);
 
+  /* ── Règles récurrentes — état propre, chargé avec le sous-onglet Coûts ── */
+  const [regles, setRegles] = useState<RecurringCost[] | null>(null);
+  const [formRegle, setFormRegle] = useState<{ open: boolean; cible: RecurringCost | null }>(
+    { open: false, cible: null },
+  );
+  const [aArreter, setAArreter] = useState<RecurringCost | null>(null);
+  /** Bump après toute écriture sur une règle — relance la relecture. */
+  const [revisionRegles, setRevisionRegles] = useState(0);
+
   /** La portée EFFECTIVE, résolue une fois — jamais recalculée par appel. */
   const portee: { scope: FinanceScope; projectId: string | null } = useMemo(() => {
     if (verrouille) return { scope: 'project', projectId };
@@ -148,6 +160,26 @@ export function FinanceWorkspace({
     [projects],
   );
 
+  /**
+   * LES RÈGLES SE CHARGENT AVEC LE SOUS-ONGLET « COÛTS », et seulement là.
+   *
+   * C'est le seul écran qui les montre. Les charger sur « Général » coûterait
+   * une requête à chaque ouverture du livret pour une liste que personne ne
+   * regarde à ce moment-là.
+   */
+  const clefRegles = `${sousOnglet}|${portee.scope}|${portee.projectId ?? ''}`;
+  useEffect(() => {
+    if (sousOnglet !== 'costs') return undefined;
+    let vivant = true;
+    finances.recurringCosts({ scope: portee.scope, projectId: portee.projectId })
+      .then((res) => { if (vivant) setRegles(res.items); })
+      .catch((err) => {
+        if (vivant) setErreurAction(errorMessage(err, 'Les coûts récurrents n’ont pas pu être chargés.'));
+      });
+    return () => { vivant = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clefRegles, revisionRegles]);
+
   const agir = async (action: () => Promise<unknown>, echec: string) => {
     setErreurAction(null);
     try {
@@ -164,6 +196,20 @@ export function FinanceWorkspace({
    * à côté du champ fautif et garde la saisie. L'avaler ici fermerait la modale
    * sur un échec, et l'utilisateur retaperait tout.
    */
+  /**
+   * APRÈS TOUTE ÉCRITURE SUR UNE RÈGLE, ON RELIT LES DEUX LISTES.
+   *
+   * Une révision « depuis le début » modifie des occurrences déjà affichées
+   * dans le livret juste en dessous : ne recharger que les règles laisserait
+   * l'écran se contredire — un montant à 59 € dans la règle, à 49 € dans les
+   * lignes qu'elle vient pourtant de corriger.
+   */
+  const apresEcritureRegle = async () => {
+    setRevisionRegles((n) => n + 1);
+    await reload();
+    onMutate?.();
+  };
+
   const enregistrer = async (input: ManualTransactionInput) => {
     if (formulaire.cible) {
       await finances.update(formulaire.cible.transactionId, input);
@@ -363,6 +409,12 @@ export function FinanceWorkspace({
                   <th scope="col">Mouvement</th>
                   {!verrouille ? <th scope="col">Rattachement</th> : null}
                   <th scope="col" className="finance-cell-amount">Montant</th>
+                  {/*
+                    LE JUSTIFICATIF EST DANS LE LIVRET, ligne par ligne — c'est
+                    l'exigence du cahier des charges : la facture d'août
+                    s'attache à août, pas à la règle qui l'a produite.
+                  */}
+                  <th scope="col">Justificatif</th>
                   <th scope="col"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
@@ -375,12 +427,22 @@ export function FinanceWorkspace({
                       {ligne.description ? (
                         <span className="cell-secondary">{ligne.description}</span>
                       ) : null}
+                      {/* Une occurrence dit d'où elle vient : le lecteur
+                          comprend pourquoi elle ne se modifie pas ici. */}
+                      {ligne.origin === 'RECURRING_COST' ? (
+                        <span className="cell-secondary">
+                          {`Coût récurrent · cycle ${ligne.cycleKey}`}
+                        </span>
+                      ) : null}
                     </td>
                     {!verrouille ? (
                       <td>{ownershipLabel(ligne.projectId, ligne.projectNameSnapshot, nomsVivants)}</td>
                     ) : null}
                     <td className={`finance-cell-amount finance-amount-${ligne.flow.toLowerCase()}`}>
                       {formatFlowCents(ligne.amountCents, ligne.flow)}
+                    </td>
+                    <td>
+                      <ReceiptCell transaction={ligne} onChanged={reload} compact />
                     </td>
                     <td className="row-actions">
                       <button
@@ -407,6 +469,27 @@ export function FinanceWorkspace({
         ) : null}
       </Card>
 
+      {/*
+        ── LES RÈGLES RÉCURRENTES — sous « Coûts », et sous « Coûts » SEULEMENT.
+
+        C'est là que le cahier des charges les demande, et c'est là qu'elles ont
+        un sens : à côté du livret des coûts, sans y être mêlées.
+      */}
+      {sousOnglet === 'costs' ? (
+        regles === null ? (
+          <Card><p className="muted">Chargement des coûts récurrents…</p></Card>
+        ) : (
+          <RecurringCostList
+            items={regles}
+            projectNames={nomsVivants}
+            showOwnership={!verrouille}
+            onAdd={() => setFormRegle({ open: true, cible: null })}
+            onEdit={(regle) => setFormRegle({ open: true, cible: regle })}
+            onStop={setAArreter}
+          />
+        )
+      ) : null}
+
       {/* ── DIALOGUES ─────────────────────────────────────────────────── */}
       {formulaire.open ? (
         <TransactionForm
@@ -432,6 +515,15 @@ export function FinanceWorkspace({
             setASupprimer(detail);
             setDetail(null);
           }}
+          /**
+           * Après un dépôt de pièce depuis le détail, on relit la liste ET l'on
+           * referme : la modale porte une copie figée de la transaction, et la
+           * laisser ouverte afficherait l'état d'avant l'envoi.
+           */
+          onReceiptChanged={async () => {
+            await reload();
+            setDetail(null);
+          }}
         />
       ) : null}
 
@@ -446,6 +538,36 @@ export function FinanceWorkspace({
             );
             setASupprimer(null);
           }}
+        />
+      ) : null}
+
+      {formRegle.open ? (
+        <RecurringCostForm
+          recurringCost={formRegle.cible}
+          lockedProjectId={verrouille ? projectId : null}
+          lockedProjectName={verrouille ? projectName : null}
+          projects={projects}
+          onCreate={async (input: RecurringCostInput) => {
+            await finances.createRecurringCost(input);
+            await apresEcritureRegle();
+          }}
+          onRevise={async (patch: RecurringCostPatch) => {
+            await finances.reviseRecurringCost(formRegle.cible!.recurringCostId, patch);
+            await apresEcritureRegle();
+          }}
+          onClose={() => setFormRegle({ open: false, cible: null })}
+        />
+      ) : null}
+
+      {aArreter ? (
+        <StopRecurringDialog
+          recurringCost={aArreter}
+          onStop={async (mode, motif) => {
+            await finances.stopRecurringCost(aArreter.recurringCostId, mode, motif || undefined);
+            setAArreter(null);
+            await apresEcritureRegle();
+          }}
+          onClose={() => setAArreter(null)}
         />
       ) : null}
 
@@ -563,6 +685,7 @@ function SuppressionEnMasse({
   onDone: () => Promise<void>;
 }) {
   const [compte, setCompte] = useState<number | null>(null);
+  const [reglesActives, setReglesActives] = useState(0);
   const [phrase, setPhrase] = useState('');
   const [motif, setMotif] = useState('');
   const [occupe, setOccupe] = useState(false);
@@ -574,7 +697,11 @@ function SuppressionEnMasse({
   useEffect(() => {
     let vivant = true;
     finances.bulkScope(scope, projectId)
-      .then((res) => { if (vivant) setCompte(res.count); })
+      .then((res) => {
+        if (!vivant) return;
+        setCompte(res.count);
+        setReglesActives(res.activeRecurringCosts);
+      })
       .catch((err) => {
         if (vivant) setErreur(errorMessage(err, 'Le décompte n’a pas pu être établi.'));
       });
@@ -610,6 +737,27 @@ function SuppressionEnMasse({
           Les documents restent en base et demeurent auditables ; aucun écran ne sait les
           restaurer.
         </p>
+      ) : null}
+
+      {/*
+        LE PIÈGE, DIT AVANT LE CLIC.
+
+        Vider le livret n'arrête aucun abonnement : les règles actives
+        continueront de produire des coûts, et la première relecture d'écran en
+        matérialisera de nouveaux. Un utilisateur qui découvre ça tout seul
+        conclut à un bogue — et il aurait raison de le croire si personne ne
+        l'avait prévenu.
+      */}
+      {reglesActives > 0 ? (
+        <div className="alert alert-warning">
+          <strong>{reglesActives}</strong>
+          {reglesActives > 1
+            ? ' coûts récurrents restent ACTIFS sur cette portée'
+            : ' coût récurrent reste ACTIF sur cette portée'}
+          {' '}
+          et continueront de produire de nouvelles lignes. Vider le livret n’arrête
+          aucun abonnement : pour cela, arrêtez chaque récurrence depuis l’onglet Coûts.
+        </div>
       ) : null}
 
       <label className="field">

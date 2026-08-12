@@ -89,6 +89,21 @@ export function ownershipLabel(
   return vivants.get(projectId) ?? snapshot ?? projectId;
 }
 
+/**
+ * TYPES PROPOSÉS PAR LE SÉLECTEUR DE FICHIER (L10.2).
+ *
+ * `accept` est une COMMODITÉ, pas un contrôle : il filtre la boîte de dialogue
+ * du système, et rien de plus. Le vrai contrôle lit la signature des octets
+ * côté serveur (`documentValidation.js`), parce qu'un utilisateur peut toujours
+ * choisir « tous les fichiers », et qu'une extension ne prouve rien.
+ *
+ * La liste reflète celle du backend. Si les deux divergent, l'écran proposera
+ * un type que le serveur refusera — désagréable, jamais dangereux.
+ */
+export const ACCEPTED_RECEIPT_MIMES = [
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic',
+];
+
 /** Le jour du jour, au format que `<input type="date">` attend. */
 export function todayInputValue(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date());

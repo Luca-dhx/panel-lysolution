@@ -1,7 +1,23 @@
 # 62 — REGISTRE FINANCIER
 
-> Lot **L10.1**. Fondation indépendante de tout fournisseur.
-> Le branchement Stripe arrive au lot L10.3, sur cette fondation, sans la modifier.
+> Lots **L10.1** (fondation) et **L10.2** (coûts récurrents, justificatifs privés).
+> Indépendant de tout fournisseur. Le branchement Stripe arrive au lot L10.3, sur cette
+> fondation, sans la modifier.
+
+---
+
+## 0. Ce que L10.2 a ajouté — en une page
+
+| | |
+|---|---|
+| **Une règle n'est pas un mouvement** | `PanelRecurringCost` décrit ce qui se répétera ; `PanelFinancialTransaction` enregistre ce qui a eu lieu. Rien n'est projeté à l'affichage. |
+| **Calendrier ancré** | 31 janvier → 28 février → **31 mars**. Le jour d'ancrage est restauré, jamais perdu. |
+| **Idempotence en base** | index unique `{sourceId, cycleKey}`. Huit matérialiseurs simultanés produisent une seule ligne. |
+| **Convergence sans cron** | la matérialisation a lieu à chaque LECTURE financière. L'ordonnanceur n'est qu'une commodité. |
+| **Trois modes de modification** | `NEXT`, `CURRENT`, `FROM_START` — chacun avec un cycle d'effet calculé, jamais un défaut. |
+| **Deux modes d'arrêt** | `NEXT` garde le cycle courant, `CURRENT` le retire des totaux par suppression logique. |
+| **Justificatif par occurrence** | attaché au mouvement, jamais à la règle. |
+| **Média privé** | `visibility: PRIVATE` ajouté au protocole Media existant. Stockage sous `storage/media/`, servi par personne, lu par une route authentifiée. |
 
 ---
 
@@ -355,40 +371,304 @@ Ce qui n'est **pas** indexé, et pourquoi :
 
 ---
 
-## 14. Ce que ce lot n'a PAS fait
+## 13 bis. COÛTS RÉCURRENTS (L10.2)
 
-Aucun appel Stripe. Aucune modification de `bridgeContract`, `projectBridge`, des registres
-de capacités, de l'appartenance Stripe ou du routage de webhooks. Aucun second stockage de
-fichiers.
+### La doctrine, en trois lignes
 
-Hors lot, explicitement : coûts récurrents et leur ordonnanceur, import Stripe,
-remboursements, factures, prestations facturées, relances, page Manager, délai de grâce,
-retries et suspension d'abonnement.
+```
+RecurringCost  « Brevo, 49 €, tous les mois, depuis le 01/08 »   ← une RÈGLE
+        ↓ génère, une fois par échéance
+FinancialTransaction  01/08 −49 €   01/09 −49 €   01/10 −49 €    ← des MOUVEMENTS
+```
 
-### Justificatifs — décision
+Chaque ligne du bas existe **vraiment** dans le ledger. Aucune n'est recalculée à
+l'affichage. Trois raisons, et une seule suffirait :
 
-Le système de médias du Panel (`PanelMedia`, `upload.service.js`) est **strictement
-imagier** : filtre `image/*`, réencodage `sharp` en WebP, politique de dimensions,
-publication vers le parc. Un justificatif de coût est typiquement un **PDF de facture**.
+- un justificatif s'attache à une **occurrence** — une projection n'a pas d'identité à
+  laquelle accrocher la facture d'août ;
+- modifier le montant réécrirait le passé en silence : le bilan de l'an dernier changerait
+  parce qu'un abonnement a augmenté aujourd'hui ;
+- un cycle annulé n'aurait aucun endroit où être annulé.
 
-Décisif : `/uploads` est servi en **statique et publiquement** (le logo d'entreprise doit
-être visible des visiteurs des sites clients). Y déposer des factures les exposerait sans
-authentification.
+### Le calendrier : ancrage, pas report
 
-Réutiliser ce système n'est donc ni propre ni isolé. Conformément à la consigne, L10.1
-**ne construit pas un second stockage** et **n'étend pas** le pipeline images. Le contrat est
-posé côté modèle — un justificatif sera une référence d'attachement portée par le mouvement —
-et le branchement est renvoyé au lot **L10.2**, qui devra d'abord trancher :
+`1 MONTH ≠ 30 DAYS`. `1 YEAR ≠ 365 DAYS`. La progression est **calendaire**, dans
+`Europe/Paris` — le même calendrier que les périodes, délibérément.
 
-1. une surface d'upload **privée** (authentifiée, hors `/uploads`) ;
-2. le format accepté (PDF, images) et sa validation par octets ;
-3. la rétention et la suppression conjointe avec le mouvement.
+Chaque échéance est calculée **depuis l'ancre**, jamais depuis la précédente :
 
-Aucun champ d'attachement n'a été ajouté au schéma : un champ nullable qu'aucune écriture ne
-renseigne et qu'aucun écran ne lit est une promesse, pas une fondation.
+| | report (✗) | ancrage (✓) |
+|---|---|---|
+| 31 jan | 31 jan | 31 jan |
+| +1 mois | 28 fév | 28 fév |
+| +2 mois | **28 mars** | **31 mars** |
+| +3 mois | 28 avril | 30 avril |
+
+Le report perd le 31 pour toujours à cause d'un seul mois court. L'ancrage le restaure dès
+que le mois le permet. Idem pour le 29 février : 2025, 2026, 2027 → 28 fév ; 2028 → **29 fév**.
+
+Conséquence : `cycleDateAt(n)` ne dépend que de l'ancre et de `n`. Elle est rejouable à
+l'identique après n'importe quelle interruption — c'est ce dont l'idempotence a besoin.
+
+### L'identité d'une occurrence
+
+```
+cycleKey = AAAA-MM-JJ      le jour local de l'échéance
+sourceId = recurringCostId la règle
+```
+
+Index **unique partiel** `{sourceId, cycleKey}` sur le ledger. La garantie est en base, pas
+dans le code : un `findOne` suivi d'un `create` laisse passer deux requêtes qui se croisent
+entre les deux instructions.
+
+Le filtre partiel ne retient que les documents portant les deux champs — les saisies
+manuelles (`null, null`) sont hors index, sinon elles entreraient toutes en collision.
+
+**Il couvre aussi les occurrences supprimées.** Un cycle annulé garde sa clé occupée : le
+matérialiseur ne peut pas le recréer. Filtrer sur les vivants aurait fait ressusciter, à la
+première relecture, le coût que l'utilisateur venait de retirer.
+
+### Rattrapage
+
+`dueCycles({ startAt, recurrence, now, fromCycleKey, untilCycleKey })` rend **tous** les
+cycles échus, du plus ancien au plus récent, chacun à sa vraie date. Quatre mois d'arrêt
+produisent **quatre lignes**, jamais une seule compressée.
+
+Borne : `MAX_CATCHUP_CYCLES = 600`. Au-delà, on s'arrête et l'on rend `overflow: true` avec
+le nombre restant — **jamais un abandon silencieux**. Les cycles restants sont matérialisés
+au passage suivant, et le journal du serveur le dit.
+
+### Convergence — et pourquoi il n'y a pas de cron obligatoire
+
+La matérialisation est déclenchée à **trois** endroits, dont un seul est la garantie :
+
+1. **à chaque lecture financière** (`/summary`, `/transactions`, `/by-project`,
+   `/recurring-costs`) — ce que quelqu'un regarde est à jour au moment où il le regarde ;
+2. au **démarrage** du serveur, puis toutes les heures (`recurringCostScheduler`) ;
+3. explicitement, par la recette.
+
+Un ordonnanceur qui serait la seule source transformerait une minute d'indisponibilité à
+minuit en un mois manquant. Ici, il n'écrit rien que la première lecture n'aurait écrit.
+
+### Versions effectives
+
+`amountCents` **n'est pas** un champ de la règle. La règle porte une suite de révisions
+**append-only** :
+
+```
+révision 1 · à partir de 2026-08-01 · 49 €
+révision 2 · à partir de 2026-10-01 · 59 €
+```
+
+`resolveEffectiveRevision(def, cycleKey)` est une fonction **pure** : « quel montant pour
+octobre ? » a une réponse unique, calculable, identique pour tout le monde et six mois plus
+tard.
+
+### Les trois modes de modification
+
+Exemple : mensuel ancré au 1er août, nous sommes le 15 septembre, août et septembre existent.
+
+| Mode | Cycle d'effet | août | sept. | oct. + | Occurrences touchées |
+|---|---|---|---|---|---|
+| `NEXT` — « prochaine récurrence » | 2026-10-01 | 49 | 49 | **59** | aucune |
+| `CURRENT` — « récurrence précédente » | 2026-09-01 | 49 | **59** | **59** | septembre |
+| `FROM_START` — « depuis le début » | 2026-08-01 | **59** | **59** | **59** | toutes les vivantes |
+
+> **« Précédente » désigne le cycle COURANT.** Le 15 septembre, la « récurrence précédente »
+> est la dernière ligne apparue dans le livret — celle du 1er septembre. Le mot invite à
+> comprendre l'inverse ; l'écran l'explicite.
+
+**La révision d'une occurrence est une MISE À JOUR**, jamais un supprimer/recréer. Sont
+conservés : l'identifiant, la date de cycle, la date de création, l'auteur d'origine, et
+**le justificatif**. C'est le point qu'un supprimer/recréer aurait détruit sans bruit.
+
+Les occurrences **annulées** ne sont pas révisées : elles constatent ce qui a été retiré, à
+la valeur qu'il avait alors.
+
+Une révision qui ne change rien n'est pas écrite — elle polluerait l'historique d'une
+décision qui n'en est pas une.
+
+### Les deux modes d'arrêt
+
+| Mode | Borne | Cycle courant | Cycles suivants |
+|---|---|---|---|
+| `NEXT` — « prochaine » | cycle courant | **reste** dans les totaux | jamais produits |
+| `CURRENT` — « actuelle » | cycle courant | **retiré** des totaux (suppression logique) | jamais produits |
+
+Dans les deux cas la borne est inscrite dans `effectiveUntilCycleKey`, **à la source** : le
+matérialiseur ne calcule même plus les cycles au-delà. Une borne appliquée seulement à
+l'affichage aurait laissé la génération continuer, et une reprise après panne aurait
+ressuscité ce qu'on croyait arrêté.
+
+Un arrêt demandé avant la première échéance pose la sentinelle `NO_CYCLE` (`0000-00-00`) :
+la règle ne produira jamais rien.
+
+### Une règle arrêtée est immuable
+
+Décision **énoncée**, pas subie. Rouvrir une règle arrêtée obligerait à décider ce que
+deviennent les cycles écoulés depuis l'arrêt — des trous ? un rattrapage rétroactif ? — et
+toute réponse implicite serait une surprise. Pour reprendre un abonnement, on en crée un
+nouveau, avec sa propre ancre. Rien n'est perdu, tout reste lisible.
+
+### « Tout supprimer » n'arrête aucune récurrence
+
+Vider le ledger ne touche pas aux règles. La conséquence est contre-intuitive — les règles
+actives continueront de produire — donc elle est **annoncée avant le clic** :
+`countBulkScope` rend `activeRecurringCosts`, et la modale le dit.
+
+Les occurrences passées ne ressuscitent pas : leur clé de cycle reste occupée.
 
 ---
 
+## 13 ter. JUSTIFICATIFS PRIVÉS (L10.2)
+
+### Ce qui manquait n'était pas un service de fichiers — c'était un champ
+
+Le protocole Media du Panel savait déjà : nommer un objet par son empreinte, mesurer un
+fichier, le décrire (`PanelMedia`), l'attacher à un environnement, le transférer au
+déploiement et le publier. Il ne savait qu'une chose : **tout média est public**.
+
+Écrire un `FinancialFileService` aurait produit une seconde pile — deux façons de nommer,
+deux façons d'empreinter, deux dossiers à sauvegarder — et une troisième le jour où un
+contrat aurait eu le même besoin. On a donc ajouté à `PanelMedia` :
+
+```
+visibility        PUBLIC | PRIVATE     (défaut PUBLIC — aucune reprise nécessaire)
+originalFilename  le nom déposé, pour le Content-Disposition — JAMAIS un chemin
+```
+
+et un module `privateMedia.service.js` qui réutilise `objectKeyFor`, `sha256Of`,
+`registerMedia` et `config.paths`. Trois différences avec un média public, et trois seulement :
+
+1. **pas de réencodage** — un logo est converti en WebP ; une facture est stockée octet pour
+   octet, sinon son empreinte ne prouve plus rien ;
+2. **un autre dossier** — `storage/media/`, jamais `uploads/` ;
+3. **jamais publié** — exclu de `publishPanelMediaOnDestination`.
+
+### Pourquoi `storage/` et pas `uploads/`
+
+| | `uploads/` | `storage/` |
+|---|---|---|
+| `express.static` | **oui** | non |
+| bloc `location` Nginx | **`/uploads/`** | aucun |
+| lien persistant au déploiement | `shared/uploads` | `shared/storage` |
+| exclu de l'artefact de build | oui | oui |
+
+Cacher une facture dans `uploads/prive/` ne l'aurait protégée de rien : l'adresse serait
+restée devinable. `shared/storage/contracts` était déjà le précédent des documents
+contractuels — on suit le même chemin.
+
+### Localhost et déployé : un seul chemin de code
+
+`config.paths.privateMedia` vaut `<backend>/storage/media` **dans les deux cas**. Sur une
+instance déployée, `<backend>/storage` est un lien symbolique vers `shared/storage`, posé à
+chaque release par le pipeline.
+
+Il n'existe **aucun** `if (localhost)` dans la couche Media ni dans le code financier — un
+contrôle de recette l'interdit. La couche Media absorbe la différence ; le domaine métier ne
+la voit jamais.
+
+**Survie au redéploiement**, prouvée sur la configuration réelle (trois faits, il faut les
+trois) :
+
+1. `pipeline.js` : `ln -sfn ${sharedRoot}/storage ${backendDir}/storage` à chaque release ;
+2. `build.js` : `storage` figure dans `BACKEND_EXCLUDE_DIRS` — rien ne l'écrase ;
+3. `nginx.js` : aucun bloc `location /storage`.
+
+> **Limite assumée.** Un justificatif déposé en local reste en local ; il n'est pas migré
+> vers le serveur au déploiement. C'est cohérent : la transaction qu'il justifie vit dans la
+> base de cette instance et ne voyage pas davantage. En exploitation, les pièces sont
+> déposées depuis l'instance déployée.
+
+### Validation : les octets, jamais l'extension
+
+`documentValidation.js` lit les **signatures** : `%PDF-`, `\x89PNG\r\n\x1a\n`, `\xff\xd8\xff`,
+`RIFF…WEBP`, `ftyp…heic`. Un exécutable ou du HTML renommé `.pdf` est refusé en **415**.
+
+L'extension de **stockage** est déduite du type mesuré. Le nom déposé ne sert qu'au
+`Content-Disposition` — jamais à écrire sur le disque.
+
+**SVG est exclu** des justificatifs alors qu'il est accepté pour les images publiques : un
+SVG est un document XML qui peut porter du script, et un justificatif se télécharge.
+
+Deux défauts réels corrigés au passage :
+
+- **le nom accentué arrivait mangé.** `busboy` décode les paramètres multipart en latin-1 ;
+  « Facture Août.pdf » devenait « Facture AoÃ»t.pdf » — systématiquement, en français.
+  `decodeUploadFilename` le remet dans son encodage, de façon conditionnelle (si le résultat
+  n'est pas de l'UTF-8 valide, on garde l'original) ;
+- **il repartait mangé.** Un en-tête HTTP transporte des octets latin-1. Le téléchargement
+  émet donc les deux formes de la RFC 6266 : `filename` (repli ASCII) et
+  `filename*=UTF-8''…`.
+
+### Lecture : par la transaction, jamais par le média
+
+```
+GET /api/finances/transactions/:transactionId/receipt
+```
+
+On aurait pu exposer `/api/media/private/:mediaId`. Cette surface ne peut être autorisée que
+par une table d'ACL parallèle : un média, seul, ne sait pas à qui il appartient.
+
+Ici le **chemin porte le contexte**. On charge la transaction, on vérifie que le document
+demandé est bien le sien (`assertBelongsTo`), et l'autorisation devient une conséquence de
+l'objet métier. Un `mediaId` récupéré ailleurs ne mène nulle part.
+
+La couche Media porte les **octets et le descripteur** ; le domaine propriétaire porte la
+**route et l'autorisation**. C'est cette frontière qui permettra aux factures et aux contrats
+de réutiliser le mécanisme sans hériter des règles d'accès des finances.
+
+Réponse : `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`,
+`Cache-Control: private, no-store`. Aucun chemin, aucune clé d'objet, aucune URL.
+
+### Ce que le protocole refuse structurellement
+
+`resolvePanelMediaUrl` — **le point unique** qui produit une adresse de média — rend `null`
+avec la raison `MEDIA_PRIVE`. Aucun écran, aucune projection, aucun descripteur publié ne
+peut obtenir l'adresse d'un document privé, même en la demandant.
+
+### Cycle de vie de la pièce
+
+| Événement | Le justificatif |
+|---|---|
+| révision `FROM_START` du montant | **conservé** — la révision est un `updateMany` sur les champs financiers |
+| arrêt « actuelle » du cycle | **conservé et téléchargeable** — le cycle sort des totaux, la pièce reste l'audit |
+| suppression logique du mouvement | **conservé et téléchargeable** ; on n'en attache plus de nouveau |
+| remplacement | l'ancien fichier est retiré, **son descripteur survit** — on saura qu'il y a eu remplacement |
+| retrait explicite | seul geste qui efface le fichier. Jamais appelé en cascade. |
+
+---
+
+## 14. Ce que ces lots n'ont PAS fait
+
+Aucun appel Stripe. Aucune modification de `bridgeContract`, `projectBridge`, des registres
+de capacités, de l'appartenance Stripe ou du routage de webhooks. **Aucun second stockage de
+fichiers** — le protocole Media existant a été étendu, pas dupliqué.
+
+Hors lot, explicitement : import Stripe, revenus automatiques, remboursements, factures
+Stripe, prestations facturées, relances, page Manager, délai de grâce, retries et suspension
+d'abonnement. Ce sont les lots L10.3 et suivants.
+
+### Justificatifs — la réserve de L10.1 est levée
+
+L10.1 avait refusé de les livrer, et la raison était bonne : `/uploads` est servi en
+**statique et publiquement** (le logo d'entreprise doit être visible des visiteurs des sites
+clients). Y déposer des factures les aurait exposées sans authentification.
+
+L10.2 ne contourne pas cette réserve, il la traite : le protocole Media reçoit une notion
+générique de **visibilité**, et les documents privés vivent sous `storage/`, que rien ne
+sert. Voir § 13 ter.
+
+Ce qui reste ouvert, et qui est assumé :
+
+- un justificatif déposé en local n'est pas migré vers le serveur au déploiement — comme la
+  transaction qu'il justifie, qui vit dans la base de cette instance ;
+- il n'existe pas de purge des fichiers orphelins (un remplacement retire l'ancien fichier ;
+  un échec en cours de route peut laisser un objet non référencé, invisible et inoffensif) ;
+- un mouvement supprimé conserve sa pièce indéfiniment. C'est délibéré : la purge d'une
+  pièce encore utile à l'audit serait un défaut bien plus grave qu'un octet de trop.
+
+---
 ## 15. Fichiers
 
 **Backend**
@@ -399,6 +679,13 @@ services/finance/money.js                       centimes entiers, saisie refusé
 services/finance/period.js                      bornes semi-ouvertes, Europe/Paris, deux passes
 services/finance/financialTransactions.service.js  CRUD, portées, journal
 services/finance/financialSummary.service.js    agrégats et série, en base
+models/PanelRecurringCost.model.js              la RÈGLE et ses révisions append-only
+services/finance/recurrence.js                  calendrier PUR — ancrage, cycles, rattrapage
+services/finance/recurringCosts.service.js      matérialisation, révisions, arrêt
+services/finance/recurringCostScheduler.js      commodité horaire — jamais la garantie
+services/finance/receipts.service.js            rattachement et autorisation d'une pièce
+services/upload/documentValidation.js           signatures d'octets, noms de fichiers
+services/upload/privateMedia.service.js         le média PRIVÉ — extension du protocole
 controllers/finances.controller.js
 routes/finances.routes.js                       montée sur /api/finances
 ```
@@ -416,12 +703,18 @@ components/finance/TransactionForm.tsx
 components/finance/TransactionDetail.tsx
 components/finance/FinanceModal.tsx
 components/finance/financeLabels.ts
+components/finance/RecurringCostForm.tsx        création, révision, arrêt — et leurs modales
+components/finance/RecurringCostList.tsx        le listing des RÈGLES, à côté du livret
+components/finance/ReceiptCell.tsx              déposer, télécharger, remplacer, retirer
 pages/FinancesPage.tsx                          la page globale
 ```
 
 **Recette**
 
 ```
-tests/finance-core.test.js    138 contrôles — noyau, monnaie, périodes, portées, garde-fou
-tests/finance-ui.test.js      111 contrôles — interface, dont les 5 états dégénérés du graphique
+tests/finance-core.test.js       138 contrôles — noyau, monnaie, périodes, portées, garde-fou
+tests/finance-recurring.test.js  105 contrôles — calendrier, idempotence, rattrapage, 3 modes, 2 arrêts
+tests/finance-receipts.test.js   105 contrôles — média privé, sécurité, survie de la pièce, persistance
+tests/finance-ui.test.js         156 contrôles — interface, dont les 5 états dégénérés du graphique
+tests/media-first-deployment.test.js  + 10 contrôles — un média privé n'est jamais publié
 ```

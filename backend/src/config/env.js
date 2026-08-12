@@ -216,8 +216,38 @@ export const config = {
    * projets. Les fichiers survivent donc aux mises en production sans aucune
    * manipulation, et le code n'a qu'un chemin à connaître : le sien.
    */
+  /**
+   * `privateMedia` — le pendant PRIVÉ d'`uploads`, ajouté au lot L10.2.
+   *
+   * ══ POURQUOI UN SECOND DOSSIER, ET PAS UN SOUS-DOSSIER D'`uploads` ═══════
+   *
+   * `<backend>/uploads` est servi en statique par Express ET proxifié par un
+   * bloc `location /uploads/` d'Nginx. Tout ce qui y tombe est PUBLIC, y
+   * compris dans un sous-dossier : cacher une facture sous
+   * `uploads/prive/…` ne la protégerait de rien — l'adresse resterait
+   * devinable, et c'est exactement la réserve qui a fait reporter les
+   * justificatifs au lot L10.1.
+   *
+   * `<backend>/storage` n'a AUCUN bloc `location`. Rien ne le sert. C'est déjà
+   * l'emplacement des documents contractuels sur les instances déployées
+   * (`shared/storage/contracts`), donc le précédent pertinent — pas une
+   * invention.
+   *
+   * ══ PERSISTANCE : LE MÊME MÉCANISME QU'`uploads` ═════════════════════════
+   *
+   * Le pipeline de déploiement pose `<backend>/storage` en LIEN SYMBOLIQUE vers
+   * `shared/storage`, à chaque release, exactement comme il le fait pour
+   * `uploads` — et `storage` figure dans les dossiers EXCLUS de l'artefact de
+   * build, donc rien ne l'écrase. Un justificatif survit donc au rebuild du
+   * front, au remplacement du backend, au `npm ci`, au rechargement PM2 et au
+   * redéploiement, sans que le code financier ait à le savoir.
+   *
+   * En local, c'est un dossier ordinaire. Le code ne connaît qu'un chemin, le
+   * sien : aucune branche « si localhost ».
+   */
   paths: {
     uploads: path.resolve(process.cwd(), 'uploads'),
+    privateMedia: path.resolve(process.cwd(), 'storage', 'media'),
   },
   // Repli d'AMORÇAGE de la règle de priorité des URLs (cf.
   // `networkConfig.service.js`) : la configuration système écrite par le
