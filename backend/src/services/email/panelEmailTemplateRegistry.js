@@ -667,6 +667,81 @@ ${row('Incident', '{{incident.reference}}')}
       });
     },
   },
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * L10.6 FINAL — LA SUSPENSION MANUELLE, ANNONCÉE AUX ADMINISTRATEURS.
+   *
+   * ══ POURQUOI IL N'EST PAS UN TROISIÈME MESSAGE D'IMPAYÉ ═══════════════════
+   *
+   * Les deux modèles ci-dessus annoncent une fermeture que le client peut LEVER
+   * en réglant sa facture, et le renvoient vers sa facturation. Celui-ci
+   * annonce une décision de NOTRE équipe : le client n'a aucune prise dessus,
+   * et lui proposer de payer quoi que ce soit laisserait croire à un impayé
+   * qui n'existe pas.
+   *
+   * ══ QUI LE DÉCLENCHE ═════════════════════════════════════════════════════
+   *
+   * Le PROJET, pas le Panel. Un développeur suspend depuis le Manager, et le
+   * projet demande le verbe `email.send_template`. Le contenu, l'expéditeur et
+   * la clé restent ici : le projet n'a jamais touché Brevo depuis L8.4C.
+   *
+   * ══ « Aucun » EST UNE VALEUR, PAS UN DÉFAUT D'AFFICHAGE ══════════════════
+   *
+   * `suspension.reason` est REQUIS et vaut « Aucun » quand personne n'a saisi
+   * de motif. Le rendre facultatif aurait laissé une ligne vide dans le
+   * tableau, que le lecteur aurait prise pour un bogue. La chaîne naît au rendu
+   * côté projet ; aucune base ne la stocke.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  SITE_SUSPENDED_MANUAL_ADMIN: {
+    templateId: 'SITE_SUSPENDED_MANUAL_ADMIN',
+    defaultName: 'Suspension manuelle — information aux administrateurs',
+    defaultDescription:
+      "Prévient les administrateurs d'un projet que l'équipe technique a suspendu leur site à la main. Envoyé UNIQUEMENT si la case « notifier les administrateurs » a été cochée au moment de la suspension. Jamais utilisé pour une fermeture automatique — impayé et contrat ont leurs propres messages.",
+    defaultSubject: 'Votre site est temporairement suspendu',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du site concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'suspension.reason', label: 'Motif', description: 'Motif saisi par l’équipe technique. Vaut « Aucun » quand aucun motif n’a été communiqué — la chaîne n’est jamais persistée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'suspension.suspendedOn', label: 'Suspendu le', description: 'Date et heure de la suspension, déjà formatées par le projet.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'suspension.reason': 'Aucun',
+      'suspension.suspendedOn': '13 août 2026 à 14:05',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre site est temporairement suspendu par l’équipe technique.',
+        heading: 'Votre site est temporairement suspendu',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour,
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Le site de {{company.name}} a été suspendu par notre équipe technique
+              le {{suspension.suspendedOn}}. Il n'est plus accessible à vos visiteurs
+              pour le moment.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Motif', '{{suspension.reason}}')}
+${row('Suspendu le', '{{suspension.suspendedOn}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Cette suspension a été décidée par notre équipe : aucune action n'est
+              attendue de votre part, et aucun règlement n'est en cause. Nous vous
+              préviendrons dès le rétablissement.
+            </p>`,
+        footerHtml: '            {{company.name}} — information technique.',
+      });
+    },
+  },
 });
 
 /** Identifiants connus. C'est la LISTE DE RÉFÉRENCE : la base n'en fait pas foi. */

@@ -76,6 +76,11 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     // messages : le client agit, l'équipe instruit.
     'SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT',
     'SITE_SUSPENDED_PAYMENT_DEFAULT_TEAM',
+    // L10.6 FINAL — la suspension MANUELLE, décidée par l'équipe. Distinct des
+    // deux ci-dessus : le client n'a aucune prise dessus, et lui parler de
+    // facturation laisserait croire à un impayé qui n'existe pas. Déclenché par
+    // le PROJET (`email.send_template`), rendu et expédié ici.
+    'SITE_SUSPENDED_MANUAL_ADMIN',
   ];
 
   const codes = templates.listTemplateCodes();
