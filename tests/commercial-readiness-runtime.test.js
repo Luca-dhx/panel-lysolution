@@ -143,8 +143,18 @@ section('Persistance et transitions — aucune ouverture automatique');
   check('sans décision, l’état effectif est PREOPENING', vue.state === 'PREOPENING');
   check('…et la vue dit que personne n’a tranché', vue.neverDecided === true);
   check('les contrôles passent sur une instance saine', vue.readyToGoLive === true);
+  /**
+   * SIX depuis R10.5C : l'ANNULATION de signature rejoint la liste. Elle
+   * atteint le même tiers réel que la demande elle-même, et la ranger en
+   * écriture réversible l'aurait autorisée pendant la recette, sur un
+   * signataire déjà sollicité.
+   *
+   * Le nombre est délibérément écrit en dur : c'est ce qui force à relire la
+   * politique quand une capacité engageante s'ajoute, plutôt que de la voir
+   * grossir en silence.
+   */
   check('la vue nomme ce que la pré-ouverture interdit',
-    vue.blockedInPreopening.length === 5);
+    vue.blockedInPreopening.length === 6);
 
   const ouvert = await service.setCommercialReadiness('p-cycle', 'LIVE', {
     actor: ACTEUR, reason: 'Recette validée par le client.',
