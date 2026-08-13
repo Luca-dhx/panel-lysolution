@@ -29,6 +29,8 @@
 // un `CAPABILITY_UNKNOWN` mensonger : la capacité existe, elle n'est pas prête.
 import { z } from 'zod';
 
+import { MAX_DOCUMENT_BASE64_LENGTH } from '../integratedApi/yousign/signatureDocumentLimits.js';
+
 import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
 import { CAPABILITY_EFFECTS, EFFECT } from '../integratedApi/commercialReadiness.js';
 import { BREVO_CAPABILITY_CODES } from '../integratedApi/brevo/brevoCapabilities.js';
@@ -195,7 +197,15 @@ const signatureRequestOpenInput = z.object({
    * second chemin d'exécution, donc un second endroit où l'appartenance
    * pourrait être oubliée. Borné à ~15 Mio décodés.
    */
-  documentBase64: z.string().min(1).max(20_000_000),
+  /**
+   * LE PDF, EN BASE64 — borné par une limite NOMMÉE.
+   *
+   * Le schéma refuse d'emblée une chaîne hors gabarit, avant tout décodage :
+   * décoder 100 Mio pour découvrir qu'ils sont de trop ferait payer l'attaque
+   * avant de la refuser. L'adaptateur revérifie la taille DÉCODÉE, qui est la
+   * seule que l'humain manipule, et rend alors un message actionnable.
+   */
+  documentBase64: z.string().min(1).max(MAX_DOCUMENT_BASE64_LENGTH),
   documentFilename: z.string().trim().min(1).max(200),
   /** L'ORDRE du tableau EST l'ordre de signature. */
   signers: z.array(signerSchema).min(1).max(4),

@@ -55,6 +55,7 @@ import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
 } from '../../capabilities/capabilityErrors.js';
+import { checkDocumentSize } from './signatureDocumentLimits.js';
 
 /* -------------------------------------------------------------------------- */
 /*  TRADUCTION DES REFUS                                                      */
@@ -170,6 +171,26 @@ async function requireOwned({ context, definition, resourceId }) {
 async function signatureRequestOpen({ definition, context, credentials, input, fetchImpl }) {
   const timeoutMs = definition.timeoutMs;
   const common = { credentials, timeoutMs, ...(fetchImpl ? { fetchImpl } : {}) };
+
+  /**
+   * ── LA TAILLE, VÉRIFIÉE AVANT TOUTE RÉSERVATION ───────────────────────────
+   *
+   * Le schéma a déjà borné la CHAÎNE ; ici on borne le PDF DÉCODÉ, qui est la
+   * grandeur que l'exploitant manipule et la seule dont le message puisse
+   * parler utilement.
+   *
+   * Placé avant `claimSignatureRequest` : un document hors gabarit ne doit pas
+   * laisser derrière lui une réservation à libérer, ni verrouiller un contrat
+   * pour une raison qui n'a rien à voir avec le fournisseur.
+   */
+  const taille = checkDocumentSize(input.documentBase64);
+  if (!taille.ok) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.INPUT_INVALID,
+      taille.message,
+      { reason: taille.code, byteLength: taille.byteLength },
+    );
+  }
 
   /**
    * ── 1. RÉSERVER LE CONTRAT, AVANT TOUT APPEL ──────────────────────────────

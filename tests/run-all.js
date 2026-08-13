@@ -118,6 +118,10 @@ const TESTS = [
   // concurrence, rejeu et course inverse : un seul événement d'ouverture,
   // jamais deux, et aucune sortie fournisseur.
   'commercial-opening-concurrency.test.js',
+  // R10.5C — le verrou de signature : ce qu’il protège (double ouverture d’un
+  // même contrat, ressource étrangère, identifiant inventé, isolation
+  // TEST/PROD) et la sortie tracée quand une issue reste indéterminée.
+  'signature-reservations.test.js',
   // L8 — la connaissance Brevo : deux vocabulaires d'événements pour un seul
   // sens, quatre champs de date pour deux unités, et cinq objets qu'on
   // confondait. Enregistré ici en L5.1 — il était livré mais jamais exécuté.

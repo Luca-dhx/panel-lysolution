@@ -15,6 +15,7 @@ import themeRoutes from './routes/theme.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import networkRoutes from './routes/network.routes.js';
 import emailSenderRoutes from './routes/emailSender.routes.js';
+import signatureReservationsRoutes from './routes/signatureReservations.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
@@ -120,6 +121,15 @@ export function createApp() {
    * garde d'écriture de l'un finirait par servir à l'autre.
    */
   app.use('/api/email-sender', emailSenderRoutes);
+  /**
+   * Les réservations de signature bloquées (R10.5C).
+   *
+   * Une ouverture dont l'issue est restée indéterminée laisse le contrat
+   * verrouillé — c'est le bon arbitrage, mais il serait invisible sans cet
+   * écran. Monté à part des capacités : ce n’est pas un verbe fournisseur,
+   * c’est un outil d’exploitation sur NOTRE propre état.
+   */
+  app.use('/api/signature-reservations', signatureReservationsRoutes);
   app.use('/api/supervision', supervisionRoutes);
   app.use('/api/diagnostic', diagnosticRoutes);
   app.use('/api/executions', executionRoutes);
