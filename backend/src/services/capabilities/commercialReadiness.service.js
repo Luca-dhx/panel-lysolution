@@ -186,12 +186,29 @@ export async function setCommercialReadiness(projectId, nextState, { actor = {},
 
   const record = await getProjectOrThrow(projectId);
   const previous = effectiveCommercialState(record);
+  /**
+   * L'état STOCKÉ, distinct de l'état EFFECTIF ci-dessus.
+   *
+   * `null` (« jamais décidé ») se résout vers `PREOPENING` pour la politique,
+   * mais reste `null` en base. C'est cette valeur-là — celle qu'on a
+   * réellement lue — que l'écriture conditionnelle devra retrouver.
+   */
+  const storedBefore = record?.commercialState ?? null;
 
   if (previous === nextState) {
-    // Idempotent : réaffirmer un état n'est pas une erreur, et ne produit
-    // aucune trace — une chronologie remplie de « toujours ouvert » se lit
-    // moins bien qu'une chronologie qui ne montre que les changements.
-    return describeCommercialReadiness(record);
+    /**
+     * Idempotent : réaffirmer un état n'est pas une erreur, et ne produit
+     * aucune trace — une chronologie remplie de « toujours ouvert » se lit
+     * moins bien qu'une chronologie qui ne montre que les changements.
+     *
+     * On RELIT quand même avant de répondre. `record` date de quelques
+     * instructions plus haut ; si un autre geste a basculé la fiche entre
+     * temps, rendre l'instantané périmé annoncerait un état que l'appelant ne
+     * retrouverait pas en rechargeant. La relecture ne supprime pas la course
+     * — rien ne le peut — mais elle rend la réponse aussi fraîche que celle du
+     * chemin qui écrit, qui relit lui aussi avant de rendre.
+     */
+    return describeCommercialReadiness(await getProjectOrThrow(projectId));
   }
 
   if (!(ALLOWED_TRANSITIONS[previous] ?? []).includes(nextState)) {
@@ -214,12 +231,51 @@ export async function setCommercialReadiness(projectId, nextState, { actor = {},
   }
 
   const at = nowIso();
-  await registryStore.setCommercialState(projectId, {
+  /**
+   * ── LE GESTE EST RÉCLAMÉ, PAS SEULEMENT ÉCRIT ─────────────────────────────
+   *
+   * Tout ce qui précède — lecture, transition, prérequis — a été décidé sur un
+   * instantané. Deux requêtes simultanées le franchissent toutes les deux :
+   * deux clics sur le bouton, deux onglets ouverts, un rejeu de la requête.
+   *
+   * L'écriture conditionnelle départage. Une seule retrouve l'état qu'elle
+   * avait lu ; les autres n'écrivent rien, et surtout n'émettent PAS un second
+   * `COMMERCIAL_OPENED`. Une chronologie qui montre deux ouvertures pour un
+   * seul geste ferait chercher un incident qui n'a pas eu lieu — et rendrait
+   * indécidable la question « combien de fois cette instance a-t-elle été
+   * ouverte ? », qui est précisément celle qu'on vient y lire.
+   */
+  const claimed = await registryStore.setCommercialState(projectId, {
     state: nextState,
     at,
     by: actor.userId ?? null,
     reason: reason ? String(reason).slice(0, 500) : null,
+    expected: storedBefore,
   });
+
+  if (!claimed) {
+    /**
+     * Quelqu'un d'autre a bougé l'état entre notre lecture et notre écriture.
+     *
+     * S'il a visé le MÊME état, il n'y a pas de conflit : les deux voulaient la
+     * même chose, l'une d'elles l'a fait, et nous rendons le résultat commun
+     * sans rien réécrire ni rien journaliser. C'est ce qui rend le double clic
+     * inoffensif.
+     *
+     * S'il a visé l'état INVERSE, refuser est la seule réponse honnête : rendre
+     * « ouvert » à qui vient de fermer — ou l'inverse — ferait afficher un état
+     * que personne ne retrouverait en rechargeant.
+     */
+    const actuel = await getProjectOrThrow(projectId);
+    if (effectiveCommercialState(actuel) === nextState) {
+      return describeCommercialReadiness(actuel);
+    }
+    throw ApiError.conflict(
+      'PANEL_COMMERCIAL_STATE_CONCURRENT_CHANGE',
+      'Changement refusé : l’ouverture commerciale a été modifiée pendant cette décision. '
+      + 'Rechargez l’écran pour lire l’état courant.',
+    );
+  }
 
   const ouverture = nextState === COMMERCIAL_STATE.LIVE;
   logger.info(

@@ -173,21 +173,69 @@ export function CommercialReadinessCard({ projectId, canEdit }: {
             )
           ) : (
             <div className="parameter-form">
-              <p className={`mode-notice ${confirmation === 'OPEN' ? 'mode-reel' : 'mode-simulation'}`}>
+              {/*
+                LA CONFIRMATION ÉNUMÈRE LES EFFETS PROUVÉS, ELLE NE LES RÉSUME PAS.
+
+                « Les opérations commerciales réelles » ne dit rien à qui doit
+                décider : ni lesquelles, ni ce qui reste intact. La liste des
+                capacités vient du SERVEUR (`blockedInPreopening`), qui la dérive
+                de la table des effets — l'écran ne peut donc pas se désynchroniser
+                de la politique qu'il annonce, et l'ajout d'un verbe financier
+                apparaît ici sans qu'on y touche.
+              */}
+              <div className={`mode-notice ${confirmation === 'OPEN' ? 'mode-reel' : 'mode-simulation'}`}>
                 {confirmation === 'OPEN' ? (
                   <>
-                    Cette instance pourra exécuter les opérations commerciales
-                    réelles autorisées en{' '}
-                    <strong>{ENVIRONNEMENT_LABEL[vue.environment ?? ''] ?? 'son environnement'}</strong>.
-                    Son environnement technique ne change pas.
+                    <p>
+                      <strong>Cette action autorisera</strong> cette instance à exécuter,
+                      en{' '}
+                      <strong>{ENVIRONNEMENT_LABEL[vue.environment ?? ''] ?? 'son environnement'}</strong>,
+                      les {vue.blockedInPreopening.length} capacité(s) aujourd’hui refusées :
+                    </p>
+                    <ul className="credential-list">
+                      {vue.blockedInPreopening.map((b) => (
+                        <li key={b.capability}>
+                          <span className="credential-name">{b.capability}</span>
+                          <span className="muted">{b.effect}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p>
+                      <strong>Elle ne modifiera pas</strong> l’environnement technique,
+                      les identifiants fournisseurs, le contrat, l’état du site ni sa
+                      suspension, les planificateurs, ni le déploiement. Elle ne déclenche
+                      aucun paiement, aucun envoi et aucune signature : elle lève une
+                      interdiction, elle n’agit pas.
+                    </p>
+                    <p>
+                      <strong>Prérequis vérifiés</strong> :{' '}
+                      {vue.checks.map((c) => c.label).join(' · ')}.
+                    </p>
+                    <p className="muted">
+                      Réversible : « Repasser en pré-ouverture » referme sans condition.
+                      Les opérations exécutées entre-temps, elles, ne sont pas annulées.
+                    </p>
                   </>
                 ) : (
                   <>
-                    Les opérations financières et de signature seront de nouveau
-                    refusées. Les opérations déjà exécutées ne sont pas annulées.
+                    <p>
+                      <strong>Cette action refusera de nouveau</strong> les{' '}
+                      {vue.blockedInPreopening.length} capacité(s) financières et de
+                      signature, dès la prochaine demande.
+                    </p>
+                    <p>
+                      <strong>Elle ne modifiera pas</strong> l’environnement technique, le
+                      contrat, l’état du site, ni les abonnements en cours — refermer
+                      n’est pas résilier.
+                    </p>
+                    <p className="muted">
+                      <strong>Partiellement irréversible</strong> : les opérations déjà
+                      exécutées (paiements encaissés, signatures demandées) restent
+                      acquises et ne sont pas annulées.
+                    </p>
                   </>
                 )}
-              </p>
+              </div>
               <label className="field">
                 <span className="field-label">Motif (facultatif, conservé dans la chronologie)</span>
                 <input type="text" value={motif} maxLength={200}

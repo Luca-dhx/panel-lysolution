@@ -67,6 +67,7 @@
     "test:brevo": "node ../tests/brevo-control-plane.test.js",
     "test:capability-gateway": "node ../tests/capability-gateway.test.js",
     "test:capability-preopening": "node ../tests/capability-preopening.test.js",
+    "test:commercial-opening": "node ../tests/commercial-opening-concurrency.test.js",
     "test:capability-e2e": "node ../tests/capability-gateway-e2e.test.js"
   },
   "dependencies": {

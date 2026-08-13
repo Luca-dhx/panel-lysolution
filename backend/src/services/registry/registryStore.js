@@ -290,15 +290,36 @@ export const registryStore = {
   },
 
   /**
-   * OUVERTURE COMMERCIALE — écriture CIBLÉE (lot L3.1).
+   * OUVERTURE COMMERCIALE — écriture CIBLÉE et CONDITIONNELLE (L3.1, durcie R10.4).
    *
    * `save()` réécrit la fiche entière depuis un instantané lu plus tôt : s'en
    * servir ici écraserait ce qu'un battement de cœur ou une projection vient de
    * poser entre la lecture et la décision. Quatre champs, et rien d'autre.
+   *
+   * ── POURQUOI LE FILTRE PORTE AUSSI SUR L'ÉTAT ATTENDU ─────────────────────
+   *
+   * Le service LIT la fiche, vérifie la transition et les prérequis, PUIS
+   * écrit. Entre ces deux instants, une seconde requête peut faire exactement
+   * le même chemin : deux clics, deux onglets, un rejeu réseau. Avec un `$set`
+   * inconditionnel, les deux gagnaient — même état écrit deux fois, et surtout
+   * DEUX événements d'ouverture dans la chronologie, pour un seul geste.
+   *
+   * Le filtre transforme l'écriture en comparaison-et-échange : seul le
+   * premier trouve encore l'état qu'il avait lu. Les suivants ne matchent
+   * rien, et le service les traite comme ce qu'ils sont — des doublons, pas
+   * des décisions.
+   *
+   * `expected` est l'état STOCKÉ, pas l'état effectif : `null` (« jamais
+   * décidé ») et `PREOPENING` se résolvent pareil pour la politique, mais ce
+   * sont deux valeurs différentes en base, et c'est celle-là qu'il faut
+   * retrouver. Un filtre Mongo sur `null` matche aussi le champ absent, ce qui
+   * couvre les fiches antérieures à L3.1.
+   *
+   * @returns {Promise<boolean>} `true` si CETTE tentative a écrit.
    */
-  async setCommercialState(projectId, { state, at, by = null, reason = null }) {
-    await PanelProject.updateOne(
-      { projectId },
+  async setCommercialState(projectId, { state, at, by = null, reason = null, expected }) {
+    const result = await PanelProject.updateOne(
+      { projectId, commercialState: expected ?? null },
       {
         $set: {
           commercialState: state,
@@ -309,6 +330,7 @@ export const registryStore = {
         },
       },
     );
+    return result.matchedCount > 0;
   },
 
   async remove(projectId) {

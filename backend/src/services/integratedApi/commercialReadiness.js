@@ -165,7 +165,6 @@ export const CAPABILITY_EFFECTS = Object.freeze({
    * lors qu'un abonnement a un propriétaire prouvable.
    */
   'billing.subscription.retrieve': EFFECT.READ_ONLY,
-  'billing.invoice.list': EFFECT.READ_ONLY,
   'billing.subscription.reconcile': EFFECT.READ_ONLY,
   // Créer un Customer ne débite rien et se supprime. L'interdire empêcherait
   // de préparer le dossier d'un client avant son ouverture, sans rien protéger.

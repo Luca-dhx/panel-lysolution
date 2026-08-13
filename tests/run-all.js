@@ -114,6 +114,10 @@ const TESTS = [
   // L3.1 — le geste qui manquait : ouvrir, refermer, et la jonction avec la
   // passerelle. L'environnement est relevé avant/après : il ne bouge pas.
   'commercial-readiness-runtime.test.js',
+  // R10.4 — le geste est RÉCLAMÉ, pas seulement écrit. Double clic ×8,
+  // concurrence, rejeu et course inverse : un seul événement d'ouverture,
+  // jamais deux, et aucune sortie fournisseur.
+  'commercial-opening-concurrency.test.js',
   // L8 — la connaissance Brevo : deux vocabulaires d'événements pour un seul
   // sens, quatre champs de date pour deux unités, et cinq objets qu'on
   // confondait. Enregistré ici en L5.1 — il était livré mais jamais exécuté.
@@ -130,6 +134,10 @@ const TESTS = [
   // l'autorité de contenu du Panel, les identités expéditrices par projet, et
   // l'idempotence que Brevo n'offre pas.
   'brevo-send-template-foundation.test.js',
+  // R10.4 — l'expéditeur GLOBAL : une seule source pour tout le parc et pour le
+  // Panel lui-même, aucun projet ne configure le From, et l'e-mail de test
+  // emprunte la chaîne réelle jusqu'au webhook de livraison.
+  'global-email-sender.test.js',
   // L8.4C — la BOUCLE COMPLÈTE, de bout en bout : un projet demande un envoi,
   // le Panel le fait partir sous SON compte, le webhook du fournisseur revient
   // au Panel, et le verbe de livraison redescend jusqu'au projet — y compris
