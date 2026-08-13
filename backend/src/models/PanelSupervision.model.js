@@ -93,6 +93,22 @@ export const EVENT_TYPES = Object.freeze({
    */
   INTEGRATED_API_PUBLISHED: 'INTEGRATED_API_PUBLISHED',
   PROJECT_DISCOVERED: 'PROJECT_DISCOVERED',
+  /**
+   * L10.6B-2 — UN IMPAYÉ A RÉELLEMENT FERMÉ UN SITE.
+   *
+   * Écrit à la CONFIRMATION, quand le projet a renvoyé son état et prouvé que
+   * la cause financière est appliquée — jamais à la demande de suspension.
+   * `suspensionRequestedAt` dit ce que le Panel a réclamé ;
+   * `suspensionConfirmedAt` dit ce qui s'est réellement produit. Journaliser
+   * la première ferait apparaître dans la chronologie des fermetures qui
+   * n'ont peut-être jamais eu lieu.
+   *
+   * Ce journal est l'ACTIVITÉ D'OPÉRATEUR, borné à `timelineHistorySize`. La
+   * preuve durable de l'incident reste `PanelPaymentDefault`, qui n'est jamais
+   * élagué : un défaut de paiement de l'an dernier doit rester démontrable
+   * longtemps après que son événement a quitté la chronologie.
+   */
+  PROJECT_SITE_SUSPENDED_PAYMENT_DEFAULT: 'PROJECT_SITE_SUSPENDED_PAYMENT_DEFAULT',
   // L1 — plan de contrôle IntegratedAPI. Ces événements ne concernent aucun
   // projet (`projectId: null`) : ils décrivent le Panel administrant son
   // propre coffre. Leur `data` ne porte QUE des noms de rôles et des codes.

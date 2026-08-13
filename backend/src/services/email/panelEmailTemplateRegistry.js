@@ -449,7 +449,7 @@ ${row('Envoyé le', '{{email.sentAt}}')}
       { key: 'developer.companyName', label: 'Votre société', description: 'Émetteur de la demande.', type: VARIABLE_TYPE.TEXT, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'payment.label': 'Ajout formulaire personnalisé',
       'payment.description': 'Développement et intégration du formulaire demandé.',
       'payment.amount': '500,00 €',
@@ -501,7 +501,7 @@ ${button('Régler cette prestation', '{{payment.url}}')}
       { key: 'developer.companyName', label: 'Votre société', description: 'Émetteur de la demande.', type: VARIABLE_TYPE.TEXT, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'payment.label': 'Ajout formulaire personnalisé',
       'payment.amount': '500,00 €',
       'payment.url': 'https://manager.exemple.fr/factures',
@@ -532,6 +532,138 @@ ${button('Régler maintenant', '{{payment.url}}')}
               dans ce cas, merci de ne pas en tenir compte.
             </p>`,
         footerHtml: '            {{developer.companyName}} — {{company.name}}.',
+      });
+    },
+  },
+
+  /* ───────────────────────────────────────────────────────────────────────────
+   * L10.6B-2 — QUAND UN IMPAYÉ A RÉELLEMENT FERMÉ UN SITE.
+   *
+   * Deux modèles, deux publics, et ils ne disent pas la même chose :
+   *
+   *   · le CLIENT doit comprendre pourquoi son site ne répond plus et comment
+   *     y remédier — c'est un message d'action ;
+   *   · l'ÉQUIPE doit disposer du dossier — dates, montant, référence — pour
+   *     décider quoi faire. C'est un message d'exploitation.
+   *
+   * Les fondre en un seul aurait donné soit un client noyé sous des détails
+   * internes, soit une équipe privée de ce qu'il lui faut. Ils ne partent
+   * qu'APRÈS confirmation réelle de la fermeture par le projet lui-même.
+   *
+   * Aucun des deux n'appelle Brevo : rendus par l'autorité Panel, envoyés par
+   * `email.send_template`, comme tout message du parc depuis L8.4C.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT: {
+    templateId: 'SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT',
+    defaultName: 'Impayé — site suspendu (client)',
+    defaultDescription:
+      "Envoyé aux administrateurs du projet APRÈS que le site a réellement été fermé pour un abonnement impayé — jamais à la simple demande de suspension. Explique la cause et renvoie vers l'espace de facturation. Aucun détail technique du prestataire de paiement.",
+    defaultSubject: 'Votre site est suspendu — {{suspension.reasonLabel}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du site concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'suspension.reasonLabel', label: 'Motif', description: 'Motif canonique, toujours « Défaut de paiement ». Jamais un message du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'suspension.confirmedOn', label: 'Suspendu le', description: 'Date de fermeture confirmée par le site lui-même, déjà formatée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'billing.url', label: 'Lien vers la facturation', description: 'Page « Facturation & abonnement » du Manager. Jamais un lien du prestataire de paiement.', type: VARIABLE_TYPE.URL, required: false },
+      { key: 'developer.companyName', label: 'Votre société', description: 'Émetteur du message.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'suspension.reasonLabel': 'Défaut de paiement',
+      'suspension.confirmedOn': '13 août 2026',
+      'billing.url': 'https://manager.exemple.fr/factures',
+      'developer.companyName': 'L.Y Solution',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre site est temporairement suspendu — {{suspension.reasonLabel}}.',
+        heading: 'Votre site est suspendu',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour,
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Le site de {{company.name}} a été suspendu le {{suspension.confirmedOn}}.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Motif', '{{suspension.reasonLabel}}')}
+${row('Depuis le', '{{suspension.confirmedOn}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Un règlement d'abonnement n'a pas pu être encaissé. Dès que la situation
+              sera régularisée, le site sera rétabli.
+            </p>
+${button('Voir ma facturation', '{{billing.url}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Si vous pensez qu'il s'agit d'une erreur, répondez à ce message : nous
+              regarderons ensemble.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — {{company.name}}.',
+      });
+    },
+  },
+
+  SITE_SUSPENDED_PAYMENT_DEFAULT_TEAM: {
+    templateId: 'SITE_SUSPENDED_PAYMENT_DEFAULT_TEAM',
+    defaultName: 'Impayé — site suspendu (équipe)',
+    defaultDescription:
+      "Envoyé à l'équipe L.Y Solution quand la fermeture d'un site pour impayé est confirmée par le projet. Porte le dossier : identifiant stable, premier échec, échéance de grâce, date de confirmation. Aucune donnée n'est allée la chercher chez le prestataire de paiement — tout vient de l'incident local.",
+    defaultSubject: 'Site suspendu pour impayé — {{project.name}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'project.name', label: 'Projet', description: 'Nom lisible du projet.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'project.id', label: 'Identifiant du projet', description: 'Identifiant stable, celui du registre.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'suspension.reasonLabel', label: 'Motif', description: 'Motif canonique, toujours « Défaut de paiement ».', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.firstFailedOn', label: 'Premier échec', description: 'Date du premier prélèvement refusé, déjà formatée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.graceDeadlineOn', label: 'Échéance de grâce', description: 'Date d’échéance. Vide si aucune politique n’était configurée.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'suspension.confirmedOn', label: 'Fermeture confirmée le', description: 'Date à laquelle le projet a confirmé la fermeture.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.amountDue', label: 'Montant dû', description: 'Montant de la facture impayée, déjà formaté. Vide si inconnu.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'incident.reference', label: 'Référence', description: 'Identifiant de l’incident. Jamais une référence du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'project.name': 'Entreprise Démonstration',
+      'project.id': 'entreprise-demonstration',
+      'suspension.reasonLabel': 'Défaut de paiement',
+      'incident.firstFailedOn': '1 août 2026',
+      'incident.graceDeadlineOn': '8 août 2026',
+      'suspension.confirmedOn': '13 août 2026',
+      'incident.amountDue': '249,00 €',
+      'incident.reference': '7f3c1a20-5b9e-4d11-9f42-8c0a1b2d3e4f',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: '{{project.name}} — fermeture confirmée pour impayé.',
+        heading: 'Site suspendu pour impayé',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              La fermeture du site de <strong>{{project.name}}</strong> vient d'être
+              confirmée par le projet lui-même.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Projet', '{{project.id}}')}
+${row('Motif', '{{suspension.reasonLabel}}')}
+${row('Premier échec', '{{incident.firstFailedOn}}')}
+${row('Échéance de grâce', '{{incident.graceDeadlineOn}}')}
+${row('Fermeture confirmée', '{{suspension.confirmedOn}}')}
+${row('Montant dû', '{{incident.amountDue}}')}
+${row('Incident', '{{incident.reference}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Les tentatives de prélèvement restent pilotées par le prestataire de
+              paiement. Ce message constate une fermeture, il n'en déclenche aucune.
+            </p>`,
+        footerHtml: '            Notification interne — L.Y Solution.',
       });
     },
   },

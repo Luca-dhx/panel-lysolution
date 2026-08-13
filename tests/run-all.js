@@ -71,6 +71,11 @@ const TESTS = [
   // fermeture automatique. La suite garde aussi la frontière avec Stripe, qui
   // reste seul ordonnanceur des tentatives de collecte.
   'finance-payment-default-confirmation.test.js',
+  // L10.6B-2 — CE QU'ON ANNONCE, ET QUAND ON A LE DROIT DE L'ANNONCER. Les
+  // notifications et l'activité sont des CONSÉQUENCES de la confirmation
+  // réelle, jamais des conditions : une panne d'envoi ne défait aucune
+  // suspension, et huit livraisons du même instantané n'écrivent qu'une fois.
+  'finance-payment-default-notifications.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',

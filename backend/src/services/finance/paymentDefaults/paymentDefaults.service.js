@@ -616,6 +616,8 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
 
   let confirmed = 0;
   let removed = 0;
+  /** Les incidents que CET appel vient de faire basculer — voir plus bas. */
+  const confirmes = [];
 
   if (applique && ferme) {
     /**
@@ -625,16 +627,42 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
      * fait foi. Un snapshot rejoué ne réécrit pas la date, sans quoi l'écran
      * afficherait une fermeture qui rajeunirait à chaque livraison.
      */
-    const r = await PanelPaymentDefault.updateMany(
-      {
-        projectId,
-        status: PAYMENT_DEFAULT_STATUS.GRACE_EXPIRED,
-        suspensionRequestedAt: { $ne: null },
-        suspensionConfirmedAt: null,
-      },
-      { $set: { suspensionConfirmedAt: vu } },
-    );
-    confirmed = r.modifiedCount ?? 0;
+    /**
+     * ══ POURQUOI UN `findOneAndUpdate` PAR INCIDENT, ET NON UN `updateMany` ═══
+     *
+     * L10.6A se contentait d'un compteur : il suffisait à dire « c'est
+     * confirmé ». L10.6B-2 doit en plus savoir QUELS incidents viennent de
+     * basculer, parce que chaque bascule produit une activité et des
+     * notifications qui doivent partir EXACTEMENT UNE FOIS.
+     *
+     * Un `updateMany` rend `modifiedCount` — un nombre, pas des identités. En
+     * relisant ensuite les incidents confirmés, on ne saurait pas distinguer
+     * ceux que CET appel vient de faire basculer de ceux qu'un appel concurrent
+     * (ou un snapshot rejoué une milliseconde plus tôt) avait déjà confirmés.
+     * On enverrait alors deux fois le même e-mail.
+     *
+     * Ici, c'est l'écriture atomique qui arbitre : le filtre exige
+     * `suspensionConfirmedAt: null`, donc UN SEUL appelant obtient le document
+     * en retour. Celui qui l'obtient est celui qui a fait la transition, et
+     * c'est lui — et lui seul — qui notifie.
+     */
+    const candidats = await PanelPaymentDefault.find({
+      projectId,
+      status: PAYMENT_DEFAULT_STATUS.GRACE_EXPIRED,
+      suspensionRequestedAt: { $ne: null },
+      suspensionConfirmedAt: null,
+    }).select('_id').lean();
+
+    for (const { _id } of candidats) {
+      // eslint-disable-next-line no-await-in-loop
+      const gagne = await PanelPaymentDefault.findOneAndUpdate(
+        { _id, suspensionConfirmedAt: null },
+        { $set: { suspensionConfirmedAt: vu } },
+        { new: true },
+      ).lean();
+      if (gagne) confirmes.push(gagne);
+    }
+    confirmed = confirmes.length;
   }
 
   if (!applique) {
@@ -669,7 +697,34 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
       + `(accessible=${snapshot.accessible}, paymentDefault=${applique}).`,
     );
   }
-  return { confirmed, removed, reason: null };
+
+  /**
+   * ══ LES EFFETS DE BORD DE LA CONFIRMATION (L10.6B-2) ═══════════════════════
+   *
+   * Activité d'exploitation et notifications. Ils sont ICI, et non chez
+   * l'appelant, pour deux raisons :
+   *
+   *  · c'est le seul endroit qui connaisse la TRANSITION — la bascule que cet
+   *    appel vient de gagner atomiquement, par opposition à un état déjà
+   *    confirmé qu'un rejeu relirait ;
+   *  · `confirmFromSiteStatus` est traversé par la livraison immédiate comme
+   *    par le rattrapage hors ligne. Un seul chemin, donc un seul effet.
+   *
+   * `catch` global et délibéré : une notification est une CONSÉQUENCE de la
+   * suspension, jamais une condition. Si l'annonce échoue, la fermeture reste
+   * vraie, la confirmation reste écrite, et rien ne revient en arrière.
+   */
+  if (confirmes.length > 0) {
+    const { announceConfirmedSuspensions } = await import('./paymentDefaultAnnouncements.js');
+    await announceConfirmedSuspensions({ projectId, incidents: confirmes }).catch((err) => {
+      logger.error(
+        `[finance] annonce de suspension impossible pour ${projectId} — ${err?.message}. `
+        + 'La suspension et sa confirmation restent acquises.',
+      );
+    });
+  }
+
+  return { confirmed, removed, reason: null, confirmedIncidents: confirmes };
 }
 
 /* -------------------------------------------------------------------------- */

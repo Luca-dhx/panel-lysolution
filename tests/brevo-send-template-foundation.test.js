@@ -45,12 +45,49 @@ const PROJET_B = 'projet-b';
    ══════════════════════════════════════════════════════════════════════════ */
 section('1 · Les codes de modèle sont canoniques et code-first');
 {
+  /**
+   * ══ POURQUOI UN COMPTE EN DUR, ET POURQUOI IL DOIT FAIRE MAL ═══════════════
+   *
+   * Ce nombre n'est pas une commodité : c'est un point de passage obligé. Tout
+   * modèle ajouté au registre canonique casse ce contrôle, et c'est le but —
+   * il force à venir déclarer nominativement le nouveau modèle plutôt qu'à le
+   * laisser entrer sans que personne ne l'ait regardé.
+   *
+   * Il a d'ailleurs déjà rempli son office : L10.5 a ajouté les deux modèles de
+   * prestation sans passer par ici, et ce contrôle est resté rouge jusqu'à
+   * L10.6B-2. La leçon n'est pas de dériver le nombre du registre — cela
+   * supprimerait le garde-fou — mais de venir ici quand on ajoute un modèle.
+   *
+   * Un nombre SEUL serait toutefois insuffisant : remplacer un modèle par un
+   * autre le laisserait passer. La liste nominative ci-dessous est donc
+   * EXHAUSTIVE, et vérifiée dans les deux sens.
+   */
+  const ATTENDUS = [
+    // Fondation (L8.4C)
+    'PASSWORD_RESET_REQUEST',
+    'CONTACT_ADMIN_NOTIFICATION',
+    'CONTRACT_CANCELLATION_ADMIN_CONFIRMATION',
+    'CONTRACT_CANCELLATION_DEV_NOTIFICATION',
+    'EMAIL_SENDER_VERIFICATION_TEST',
+    // L10.5 — prestations ponctuelles
+    'PAYMENT_REQUEST_CREATED',
+    'PAYMENT_REQUEST_REMINDER',
+    // L10.6B-2 — impayé ayant réellement fermé un site. Deux publics, deux
+    // messages : le client agit, l'équipe instruit.
+    'SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT',
+    'SITE_SUSPENDED_PAYMENT_DEFAULT_TEAM',
+  ];
+
   const codes = templates.listTemplateCodes();
-  check('les 5 modèles du parc sont là', codes.length === 5);
+  check(`les ${ATTENDUS.length} modèles du parc sont là`, codes.length === ATTENDUS.length);
   check('ce sont les codes RÉELS du dépôt, repris tels quels',
-    ['PASSWORD_RESET_REQUEST', 'CONTACT_ADMIN_NOTIFICATION',
-      'CONTRACT_CANCELLATION_ADMIN_CONFIRMATION', 'CONTRACT_CANCELLATION_DEV_NOTIFICATION',
-      'EMAIL_SENDER_VERIFICATION_TEST'].every((c) => codes.includes(c)));
+    ATTENDUS.every((c) => codes.includes(c)));
+  /**
+   * L'AUTRE SENS — aucun modèle ne s'invite sans être déclaré ici. Sans ce
+   * contrôle, un ajout non revu passerait dès que le compte est corrigé.
+   */
+  const intrus = codes.filter((c) => !ATTENDUS.includes(c));
+  check(`aucun modèle non déclaré (${intrus.join(', ') || 'aucun'})`, intrus.length === 0);
 
   /**
    * RAW_BREVO_TEMPLATE_ID_REJECTED — un identifiant numérique de modèle Brevo
@@ -76,16 +113,35 @@ section('1 · Les codes de modèle sont canoniques et code-first');
    ══════════════════════════════════════════════════════════════════════════ */
 section('2 · L’amorçage pose les défauts de plateforme, une seule fois');
 {
+  // Le registre fait foi : l'amorçage doit poser TOUT ce qu'il déclare, ni
+  // plus ni moins. Le nombre attendu vient de la liste nominative ci-dessus,
+  // qui est elle-même verrouillée dans les deux sens.
+  const N = templates.listTemplateCodes().length;
+
   const premier = await templates.seedPlatformTemplates();
-  check('5 modèles amorcés au premier passage', premier.created === 5 && premier.existing === 0);
+  check(`${N} modèles amorcés au premier passage`, premier.created === N && premier.existing === 0);
 
   const second = await templates.seedPlatformTemplates();
-  check('rejoué : aucun nouveau modèle', second.created === 0 && second.existing === 5);
+  check('rejoué : aucun nouveau modèle', second.created === 0 && second.existing === N);
 
-  check('5 documents en base, pas un de plus',
-    (await PanelEmailTemplate.countDocuments({ projectId: null })) === 5);
+  check(`${N} documents en base, pas un de plus`,
+    (await PanelEmailTemplate.countDocuments({ projectId: null })) === N);
   check('chaque amorçage a laissé une version 1',
-    (await PanelEmailTemplateVersion.countDocuments({ origin: 'BOOTSTRAP' })) === 5);
+    (await PanelEmailTemplateVersion.countDocuments({ origin: 'BOOTSTRAP' })) === N);
+
+  /**
+   * NOMINATIF — les modèles de L10.5 sont réellement AMORÇÉS, pas seulement
+   * déclarés. Un modèle présent au registre mais absent en base ne serait
+   * jamais envoyable, et le compte seul ne l'aurait pas dit.
+   */
+  const enBase = (await PanelEmailTemplate.find({ projectId: null }).select('templateCode').lean())
+    .map((t) => t.templateCode);
+  for (const code of [
+    'PAYMENT_REQUEST_CREATED', 'PAYMENT_REQUEST_REMINDER',
+    'SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT', 'SITE_SUSPENDED_PAYMENT_DEFAULT_TEAM',
+  ]) {
+    check(`${code} est amorcé en base`, enBase.includes(code));
+  }
 
   // NON DESTRUCTIF : un contenu réécrit survit à un rejeu du seed.
   await templates.saveTemplate('PASSWORD_RESET_REQUEST', {
