@@ -309,8 +309,11 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
      */
     rebrandWatch: 'Yousign → Youtrust (2026-07) : hôtes d’API à revérifier avant L7.',
     capabilities: Object.freeze([
-      'signature.request.create',
+      'signature.request.open',
+      'signature.request.retrieve',
+      'signature.signer.retrieve',
       'signature.document.download',
+      'signature.request.cancel',
     ]),
     credentialRoles: Object.freeze([
       role('apiKey', 'Clé API', { secret: true, required: true }),

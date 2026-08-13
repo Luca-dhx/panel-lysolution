@@ -147,6 +147,120 @@ const emailSendTemplateInput = z.object({
   operationId: z.string().trim().min(8).max(64),
 }).strict();
 
+/* ── Yousign (R10.5C) ─────────────────────────────────────────────────────── */
+
+/**
+ * UN SIGNATAIRE, tel que le projet le décrit.
+ *
+ * L'identité vient du SNAPSHOT contractuel figé à la validation, jamais des
+ * fiches Entreprise vivantes : c'est une règle du projet, et la passerelle n'a
+ * pas à la connaître. Ce qu'elle impose, elle, c'est que les trois champs
+ * soient présents — un signataire vide produirait chez Yousign un refus dont le
+ * message n'apprend rien.
+ */
+const signerSchema = z.object({
+  role: z.enum(['DEVELOPER', 'CLIENT']),
+  firstName: z.string().trim().min(1).max(120),
+  lastName: z.string().trim().min(1).max(120),
+  email: z.string().trim().email().max(200),
+  /** Retour de fin de signature. FACULTATIF : sans lui, le signataire reste chez Yousign. */
+  redirectUrls: z.object({
+    success: z.string().url(),
+    error: z.string().url(),
+    decline: z.string().url(),
+  }).strict().optional(),
+}).strict();
+
+/** UNE ZONE DE SIGNATURE, déjà convertie en coordonnées par le projet. */
+const signatureFieldSchema = z.object({
+  signerRole: z.enum(['DEVELOPER', 'CLIENT']),
+  page: z.number().int().min(1),
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+}).strict();
+
+const signatureRequestOpenInput = z.object({
+  /**
+   * LA RÉFÉRENCE MÉTIER — c'est elle qui fonde l'appartenance et l'unicité.
+   * Un contrat n'a qu'une demande vivante à la fois (index partiel).
+   */
+  contractRef: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(200),
+  /**
+   * LE PDF, EN BASE64.
+   *
+   * La passerelle porte du JSON ; un transport binaire dédié aurait créé un
+   * second chemin d'exécution, donc un second endroit où l'appartenance
+   * pourrait être oubliée. Borné à ~15 Mio décodés.
+   */
+  documentBase64: z.string().min(1).max(20_000_000),
+  documentFilename: z.string().trim().min(1).max(200),
+  /** L'ORDRE du tableau EST l'ordre de signature. */
+  signers: z.array(signerSchema).min(1).max(4),
+  fields: z.array(signatureFieldSchema).min(1).max(40),
+  operationId: z.string().trim().min(8).max(64),
+}).strict();
+
+const signatureRequestOpenOutput = z.object({
+  status: z.enum(['OPENED', 'ALREADY_OPEN']),
+  signatureRequestId: z.string().nullable(),
+  documentId: z.string().nullable(),
+  contractRef: z.string(),
+  signers: z.array(z.object({
+    role: z.string(),
+    signerId: z.string(),
+    signatureLink: z.string().nullable(),
+  }).strict()),
+}).strict();
+
+const signatureRequestRefInput = z.object({
+  signatureRequestId: z.string().trim().min(8).max(64),
+  operationId: z.string().trim().min(8).max(64).optional(),
+}).strict();
+
+const signatureRequestRetrieveOutput = z.object({
+  signatureRequestId: z.string(),
+  status: z.string().nullable(),
+  signers: z.array(z.object({
+    signerId: z.string(),
+    status: z.string().nullable(),
+  }).strict()),
+}).strict();
+
+const signatureSignerRetrieveInput = z.object({
+  signatureRequestId: z.string().trim().min(8).max(64),
+  signerId: z.string().trim().min(8).max(64),
+  operationId: z.string().trim().min(8).max(64).optional(),
+}).strict();
+
+const signatureSignerRetrieveOutput = z.object({
+  signerId: z.string(),
+  status: z.string().nullable(),
+  signatureLink: z.string().nullable(),
+}).strict();
+
+const signatureDocumentDownloadOutput = z.object({
+  signatureRequestId: z.string(),
+  documentId: z.string(),
+  contentBase64: z.string(),
+  byteLength: z.number().int(),
+  /** L'empreinte accompagne le contenu : le projet vérifie ce qu'il a reçu. */
+  sha256: z.string(),
+}).strict();
+
+const signatureRequestCancelInput = z.object({
+  signatureRequestId: z.string().trim().min(8).max(64),
+  reason: z.string().trim().max(200).optional(),
+  operationId: z.string().trim().min(8).max(64),
+}).strict();
+
+const signatureRequestCancelOutput = z.object({
+  signatureRequestId: z.string(),
+  status: z.literal('CANCELED'),
+}).strict();
+
 /* -------------------------------------------------------------------------- */
 /*  SCHÉMAS DE SORTIE                                                         */
 /* -------------------------------------------------------------------------- */
@@ -595,27 +709,78 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     migrationNote: null,
   }),
 
-  /* ── Yousign — audité, pas migré (L7) ───────────────────────────────────── */
+  /* ── Yousign — SERVIES (R10.5C) ─────────────────────────────────────────── */
 
+  /**
+   * OUVRIR UNE SIGNATURE — un acte, cinq appels.
+   *
+   * Elle remplace `signature.request.create` : le nom `create` laissait croire
+   * à un acte élémentaire qu'on compléterait ensuite, et c'est cette lecture
+   * qui aurait fait exposer six capacités — donc laissé un projet capable de
+   * s'arrêter au milieu d'une préparation.
+   */
+  'signature.request.open': capability('signature.request.open', {
+    provider: 'YOUSIGN',
+    label: 'Ouvrir une demande de signature',
+    migrated: true,
+    inputSchema: signatureRequestOpenInput,
+    outputSchema: signatureRequestOpenOutput,
+    /** Généreux : un upload de PDF n'est pas une lecture. */
+    timeoutMs: 60_000,
+    /**
+     * Aucune clé d'idempotence chez Yousign : un doublon sollicite une seconde
+     * fois une personne réelle avec un engagement juridique. Le registre
+     * d'opérations EST la garantie, doublé de l'index partiel « une demande
+     * vivante par contrat ».
+     */
+    idempotency: IDEMPOTENCY.UNKNOWN_ON_TIMEOUT,
+    requiredPermissions: [PERMISSIONS.SIGNATURE_WRITE],
+    correlationField: 'signatureRequestId',
+    migrationNote: null,
+  }),
+  'signature.request.retrieve': capability('signature.request.retrieve', {
+    provider: 'YOUSIGN',
+    label: 'Lire l’état d’une demande de signature',
+    migrated: true,
+    inputSchema: signatureRequestRefInput,
+    outputSchema: signatureRequestRetrieveOutput,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
+    migrationNote: null,
+  }),
+  'signature.signer.retrieve': capability('signature.signer.retrieve', {
+    provider: 'YOUSIGN',
+    label: 'Lire le lien de signature d’un signataire',
+    migrated: true,
+    inputSchema: signatureSignerRetrieveInput,
+    outputSchema: signatureSignerRetrieveOutput,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
+    migrationNote: null,
+  }),
   'signature.document.download': capability('signature.document.download', {
     provider: 'YOUSIGN',
     label: 'Télécharger un document signé',
-    migrated: false,
-    timeoutMs: 30_000,
+    migrated: true,
+    inputSchema: signatureRequestRefInput,
+    outputSchema: signatureDocumentDownloadOutput,
+    timeoutMs: 60_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
-    migrationNote: 'L7. Rend un binaire : la passerelle devra porter un transport non-JSON.',
+    migrationNote: null,
   }),
-  'signature.request.create': capability('signature.request.create', {
+  'signature.request.cancel': capability('signature.request.cancel', {
     provider: 'YOUSIGN',
-    label: 'Demander une signature',
-    migrated: false,
+    label: 'Annuler une demande de signature',
+    migrated: true,
+    inputSchema: signatureRequestCancelInput,
+    outputSchema: signatureRequestCancelOutput,
     timeoutMs: 30_000,
-    // Aucune clé d'idempotence documentée : un doublon crée une seconde
-    // demande de signature chez une personne réelle.
     idempotency: IDEMPOTENCY.UNKNOWN_ON_TIMEOUT,
     requiredPermissions: [PERMISSIONS.SIGNATURE_WRITE],
-    migrationNote: 'L7. Hôtes d’API à revérifier après le rebranding Youtrust.',
+    migrationNote: null,
   }),
 
   /* ── Hostinger — les trois verbes du DNS, servis (L9.1) ─────────────────── */

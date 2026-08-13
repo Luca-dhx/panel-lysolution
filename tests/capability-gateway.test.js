@@ -177,6 +177,24 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'billing.invoice.list',
     'billing.invoice.retrieve',
     'billing.portal.create',
+    /**
+     * R10.5C — LES CINQ ACTES DE SIGNATURE.
+     *
+     * Cinq, et non onze : l’API Yousign expose onze endpoints, mais ouvrir une
+     * signature suppose d’en enchaîner cinq (demande, document, signataires,
+     * champs, activation). Les exposer séparément aurait laissé un projet
+     * s’arrêter au milieu d’une préparation — précisément l’état que le
+     * tout-ou-rien s’échine à ne jamais rendre observable.
+     *
+     * Ce sont aussi les premières capacités dont l’appartenance repose sur un
+     * lien écrit AVANT l’appel fournisseur, et non sur une metadata rendue par
+     * lui.
+     */
+    'signature.request.open',
+    'signature.request.retrieve',
+    'signature.signer.retrieve',
+    'signature.document.download',
+    'signature.request.cancel',
   ].sort();
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
     JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
@@ -589,8 +607,8 @@ section('9. IDEMPOTENCE — une stratégie par capacité, jamais une seule');
   check('les écritures Stripe sont PROVIDER_IDEMPOTENT',
     registry.getCapabilityDefinition(CHECKOUT).idempotency === registry.IDEMPOTENCY.PROVIDER_IDEMPOTENT);
   // Une demande de signature engage une personne réelle : jamais rejouée seule.
-  check('la demande de signature est UNKNOWN_ON_TIMEOUT',
-    registry.getCapabilityDefinition('signature.request.create').idempotency
+  check('l’ouverture de signature est UNKNOWN_ON_TIMEOUT',
+    registry.getCapabilityDefinition('signature.request.open').idempotency
     === registry.IDEMPOTENCY.UNKNOWN_ON_TIMEOUT);
 }
 

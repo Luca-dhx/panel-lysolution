@@ -76,8 +76,8 @@ section('PROD_PREOPENING_BLOCKS_REAL_PAYMENT');
     check(`…et l’effet nommé`, r.effect === EFFECT.FINANCIAL_WRITE);
   }
 
-  const signature = canExecute({ capability: 'signature.request.create', commercialState: preopening });
-  check('demander une signature est REFUSÉE en pré-ouverture',
+  const signature = canExecute({ capability: 'signature.request.open', commercialState: preopening });
+  check('OUVRIR une signature est REFUSÉE en pré-ouverture',
     signature.decision === DECISION.BLOCKED_PREOPENING && signature.effect === EFFECT.LEGAL_WRITE);
 }
 
@@ -248,7 +248,11 @@ section('La politique est une table fermée, relisible');
   const bloquees = capabilitiesBlockedInPreopening();
   // L6.2G ajoute la coupure immédiate : une résiliation engage l'argent du
   // client autant qu'un encaissement, et n'a donc rien à faire avant l'ouverture.
-  check('5 capacités sont bloquées en pré-ouverture', bloquees.length === 5);
+  //
+  // R10.5C en ajoute une sixième : ANNULER une signature atteint le même tiers
+  // réel que la lui avoir demandée. La ranger en écriture réversible l'aurait
+  // autorisée pendant la recette, sur un signataire déjà sollicité.
+  check('6 capacités sont bloquées en pré-ouverture', bloquees.length === 6);
   check('…et ce sont bien les financières et la signature',
     bloquees.every((b) => [EFFECT.FINANCIAL_WRITE, EFFECT.LEGAL_WRITE].includes(b.effect)));
 

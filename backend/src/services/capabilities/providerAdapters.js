@@ -34,6 +34,7 @@ import {
 } from '../integratedApi/brevo/brevoTransport.js';
 import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
 import { STRIPE_ADAPTERS } from '../integratedApi/stripe/stripeAdapters.js';
+import { YOUSIGN_ADAPTERS } from '../integratedApi/yousign/yousignAdapters.js';
 import { brevoSendTemplate } from './brevoSendAdapter.js';
 import {
   CAPABILITY_ERROR_CODES,
@@ -181,6 +182,17 @@ const ADAPTERS = Object.freeze({
    * projet à rejouer un paiement.
    */
   ...STRIPE_ADAPTERS,
+  /**
+   * YOUSIGN — cinq actes métier, servis depuis R10.5C.
+   *
+   * Hors de ce fichier pour la même raison que les autres : ils traduisent
+   * leurs PROPRES refus. Le traducteur générique ci-dessus ne connaît que
+   * Brevo — une YousignTransportError y tomberait dans « erreur non typée » et
+   * ressortirait en PROVIDER_UNAVAILABLE, c'est-à-dire en « rien ne s'est
+   * passé ». Sur une demande de signature interrompue, c'est faux, et c'est
+   * exactement l’affirmation qui pousse à solliciter deux fois un signataire.
+   */
+  ...YOUSIGN_ADAPTERS,
 });
 
 export function hasAdapter(code) {

@@ -223,10 +223,29 @@ export const CAPABILITY_EFFECTS = Object.freeze({
 
   // ── Yousign ──────────────────────────────────────────────────────────────
   'signature.document.download': EFFECT.READ_ONLY,
-  // Demander une signature engage juridiquement un tiers réel. C'est aussi la
-  // PREMIÈRE étape du parcours d'activation : la refuser en pré-ouverture est
-  // cohérent — on ouvre, PUIS on contractualise.
-  'signature.request.create': EFFECT.LEGAL_WRITE,
+  'signature.request.retrieve': EFFECT.READ_ONLY,
+  'signature.signer.retrieve': EFFECT.READ_ONLY,
+  /**
+   * OUVRIR une signature engage juridiquement un tiers réel. C'est aussi la
+   * PREMIÈRE étape du parcours d'activation : la refuser en pré-ouverture est
+   * cohérent — on ouvre commercialement, PUIS on contractualise.
+   *
+   * Nommée `open` et non `create` (R10.5C) : elle ne crée pas un objet, elle
+   * ouvre un parcours — demande, document, signataires, champs, activation. Le
+   * nom `create` laissait croire à un acte élémentaire qu'on pourrait compléter
+   * ensuite, et c'est exactement la lecture qui aurait fait découper la
+   * capacité en six.
+   */
+  'signature.request.open': EFFECT.LEGAL_WRITE,
+  /**
+   * ANNULER ENGAGE AUTANT QU'OUVRIR.
+   *
+   * La ranger en `REVERSIBLE_EXTERNAL_WRITE` l'aurait autorisée en
+   * pré-ouverture — c'est-à-dire pendant la recette, sur un signataire réel
+   * déjà sollicité. Interrompre l'engagement d'un tiers est un acte qui
+   * l'atteint, au même titre que le lui avoir demandé.
+   */
+  'signature.request.cancel': EFFECT.LEGAL_WRITE,
 
   // ── Hostinger ────────────────────────────────────────────────────────────
   // Les trois verbes du DNS (L9). Le moteur de déploiement PLANIFIE avec les
