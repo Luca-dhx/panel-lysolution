@@ -43,6 +43,7 @@ import { loadVerificationSecrets } from './webhookSecrets.js';
 import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './webhookSignature.js';
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
+import { dispatchSignatureEvent } from './signatureEventDispatch.js';
 import { resolveStripeEventOwnership, EVENT_OWNERSHIP } from './stripeEventRouting.js';
 import { adoptSubscriptionFromSession } from '../integratedApi/stripe/stripeSubscriptionAdoption.js';
 import {
@@ -298,7 +299,18 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   // rattrapable ; le perdre coûterait moins cher qu'une tempête de rejeux.
   let dispatch = { dispatched: false, reason: 'DUPLICATE' };
   if (!duplicate) {
-    dispatch = await dispatchDeliveryEvent({
+    /**
+     * DEUX ACHEMINEMENTS, UN SEUL ORDRE.
+     *
+     * Chacun ne reconnaît QUE son fournisseur et rend 
+     * sinon — les enchaîner ainsi évite un aiguillage par nom de fournisseur
+     * ici, qui grossirait à chaque migration et finirait par porter la logique
+     * qu'il était censé router.
+     */
+    const acheminer = String(provider).toUpperCase() === 'YOUSIGN'
+      ? dispatchSignatureEvent
+      : dispatchDeliveryEvent;
+    dispatch = await acheminer({
       provider,
       environment,
       payload: parsed,
