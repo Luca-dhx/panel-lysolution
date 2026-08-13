@@ -1,21 +1,21 @@
-// IDENTITÉS EXPÉDITRICES — le stockage que L8 avait laissé à écrire (L8.3).
+// EXPÉDITEUR SERVI — le `From` global, le `Reply-To` du projet (L8.3 → R10.4).
 //
 // docs/architecture/BREVO_CONTROL_PLANE.md §« Expéditeurs ».
 //
 // ── CE MODULE NE REDÉFINIT RIEN ─────────────────────────────────────────────
 //
 // `brevo/brevoSenderIdentity.js` (L8) porte le CONTRAT : forme, validation,
-// garde de portée. Il ne persistait rien — `lookup` était injecté, et le
-// stockage laissé à qui écrirait les modèles. C'est ce qu'on branche ici, sans
-// réécrire une seule des règles : les redéclarer ferait diverger la validation
-// du contrat qu'elle est censée appliquer.
+// garde de portée. `email/panelGlobalSender.service.js` (R10.4) porte l'AUTORITÉ
+// sur le `From`. Ce module ne fait que les JOINDRE au stockage — sans réécrire
+// une seule de leurs règles : les redéclarer ferait diverger la validation du
+// contrat qu'elle est censée appliquer.
 //
-// ── LA GARDE DE PORTÉE EST LA RAISON D'ÊTRE DU MODULE ───────────────────────
+// ── LA GARDE DE PORTÉE RESTE LA RAISON D'ÊTRE DU MODULE ─────────────────────
 //
-// Un projet ne peut atteindre QUE son identité, dans le monde servi. Ce n'est
-// pas une politesse : l'adresse expéditrice est ce que voit le destinataire.
-// Un projet capable de choisir celle d'un autre pourrait écrire en son nom —
-// à ses clients, avec sa réputation de domaine.
+// Un projet ne peut atteindre QUE sa propre adresse de réponse, dans le monde
+// servi. Ce n'est pas une politesse : un projet capable de désigner le
+// `Reply-To` d'un autre détournerait sa correspondance — les réponses de ses
+// clients arriveraient chez lui.
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
@@ -23,67 +23,139 @@ import PanelProjectSenderIdentity from '../../models/PanelProjectSenderIdentity.
 import {
   SENDER_IDENTITY_CODES,
   SENDER_IDENTITY_SHAPE,
-  validateSenderIdentity,
-  resolveSenderIdentity as resolveWithContract,
-  describeSenderIdentity,
+  assertProjectScope,
 } from '../integratedApi/brevo/brevoSenderIdentity.js';
+import { resolveGlobalSender } from './panelGlobalSender.service.js';
 import { ENVIRONMENTS } from '../integratedApi/providerRegistry.js';
 
 /**
- * LA SOURCE — branchée sur le contrat L8 comme `lookup`.
+ * LA SOURCE du `Reply-To` — un couple exact, aucun repli.
  *
- * Volontairement étroite : elle lit un couple exact et ne connaît aucun repli.
- * Un repli « sur l'identité de plateforme » serait tentant et faux — il ferait
- * partir un e-mail sous une adresse que le projet n'a jamais choisie.
+ * Un repli « sur le projet voisin » ou « sur la plateforme » ferait router les
+ * réponses d'un client vers une boîte que personne n'a désignée.
  */
 async function lookup({ projectId, environment }) {
   return PanelProjectSenderIdentity.findOne({ projectId, environment }).lean();
 }
 
 /**
- * Résout l'identité d'un projet dans le monde SERVI.
+ * Résout l'expéditeur à utiliser pour un projet, dans le monde SERVI.
  *
- * `requestedProjectId` est ce que la charge utile prétend. Le contrat L8 refuse
- * s'il diverge du projet authentifié — plutôt que de l'ignorer en silence :
- * un projet qui envoie un identifiant étranger a un bug ou une intention, et
- * les deux méritent une trace.
+ * ══ DEUX AUTORITÉS, ET UNE SEULE DÉCIDE DU `From` (R10.4) ══════════════════
+ *
+ *   `From`      →  configuration GLOBALE du Panel. Identique pour tout le
+ *                  parc, et pour le Panel lui-même. Absente = REFUS.
+ *   `Reply-To`  →  configuration du PROJET authentifié. Facultative : sans
+ *                  elle, les réponses arrivent au support de la plateforme,
+ *                  ce qui est un défaut acceptable — un `From` par défaut ne
+ *                  l'aurait pas été.
+ *
+ * La garde de portée du contrat L8 est CONSERVÉE telle quelle. Elle protège
+ * désormais le `Reply-To` plutôt que le `From`, et l'enjeu reste le même : un
+ * projet capable de désigner l'adresse de réponse d'un autre détournerait sa
+ * correspondance.
+ *
+ * @returns {Promise<{projectId: string|null, environment: string,
+ *   fromEmail: string, fromName: string, replyTo: {email, name?}|null}>}
  */
 export async function resolveForProject({ authenticatedProjectId, requestedProjectId = null, environment }) {
-  return resolveWithContract({ authenticatedProjectId, requestedProjectId, environment, lookup });
-}
-
-/** L'identité existe-t-elle et est-elle exploitable ? Sans lever. */
-export async function describeForProject(projectId, environment) {
-  const stored = await lookup({ projectId, environment });
-  const verdict = validateSenderIdentity(stored);
-  if (!verdict.valid) {
-    return { projectId, environment, configured: Boolean(stored), code: verdict.code, problems: verdict.problems, identity: null };
-  }
+  const projectId = assertProjectScope({ authenticatedProjectId, requestedProjectId });
+  const global = await resolveGlobalSender();
   return {
     projectId,
     environment,
-    configured: true,
-    code: SENDER_IDENTITY_CODES.OK,
-    problems: [],
-    identity: describeSenderIdentity({
-      projectId,
-      environment,
-      fromEmail: stored.fromEmail,
-      fromName: stored.fromName,
-      replyTo: stored.replyToEmail ? { email: stored.replyToEmail, name: stored.replyToName } : null,
-    }),
-    verifiedAtProvider: Boolean(stored.verifiedAtProvider),
-    verifiedAt: stored.verifiedAt ?? null,
+    fromEmail: global.senderEmail,
+    fromName: global.senderName,
+    replyTo: await resolveReplyTo({ projectId, environment }),
   };
 }
 
 /**
- * Enregistre l'identité d'un projet — geste d'ADMINISTRATION du Panel.
+ * L'expéditeur du PANEL POUR LUI-MÊME — aucune fiche projet dans l'affaire.
  *
- * Les champs interdits par le contrat (`apiKey`, `webhookSecret`…) sont refusés
- * AVANT écriture. Ce n'est pas une redondance avec la validation : celle-ci
- * dirait « problème », celle-là dit LEQUEL, et empêche qu'un secret entre dans
- * une collection qui n'est pas faite pour en porter.
+ * Le Panel écrit à ses propres exploitants (test d'expéditeur, notifications
+ * internes). Il n'a pas de `Reply-To` de projet, et surtout : il emprunte
+ * exactement le même `From` que tout le reste du parc. Une seconde source pour
+ * « les e-mails du Panel » serait la deuxième vérité que R10.4 interdit.
+ */
+export async function resolveForPanel() {
+  const global = await resolveGlobalSender();
+  return {
+    projectId: null,
+    environment: null,
+    fromEmail: global.senderEmail,
+    fromName: global.senderName,
+    replyTo: null,
+  };
+}
+
+/**
+ * Le `Reply-To` d'un projet, ou `null`.
+ *
+ * Ne LÈVE JAMAIS pour une absence : un projet sans adresse de réponse est un
+ * cas normal, pas une panne. Une adresse ILLISIBLE, en revanche, est écartée
+ * plutôt que transmise — Brevo la refuserait, et le refus porterait alors sur
+ * l'envoi entier au lieu d'un en-tête accessoire.
+ */
+export async function resolveReplyTo({ projectId, environment }) {
+  if (!projectId || !environment) return null;
+  const stored = await lookup({ projectId, environment });
+  const email = String(stored?.replyToEmail ?? '').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  const name = String(stored?.replyToName ?? '').trim();
+  return name ? { email, name } : { email };
+}
+
+/**
+ * Ce qui est configuré pour ce projet — l'adresse de réponse, et le `From`
+ * GLOBAL qui s'appliquera. Sans lever.
+ *
+ * Le `From` figure dans la vue alors qu'il n'appartient pas à ce projet, et
+ * c'est délibéré : l'écran qui montre « à qui l'on répond » doit montrer « au
+ * nom de qui l'on écrit », sinon l'opérateur croit configurer l'expéditeur.
+ * Il est marqué comme venant d'ailleurs (`fromSource: 'GLOBAL'`).
+ */
+export async function describeForProject(projectId, environment) {
+  const stored = await lookup({ projectId, environment });
+  const replyTo = await resolveReplyTo({ projectId, environment });
+
+  let from = null;
+  let fromProblem = null;
+  try {
+    const global = await resolveGlobalSender();
+    from = { email: global.senderEmail, name: global.senderName };
+  } catch (error) {
+    // L'absence d'expéditeur global n'est pas un défaut de CE projet : on la
+    // rapporte sans la lui imputer, et sans faire échouer la lecture.
+    fromProblem = error?.code ?? 'PANEL_GLOBAL_SENDER_NOT_CONFIGURED';
+  }
+
+  return {
+    projectId,
+    environment,
+    /** Le `From` ne se configure pas ici — il est rappelé, et son origine dite. */
+    fromSource: 'GLOBAL',
+    from,
+    fromProblem,
+    /** Ce que CE projet configure réellement. */
+    replyTo,
+    configured: Boolean(replyTo),
+    code: SENDER_IDENTITY_CODES.OK,
+    problems: [],
+    updatedAt: stored?.updatedAt ?? null,
+    updatedBy: stored?.updatedBy ?? null,
+  };
+}
+
+/**
+ * Enregistre l'ADRESSE DE RÉPONSE d'un projet — geste d'ADMINISTRATION du Panel.
+ *
+ * ── CE QUE CETTE FONCTION REFUSE DÉSORMAIS (R10.4) ──────────────────────────
+ *
+ * `fromEmail` et `fromName`. Les accepter en silence — même pour les ignorer —
+ * laisserait un appelant croire qu'il configure l'expéditeur d'un projet, et
+ * ferait diverger ce qu'il a saisi de ce qui part réellement. Un refus nommé
+ * envoie sur le bon écran.
  */
 export async function saveSenderIdentity(projectId, environment, input = {}, actor = {}) {
   if (!ENVIRONMENTS.includes(environment)) {
@@ -96,59 +168,45 @@ export async function saveSenderIdentity(projectId, environment, input = {}, act
     if (input[forbidden] !== undefined) {
       throw ApiError.badRequest(
         SENDER_IDENTITY_CODES.INVALID,
-        `Le champ « ${forbidden} » n’a rien à faire dans une identité expéditrice : `
+        `Le champ « ${forbidden} » n’a rien à faire dans une configuration d’expéditeur : `
         + 'les secrets vivent dans le coffre, pas dans une configuration métier.',
       );
     }
   }
+  for (const global of ['fromEmail', 'fromName', 'senderEmail', 'senderName']) {
+    if (input[global] !== undefined) {
+      throw ApiError.badRequest(
+        'PANEL_PROJECT_FROM_NOT_CONFIGURABLE',
+        `« ${global} » ne se configure pas par projet : l’expéditeur du parc est global `
+        + '(écran « Expéditeur e-mail »). Un projet ne configure que son adresse de réponse.',
+      );
+    }
+  }
 
-  const candidate = {
-    fromEmail: input.fromEmail,
-    fromName: input.fromName,
-    replyToEmail: input.replyToEmail ?? '',
-    replyToName: input.replyToName ?? '',
-  };
-  const verdict = validateSenderIdentity(candidate);
-  if (!verdict.valid) {
-    throw ApiError.badRequest(verdict.code, `Identité expéditrice refusée : ${verdict.problems.join(' ')}`);
+  const replyToEmail = String(input.replyToEmail ?? '').trim().toLowerCase();
+  const replyToName = String(input.replyToName ?? '').trim();
+  if (replyToEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyToEmail)) {
+    throw ApiError.badRequest(
+      SENDER_IDENTITY_CODES.INVALID,
+      'Adresse de réponse illisible.',
+    );
   }
 
   const at = nowIso();
   await PanelProjectSenderIdentity.updateOne(
     { projectId, environment },
     {
-      $set: {
-        fromEmail: String(candidate.fromEmail).trim().toLowerCase(),
-        fromName: String(candidate.fromName).trim(),
-        replyToEmail: String(candidate.replyToEmail).trim().toLowerCase(),
-        replyToName: String(candidate.replyToName).trim(),
-        updatedAt: at,
-        updatedBy: actor.userId ?? null,
-        /**
-         * Toute modification d'adresse invalide la preuve de reconnaissance :
-         * Brevo valide une ADRESSE, pas une ligne de base. La conserver ferait
-         * croire qu'une nouvelle adresse est déjà autorisée à expédier.
-         */
-        verifiedAtProvider: false,
-        verifiedAt: null,
-      },
+      $set: { replyToEmail, replyToName, updatedAt: at, updatedBy: actor.userId ?? null },
       $setOnInsert: { createdAt: at },
     },
     { upsert: true },
   );
 
-  // L'adresse expéditrice est publique par nature — elle figure dans chaque
+  // L'adresse de réponse est publique par nature — elle figure dans chaque
   // e-mail envoyé. La journaliser n'expose rien qu'un destinataire ne voie.
-  logger.info(`[email] identité expéditrice ${projectId}/${environment} enregistrée (${candidate.fromEmail}).`);
-  return describeForProject(projectId, environment);
-}
-
-/** Marque l'adresse comme reconnue par le fournisseur. Constat, pas décision. */
-export async function markVerifiedAtProvider(projectId, environment, verified = true) {
-  const at = nowIso();
-  await PanelProjectSenderIdentity.updateOne(
-    { projectId, environment },
-    { $set: { verifiedAtProvider: Boolean(verified), verifiedAt: verified ? at : null, updatedAt: at } },
+  logger.info(
+    `[email] adresse de réponse ${projectId}/${environment} enregistrée `
+    + `(${replyToEmail || 'aucune — les réponses iront au support'}).`,
   );
   return describeForProject(projectId, environment);
 }
@@ -158,7 +216,7 @@ export async function removeSenderIdentity(projectId, environment) {
   return { removed: result.deletedCount > 0 };
 }
 
-/** Toutes les identités d'un projet — les deux mondes, pour l'écran. */
+/** Toute la configuration d'un projet — les deux mondes, pour l'écran. */
 export async function listForProject(projectId) {
   const items = [];
   for (const environment of ENVIRONMENTS) {
@@ -169,9 +227,10 @@ export async function listForProject(projectId) {
 
 export default {
   resolveForProject,
+  resolveForPanel,
+  resolveReplyTo,
   describeForProject,
   saveSenderIdentity,
-  markVerifiedAtProvider,
   removeSenderIdentity,
   listForProject,
 };

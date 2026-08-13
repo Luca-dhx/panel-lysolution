@@ -24,6 +24,7 @@ await connectTestDatabase();
 const registre = await import('../backend/src/services/email/panelEmailTemplateRegistry.js');
 const templates = await import('../backend/src/services/email/panelEmailTemplate.service.js');
 const senders = await import('../backend/src/services/email/panelSenderIdentity.service.js');
+const globalSender = await import('../backend/src/services/email/panelGlobalSender.service.js');
 const operations = await import('../backend/src/services/capabilities/operationRegistry.js');
 
 const { default: PanelEmailTemplate } = await import('../backend/src/models/PanelEmailTemplate.model.js');
@@ -81,6 +82,11 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     // facturation laisserait croire à un impayé qui n'existe pas. Déclenché par
     // le PROJET (`email.send_template`), rendu et expédié ici.
     'SITE_SUSPENDED_MANUAL_ADMIN',
+    // R10.4 — le test d'expédition de l'expéditeur global. Un VRAI modèle du
+    // registre, et non un corps fabriqué par le service de test : un envoi de
+    // diagnostic qui contournerait la résolution, le rendu, la validation des
+    // variables et le versionnement réussirait là où un envoi réel échoue.
+    'PANEL_EMAIL_SENDER_TEST',
   ];
 
   const codes = templates.listTemplateCodes();
@@ -296,25 +302,43 @@ section('5 · Éditer sans perdre : versions, restauration, conflits');
 /* ══════════════════════════════════════════════════════════════════════════
    6. PROJECT_A_CANNOT_USE_B_SENDER — l’invariant du lot.
    ══════════════════════════════════════════════════════════════════════════ */
-section('6 · Un projet ne peut jamais expédier au nom d’un autre');
+section('6 · Un projet ne peut jamais détourner la correspondance d’un autre');
 {
-  await senders.saveSenderIdentity(PROJET_A, 'TEST', {
-    fromEmail: 'contact@garage-a.fr', fromName: 'Garage A',
-    replyToEmail: 'sav@garage-a.fr',
-  }, ACTEUR);
-  await senders.saveSenderIdentity(PROJET_B, 'TEST', {
-    fromEmail: 'contact@garage-b.fr', fromName: 'Garage B',
-  }, ACTEUR);
+  /**
+   * ══ CE QUE R10.4 A CHANGÉ DANS CETTE SECTION ═══════════════════════════════
+   *
+   * L'invariant du lot L8 était « A ne peut pas expédier AU NOM DE B ». Il a
+   * cessé d'avoir un sujet le jour où le `From` est devenu unique et global :
+   * A et B expédient désormais sous la MÊME adresse, celle de la plateforme,
+   * et il n'y a plus d'identité d'expéditeur à usurper.
+   *
+   * L'invariant n'a pas disparu pour autant — il s'est déplacé sur le champ qui
+   * reste par projet, le `Reply-To`. Un projet capable de désigner l'adresse de
+   * réponse d'un autre détournerait sa correspondance : les réponses de ses
+   * clients arriveraient chez lui. C'est le même risque, sur le seul champ qui
+   * peut encore le porter.
+   */
+  await senders.saveSenderIdentity(PROJET_A, 'TEST', { replyToEmail: 'sav@garage-a.fr' }, ACTEUR);
+  await senders.saveSenderIdentity(PROJET_B, 'TEST', { replyToEmail: 'sav@garage-b.fr' }, ACTEUR);
+
+  await globalSender.updateGlobalSender(
+    { senderEmail: 'support@ly-solution.fr', senderName: 'L.Y Solution' }, ACTEUR,
+  );
 
   const a = await senders.resolveForProject({ authenticatedProjectId: PROJET_A, environment: 'TEST' });
-  check('A résout SON expéditeur', a.fromEmail === 'contact@garage-a.fr');
-  check('…avec son adresse de réponse', a.replyTo?.email === 'sav@garage-a.fr');
+  const b = await senders.resolveForProject({ authenticatedProjectId: PROJET_B, environment: 'TEST' });
+
+  check('SINGLE_GLOBAL_FROM — A expédie sous l’adresse de la plateforme',
+    a.fromEmail === 'support@ly-solution.fr' && a.fromName === 'L.Y Solution');
+  check('…et B sous exactement la même', b.fromEmail === a.fromEmail && b.fromName === a.fromName);
+  check('A garde SON adresse de réponse', a.replyTo?.email === 'sav@garage-a.fr');
+  check('…et B la sienne', b.replyTo?.email === 'sav@garage-b.fr');
 
   /**
-   * LA GARDE : A demande explicitement l'identité de B. Le contrat L8 refuse
-   * sur ÉGALITÉ MANQUÉE plutôt que d'ignorer en silence — un projet qui envoie
-   * un identifiant étranger a un bug ou une intention, et les deux méritent une
-   * trace.
+   * LA GARDE : A demande explicitement la configuration de B. Le contrat L8
+   * refuse sur ÉGALITÉ MANQUÉE plutôt que d'ignorer en silence — un projet qui
+   * envoie un identifiant étranger a un bug ou une intention, et les deux
+   * méritent une trace.
    */
   let usurpation = null;
   try {
@@ -322,49 +346,58 @@ section('6 · Un projet ne peut jamais expédier au nom d’un autre');
       authenticatedProjectId: PROJET_A, requestedProjectId: PROJET_B, environment: 'TEST',
     });
   } catch (err) { usurpation = err; }
-  check('A DEMANDANT l’identité de B est REFUSÉ',
+  check('A DEMANDANT la configuration de B est REFUSÉ',
     usurpation?.code === 'SENDER_IDENTITY_SCOPE_VIOLATION' && usurpation?.statusCode === 403);
 
-  // Sans identité dans le monde servi, on refuse — jamais de repli.
-  let absente = null;
-  try {
-    await senders.resolveForProject({ authenticatedProjectId: PROJET_A, environment: 'PROD' });
-  } catch (err) { absente = err; }
-  check('aucune identité en PROD → refus, jamais un repli sur celle de TEST',
-    absente?.code === 'SENDER_IDENTITY_MISSING');
-
-  // ENVIRONMENT_CANNOT_BE_SELECTED : l'environnement n'est pas devinable.
-  let sansMonde = null;
-  try {
-    await senders.resolveForProject({ authenticatedProjectId: PROJET_A, environment: null });
-  } catch (err) { sansMonde = err; }
-  check('un environnement absent est refusé, jamais deviné', sansMonde !== null);
+  /**
+   * Sans `Reply-To` dans le monde servi : AUCUN repli, et aucun refus non plus.
+   *
+   * C'est la différence de nature avec l'ancien `From`. Un expéditeur manquant
+   * bloquait l'envoi — il fallait bien écrire quelque chose dans l'en-tête. Une
+   * adresse de réponse manquante est un cas NORMAL : les réponses arrivent au
+   * support de la plateforme, ce qui est un défaut acceptable.
+   */
+  const prod = await senders.resolveForProject({ authenticatedProjectId: PROJET_A, environment: 'PROD' });
+  check('aucun Reply-To en PROD → pas de repli sur celui de TEST', prod.replyTo === null);
+  check('…et l’envoi reste possible, sous l’expéditeur global',
+    prod.fromEmail === 'support@ly-solution.fr');
 }
 
-section('6 bis · Une identité expéditrice ne porte JAMAIS de secret');
+section('6 bis · Une configuration d’expéditeur ne porte JAMAIS de secret');
 {
   let secret = null;
   try {
     await senders.saveSenderIdentity(PROJET_A, 'TEST', {
-      fromEmail: 'contact@garage-a.fr', fromName: 'Garage A',
+      replyToEmail: 'sav@garage-a.fr',
       apiKey: ['xkeysib', 'NEDOITJAMAISENTRER'].join('-'),
     }, ACTEUR);
   } catch (err) { secret = err; }
-  check('un `apiKey` glissé dans l’identité est REFUSÉ', secret !== null);
+  check('un `apiKey` glissé dans la configuration est REFUSÉ', secret !== null);
   check('le message nomme le champ fautif', /apiKey/.test(secret?.message ?? ''));
 
   const brut = await PanelProjectSenderIdentity.collection.find({}).toArray();
   check('aucun champ de secret en base', !JSON.stringify(brut).includes('xkeysib'));
 
-  // Changer d'adresse invalide la reconnaissance : Brevo valide une ADRESSE.
-  await senders.markVerifiedAtProvider(PROJET_A, 'TEST', true);
-  check('l’adresse peut être marquée reconnue',
-    (await senders.describeForProject(PROJET_A, 'TEST')).verifiedAtProvider === true);
-  await senders.saveSenderIdentity(PROJET_A, 'TEST', {
-    fromEmail: 'nouvelle@garage-a.fr', fromName: 'Garage A',
-  }, ACTEUR);
-  check('changer d’adresse RETIRE la preuve de reconnaissance',
-    (await senders.describeForProject(PROJET_A, 'TEST')).verifiedAtProvider === false);
+  /**
+   * NO_PROJECT_FROM — la garde qui rend `PROJECT_EMAIL_FROM_CONFIGURATION = 0`
+   * vérifiable plutôt que déclaratif.
+   *
+   * On refuse le champ au lieu de l'ignorer : l'ignorer laisserait un appelant
+   * croire qu'il a configuré l'expéditeur de son projet, et l'écart entre ce
+   * qu'il a saisi et ce qui part ne se verrait qu'à la réception.
+   */
+  for (const champ of ['fromEmail', 'fromName', 'senderEmail', 'senderName']) {
+    let refus = null;
+    try {
+      await senders.saveSenderIdentity(PROJET_A, 'TEST', { [champ]: 'x@y.fr' }, ACTEUR);
+    } catch (err) { refus = err; }
+    check(`« ${champ} » ne se configure PAS par projet`,
+      refus?.code === 'PANEL_PROJECT_FROM_NOT_CONFIGURABLE');
+  }
+
+  const stocke = await PanelProjectSenderIdentity.collection.find({}).toArray();
+  check('aucun document de projet ne porte d’expéditeur',
+    stocke.every((d) => d.fromEmail === undefined && d.fromName === undefined));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -492,7 +525,9 @@ section('10 · Tout survit à un redémarrage');
   check('le contenu du projet a survécu', modele.source === 'PROJECT');
 
   const identite = await senders.describeForProject(PROJET_A, 'TEST');
-  check('l’identité expéditrice a survécu', identite.configured === true);
+  check('l’adresse de réponse du projet a survécu', identite.configured === true);
+  check('…et l’expéditeur GLOBAL aussi',
+    (await globalSender.describeGlobalSender()).senderEmail === 'support@ly-solution.fr');
 
   const rejeu = await operations.claimOperation({
     projectId: PROJET_A, capability: 'email.send_template', operationId: 'op-000000001',

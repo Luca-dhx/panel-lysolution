@@ -54,7 +54,35 @@ export const INVOCATION_SOURCES = Object.freeze({
    * reste le périmètre entier : appartenance, monde, coffre et journal.
    */
   PANEL_INTERNAL: 'PANEL_INTERNAL',
+  /**
+   * Le Panel agissant POUR LUI-MÊME — aucun projet dans l'affaire (R10.4).
+   *
+   * ── EN QUOI C'EST DIFFÉRENT DE `PANEL_INTERNAL` ──────────────────────────
+   *
+   * `PANEL_INTERNAL` est le Panel agissant pour UN projet : rembourser un
+   * client, dans la fiche de ce client. Le projet reste le périmètre — monde,
+   * coffre, appartenance et journal en dépendent.
+   *
+   * `PANEL_SELF` n'a pas de périmètre projet du tout. C'est le Panel écrivant à
+   * ses propres exploitants : l'e-mail de test de l'expéditeur global, et les
+   * notifications internes qui suivront. Lui inventer une fiche projet serait
+   * pire que de l'assumer — on choisirait un projet arbitraire, dont l'état
+   * d'ouverture et les octrois décideraient d'un envoi qui ne le concerne pas.
+   */
+  PANEL_SELF: 'PANEL_SELF',
 });
+
+/**
+ * LE PÉRIMÈTRE RÉSERVÉ DU PANEL — jamais un identifiant de projet.
+ *
+ * Il ne sert qu'à PARTITIONNER : le registre d'opérations et le journal
+ * d'audit ont besoin d'une clé, et deux actes du Panel ne doivent pas se
+ * confondre avec ceux d'un projet. Il n'est JAMAIS utilisé pour chercher une
+ * fiche, résoudre une identité ou lire un octroi — les doubles tirets rendent
+ * d'ailleurs une collision improbable, et un test vérifie qu'aucune fiche ne
+ * le porte.
+ */
+export const PANEL_SELF_SCOPE = '__panel_self__';
 
 /**
  * Construit le contexte d'une invocation à partir de la fiche AUTHENTIFIÉE.
@@ -97,6 +125,45 @@ export function buildInvocationContext({
     panelProject,
     requestId: requestId || crypto.randomUUID(),
     source,
+    startedAt: Date.now(),
+  });
+}
+
+/**
+ * Contexte du Panel agissant POUR LUI-MÊME (R10.4).
+ *
+ * ── CE QU'IL NE RELÂCHE PAS ─────────────────────────────────────────────────
+ *
+ * L'état d'ouverture vaut `DEFAULT_COMMERCIAL_STATE`, c'est-à-dire
+ * `PREOPENING`, c'est-à-dire le défaut FERMÉ. On aurait pu écrire `LIVE` en
+ * arguant que le Panel n'est pas une instance cliente et n'a donc pas à être
+ * « ouvert » — l'argument est vrai, et la conséquence aurait été mauvaise :
+ * elle créait un chemin d'exécution qui ignore la politique commerciale, et
+ * c'est précisément la classe de contournement que L1.75 existe pour empêcher.
+ *
+ * Concrètement cela ne change rien aujourd'hui : `email.send_template` est
+ * `COMMUNICATION_WRITE`, autorisée en pré-ouverture. Si un jour on interdisait
+ * cet effet avant ouverture, les e-mails du Panel s'arrêteraient aussi — et ce
+ * serait la bonne réponse, immédiatement visible dans l'écran de test.
+ *
+ * L'environnement, lui, est celui du RUNTIME, exactement comme pour un projet :
+ * il n'y a qu'un monde servi par instance de Panel, et il ne se choisit pas.
+ */
+export function buildPanelSelfContext({ requestId = null } = {}) {
+  return Object.freeze({
+    /**
+     * `null`, et non le périmètre réservé : tout code qui chercherait une fiche
+     * doit échouer franchement plutôt que de trouver un pseudo-projet.
+     */
+    projectId: null,
+    projectName: 'Panel',
+    /** Le périmètre de PARTITION — registre d'opérations et journal, rien d'autre. */
+    scope: PANEL_SELF_SCOPE,
+    environment: runtimeEnvironment(),
+    commercialState: DEFAULT_COMMERCIAL_STATE,
+    panelProject: null,
+    requestId: requestId || crypto.randomUUID(),
+    source: INVOCATION_SOURCES.PANEL_SELF,
     startedAt: Date.now(),
   });
 }
@@ -168,9 +235,23 @@ export function describeContext(context) {
   };
 }
 
+/**
+ * La clé de PARTITION d'un contexte — pour le registre d'opérations et l'audit.
+ *
+ * Un projet est partitionné par son identifiant ; le Panel par son périmètre
+ * réservé. Une seule fonction pour les deux, afin qu'aucun appelant n'ait à
+ * choisir — et qu'aucun n'écrive `context.projectId ?? 'panel'` de son côté.
+ */
+export function partitionKey(context) {
+  return context?.projectId ?? context?.scope ?? PANEL_SELF_SCOPE;
+}
+
 export default {
   INVOCATION_SOURCES,
+  PANEL_SELF_SCOPE,
   buildInvocationContext,
+  buildPanelSelfContext,
+  partitionKey,
   assertProjectScope,
   resolveInstanceEnvironment,
   resolveCommercialState,

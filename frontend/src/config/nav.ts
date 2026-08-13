@@ -43,6 +43,10 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/pairings', label: 'Appairages', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/versions', label: 'Versions', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/integrated-apis', label: 'Intégrations API', section: 'DEVELOPPEUR', devOnly: true },
+  // R10.4 — l'expéditeur de TOUT le parc, Panel compris. Une seule entrée,
+  // parce qu'il n'y a qu'une adresse : un écran par projet suggérerait le
+  // contraire, et la première question serait « lequel gagne ? ».
+  { to: '/email-sender', label: 'Expéditeur e-mail', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/deployment', label: 'Déploiement', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/theme', label: 'Thème du Panel', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/actions', label: 'Exécutions', section: 'DEVELOPPEUR', devOnly: true },

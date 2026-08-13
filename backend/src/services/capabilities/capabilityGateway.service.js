@@ -45,7 +45,10 @@ import { getCapabilityDefinition, IDEMPOTENCY } from './capabilityRegistry.js';
 import {
   CLAIM, DEFAULT_CONVERGENCE, claimOperation, settleSucceeded, settleFailure,
 } from './operationRegistry.js';
-import { INVOCATION_SOURCES, buildInvocationContext, describeContext } from './invocationContext.js';
+import {
+  INVOCATION_SOURCES, buildInvocationContext, buildPanelSelfContext,
+  describeContext, partitionKey,
+} from './invocationContext.js';
 import { assertGranted } from './capabilityGrants.js';
 import { resolveCredentialsForCapability } from './credentialResolver.js';
 import { executeCapability } from './providerAdapters.js';
@@ -109,7 +112,22 @@ export async function invokeCapability({
    */
   let context;
   try {
-    context = buildInvocationContext({ panelProject, payload, requestId, source });
+    /**
+     * LE PANEL POUR LUI-MÊME N'A PAS DE FICHE À AUTHENTIFIER (R10.4).
+     *
+     * `buildInvocationContext` exige un `panelProject` — et c'est bien : pour
+     * un projet, l'absence de fiche signifie que la garde d'authentification a
+     * été contournée. Le Panel écrivant à ses propres exploitants n'a pas de
+     * fiche du tout, et lui en fabriquer une ferait décider d'un envoi par
+     * l'état d'ouverture et les octrois d'un projet arbitraire.
+     *
+     * Le contexte est donc construit par une fonction DISTINCTE, atteignable
+     * uniquement par cette source. Aucun chemin projet ne peut y arriver : la
+     * source est un paramètre d'appel interne, jamais une donnée de requête.
+     */
+    context = source === INVOCATION_SOURCES.PANEL_SELF
+      ? buildPanelSelfContext({ requestId })
+      : buildInvocationContext({ panelProject, payload, requestId, source });
   } catch (error) {
     await audit(fallbackContext(panelProject, requestId), definition, {
       outcome: error instanceof CapabilityError ? error.outcome : CAPABILITY_OUTCOMES.FAILED,
@@ -137,7 +155,13 @@ export async function invokeCapability({
      * sautée : politique commerciale, migration, contrat, coffre, réservation,
      * appartenance et journal s'appliquent à l'identique.
      */
-    if (context.source !== INVOCATION_SOURCES.PANEL_INTERNAL) {
+    /**
+     * `PANEL_SELF` rejoint `PANEL_INTERNAL` pour la même raison, en plus fort
+     * encore : il n'y a pas de projet du tout. Un octroi répond à « ce projet
+     * peut-il demander ceci » — la question n'a pas de sujet.
+     */
+    if (context.source !== INVOCATION_SOURCES.PANEL_INTERNAL
+      && context.source !== INVOCATION_SOURCES.PANEL_SELF) {
       assertGranted(context, definition);
     }
 
@@ -389,7 +413,12 @@ function convergenceFor(definition) {
  */
 async function reserve(context, definition, input, actId) {
   const outcome = await claimOperation({
-    projectId: context.projectId,
+    /**
+     * La clé de PARTITION, pas l'identifiant d'un projet : le Panel agissant
+     * pour lui-même n'en a pas, et deux actes de même nom dans deux périmètres
+     * différents ne doivent pas se réserver l'un l'autre.
+     */
+    projectId: partitionKey(context),
     capability: definition.code,
     operationId: actId,
     environment: context.environment,

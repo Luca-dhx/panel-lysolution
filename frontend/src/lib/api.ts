@@ -13,6 +13,7 @@ import type {
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type { PanelTheme } from '@/lib/useTheme';
+import type { EmailSenderScreen, EmailSenderTestReport } from '@/types.emailSender';
 import type { ProjectDestination, ProjectDestinationsByEnvironment } from '@/types';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
@@ -357,6 +358,25 @@ export const api = {
     // Après le clic, jamais avant.
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   },
+
+  /* ── EXPÉDITEUR E-MAIL GLOBAL (R10.4) ────────────────────────────────── */
+  /**
+   * Une seule surface pour l'expéditeur de TOUT le parc. Aucune variante par
+   * projet : c'est l'invariant du lot, et l'absence d'une seconde méthode ici
+   * est la façon la plus simple de ne pas le trahir.
+   */
+  getEmailSender: () => request<EmailSenderScreen>('/api/email-sender'),
+  saveEmailSender: (body: { senderEmail: string; senderName: string }) =>
+    request<EmailSenderScreen>('/api/email-sender', { method: 'PUT', body }),
+  /** ENVOIE un e-mail réel. À ne jamais appeler pour rafraîchir un écran. */
+  sendEmailSenderTest: (recipientEmail: string) =>
+    request<EmailSenderTestReport>('/api/email-sender/test', {
+      method: 'POST',
+      body: { recipientEmail },
+    }),
+  /** RELIT un test — c'est ce qui permet d'attendre le webhook sans renvoyer. */
+  readEmailSenderTest: (testId: string) =>
+    request<EmailSenderTestReport>(`/api/email-sender/test/${testId}`),
 
   /* ── THÈME DU PANEL ──────────────────────────────────────────────────── */
   getTheme: () => request<{ theme: PanelTheme }>('/api/theme'),

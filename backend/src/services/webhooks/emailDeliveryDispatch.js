@@ -28,6 +28,8 @@
 import logger from '../../utils/logger.js';
 import { emitChange } from '../sync/syncCore.service.js';
 import { findByProviderMessageId } from '../capabilities/operationRegistry.js';
+import { PANEL_SELF_SCOPE } from '../capabilities/invocationContext.js';
+import { applyDeliveryEvent } from '../email/panelEmailSenderTest.service.js';
 import {
   normalizeBrevoEvent,
   parseEventDate,
@@ -114,6 +116,33 @@ export async function dispatchDeliveryEvent({ provider, environment, payload, ev
   }
 
   const occurredAt = parseEventDate(payload);
+
+  /**
+   * L'ENVOI VENAIT-IL DU PANEL LUI-MÊME ? (R10.4)
+   *
+   * L'e-mail de test de l'expéditeur global emprunte la chaîne réelle, donc il
+   * produit un vrai `delivered`. Mais il n'appartient à AUCUN projet : le
+   * pousser sur le pont l'adresserait à un destinataire (`__panel_self__`) qui
+   * n'existe pas, et le fait serait perdu — c'est-à-dire que l'écran de test
+   * resterait sur « accepté », la moitié de la réponse qui ne prouve rien.
+   *
+   * On le pose donc là où il sera lu, et on s'arrête : un événement du Panel
+   * n'a rien à faire dans le journal durable d'un projet.
+   */
+  if (operation.projectId === PANEL_SELF_SCOPE) {
+    const applied = await applyDeliveryEvent({
+      operationId: operation.operationId,
+      event: businessEvent,
+      providerEvent: canonical,
+      occurredAt: occurredAt ? occurredAt.toISOString() : null,
+      reason: businessEvent === DELIVERY_EVENTS.BOUNCED ? payload?.reason ?? null : null,
+    });
+    logger.info(
+      `[email] ${businessEvent} rattaché au test d’expédition du Panel `
+      + `(opération ${operation.operationId}).`,
+    );
+    return { dispatched: applied.applied, scope: 'PANEL_SELF', event: businessEvent };
+  }
 
   await emitChange({
     entityType: DELIVERY_ENTITY_TYPE,

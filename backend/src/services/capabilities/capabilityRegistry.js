@@ -169,6 +169,35 @@ const emailSendTemplateOutput = z.object({
   status: z.enum(['ACCEPTED', 'ALREADY_SENT']),
   providerMessageId: z.string().nullable(),
   operationId: z.string(),
+  /**
+   * L'EXPÉDITEUR RÉELLEMENT UTILISÉ — rendu au projet (R10.4).
+   *
+   * ── POURQUOI LE PROJET A BESOIN DE LE SAVOIR ──────────────────────────────
+   *
+   * Il affiche un suivi de ses envois, et cet écran doit dire de quelle adresse
+   * le message est parti. Avant R10.4 il le lisait dans sa propre
+   * configuration ; depuis que le `From` est global et détenu par le Panel,
+   * cette copie locale serait une DEVINETTE — juste tant que personne ne change
+   * l'adresse, fausse pour tous les envois passés le jour où quelqu'un la
+   * change.
+   *
+   * Le rendre ici n'expose rien : l'adresse figure déjà dans l'en-tête de
+   * chaque message reçu. Ce n'est pas un secret, c'est un fait constaté.
+   */
+  /**
+   * FACULTATIF, et pour une raison précise : le REJEU ne le porte pas.
+   *
+   * `ALREADY_SENT` est rendu depuis le registre d'opérations, sans réexécuter
+   * l'adaptateur — donc sans re-résoudre l'expéditeur. Le stocker dans le
+   * registre pour le rejouer serait inutile : un rejeu signifie que le premier
+   * appel a réussi, et le projet a déjà enregistré l'expéditeur à ce
+   * moment-là. Le rendre obligatoire forcerait à inventer une valeur pour la
+   * seule branche qui n'en a pas besoin.
+   */
+  sender: z.object({
+    email: z.string(),
+    name: z.string(),
+  }).strict().optional(),
 }).strict();
 
 /* -------------------------------------------------------------------------- */

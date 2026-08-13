@@ -11,6 +11,7 @@ import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
 import { IntegratedApiControlPlanePage } from '@/pages/IntegratedApiControlPlanePage';
 import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
+import { EmailSenderPage } from '@/pages/EmailSenderPage';
 import { FinancesPage } from '@/pages/FinancesPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { OverviewPage } from '@/pages/OverviewPage';
@@ -82,6 +83,12 @@ export default function App() {
           appairés, et le retirer AVANT L4 couperait un chemin en service.
         */}
         <Route path="/integrated-apis" element={dev(<IntegratedApiControlPlanePage />)} />
+        {/*
+          L'expéditeur global (R10.4). Sous garde DEV comme les autres surfaces
+          d'infrastructure : l'écriture change l'expéditeur de tout le parc, et
+          le test envoie un e-mail RÉEL sur le compte de la plateforme.
+        */}
+        <Route path="/email-sender" element={dev(<EmailSenderPage />)} />
         <Route path="/integrated-apis/legacy" element={dev(<IntegratedApisPage />)} />
         <Route path="/actions" element={dev(<ActionsPage />)} />
         <Route path="/actions/:executionId" element={dev(<ExecutionPage />)} />

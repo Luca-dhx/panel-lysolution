@@ -1674,3 +1674,28 @@ textarea:focus {
   margin: 0 auto 0.75rem;
   object-fit: contain;
 }
+
+/*
+  LE RAPPORT DE TEST D'EXPÉDITION (R10.4).
+
+  Monospace et pré-formaté parce que c'est un rapport ALIGNÉ : les libellés sont
+  paddés côté serveur pour que les valeurs forment une colonne. Une police
+  proportionnelle détruirait cet alignement, et le texte collé dans un ticket
+  serait moins lisible que celui qu'on lit à l'écran.
+
+  Il défile HORIZONTALEMENT plutôt que de se replier : un identifiant de message
+  coupé au milieu ne se recopie pas.
+*/
+.report-block {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  background: var(--surface-muted, #f4f4f5);
+  border: 1px solid var(--border, #e4e4e7);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre;
+  user-select: text;
+}

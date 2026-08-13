@@ -93,6 +93,7 @@ const registre = await import('../backend/src/services/registry/projectRegistry.
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
 const grants = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const senders = await import('../backend/src/services/email/panelSenderIdentity.service.js');
+const globalSender = await import('../backend/src/services/email/panelGlobalSender.service.js');
 const templates = await import('../backend/src/services/email/panelEmailTemplate.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
@@ -150,10 +151,18 @@ section('2 · Appairage, octroi, identité expéditrice');
   check('le projet est appairé', typeof projectId === 'string');
 
   await grants.setCapabilityGrants(projectId, [SEND], ACTEUR);
+  /**
+   * R10.4 — l'expéditeur est GLOBAL, l'adresse de réponse reste au projet.
+   * L'envoi exige le premier ; le second est facultatif, et on le pose pour
+   * éprouver que les deux voyagent ensemble jusqu'à Brevo.
+   */
+  await globalSender.updateGlobalSender(
+    { senderEmail: 'support@ly-solution.test', senderName: 'L.Y Solution' }, ACTEUR,
+  );
   await senders.saveSenderIdentity(projectId, 'TEST', {
-    fromEmail: 'contact@projet-l84c.test', fromName: 'Projet L8.4C',
+    replyToEmail: 'sav@projet-l84c.test',
   }, ACTEUR);
-  check('l’octroi et l’identité expéditrice sont posés', true);
+  check('l’octroi, l’expéditeur global et l’adresse de réponse sont posés', true);
 }
 
 /** Poste un webhook Brevo sur la VRAIE route publique du Panel. */
@@ -213,8 +222,19 @@ section('3 · sendTemplate() passe par le Panel, et la clé du Panel seule sort'
   check('le corps porte le sujet et le HTML rendus par le Panel',
     typeof JSON.parse(appel.body).subject === 'string'
     && String(JSON.parse(appel.body).htmlContent).includes('Entreprise L8.4C'));
-  check('l’expéditeur est celui du PROJET, résolu par le Panel',
-    JSON.parse(appel.body).sender?.email === 'contact@projet-l84c.test');
+  /**
+   * R10.4 — l'expéditeur est GLOBAL, l'adresse de réponse reste au projet.
+   *
+   * Les deux partent dans le MÊME appel, et c'est tout l'intérêt de les vérifier
+   * ici plutôt qu'en test unitaire : le `From` que Brevo reçoit ne dépend
+   * d'aucun réglage de ce projet, et le `Reply-To` n'en dépend que de lui.
+   */
+  check('SINGLE_GLOBAL_FROM — l’expéditeur est celui de la plateforme',
+    JSON.parse(appel.body).sender?.email === 'support@ly-solution.test');
+  check('…et jamais une adresse propre au projet',
+    JSON.parse(appel.body).sender?.email !== 'contact@projet-l84c.test');
+  check('l’adresse de réponse, elle, est celle du PROJET',
+    JSON.parse(appel.body).replyTo?.email === 'sav@projet-l84c.test');
 
   // operationId === deliveryId : l'invariant qui referme la course.
   const op = await Operation.findOne({ capability: SEND, projectId }).lean();

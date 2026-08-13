@@ -27,7 +27,7 @@ import {
   OUTCOMES as TRANSPORT_OUTCOMES,
 } from '../integratedApi/brevo/brevoTransport.js';
 import { renderForSend } from '../email/panelEmailTemplate.service.js';
-import { resolveForProject } from '../email/panelSenderIdentity.service.js';
+import { resolveForProject, resolveForPanel } from '../email/panelSenderIdentity.service.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
@@ -127,6 +127,24 @@ function translatePreparation(error, capability) {
     return capabilityProjectScopeMismatch();
   }
 
+  /**
+   * L'EXPÉDITEUR GLOBAL MANQUE — une CONFIGURATION manque, pas une clé (R10.4).
+   *
+   * Ce refus vaut pour TOUT le parc d'un coup : sans expéditeur global, aucun
+   * projet n'envoie. C'est voulu — un repli silencieux ferait partir des
+   * e-mails sous une adresse que personne n'a choisie — et c'est la raison pour
+   * laquelle le message nomme l'écran à remplir plutôt que le projet appelant,
+   * qui n'y peut rien.
+   */
+  if (String(code).startsWith('PANEL_GLOBAL_SENDER_')) {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `Aucun expéditeur global exploitable : « ${capability.code} » ne peut pas s’exécuter. `
+      + 'Renseignez « Expéditeur e-mail » dans le Panel.',
+      { reason: code },
+    );
+  }
+
   // Identité absente ou inexploitable : une CONFIGURATION manque, pas une clé.
   if (String(code).startsWith('SENDER_IDENTITY_')
     || code === 'PANEL_INTEGRATED_API_ENVIRONMENT_REQUIRED') {
@@ -166,17 +184,24 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
    */
   try {
     /**
-     * L'EXPÉDITEUR D'ABORD — et il vient du contexte AUTHENTIFIÉ.
+     * L'EXPÉDITEUR D'ABORD — `From` GLOBAL, `Reply-To` du projet (R10.4).
      *
      * `context.projectId` est celui que le bridgeToken a prouvé. La charge
      * utile n'a aucun champ pour en proposer un autre (schéma `strict()`), et
      * même si elle en avait un, il ne serait pas lu ici : la garde du contrat
      * L8 refuse sur égalité manquée, elle ne choisit pas le plus permissif.
+     *
+     * Quand le Panel écrit pour LUI-MÊME (`PANEL_SELF`), il n'y a pas de
+     * projet — donc pas de `Reply-To`, et le MÊME `From` que tout le reste du
+     * parc. C'est le point entier de R10.4 : l'e-mail de test emprunte la
+     * chaîne réelle, pas une chaîne parallèle qui prouverait autre chose.
      */
-    sender = await resolveForProject({
-      authenticatedProjectId: context.projectId,
-      environment: context.environment,
-    });
+    sender = context.projectId === null
+      ? await resolveForPanel()
+      : await resolveForProject({
+        authenticatedProjectId: context.projectId,
+        environment: context.environment,
+      });
 
     // LE RENDU — par l'autorité Panel, avec le contenu de CE projet.
     rendered = await renderForSend({
@@ -219,6 +244,9 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
       status: 'ACCEPTED',
       providerMessageId: outcome.providerMessageId,
       operationId: input.operationId,
+      // Le fait constaté, pas la configuration : c'est SOUS CETTE ADRESSE que
+      // le message est parti, et c'est ce que le suivi du projet doit montrer.
+      sender: { email: sender.fromEmail, name: sender.fromName },
     };
   } catch (error) {
     if (error instanceof CapabilityError) throw error;

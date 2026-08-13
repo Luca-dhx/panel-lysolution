@@ -326,18 +326,29 @@ section('7. Fail closed sur l’inconnu, refus explicite sur le non-migré');
   });
   /**
    * Depuis L8.4B la capacité est SERVIE : le refus ne vient plus du registre.
-   * Ce projet n'a aucune identité expéditrice configurée, et l'expéditeur est
-   * résolu AVANT le modèle — un modèle valide dont l'expéditeur manque ne doit
-   * pas être rendu pour rien, et l'erreur doit nommer la vraie cause.
+   * L'expéditeur est résolu AVANT le modèle — un modèle valide dont
+   * l'expéditeur manque ne doit pas être rendu pour rien, et l'erreur doit
+   * nommer la vraie cause.
+   *
+   * ══ CE QUI A CHANGÉ EN R10.4 ═══════════════════════════════════════════════
+   *
+   * La cause n'est plus « ce PROJET n'a pas d'identité » mais « le PARC n'a pas
+   * d'expéditeur ». L'adresse d'expédition est devenue unique et globale : son
+   * absence bloque tout le monde d'un coup, et le code le dit
+   * (`PANEL_GLOBAL_SENDER_NOT_CONFIGURED`).
+   *
+   * C'est plus juste, et c'est surtout mieux ACTIONNABLE : l'ancien message
+   * envoyait chercher une configuration dans la fiche du projet appelant, qui
+   * n'y peut plus rien.
    *
    * Classé NOT_AVAILABLE et non « fournisseur indisponible » : rien n'a été
    * tenté chez Brevo, et c'est une CONFIGURATION qui manque — actionnable par
    * un humain, pas réparable en réessayant.
    */
-  check('sans identité expéditrice → CAPABILITY_NOT_AVAILABLE',
+  check('sans expéditeur global → CAPABILITY_NOT_AVAILABLE',
     nonMigree.code === 'CAPABILITY_NOT_AVAILABLE');
   check('…et le motif nomme la configuration manquante',
-    nonMigree.panelDetails?.reason === 'SENDER_IDENTITY_MISSING');
+    nonMigree.panelDetails?.reason === 'PANEL_GLOBAL_SENDER_NOT_CONFIGURED');
 
   check('aucun appel fournisseur sur ces deux refus', appelsFournisseur.length === avant);
 }

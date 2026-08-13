@@ -742,6 +742,75 @@ ${row('Suspendu le', '{{suspension.suspendedOn}}')}
       });
     },
   },
+
+  /**
+   * L'E-MAIL DE TEST DE L'EXPÉDITEUR GLOBAL (R10.4).
+   *
+   * ── POURQUOI UN VRAI MODÈLE, ET PAS UN CORPS FABRIQUÉ À LA VOLÉE ──────────
+   *
+   * Parce que le test doit emprunter la chaîne RÉELLE. Un corps construit dans
+   * le service de test contournerait la résolution de modèle, le rendu, la
+   * validation des variables et le versionnement — c'est-à-dire quatre des
+   * étapes qui peuvent casser un envoi de production. Le test réussirait alors
+   * là où un envoi réel échouerait, ce qui est exactement l'inverse de ce qu'on
+   * lui demande.
+   *
+   * ── CE QU'IL AFFICHE, ET POURQUOI ─────────────────────────────────────────
+   *
+   * L'expéditeur et l'environnement. Le destinataire tient dans sa main la
+   * preuve de CE QUI A ÉTÉ RÉSOLU, sans avoir à croire l'écran qui l'a
+   * déclenché. Aucun secret, aucun identifiant de compte, aucune URL interne :
+   * ce message part chez un humain, et le contenu d'un e-mail voyage.
+   */
+  PANEL_EMAIL_SENDER_TEST: {
+    templateId: 'PANEL_EMAIL_SENDER_TEST',
+    defaultName: 'Panel — test de l’expéditeur global',
+    defaultDescription:
+      "Message envoyé depuis l'écran « Expéditeur e-mail » pour éprouver la chaîne d'envoi de bout en bout : configuration, modèle, capacité, coffre, fournisseur, puis webhook de livraison. Il ne concerne aucun projet et n'informe d'aucun événement métier.",
+    defaultSubject: 'Test d’expédition — {{sender.name}}',
+    /** Un test n'a aucune valeur au-delà de sa lecture immédiate. */
+    retentionClass: RETENTION_CLASS.TRANSIENT,
+    variables: [
+      { key: 'sender.name', label: 'Nom d’expéditeur', description: 'Nom global résolu au moment de l’envoi.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'sender.email', label: 'Adresse d’expédition', description: 'Adresse globale résolue au moment de l’envoi.', type: VARIABLE_TYPE.EMAIL, required: true },
+      { key: 'test.environment', label: 'Environnement', description: 'Monde fournisseur servi par ce Panel (TEST ou PROD).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'test.requestedAt', label: 'Demandé le', description: 'Date et heure de la demande d’envoi.', type: VARIABLE_TYPE.DATETIME, required: true },
+    ],
+    sampleVariables: {
+      'sender.name': 'L.Y Solution',
+      'sender.email': 'support@exemple.fr',
+      'test.environment': 'TEST',
+      'test.requestedAt': '2026-08-13T12:32:00.000Z',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Test d’expédition — la chaîne d’envoi fonctionne.',
+        heading: 'Test d’expédition',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Ce message confirme que la chaîne d'envoi du Panel fonctionne de bout
+              en bout : configuration de l'expéditeur, modèle, capacité, coffre et
+              fournisseur.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Expéditeur', '{{sender.name}}')}
+${row('Adresse', '{{sender.email}}')}
+${row('Environnement', '{{test.environment}}')}
+${row('Demandé le', '{{test.requestedAt}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Aucune action n'est attendue. Si vous recevez ce message sans l'avoir
+              demandé, prévenez l'équipe technique.
+            </p>`,
+        footerHtml: '            Message de test — aucun contenu commercial.',
+      });
+    },
+  },
 });
 
 /** Identifiants connus. C'est la LISTE DE RÉFÉRENCE : la base n'en fait pas foi. */

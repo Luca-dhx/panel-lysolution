@@ -14,6 +14,7 @@ import financesRoutes from './routes/finances.routes.js';
 import themeRoutes from './routes/theme.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import networkRoutes from './routes/network.routes.js';
+import emailSenderRoutes from './routes/emailSender.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
@@ -112,6 +113,13 @@ export function createApp() {
   app.use('/api/finances', financesRoutes);
   app.use('/api/theme', themeRoutes);
   app.use('/api/system-configuration', networkRoutes);
+  /**
+   * L'expéditeur e-mail global (R10.4). Monté à part plutôt que sous
+   * `/api/system-configuration` : il partage son STOCKAGE (le singleton), pas
+   * son sujet. Les fondre ferait d'un écran réseau un écran d'e-mail, et la
+   * garde d'écriture de l'un finirait par servir à l'autre.
+   */
+  app.use('/api/email-sender', emailSenderRoutes);
   app.use('/api/supervision', supervisionRoutes);
   app.use('/api/diagnostic', diagnosticRoutes);
   app.use('/api/executions', executionRoutes);
