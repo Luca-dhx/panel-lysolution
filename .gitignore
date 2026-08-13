@@ -24,3 +24,19 @@ backend/uploads/*
 # importent une image y déposaient donc des fichiers qu'un `git add -A`
 # aurait embarqués dans l'historique — des données, jamais du code.
 uploads/
+
+# MÉDIAS PRIVÉS — justificatifs comptables, contrats. JAMAIS dans l'historique.
+#
+# `config.paths.privateMedia` vaut `<backend>/storage/media` : c'est là
+# qu'atterrit un justificatif déposé depuis l'écran Finances (L10.2). Le dossier
+# n'était couvert par AUCUNE règle — seul `backend/uploads/` l'était.
+#
+# Un `git add -A` après un test manuel aurait donc committé une pièce comptable
+# dans un dépôt distant, définitivement. Ces fichiers sont plus sensibles que
+# les médias publics, et c'était le seul des deux à ne pas être protégé.
+#
+# En production ce chemin est un LIEN SYMBOLIQUE vers `shared/storage`, posé à
+# chaque déploiement par le pipeline : les fichiers vivent hors du dossier
+# applicatif et lui survivent.
+backend/storage/
+storage/

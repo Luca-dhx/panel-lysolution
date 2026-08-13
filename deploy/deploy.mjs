@@ -19,7 +19,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadDeployConfig } from './lib/config.mjs';
-import { buildPlan, buildRollbackPlan, LOCAL_QUALITY_COMMANDS, STEPS } from './lib/plan.mjs';
+import {
+  buildPlan, buildRollbackPlan, describeRemoteLayout, LOCAL_QUALITY_COMMANDS, STEPS,
+} from './lib/plan.mjs';
 import { buildRemoteEnv, parseEnvFile, validateRemoteEnv } from './lib/remoteEnv.mjs';
 
 const panelRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -47,17 +49,44 @@ function releaseId() {
   return `${stamp}-${commit}`;
 }
 
+/**
+ * AFFICHER LE PLAN — celui du MOTEUR, sans rien y ajouter (R10.1).
+ *
+ * Le plan ne porte plus de commandes shell : elles appartiennent au pipeline,
+ * qui les compose à l'exécution. Ce qui s'affiche est donc ce qui est
+ * réellement connu d'avance — les étapes, les chemins, les liens persistants —
+ * et rien de plus. Une simulation qui inventerait le reste ferait relire une
+ * fiction à qui s'apprête à déployer.
+ */
 function printPlan(plan) {
   for (const phase of plan) {
     console.log(`\n▸ ${phase.step} — ${phase.description}`);
     for (const file of phase.writeFiles ?? []) {
       console.log(`  · écrire ${file.path} (${file.content.split('\n').length} lignes générées)`);
     }
-    for (const command of phase.commands) console.log(`  $ ${command}`);
+    for (const command of phase.commands ?? []) console.log(`  $ ${command}`);
+    // Les liens PERSISTANTS : la réponse à « mes données survivent-elles ? ».
+    for (const link of phase.links ?? []) {
+      console.log(`  · ${link.from} -> ${link.to}   (persistant)`);
+    }
+    for (const pub of phase.publications ?? []) {
+      console.log(`  · ${pub.id} (${pub.host}) : ${pub.next} → ${pub.target}, retour ${pub.prev}`);
+    }
+    for (const caveat of phase.caveats ?? []) console.log(`  ⚠ ${caveat}`);
     if (phase.healthCheck) {
       console.log(`  ✓ contrôle de santé : ${phase.healthCheck.url} (ENV attendu ${phase.healthCheck.expectEnv})`);
     }
   }
+}
+
+/** Les chemins distants réels, affichés avant le plan : c'est le contexte. */
+function printLayout(layout) {
+  console.log('\n▸ disposition distante (topologie du moteur)');
+  console.log(`  · racine du site   : ${layout.siteRoot}`);
+  console.log(`  · backend (stable) : ${layout.backendDir}`);
+  console.log(`  · partagé          : ${layout.sharedRoot}`);
+  console.log(`  · médias publics   : ${layout.sharedUploads}`);
+  console.log(`  · médias privés    : ${layout.sharedStorage}`);
 }
 
 /**
@@ -203,7 +232,16 @@ async function main() {
     console.error('    (renseigner backend/.env — voir backend/.env.example)\n');
     process.exit(1);
   }
-  console.log(`  ✓ ${Object.keys(remoteEnv).length} variables prêtes pour ${deployConfig.paths.envFile}`);
+  /**
+   * LE `.env` VA DANS LE BACKEND, pas dans `shared/` (R10.1).
+   *
+   * Le pipeline l'écrit dans `<backend>/.env` puis le RELIT depuis le disque du
+   * serveur pour vérifier que les clés critiques ont atterri. Annoncer un autre
+   * chemin ici enverrait chercher le fichier au mauvais endroit le jour d'un
+   * incident.
+   */
+  console.log(`  ✓ ${Object.keys(remoteEnv).length} variables prêtes pour `
+    + `${describeRemoteLayout(deployConfig).backendDir}/.env`);
   console.log(`  · valeurs pilotées par le déploiement : ${JSON.stringify(redactEnv({
     ENV: remoteEnv.ENV, PORT: remoteEnv.PORT, PUBLIC_URL: remoteEnv.PUBLIC_URL, CORS_ORIGINS: remoteEnv.CORS_ORIGINS,
   }))}`);
@@ -238,8 +276,11 @@ async function main() {
 
   if (executeMode) return execute(deployConfig, { mode });
 
+  printLayout(describeRemoteLayout(deployConfig));
   printPlan(buildPlan(deployConfig, { releaseId: id }));
   console.log(`\n✓ Simulation terminée — ${STEPS.length} étapes planifiées, aucune action exécutée.`);
+  console.log('  Les étapes et les chemins ci-dessus sont LUS dans le moteur '
+    + '(PIPELINE_STEPS + planTopology) : la simulation ne peut pas diverger de l’exécution.');
   console.log('  Pour exécuter réellement : DEPLOY_SSH_PASSWORD=… node deploy/deploy.mjs --execute …\n');
 }
 

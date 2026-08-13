@@ -97,23 +97,48 @@ export function loadDeployConfig(configPath, overrides = {}, required = false) {
     sshUser: merged.sshUser ?? 'root',
     backendPort: merged.backendPort,
     remoteRoot,
+    /**
+     * @deprecated Le moteur ne conserve AUCUNE release et ne purge rien : il
+     * uploade dans un `backend/` stable et garde un seul `.prev` par SPA. Ce
+     * réglage n'a donc plus d'effet.
+     *
+     * Il reste ACCEPTÉ et validé pour qu'un `deploy.config.json` existant ne
+     * soit pas refusé du jour au lendemain — refuser une clé devenue inutile
+     * transformerait un nettoyage en panne de déploiement. Il n'est simplement
+     * plus lu par le plan.
+     */
     keepReleases: merged.keepReleases ?? 5,
     serviceName: merged.serviceName ?? `panel-${merged.host.replace(/[^a-z0-9.-]/gi, '-')}`,
+    /**
+     * ══ LES CHEMINS DISTANTS — CEUX DU MOTEUR, ET RIEN D'AUTRE (R10.1) ══════
+     *
+     * Ce bloc décrivait un déploiement par releases : `releases/<id>`, un lien
+     * `current`, un `.env` dans `shared/`. Le moteur n'en utilise aucun. Il
+     * uploade dans un `backend/` STABLE, écrit le `.env` dedans, et publie les
+     * SPA par bascule `.next` → `.prev`.
+     *
+     * Ces chemins-là ne servaient qu'à la simulation, et lui faisaient décrire
+     * une disposition qui n'existe pas sur le serveur. Un audit s'y est laissé
+     * prendre (voir POST_MIGRATION_PRE_DEPLOYMENT_AUDIT §AH).
+     *
+     * La topologie fait désormais autorité : `describeRemoteLayout()` la lit
+     * dans `planTopology()`. Ce qui reste ici est ce que le CLI possède en
+     * propre — la racine, dérivée du domaine choisi.
+     */
     paths: {
       siteRoot,
-      releasesDir: `${siteRoot}/releases`,
-      currentLink: `${siteRoot}/current`,
       sharedDir: `${siteRoot}/shared`,
-      envFile: `${siteRoot}/shared/.env`,
       /**
-       * MÉDIAS IMPORTÉS — hors des releases, comme le stockage des projets.
+       * MÉDIAS PUBLICS ET PRIVÉS — hors du dossier applicatif, et persistants.
        *
-       * Une release est un dossier jetable : y écrire les logos les ferait
-       * disparaître à la mise en production suivante. Ils vivent donc dans
-       * `shared/`, et chaque release y pointe par un lien symbolique refait à
-       * chaque déploiement. Aucune opération manuelle, jamais.
+       * Le pipeline (re)pose à chaque déploiement `backend/uploads` et
+       * `backend/storage` en liens vers ces deux dossiers : les fichiers
+       * survivent donc aux mises en production sans aucune opération manuelle.
+       * Ils sont exposés ici pour que la simulation puisse les AFFICHER — c'est
+       * la question qu'on se pose avant de redéployer.
        */
       sharedUploads: `${siteRoot}/shared/uploads`,
+      sharedStorage: `${siteRoot}/shared/storage`,
     },
     // Dérivé du frontend, jamais configuré : c'est l'origine canonique du
     // backend, celle que servent Nginx, certbot et la configuration réseau.

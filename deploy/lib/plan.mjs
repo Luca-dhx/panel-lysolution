@@ -1,29 +1,62 @@
-// Le PLAN de déploiement : la liste ordonnée des étapes et, pour chacune,
-// les commandes distantes exactes. Séparer le plan de son exécution permet
-// de le vérifier entièrement en mode simulation (--dry-run) et de le
-// tester sans serveur.
-import { renderNginxConfig, renderNginxHttpOnly } from './nginx.mjs';
+/**
+ * LA SIMULATION — et elle décrit le MOTEUR, pas une seconde idée du déploiement.
+ *
+ * ══ CE QUE CE FICHIER A CESSÉ D'ÊTRE (R10.1) ════════════════════════════════
+ *
+ * Il portait une liste d'étapes et de commandes shell écrites À LA MAIN :
+ * `releases/<id>`, un lien `current`, une purge `releases.prune`. Rien de tout
+ * cela n'existe côté exécution. `deploy.mjs` ne s'en sert que pour AFFICHER un
+ * plan ; l'exécution réelle (`--execute`) délègue intégralement au
+ * `DeploymentEngine`, dont le pipeline uploade dans un `backend/` STABLE et
+ * publie les SPA par bascule `.next` → `.prev`.
+ *
+ * Les deux descriptions avaient donc divergé, et la simulation montrait une
+ * fiction à qui s'apprêtait à déployer. Ce n'est pas une inexactitude
+ * cosmétique : un audit pré-déploiement s'est appuyé dessus et a conclu à une
+ * perte de données inexistante (voir POST_MIGRATION_PRE_DEPLOYMENT_AUDIT §AH).
+ *
+ * ══ LA RÈGLE MAINTENANT ═════════════════════════════════════════════════════
+ *
+ * Ce module ne DÉCRIT plus le déploiement : il le LIT. Les étapes viennent de
+ * `PIPELINE_STEPS`, les chemins de `planTopology()` — les deux autorités que
+ * l'exécution emploie réellement. Une étape ajoutée au moteur apparaît ici sans
+ * qu'on y touche ; une étape retirée en disparaît. La divergence n'est plus
+ * possible, parce qu'il n'y a plus deux sources.
+ *
+ * Ce module n'invente donc AUCUNE commande shell. Il ne les possède pas : elles
+ * vivent dans le pipeline, qui les compose à partir du transport et de la
+ * topologie. Prétendre les recopier ici recréerait exactement le défaut qu'on
+ * vient de fermer.
+ */
+import { PIPELINE_STEPS } from '../../backend/src/deployment-engine/pipeline.js';
+import { planTopology } from '../../backend/src/deployment-engine/topology.js';
 
-export const STEPS = Object.freeze([
-  'validate.env',
-  'quality.lint',
-  'quality.typecheck',
-  'quality.tests',
-  'artifact.build',
-  'artifact.upload',
-  'release.install',
-  'nginx.http',
-  'https.certificate',
-  'nginx.https',
-  'service.start',
-  'health.local',
-  'runtime.network',
-  'health.public',
-  'releases.prune',
-]);
+/**
+ * Ce que chaque étape du moteur fait, en une phrase.
+ *
+ * Un libellé MANQUANT n'est pas une erreur : l'étape s'affiche quand même, avec
+ * son identifiant. Un moteur qui gagne une étape ne doit pas casser sa propre
+ * simulation — il doit la montrer, fût-ce sans commentaire.
+ */
+const STEP_LABELS = Object.freeze({
+  upload: 'Uploader l’artefact — SPA vers `.next`, backend vers son dossier stable',
+  dirs: 'Lier `uploads` et `storage` au partagé persistant, écrire puis RELIRE le `.env`',
+  uploads_migrate: 'Reprendre les médias de l’ancienne destination, s’il y en a',
+  project_media_adopt: 'Adopter les médias déjà présents sur la destination',
+  nginx: 'Installer la configuration Nginx',
+  certbot: 'Obtenir ou renouveler les certificats Let’s Encrypt',
+  reload: 'Recharger Nginx',
+  pm2: 'Démarrer ou recharger le backend sous PM2',
+  health: 'Contrôler la santé locale puis publique',
+  media_publish: 'Publier les médias publics sur la destination',
+  validate: 'Constater l’état réellement servi',
+  runtime_config: 'Écrire le domaine choisi dans la configuration système',
+});
 
-// Commandes locales de qualité — exécutées AVANT toute action distante :
-// on ne déploie jamais un artefact qui n'a pas passé la chaîne complète.
+/**
+ * Les étapes LOCALES, bloquantes, exécutées avant toute action distante : on ne
+ * déploie jamais un artefact qui n'a pas passé la chaîne complète.
+ */
 export const LOCAL_QUALITY_COMMANDS = Object.freeze({
   'quality.lint': { cwd: 'frontend', command: 'npm run lint' },
   'quality.typecheck': { cwd: 'frontend', command: 'npm run typecheck' },
@@ -31,130 +64,114 @@ export const LOCAL_QUALITY_COMMANDS = Object.freeze({
   'artifact.build': { cwd: 'frontend', command: 'npm run build' },
 });
 
-export function buildPlan(deployConfig, { releaseId }) {
-  const { host, paths, backendPort, serviceName, keepReleases, environment, urls } = deployConfig;
-  const releaseDir = `${paths.releasesDir}/${releaseId}`;
-  const nginxAvailable = `/etc/nginx/sites-available/${host}.conf`;
-  const nginxEnabled = `/etc/nginx/sites-enabled/${host}.conf`;
+/**
+ * L'ORDRE COMPLET, dérivé — jamais recopié.
+ *
+ * Les étapes locales d'abord (elles n'appartiennent qu'au CLI), puis celles du
+ * moteur, dans SON ordre.
+ */
+export const STEPS = Object.freeze([
+  ...Object.keys(LOCAL_QUALITY_COMMANDS),
+  ...PIPELINE_STEPS,
+]);
 
-  return [
-    {
-      step: 'release.install',
-      description: 'Préparer les dossiers, lier les ressources partagées et installer les dépendances',
-      commands: [
-        `mkdir -p ${paths.releasesDir} ${paths.sharedDir}`,
-        // Le dossier des médias est créé s'il manque — un premier déploiement
-        // ne doit rien exiger de plus qu'un déploiement suivant.
-        `mkdir -p ${paths.sharedUploads}`,
-        `mkdir -p ${releaseDir}`,
-        `ln -sfn ${paths.envFile} ${releaseDir}/backend/.env`,
-        // Le lien est REFAIT à chaque release (`-n` : on remplace le lien, on
-        // n'écrit pas dedans). `rm -rf` d'abord, sinon `ln` créerait un lien
-        // À L'INTÉRIEUR d'un dossier `uploads` laissé par l'archive.
-        `rm -rf ${releaseDir}/backend/uploads`,
-        `ln -sfn ${paths.sharedUploads} ${releaseDir}/backend/uploads`,
-        `cd ${releaseDir}/backend && npm ci --omit=dev`,
-      ],
-    },
-    {
-      step: 'nginx.http',
-      description: 'Installer la configuration Nginx HTTP (challenge ACME)',
-      writeFiles: [{ path: `/tmp/${host}.http.conf`, content: renderNginxHttpOnly(deployConfig) }],
-      commands: [
-        `mv /tmp/${host}.http.conf ${nginxAvailable}`,
-        `ln -sfn ${nginxAvailable} ${nginxEnabled}`,
-        'nginx -t',
-        'systemctl reload nginx',
-      ],
-    },
-    {
-      step: 'https.certificate',
-      description: 'Obtenir ou renouveler le certificat Let’s Encrypt',
-      commands: [
-        `mkdir -p /var/www/certbot`,
-        // UN CERTIFICAT PAR HÔTE, jamais de wildcard TLS : celui-ci ne
-        // couvrirait qu'un seul niveau et ne pourrait pas servir
-        // `api.panel.…`. HTTP-01 sur webroot, exactement comme SB Auto.
-        ...urls.hosts.map((h) =>
-          `certbot certonly --webroot -w /var/www/certbot -d ${h} --agree-tos --non-interactive --keep-until-expiring`),
-      ],
-    },
-    {
-      step: 'nginx.https',
-      description: 'Installer la configuration Nginx HTTPS complète',
-      writeFiles: [{ path: `/tmp/${host}.conf`, content: renderNginxConfig(deployConfig) }],
-      commands: [
-        `mv /tmp/${host}.conf ${nginxAvailable}`,
-        'nginx -t',
-        'systemctl reload nginx',
-      ],
-    },
-    {
-      step: 'service.start',
-      description: 'Basculer le lien « current » puis (re)démarrer le service',
-      commands: [
-        // La bascule du lien symbolique est le point de non-retour : tout ce
-        // qui précède est réversible sans toucher à la release active.
-        `ln -sfn ${releaseDir} ${paths.currentLink}`,
-        `cd ${paths.currentLink}/backend && PORT=${backendPort} ENV=${environment} pm2 startOrReload ecosystem.config.cjs --update-env || pm2 start src/server.js --name ${serviceName} --update-env`,
-        'pm2 save',
-      ],
-    },
-    {
-      step: 'health.local',
-      description: 'Vérifier la santé du backend en local (avant exposition)',
-      healthCheck: { url: `http://127.0.0.1:${backendPort}/health`, expectEnv: environment },
-      commands: [
-        `curl -fsS --retry 8 --retry-delay 2 http://127.0.0.1:${backendPort}/health`,
-      ],
-    },
-    {
-      step: 'runtime.network',
-      description: 'Écrire le domaine choisi dans la configuration système du Panel',
-      commands: [
-        `cd ${paths.currentLink}/backend && node scripts/set-network-configuration.mjs --backend-url ${urls.backendUrl} --frontend-url ${urls.frontendUrl}`,
-      ],
-    },
-    {
-      step: 'health.public',
-      description: 'Vérifier la santé publique et la version publiée',
-      healthCheck: { url: `${urls.backendUrl}/health`, expectEnv: environment },
-      commands: [
-        `curl -fsS --retry 5 --retry-delay 3 ${urls.backendUrl}/health`,
-        `curl -fsS ${urls.backendUrl}/api/version`,
-      ],
-    },
-    {
-      step: 'releases.prune',
-      description: `Conserver les ${keepReleases} dernières releases`,
-      commands: [
-        `cd ${paths.releasesDir} && ls -1t | tail -n +${keepReleases + 1} | xargs -r rm -rf`,
-      ],
-    },
-  ];
+/**
+ * LES CHEMINS RÉELS de la destination, lus dans la topologie du moteur.
+ *
+ * ══ POURQUOI `storage` FIGURE EXPLICITEMENT ═══════════════════════════════
+ *
+ * Parce que c'est la question qu'un opérateur se pose avant de redéployer :
+ * « mes justificatifs survivent-ils ? ». La réponse est un lien, et un lien
+ * s'affiche. Le laisser implicite est précisément ce qui a permis de croire
+ * qu'il n'existait pas.
+ */
+export function describeRemoteLayout(deployConfig) {
+  const topo = planTopology({
+    host: deployConfig.host,
+    remoteRoot: deployConfig.remoteRoot,
+  });
+  return {
+    siteRoot: topo.siteRoot,
+    backendDir: topo.backendDir,
+    sharedRoot: topo.sharedRoot,
+    sharedUploads: topo.sharedUploads,
+    /** Le partagé privé — cible du lien `backend/storage` posé à chaque déploiement. */
+    sharedStorage: `${topo.sharedRoot}/storage`,
+    /** Les liens que le pipeline (re)pose à chaque passage, étape `dirs`. */
+    links: [
+      { from: `${topo.backendDir}/uploads`, to: topo.sharedUploads },
+      { from: `${topo.backendDir}/storage`, to: `${topo.sharedRoot}/storage` },
+    ],
+    /** Les SPA publiées par bascule atomique — aucune release, aucun `current`. */
+    publications: topo.publishable.map((app) => ({
+      id: app.id,
+      host: app.host,
+      target: app.remoteRoot,
+      next: `${app.remoteRoot}.next`,
+      prev: `${app.remoteRoot}.prev`,
+    })),
+  };
 }
 
-// Rollback : on repointe « current » vers la release précédente et on
-// redémarre. Aucune donnée n'est touchée — les migrations Mongo restent la
-// responsabilité de leur lot.
-export function buildRollbackPlan(deployConfig, { targetReleaseId }) {
-  const { paths, backendPort, environment, serviceName, urls } = deployConfig;
+/**
+ * LE PLAN AFFICHÉ — une lecture du moteur, pas une seconde implémentation.
+ *
+ * `releaseId` reste accepté pour ne pas casser l'appelant, et n'est utilisé que
+ * comme ÉTIQUETTE de version : le pipeline ne crée aucun dossier de release.
+ */
+export function buildPlan(deployConfig, { releaseId } = {}) {
+  const layout = describeRemoteLayout(deployConfig);
+
+  return PIPELINE_STEPS.map((step) => ({
+    step,
+    description: STEP_LABELS[step] ?? `Étape « ${step} » du moteur de déploiement`,
+    /**
+     * VIDE, ET C'EST EXACT. Les commandes appartiennent au pipeline, qui les
+     * compose au moment de l'exécution à partir du transport. En afficher une
+     * recopie serait réintroduire la fiction que ce lot a supprimée.
+     */
+    commands: [],
+    /** L'étiquette de version affichée — pas un dossier, pas une release. */
+    version: releaseId ?? null,
+    ...(step === 'dirs' ? { links: layout.links } : {}),
+    ...(step === 'upload' ? { publications: layout.publications } : {}),
+    ...(step === 'health'
+      ? { healthCheck: { url: `${deployConfig.urls.backendUrl}/health`, expectEnv: deployConfig.environment } }
+      : {}),
+  }));
+}
+
+/**
+ * LE ROLLBACK — décrit tel qu'il est, réserve comprise.
+ *
+ * ══ UNE RÉSERVE QUI DOIT SE VOIR ══════════════════════════════════════════
+ *
+ * `rollback.js` repointe un lien `current` vers un dossier `releases/<id>`. Or
+ * le pipeline de déploiement ne crée NI l'un NI l'autre : il uploade dans un
+ * `backend/` stable et bascule les SPA par `.next`/`.prev`.
+ *
+ * Sur une destination déployée par ce pipeline, `listReleases()` ne trouve donc
+ * rien, et le rollback n'a aucune cible. Le filet réel est `.prev`, que
+ * `rollback.js` n'utilise pas.
+ *
+ * Ce n'est pas corrigé ici — ce serait changer le comportement du moteur, ce
+ * qui appartient à son propre lot. Mais la simulation cesse de laisser croire
+ * qu'un rollback est planifié et prêt.
+ */
+export function buildRollbackPlan(deployConfig, { targetReleaseId } = {}) {
+  const layout = describeRemoteLayout(deployConfig);
   return [
     {
-      step: 'rollback.switch',
-      description: `Repointer « current » vers la release ${targetReleaseId}`,
-      commands: [
-        `test -d ${paths.releasesDir}/${targetReleaseId}`,
-        `ln -sfn ${paths.releasesDir}/${targetReleaseId} ${paths.currentLink}`,
-        `cd ${paths.currentLink}/backend && PORT=${backendPort} ENV=${environment} pm2 startOrReload ecosystem.config.cjs --update-env || pm2 restart ${serviceName} --update-env`,
-      ],
-    },
-    {
-      step: 'rollback.health',
-      description: 'Vérifier la santé après rollback',
-      healthCheck: { url: `${urls.backendUrl}/health`, expectEnv: environment },
-      commands: [
-        `curl -fsS --retry 8 --retry-delay 2 http://127.0.0.1:${backendPort}/health`,
+      step: 'rollback.delegate',
+      description:
+        `Déléguer au moteur : engine.rollback({ releaseId: ${targetReleaseId ?? 'précédente'} })`,
+      commands: [],
+      caveats: [
+        'Le moteur cherche `<siteRoot>/releases/<id>` et un lien `<siteRoot>/current`.',
+        'Le pipeline de déploiement ne crée ni l’un ni l’autre : il uploade dans '
+        + `\`${layout.backendDir}\` et bascule les SPA par \`.next\`/\`.prev\`.`,
+        'Sur une destination déployée par ce pipeline, aucune release n’est donc '
+        + 'listable et le rollback n’a pas de cible. À traiter dans un lot du moteur.',
       ],
     },
   ];

@@ -28,6 +28,8 @@ const {
 const { deriveUrls } = await import('../deploy/lib/config.mjs');
 const { renderNginxConfig, renderNginxHttpOnly, certPaths } = await import('../deploy/lib/nginx.mjs');
 const { buildPlan } = await import('../deploy/lib/plan.mjs');
+/** L'autorité des chemins et des hôtes — la même que celle du pipeline. */
+const { planTopology } = await import('../backend/src/deployment-engine/topology.js');
 
 const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
@@ -174,25 +176,38 @@ section('5. Certificats — un par hôte, HTTP-01, aucun wildcard');
     },
     urls,
   };
-  const plan = buildPlan(cfg, { releaseId: 'r1' });
-  // `certonly`, pas `certbot` : `mkdir -p /var/www/certbot` contient le mot.
-  const certbot = plan.find((s) => s.step === 'https.certificate').commands.filter((c) => c.includes('certonly'));
+  /**
+   * ══ ON ÉPROUVE LE MOTEUR, PAS LA SIMULATION (R10.1) ═══════════════════════
+   *
+   * Ces contrôles lisaient le plan de `deploy/lib/plan.mjs` — une description
+   * écrite à la main, qui avait divergé du pipeline réel. Ils validaient donc
+   * une fiction cohérente avec elle-même.
+   *
+   * La source des certificats est `certbot.js`, et c'est elle qu'on inspecte :
+   * un `certonly` par hôte, en HTTP-01 sur webroot, jamais de wildcard.
+   */
+  const certbotSrc = lire('backend/src/deployment-engine/certbot.js');
 
-  check('deux émissions, une par hôte', certbot.length === 2);
-  check('…le frontend', certbot[0].includes('-d panel.ly-solution.com'));
-  check('…le backend', certbot[1].includes('-d api.panel.ly-solution.com'));
-  check('challenge HTTP-01 sur webroot', certbot.every((c) => c.includes('--webroot -w /var/www/certbot')));
-  check('AUCUN wildcard demandé', certbot.every((c) => !c.includes('*')));
-  check('…ni challenge DNS', certbot.every((c) => !c.includes('dns-')));
-  check('renouvellement idempotent', certbot.every((c) => c.includes('--keep-until-expiring')));
+  check('émission par HÔTE (une commande, appelée par hôte)',
+    /certonly --webroot -w \$\{webroot\} -d \$\{host\}/.test(certbotSrc));
+  check('challenge HTTP-01 sur webroot', /--webroot -w/.test(certbotSrc));
+  check('AUCUN wildcard demandé', !/-d \*\./.test(certbotSrc));
+  check('…ni challenge DNS', !/dns-/.test(certbotSrc));
+  check('renouvellement idempotent', /--keep-until-expiring/.test(certbotSrc));
+  check('un certificat existant est RÉUTILISÉ, jamais réémis',
+    /test -f \$\{fullchain\}/.test(certbotSrc) && /reused: true/.test(certbotSrc));
 
-  // La configuration réseau reçoit l'origine CANONIQUE.
-  const reseau = plan.find((s) => s.step === 'runtime.network').commands.join(' ');
-  check('backendUrl = https://api.<frontend>', reseau.includes('--backend-url https://api.panel.ly-solution.com'));
-  check('frontendUrl inchangé', reseau.includes('--frontend-url https://panel.ly-solution.com'));
+  /**
+   * Les hôtes à certifier viennent de la TOPOLOGIE — c'est elle qui sait qu'un
+   * Panel expose son frontend et son API sur deux noms distincts.
+   */
+  const topoCert = planTopology({ host: 'panel.ly-solution.com', remoteRoot: '/srv' });
+  check('le frontend est un hôte servi', topoCert.servedHosts.includes('panel.ly-solution.com'));
+  check('l’API est dérivée en api.<frontend>', topoCert.apiHost === 'api.panel.ly-solution.com');
 
   // La vérification publique porte sur le backend canonique.
-  const publique = plan.find((s) => s.step === 'health.public');
+  const plan = buildPlan(cfg, { releaseId: 'r1' });
+  const publique = plan.find((s) => s.step === 'health');
   check('la santé publique interroge le backend canonique',
     publique.healthCheck.url === 'https://api.panel.ly-solution.com/health');
 }

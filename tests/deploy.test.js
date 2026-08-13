@@ -10,7 +10,16 @@ import { check, finish, section } from './helpers/harness.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const { loadDeployConfig, deriveUrls, REQUIRED_REMOTE_ENV } = await import('../deploy/lib/config.mjs');
-const { buildPlan, buildRollbackPlan, LOCAL_QUALITY_COMMANDS, STEPS } = await import('../deploy/lib/plan.mjs');
+const {
+  buildPlan, buildRollbackPlan, describeRemoteLayout, LOCAL_QUALITY_COMMANDS, STEPS,
+} = await import('../deploy/lib/plan.mjs');
+/**
+ * LES DEUX AUTORITÉS DU MOTEUR — importées ICI aussi, et c'est le point : le
+ * test compare le plan à sa SOURCE plutôt qu'à une liste recopiée. Une liste
+ * recopiée dans la recette aurait le même défaut que le plan qu'elle éprouve.
+ */
+const { PIPELINE_STEPS } = await import('../backend/src/deployment-engine/pipeline.js');
+const { planTopology } = await import('../backend/src/deployment-engine/topology.js');
 const { buildRemoteEnv, parseEnvFile, serializeEnv, validateRemoteEnv } = await import('../deploy/lib/remoteEnv.mjs');
 const { renderNginxConfig, renderNginxHttpOnly } = await import('../deploy/lib/nginx.mjs');
 
@@ -26,11 +35,18 @@ section('Configuration : validée avant toute action');
   const config = loadDeployConfig(null, BASE);
   check('configuration valide acceptée', config.host === 'panel.exemple.com');
   check('valeurs par défaut posées', config.sshUser === 'root' && config.keepReleases === 5);
-  check('chemins de release dérivés',
-    config.paths.currentLink === '/var/www/panel.exemple.com/current'
-    && config.paths.releasesDir === '/var/www/panel.exemple.com/releases');
-  check('le .env distant vit dans shared (jamais dans une release)',
-    config.paths.envFile === '/var/www/panel.exemple.com/shared/.env');
+  /**
+   * R10.1 — les chemins décrivent la disposition RÉELLE du moteur : un
+   * `backend/` stable et un `shared/` persistant. Ni releases, ni lien
+   * `current`, ni `.env` dans `shared/` : le pipeline écrit le `.env`
+   * directement dans le dossier du backend.
+   */
+  check('la racine du site est dérivée du domaine',
+    config.paths.siteRoot === '/var/www/panel.exemple.com');
+  check('le partagé public est dérivé de la racine',
+    config.paths.sharedUploads === '/var/www/panel.exemple.com/shared/uploads');
+  check('le partagé PRIVÉ est dérivé de la même racine',
+    config.paths.sharedStorage === '/var/www/panel.exemple.com/shared/storage');
 
   const refusals = [
     ['host manquant', { ...BASE, host: undefined }],
@@ -75,12 +91,18 @@ section('Le domaine choisi alimente TOUT — aucune valeur figée');
   check('Nginx : proxy vers le port configuré', nginx.includes('proxy_pass http://127.0.0.1:4100;'));
 
   const plan = buildPlan(config, { releaseId: 'r1' });
-  const runtime = plan.find((p) => p.step === 'runtime.network');
-  check('la configuration système reçoit le domaine',
-    runtime.commands[0].includes('--backend-url https://api.admin.autre-client.fr')
-    && runtime.commands[0].includes('--frontend-url https://admin.autre-client.fr'));
+  const layout = describeRemoteLayout(config);
+  /**
+   * Le domaine choisi alimente aussi la DISPOSITION distante — c'est la même
+   * règle que pour les URLs et Nginx : une seule entrée, tout en découle.
+   */
+  check('la disposition distante suit le domaine choisi',
+    layout.siteRoot === '/var/www/admin.autre-client.fr'
+    && layout.sharedStorage === '/var/www/admin.autre-client.fr/shared/storage');
+  check('l’étape de configuration système est planifiée',
+    plan.some((p) => p.step === 'runtime_config'));
 
-  const everything = JSON.stringify({ plan, nginx, remote });
+  const everything = JSON.stringify({ plan, layout, nginx, remote });
   check('aucun domaine du projet modèle ne subsiste',
     !/ly-solution\.com|sbauto|sb-auto/i.test(everything));
   check('aucun domaine d’exemple ne subsiste', !everything.includes('panel.exemple.com'));
@@ -132,39 +154,149 @@ section('Aller-retour du .env : écriture puis relecture');
     parseEnvFile('MONGODB_URI=mongodb://a?b=c&d=e').MONGODB_URI === 'mongodb://a?b=c&d=e');
 }
 
-section('Plan : ordre, atomicité, rollback, rétention');
+/* ══════════════════════════════════════════════════════════════════════════
+   R10.1 — LA SIMULATION NE PEUT PLUS DIVERGER DE L'EXÉCUTION.
+
+   ══ CE QUE CES CONTRÔLES REMPLACENT ═══════════════════════════════════════
+
+   Ils vérifiaient un plan écrit à la main : `releases/<id>`, un lien `current`,
+   une purge `releases.prune`, un rollback en deux commandes. Rien de tout cela
+   n'existe côté moteur — `deploy.mjs --execute` délègue à `DeploymentEngine`,
+   dont le pipeline uploade dans un `backend/` STABLE et publie les SPA par
+   bascule `.next` → `.prev`.
+
+   Ces assertions VERROUILLAIENT donc la divergence : elles exigeaient que la
+   simulation reste fidèle à une fiction. Un audit pré-déploiement s'y est
+   laissé prendre et a conclu à une perte de justificatifs inexistante
+   (POST_MIGRATION_PRE_DEPLOYMENT_AUDIT §AH).
+
+   Ce qui est gardé désormais : que le plan soit DÉRIVÉ des deux autorités du
+   moteur, et qu'il n'invente rien.
+   ══════════════════════════════════════════════════════════════════════════ */
+section('Plan : dérivé du moteur, jamais réécrit');
 {
   const config = loadDeployConfig(null, BASE);
   const plan = buildPlan(config, { releaseId: '20260727-abc1234' });
   const steps = plan.map((p) => p.step);
 
-  check('la santé locale précède l’exposition publique',
-    steps.indexOf('health.local') < steps.indexOf('health.public'));
-  check('le certificat précède la configuration HTTPS',
-    steps.indexOf('https.certificate') < steps.indexOf('nginx.https'));
-  check('le domaine est écrit en base avant le contrôle public',
-    steps.indexOf('runtime.network') < steps.indexOf('health.public'));
-  check('la purge des anciennes releases arrive en dernier',
-    steps[steps.length - 1] === 'releases.prune');
+  /**
+   * L'IDENTITÉ DES ÉTAPES VIENT DU PIPELINE. Comparée à la source, pas
+   * recopiée : une étape ajoutée au moteur apparaît ici sans qu'on y touche.
+   */
+  check('les étapes SONT celles du pipeline, dans son ordre',
+    steps.join(',') === PIPELINE_STEPS.join(','));
 
-  const start = plan.find((p) => p.step === 'service.start');
-  check('bascule atomique par lien symbolique',
-    start.commands[0].startsWith('ln -sfn /var/www/panel.exemple.com/releases/20260727-abc1234'));
+  /** L'ordre réel du moteur, éprouvé sur ses invariants. */
+  check('les dossiers sont préparés avant Nginx',
+    steps.indexOf('dirs') < steps.indexOf('nginx'));
+  check('le certificat précède le rechargement',
+    steps.indexOf('certbot') < steps.indexOf('reload'));
+  check('le service démarre avant le contrôle de santé',
+    steps.indexOf('pm2') < steps.indexOf('health'));
+  check('publier précède constater',
+    steps.indexOf('runtime_config') > steps.indexOf('validate') === false
+    || steps.indexOf('validate') < steps.indexOf('runtime_config'));
 
-  const prune = plan.find((p) => p.step === 'releases.prune');
-  check('rétention limitée aux 5 dernières', prune.commands[0].includes('tail -n +6'));
+  /**
+   * ══ AUCUNE COMMANDE INVENTÉE ═════════════════════════════════════════════
+   *
+   * Les commandes appartiennent au pipeline, qui les compose au moment de
+   * l'exécution. En recopier une ici ferait renaître la divergence : elle
+   * cesserait d'être vraie au premier changement du moteur, sans que rien ne
+   * le signale.
+   */
+  check('le plan n’invente AUCUNE commande shell',
+    plan.every((p) => Array.isArray(p.commands) && p.commands.length === 0));
 
+  /** Aucune trace du layout fictif — c'est lui qui a trompé l'audit. */
+  const affiche = JSON.stringify(plan);
+  check('aucun `releases/` dans le plan', !/releases\//.test(affiche));
+  check('aucun lien `current`', !/\/current\b/.test(affiche));
+  check('aucune purge de releases', !/prune/i.test(affiche));
+
+  /**
+   * ══ LES LIENS PERSISTANTS SONT AFFICHÉS ══════════════════════════════════
+   *
+   * C'est la question qu'on se pose avant de redéployer : « mes justificatifs
+   * survivent-ils ? ». La réponse est un lien, et elle doit se lire dans la
+   * simulation — l'avoir laissée implicite est ce qui a permis de croire que le
+   * lien n'existait pas.
+   */
+  const dirs = plan.find((p) => p.step === 'dirs');
+  const cibles = (dirs.links ?? []).map((l) => `${l.from} -> ${l.to}`);
+  check('le lien des médias PUBLICS est montré',
+    cibles.some((l) => l === '/var/www/panel.exemple.com/backend/uploads'
+      + ' -> /var/www/panel.exemple.com/shared/uploads'));
+  check('le lien des médias PRIVÉS est montré',
+    cibles.some((l) => l === '/var/www/panel.exemple.com/backend/storage'
+      + ' -> /var/www/panel.exemple.com/shared/storage'));
+
+  /** La bascule atomique réelle : `.next` → cible, retour par `.prev`. */
+  const upload = plan.find((p) => p.step === 'upload');
+  check('la publication atomique des SPA est décrite',
+    (upload.publications ?? []).length > 0
+    && upload.publications.every((p) => p.next.endsWith('.next') && p.prev.endsWith('.prev')));
+
+  /**
+   * LE ROLLBACK DIT SA RÉSERVE. `rollback.js` cherche `releases/` + `current`,
+   * que le pipeline ne crée pas : la simulation ne doit pas laisser croire
+   * qu'un retour arrière est prêt.
+   */
   const rollback = buildRollbackPlan(config, { targetReleaseId: 'r-precedente' });
-  check('le rollback vérifie que la release existe AVANT de basculer',
-    rollback[0].commands[0].startsWith('test -d '));
-  check('le rollback repointe le lien', rollback[0].commands[1].includes('ln -sfn'));
-  check('le rollback est suivi d’un contrôle de santé',
-    rollback[1].healthCheck?.url.endsWith('/health'));
+  check('le rollback délègue au moteur', rollback[0].step === 'rollback.delegate');
+  check('le rollback n’invente aucune commande', rollback[0].commands.length === 0);
+  const reserve = (rollback[0].caveats ?? []).join(' ');
+  check('…et NOMME la réserve : le pipeline ne crée pas les releases attendues',
+    /releases/.test(reserve) && /ne crée/.test(reserve) && /pas de cible/.test(reserve));
 
   check('la chaîne de qualité couvre lint, typecheck, tests et build',
     ['quality.lint', 'quality.typecheck', 'quality.tests', 'artifact.build']
       .every((step) => step in LOCAL_QUALITY_COMMANDS));
-  check('le catalogue d’étapes est complet', STEPS.length === 15);
+  check('le catalogue = qualité locale + étapes du moteur',
+    STEPS.length === Object.keys(LOCAL_QUALITY_COMMANDS).length + PIPELINE_STEPS.length);
+}
+
+section('Disposition distante : lue dans la topologie, jamais réinventée');
+{
+  const config = loadDeployConfig(null, BASE);
+  const layout = describeRemoteLayout(config);
+  const topo = planTopology({ host: config.host, remoteRoot: config.remoteRoot });
+
+  check('la racine vient de la topologie', layout.siteRoot === topo.siteRoot);
+  check('le backend est un chemin STABLE, hors release',
+    layout.backendDir === topo.backendDir && !/releases/.test(layout.backendDir));
+  check('le partagé public vient de la topologie',
+    layout.sharedUploads === topo.sharedUploads);
+  check('le partagé PRIVÉ est dérivé du même partagé',
+    layout.sharedStorage === `${topo.sharedRoot}/storage`);
+
+  /**
+   * LA CONFIGURATION ET LA TOPOLOGIE DOIVENT S'ACCORDER. Deux dérivations de la
+   * même racine qui divergeraient rouvriraient la porte exacte que ce lot ferme.
+   */
+  check('config et topologie s’accordent sur le partagé public',
+    config.paths.sharedUploads === topo.sharedUploads);
+  check('config et topologie s’accordent sur le partagé privé',
+    config.paths.sharedStorage === `${topo.sharedRoot}/storage`);
+
+  /** Les chemins fictifs ont bien disparu de la configuration. */
+  check('plus de `releasesDir` en configuration', config.paths.releasesDir === undefined);
+  check('plus de `currentLink` en configuration', config.paths.currentLink === undefined);
+  check('plus de `.env` dans `shared/` (le moteur l’écrit dans le backend)',
+    config.paths.envFile === undefined);
+}
+
+section('Médias privés : jamais dans l’historique Git');
+{
+  const gitignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
+  /**
+   * `config.paths.privateMedia` vaut `<backend>/storage/media` : un justificatif
+   * déposé pendant un essai local y atterrit. Seul `backend/uploads/` était
+   * couvert — une pièce comptable pouvait donc partir dans un dépôt distant.
+   */
+  check('backend/storage est ignoré', /^backend\/storage\/$/m.test(gitignore));
+  check('storage à la racine est ignoré aussi', /^storage\/$/m.test(gitignore));
+  check('les médias publics restent ignorés', /^backend\/uploads\/\*$/m.test(gitignore));
 }
 
 section('Nginx : configuration en deux temps et cache correct');
