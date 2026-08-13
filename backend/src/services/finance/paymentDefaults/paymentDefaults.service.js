@@ -203,6 +203,23 @@ export async function recordInvoiceFailure(fait) {
     const incident = await PanelPaymentDefault.findOne({ environment, invoiceId }).lean();
 
     /**
+     * ══ L'INCIDENT PART VERS LE PROJET DÈS LE PREMIER ÉCHEC (L10.6B-3) ═══════
+     *
+     * AVANT le filtre d'échec tardif ci-dessous, et c'est délibéré : le `$set`
+     * plus haut a pu actualiser `attemptCount` et `nextPaymentAttemptAt` même
+     * sur un incident déjà résolu. Publier l'état RELU garde le Manager
+     * convergent sur ce que Stripe raconte, sans rien rouvrir — le `status`
+     * publié reste celui de la base.
+     *
+     * Et c'est ici, et non à l'expiration, que le blocage de la passe
+     * précédente se referme : jusque-là, le projet n'apprenait l'existence d'un
+     * impayé qu'au moment où son site fermait. Le client découvrait donc
+     * l'incident et la sanction dans le même écran, alors qu'il avait eu sept
+     * jours pour l'éviter.
+     */
+    await publishIncidentBestEffort(incident, 'échec de prélèvement');
+
+    /**
      * UN ÉCHEC TARDIF NE ROUVRE PAS UN INCIDENT RÉSOLU.
      *
      * Stripe livre dans le désordre : un `invoice.payment_failed` de la
@@ -311,6 +328,20 @@ export async function resolveInvoiceDefault({
     );
   });
 
+  /**
+   * ET L'INCIDENT RÉSOLU, POUR QUE LE CLIENT LE LISE (L10.6B-3).
+   *
+   * Le retrait de cause dit au MOTEUR de recalculer ; il ne dit rien à
+   * l'écran du client. Sans cette seconde publication, la facturation du
+   * Manager resterait bloquée sur « paiement en échec » alors que le
+   * prélèvement est passé.
+   *
+   * `RESOLVED` ne dit PAS « site accessible » : si une maintenance technique
+   * subsiste, le site reste fermé, et c'est `SiteStatus` — pas cet incident —
+   * qui l'établit.
+   */
+  await publishIncidentBestEffort(incident, 'régularisation');
+
   return incident;
 }
 
@@ -330,6 +361,16 @@ export async function closeInvoiceDefault({ environment, invoiceId, reason = 'SU
   incident.resolution = reason;
   incident.history.push({ at: nowIso(), from: precedent, to: PAYMENT_DEFAULT_STATUS.CLOSED, reason });
   await incident.save();
+
+  /**
+   * FERMÉ SANS PAIEMENT — et le client doit pouvoir le lire aussi.
+   *
+   * Distinct de `RESOLVED`, et la nuance voyage : personne n'a payé. Un écran
+   * qui compterait les deux ensemble annoncerait une régularisation qui n'a
+   * jamais eu lieu.
+   */
+  await publishIncidentBestEffort(incident.toObject(), 'clôture sans paiement');
+
   return incident;
 }
 
@@ -425,6 +466,17 @@ export async function expireDueGracePeriods({ now = new Date(), limit = 100 } = 
         + `${err?.message ?? 'erreur inconnue'}. Le rattrapage la reprendra.`,
       );
     });
+
+    /**
+     * ET L'INCIDENT, AVEC SA DEMANDE MAIS SANS SA CONFIRMATION (L10.6B-3).
+     *
+     * `suspensionRequestedAt` vient d'être écrite ; `suspensionConfirmedAt`
+     * reste `null` jusqu'à ce que le projet publie son instantané. Le Manager
+     * doit lire cet écart et écrire « suspension en cours d'application », pas
+     * « site suspendu » — la fermeture n'est pas encore un fait, et le projet
+     * peut parfaitement être hors ligne.
+     */
+    await publishIncidentBestEffort(bascule.toObject(), 'expiration de grâce');
   }
 
   if (expired) logger.warn(`[finance] ${expired} délai(s) de grâce échu(s).`);
@@ -502,11 +554,176 @@ async function publishCause(incident) {
 }
 
 /**
+ * PUBLIE L'INCIDENT VERS LE PROJET (L10.6B-3).
+ *
+ * ══ POURQUOI UN SECOND TYPE, ET NON UN CHAMP DE PLUS SUR LA CAUSE ══════════
+ *
+ * `PAYMENT_DEFAULT_CAUSE.active` a une signification EXACTE, démontrable
+ * depuis l'applicateur du projet : elle est écrite dans
+ * `siteStatus.paymentDefault.active`, puis `reconcileSiteStatus()` en tire
+ * l'accessibilité. C'est une ENTRÉE DE MOTEUR, pas une nouvelle.
+ *
+ * Faire porter l'incident par ce type-là menait donc à deux impasses, et il
+ * n'y en avait pas de troisième :
+ *
+ *   `active: true` pendant la grâce   fermerait le site pendant la grâce.
+ *                                     C'est exactement ce que la grâce existe
+ *                                     pour empêcher.
+ *
+ *   `active: false` pendant la grâce  correct pour le moteur — mais
+ *                                     l'applicateur de cause REMET À NÉANT
+ *                                     tout le reste dans ce cas (`since: null`,
+ *                                     `paymentDefaultId: null`,
+ *                                     `amountDueCents: 0`). Le Manager
+ *                                     recevrait l'incident et le perdrait dans
+ *                                     la même écriture.
+ *
+ * Et une raison structurelle par-dessus : `SiteStatus` est un SINGLETON, avec
+ * UN sous-document `paymentDefault`. Un projet peut avoir plusieurs incidents
+ * successifs — deux périodes d'abonnement impayées sont deux factures, donc
+ * deux incidents, et l'historique doit les distinguer. Un singleton ne peut pas
+ * héberger une collection.
+ *
+ * D'où DEUX types, aux rôles disjoints et jamais interchangeables :
+ *
+ *   PAYMENT_DEFAULT_CAUSE      une ENTRÉE du moteur de suspension.
+ *                              Émise quand la cause devient — ou cesse d'être —
+ *                              applicable. Sa cible est le singleton.
+ *
+ *   PAYMENT_DEFAULT_INCIDENT   une OBSERVATION, en lecture seule.
+ *                              Émise à CHAQUE évolution de l'incident, dès le
+ *                              premier échec. Sa cible est une collection.
+ *                              Elle ne touche jamais l'accessibilité.
+ *
+ * ══ `causeActive` N'EST PAS UNE SECONDE AUTORITÉ ═══════════════════════════
+ *
+ * L'incident transporte `causeActive` pour que l'écran puisse expliquer
+ * pourquoi il montre — ou ne montre pas — une suspension. Il ne le transporte
+ * PAS pour que quelqu'un s'en serve : l'accessibilité du site reste lue dans
+ * `SiteStatus`, décidée par le moteur du projet. Un écran qui conclurait
+ * « causeActive donc site fermé » se tromperait le jour où une maintenance
+ * technique tomberait en même temps.
+ *
+ * ══ ÉTAT COMPLET, JAMAIS UN DELTA ══════════════════════════════════════════
+ *
+ * Comme la cause, et pour la même raison. Un « attemptCount + 1 » supposerait
+ * que le projet ait déjà la ligne et dans le bon état ; deux livraisons
+ * arrivées dans le désordre le laisseraient faux sans que personne ne le voie.
+ * Ici chaque livraison porte l'incident ENTIER, et l'applicateur remplace.
+ */
+async function publishIncident(incident) {
+  const { emitChange } = await import('../../sync/syncCore.service.js');
+
+  await emitChange({
+    entityType: 'PAYMENT_DEFAULT_INCIDENT',
+    /** LA MÊME IDENTITÉ QUE LA CAUSE — un incident, une entité, pour sa vie. */
+    entityId: incident.paymentDefaultId,
+    /** NOMMÉE : un impayé diffusé au parc apprendrait à chacun celui des autres. */
+    audience: incident.projectId,
+    payload: {
+      paymentDefaultId: incident.paymentDefaultId,
+      projectId: incident.projectId,
+      contractId: incident.contractId ?? null,
+      invoiceId: incident.invoiceId ?? null,
+
+      status: incident.status,
+
+      // ── CE QUE STRIPE FAIT, ET QU'ON REGARDE ────────────────────────────
+      /**
+       * RECOPIÉ, JAMAIS ESTIMÉ. Le Manager affichera « prévue par Stripe »,
+       * jamais « nous retenterons » : le Panel n'ordonnance aucune tentative,
+       * et le laisser croire ferait attendre au client un geste que personne
+       * ne fera.
+       */
+      attemptCount: incident.attemptCount ?? 0,
+      nextPaymentAttemptAt: iso(incident.nextPaymentAttemptAt),
+      firstFailedAt: iso(incident.firstFailedAt),
+      lastFailedAt: iso(incident.lastFailedAt),
+
+      // ── CE DONT LE PANEL EST AUTORITÉ ───────────────────────────────────
+      /**
+       * `null` TRAVERSE LE PONT COMME `null`, et surtout pas comme `0`.
+       * Les deux sont des décisions opposées : aucune politique d'un côté,
+       * aucune clémence de l'autre. Les confondre ferait promettre une
+       * fermeture automatique là où il n'y en aura jamais.
+       */
+      graceDaysSnapshot: Number.isInteger(incident.graceDaysSnapshot)
+        ? incident.graceDaysSnapshot
+        : null,
+      graceDeadlineAt: iso(incident.graceDeadlineAt),
+
+      // ── CE QUI EST DÛ ───────────────────────────────────────────────────
+      amountDueCents: incident.amountDueCents ?? 0,
+      currency: incident.currency ?? 'EUR',
+      invoiceNumber: incident.invoiceNumber ?? null,
+      /** La facture du client lui appartient — adresses Stripe, jamais copie. */
+      hostedInvoiceUrl: incident.hostedInvoiceUrl ?? null,
+      invoicePdfUrl: incident.invoicePdfUrl ?? null,
+
+      // ── LA SUSPENSION : DEMANDÉE, CONFIRMÉE, RETIRÉE ────────────────────
+      /**
+       * TROIS DATES, TROIS AFFIRMATIONS DIFFÉRENTES. Le Manager doit pouvoir
+       * dire « suspension en cours d'application » sans jamais affirmer
+       * « site suspendu » avant que le projet ne l'ait constaté lui-même.
+       */
+      suspensionRequestedAt: iso(incident.suspensionRequestedAt),
+      suspensionConfirmedAt: iso(incident.suspensionConfirmedAt),
+      causeRemovalConfirmedAt: iso(incident.causeRemovalConfirmedAt),
+
+      resolvedAt: iso(incident.resolvedAt),
+      resolution: incident.resolution ?? null,
+
+      /**
+       * OBSERVATION, PAS AUTORITÉ. Rigoureusement la même valeur que
+       * `PAYMENT_DEFAULT_CAUSE.active` — dérivée de la même fonction, pour
+       * qu'aucune des deux ne puisse dériver de l'autre.
+       */
+      causeActive: demandsSuspension(incident.status),
+      reason: 'Défaut de paiement',
+    },
+    /**
+     * L'HORLOGE DE L'ORDRE. C'est elle que l'applicateur du projet compare
+     * pour refuser un retardataire : une livraison plus ancienne que l'état
+     * déjà appliqué ne doit rien défaire.
+     */
+    modifiedAt: new Date(incident.updatedAt ?? Date.now()).toISOString(),
+  });
+}
+
+/**
+ * PUBLIE L'INCIDENT — sans jamais faire échouer le chemin métier.
+ *
+ * Un impayé enregistré vaut mieux qu'un impayé perdu parce que le projet était
+ * injoignable : le journal du pont conserve l'écriture et le rattrapage la
+ * livrera. C'est la même politique que pour la cause.
+ */
+async function publishIncidentBestEffort(incident, contexte) {
+  if (!incident) return;
+  await publishIncident(incident).catch((err) => {
+    logger.warn(
+      `[finance] projection d'incident non émise (${contexte}) pour `
+      + `${incident.paymentDefaultId} — ${err?.message ?? 'erreur inconnue'}. `
+      + 'Le rattrapage la reprendra.',
+    );
+  });
+}
+
+/** Une date en ISO, ou `null`. Jamais `undefined` : le pont sérialise en JSON. */
+const iso = (valeur) => (valeur ? new Date(valeur).toISOString() : null);
+
+/**
  * REPUBLIE les causes vivantes d'un projet — le rattrapage explicite.
  *
  * Le canal garantit la livraison de ce qui a été ÉMIS, pas la présence de ce
  * qui existait avant que le projet n'écoute. Un projet réappairé doit retrouver
  * la cause qui ferme son site, sans quoi il se rouvrirait tout seul.
+ *
+ * ══ ET LES INCIDENTS AVEC ═══════════════════════════════════════════════════
+ *
+ * Les causes republiées sont les `GRACE_EXPIRED` — celles qui ferment. Les
+ * INCIDENTS republiés sont tous les VIVANTS, `OPEN` compris : un projet qui
+ * revient pendant une grâce doit retrouver son incident, sinon son client
+ * verrait un espace de facturation serein sur un prélèvement refusé.
  */
 export async function republishPaymentDefaultCauses(projectId) {
   const actifs = await PanelPaymentDefault.find({
@@ -515,7 +732,15 @@ export async function republishPaymentDefaultCauses(projectId) {
   }).lean();
 
   for (const incident of actifs) await publishCause(incident).catch(() => null);
-  return { published: actifs.length };
+
+  const vivants = await PanelPaymentDefault.find({
+    projectId,
+    status: { $in: [PAYMENT_DEFAULT_STATUS.OPEN, PAYMENT_DEFAULT_STATUS.GRACE_EXPIRED] },
+  }).lean();
+
+  for (const incident of vivants) await publishIncidentBestEffort(incident, 'rattrapage');
+
+  return { published: actifs.length, incidents: vivants.length };
 }
 
 /**
@@ -618,6 +843,8 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
   let removed = 0;
   /** Les incidents que CET appel vient de faire basculer — voir plus bas. */
   const confirmes = [];
+  /** Ceux dont le RETRAIT vient d'être constaté — republiés eux aussi. */
+  const retires = [];
 
   if (applique && ferme) {
     /**
@@ -678,6 +905,13 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
      * la cause serait absente du snapshot décrit un projet qui ne l'a pas
      * encore appliquée, pas un retrait.
      */
+    const aRetirer = await PanelPaymentDefault.find({
+      projectId,
+      status: PAYMENT_DEFAULT_STATUS.RESOLVED,
+      suspensionRequestedAt: { $ne: null },
+      causeRemovalConfirmedAt: null,
+    }).select('_id').lean();
+
     const r = await PanelPaymentDefault.updateMany(
       {
         projectId,
@@ -688,6 +922,7 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
       { $set: { causeRemovalConfirmedAt: vu } },
     );
     removed = r.modifiedCount ?? 0;
+    if (removed > 0) retires.push(...aRetirer.map((d) => d._id));
   }
 
   if (confirmed || removed) {
@@ -724,12 +959,115 @@ export async function confirmFromSiteStatus({ projectId, snapshot }) {
     });
   }
 
+  /**
+   * ══ LA BOUCLE SE REFERME — L'INCIDENT REPART, CONFIRMÉ (L10.6B-3) ══════════
+   *
+   * Le projet a publié son instantané ; le Panel vient d'y lire la preuve et
+   * d'écrire `suspensionConfirmedAt` — ou `causeRemovalConfirmedAt`. Cette
+   * date n'existe QUE côté Panel : sans cette republication, le Manager
+   * garderait éternellement « suspension en cours d'application » sur un site
+   * fermé depuis une semaine.
+   *
+   * Elle est ici, avec les annonces, et pour la même raison : c'est le seul
+   * endroit qui connaisse la TRANSITION, et il est traversé aussi bien par la
+   * livraison immédiate que par le rattrapage hors ligne.
+   *
+   * Republier n'a AUCUN effet sur l'accessibilité — l'incident est une
+   * observation. Le cycle ne peut donc pas s'entretenir lui-même : cette
+   * écriture ne provoque aucun nouvel instantané de site.
+   */
+  const abasculer = [...confirmes.map((i) => i._id), ...retires];
+  if (abasculer.length > 0) {
+    const relus = await PanelPaymentDefault.find({ _id: { $in: abasculer } }).lean();
+    for (const incident of relus) {
+      // eslint-disable-next-line no-await-in-loop
+      await publishIncidentBestEffort(incident, 'confirmation de site');
+    }
+  }
+
   return { confirmed, removed, reason: null, confirmedIncidents: confirmes };
 }
 
 /* -------------------------------------------------------------------------- */
 /*  LECTURE                                                                   */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * LES INCIDENTS D'UN PROJET, MIS EN MOTS POUR UN ÉCRAN (L10.6B-3).
+ *
+ * ══ POURQUOI LA TRADUCTION EST ICI ET NON DANS REACT ═══════════════════════
+ *
+ * Parce qu'une échéance de grâce reconstruite dans un navigateur depuis
+ * `firstFailedAt + contrat.paymentGraceDays` afficherait la politique COURANTE
+ * sur un incident qui en a figé une autre — et annoncerait au client une date
+ * de fermeture que le moteur n'appliquera jamais. La règle du lot est simple :
+ * l'écran REND une vérité, il ne la recrée pas.
+ *
+ * ══ UNE LECTURE, ET RIEN QU'UNE LECTURE ════════════════════════════════════
+ *
+ * Aucun appel fournisseur, aucun e-mail, aucune écriture. Ouvrir l'écran ne
+ * doit RIEN déclencher : une page qui ordonnancerait en se rafraîchissant
+ * ferait dépendre le métier de qui regarde, et à quelle fréquence.
+ *
+ * @param {string} projectId
+ * @param {{now?: Date|string}} [options] instant de référence, explicite
+ */
+export async function describeProjectPaymentDefaults(projectId, { now = new Date() } = {}) {
+  const { describeIncidentForDisplay } = await import('./paymentDefaultPresentation.js');
+  const { PanelProjectSiteStatus } = await import(
+    '../../../models/PanelProjectProjection.model.js'
+  );
+
+  const [documents, site, contrat] = await Promise.all([
+    PanelPaymentDefault.find({ projectId }).sort({ firstFailedAt: -1 }).limit(100).lean(),
+    /**
+     * L'INSTANTANÉ DU PROJET — ou son ABSENCE, qui est une réponse aussi.
+     * Sans lui, la présentation répond `UNKNOWN` sur l'accessibilité plutôt
+     * que de supposer. « Je ne sais pas » n'est pas « le site va bien ».
+     */
+    PanelProjectSiteStatus.findOne({ projectId }).lean(),
+    PanelProjectContract.findOne({ projectId }).select('paymentGraceDays').lean(),
+  ]);
+
+  /**
+   * LA POLITIQUE COURANTE, passée à côté du snapshot et JAMAIS à sa place.
+   * L'écran affichera les deux quand elles diffèrent — « incident : 7 jours,
+   * contrat : 15 » — au lieu de recalculer une échéance déjà annoncée.
+   */
+  const politiqueCourante = Number.isInteger(contrat?.paymentGraceDays)
+    ? contrat.paymentGraceDays
+    : null;
+
+  const items = documents.map((document) => {
+    const incident = toPublicPaymentDefault(document);
+    return {
+      incident,
+      display: describeIncidentForDisplay(incident, {
+        siteStatus: site ?? null,
+        now,
+        contractPaymentGraceDays: politiqueCourante,
+      }),
+    };
+  });
+
+  /**
+   * L'INCIDENT ACTIF — le premier VIVANT, le plus récent d'abord.
+   *
+   * Il est désigné par son identité de `PaymentDefault`, jamais par son
+   * contrat : un même contrat peut porter plusieurs incidents successifs, et
+   * les fusionner par `contractId` en effacerait un.
+   */
+  const actif = items.find((i) => isLive(i.incident.status)) ?? null;
+
+  return {
+    projectId,
+    active: actif,
+    items,
+    /** L'état du site, tel que le projet l'a publié. `null` = jamais reçu. */
+    siteStatusKnown: Boolean(site),
+    contractPaymentGraceDays: politiqueCourante,
+  };
+}
 
 export async function listPaymentDefaults({ projectId = null, liveOnly = false } = {}) {
   const filtre = {};
@@ -768,7 +1106,31 @@ export function toPublicPaymentDefault(document) {
     attemptCount: document.attemptCount ?? 0,
     graceDaysSnapshot: document.graceDaysSnapshot,
     graceDeadlineAt: document.graceDeadlineAt,
+    /**
+     * ══ LES TROIS DATES QUE L10.6B-3 A DÛ AJOUTER ═════════════════════════════
+     *
+     * La projection publique n'exposait que `suspensionRequestedAt`. Un écran
+     * ne pouvait donc PAS distinguer « le Panel a réclamé la fermeture » de
+     * « le site est réellement fermé » — et aurait affiché une suspension
+     * comme un fait alors qu'elle n'était qu'une intention. C'est exactement
+     * la confusion que L10.6A a passé un lot entier à supprimer côté moteur.
+     *
+     *   suspensionRequestedAt    l'INTENTION du Panel
+     *   suspensionConfirmedAt    l'OBSERVATION du résultat côté projet
+     *   causeRemovalConfirmedAt  notre cause a été retirée — pas « site rouvert »
+     */
     suspensionRequestedAt: document.suspensionRequestedAt ?? null,
+    suspensionConfirmedAt: document.suspensionConfirmedAt ?? null,
+    causeRemovalConfirmedAt: document.causeRemovalConfirmedAt ?? null,
+    /**
+     * Références techniques. Réservées au volet « Détails » de l'écran : un
+     * identifiant de fournisseur n'a rien à faire dans la lecture courante,
+     * mais tout à faire dans un ticket de support.
+     */
+    invoiceId: document.invoiceId ?? null,
+    subscriptionId: document.subscriptionId ?? null,
+    paymentIntentId: document.paymentIntentId ?? null,
+    lastFailureCode: document.lastFailureCode ?? null,
     resolvedAt: document.resolvedAt ?? null,
     resolution: document.resolution ?? null,
     transactionId: document.transactionId ?? null,
@@ -820,5 +1182,6 @@ export default {
   confirmFromSiteStatus,
   republishPaymentDefaultCauses,
   listPaymentDefaults,
+  describeProjectPaymentDefaults,
   toPublicPaymentDefault,
 };

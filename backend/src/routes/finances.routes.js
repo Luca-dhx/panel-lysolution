@@ -65,6 +65,7 @@ import {
   editTransaction,
   addPaymentRequest,
   cancelPayment,
+  paymentDefaults,
   paymentRequest,
   paymentRequests,
   recurringCost,
@@ -201,6 +202,32 @@ router.get('/payment-requests/:paymentRequestId', asyncHandler(paymentRequest));
  * histoire et son motif — c'est une trace commerciale, et elle se relit.
  */
 router.post('/payment-requests/:paymentRequestId/cancel', asyncHandler(cancelPayment));
+
+/* ══════════════════════════════════════════════════════════════════════════
+   IMPAYÉS D'ABONNEMENT (L10.6B-3) — de l'argent qui n'est PAS arrivé.
+
+   ══ POURQUOI UNE TROISIÈME SURFACE, ET NON UNE DE PLUS SUR CELLES-CI ════════
+
+   Un impayé n'est ni un mouvement (`/transactions` : ce qui a eu lieu), ni une
+   créance émise (`/payment-requests` : ce qu'on réclame par une facture qu'on
+   a soi-même produite). C'est l'ABSENCE d'un encaissement attendu sur une
+   facture que STRIPE a émise — et une absence ne s'inscrit dans aucun livret.
+
+   Le ranger sous `/transactions` l'aurait fait entrer dans les totaux, donc
+   dans le bénéfice, et le résultat du mois aurait bougé parce qu'une carte a
+   été refusée.
+
+   ══ EN LECTURE, ET SANS AUCUN VERBE ═════════════════════════════════════════
+
+   Une seule route, un seul verbe, aucun `POST`. Il n'y a rien à déclencher
+   ici : le Panel ne retente aucun prélèvement — Stripe est l'unique
+   ordonnanceur — et l'expiration d'une grâce appartient à l'ordonnanceur
+   financier, pas à qui ouvre un écran.
+
+   Aucun appel fournisseur, aucun e-mail, aucune écriture. La règle de
+   l'en-tête de ce fichier tient sans exception pour cette surface.
+   ══════════════════════════════════════════════════════════════════════════ */
+router.get('/payment-defaults', asyncHandler(paymentDefaults));
 
 /* ══════════════════════════════════════════════════════════════════════════
    COÛTS RÉCURRENTS (L10.2) — les RÈGLES.

@@ -39,6 +39,9 @@ import {
   getPaymentRequest,
   listPaymentRequests,
 } from '../services/finance/paymentRequests/paymentRequests.service.js';
+import {
+  describeProjectPaymentDefaults,
+} from '../services/finance/paymentDefaults/paymentDefaults.service.js';
 
 /** L'auteur d'une écriture comptable. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -216,6 +219,48 @@ export async function cancelPayment(req, res) {
     actorOf(req),
   );
   return ok(res, { paymentRequest: await getPaymentRequest(document.paymentRequestId) });
+}
+
+/* ── Incidents de paiement d'abonnement (L10.6B-3) ─────────────────────────── */
+
+/**
+ * LES INCIDENTS D'UN PROJET — l'impayé, la grâce, la cause, l'accessibilité.
+ *
+ * ══ UNE SEULE RÉPONSE, ET NON TROIS ROUTES ══════════════════════════════════
+ *
+ * L'incident actif, l'historique et le détail répondent à la MÊME question —
+ * « où en est cet impayé ? » — et l'écran les affiche ensemble. Trois routes
+ * auraient produit trois requêtes pour un seul bloc, donc trois instants de
+ * référence différents : l'incident actif lu à 10h00'00, l'historique à
+ * 10h00'01, et un badge « expirée » d'un côté pendant que l'autre affiche
+ * encore « en cours ».
+ *
+ * Ici, un seul `now` traverse toute la réponse. La cohérence n'est pas
+ * surveillée, elle est structurelle.
+ *
+ * ══ CE QUE CETTE LECTURE NE FAIT PAS ════════════════════════════════════════
+ *
+ * Aucun appel Stripe, aucun e-mail, aucune écriture, aucune expiration de
+ * grâce. L'ordonnanceur financier est le seul à faire basculer un incident, et
+ * il tourne sur son propre rythme. Un GET qui ferait expirer les grâces
+ * fermerait un site parce que quelqu'un a ouvert un écran.
+ *
+ * ══ POURQUOI PAS DE `POST` À CÔTÉ ═══════════════════════════════════════════
+ *
+ * Il n'y a rien à déclencher. Le Panel ne retente aucun prélèvement — Stripe
+ * est l'unique ordonnanceur — et il ne suspend pas davantage : il constate
+ * l'expiration et signale une cause. Cette surface est donc en lecture, sans
+ * exception.
+ */
+export async function paymentDefaults(req, res) {
+  const projectId = req.query?.projectId ?? null;
+  if (!projectId) {
+    throw ApiError.badRequest(
+      'PANEL_PROJECT_REQUIRED',
+      'Un impayé se lit sur un projet : précisez « projectId ».',
+    );
+  }
+  return ok(res, await describeProjectPaymentDefaults(projectId));
 }
 
 /* ── Remboursements (L10.4) ────────────────────────────────────────────────── */

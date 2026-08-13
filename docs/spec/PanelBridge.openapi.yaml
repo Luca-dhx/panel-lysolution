@@ -800,6 +800,7 @@ components:
                   - EMAIL_DELIVERY_EVENT
                   - PAYMENT_REQUEST
                   - PAYMENT_DEFAULT_CAUSE
+                  - PAYMENT_DEFAULT_INCIDENT
             operations:
               type: array
               items: { type: string }
@@ -1205,6 +1206,7 @@ components:
             - EMAIL_DELIVERY_EVENT
             - PAYMENT_REQUEST
             - PAYMENT_DEFAULT_CAUSE
+            - PAYMENT_DEFAULT_INCIDENT
         entityId:
           type: string
           format: uuid

@@ -492,3 +492,152 @@ export interface PaymentRequestInput {
   currency?: string;
   reminders?: { enabled: boolean; intervalDays?: number };
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   IMPAYÉS D'ABONNEMENT (L10.6B-3) — QUATRE DIMENSIONS, JAMAIS FUSIONNÉES.
+
+   Ces types décrivent ce que le SERVEUR a déjà décidé. L'écran les rend ; il
+   n'en dérive rien. C'est la raison d'être du découpage : un unique champ
+   « état » aurait obligé React à recomposer les nuances, et il se serait
+   trompé sur le seul cas qui compte —
+
+       paiement régularisé · cause retirée · site toujours suspendu
+
+   — où un badge unique ment quelle que soit sa couleur.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export type PaymentDefaultStatus = 'OPEN' | 'GRACE_EXPIRED' | 'RESOLVED' | 'CLOSED';
+
+/** Le paiement lui-même. `ENDED` = abonnement éteint SANS règlement. */
+export type PaymentDimensionState = 'FAILED' | 'SETTLED' | 'ENDED';
+/** `UNCONFIGURED` n'est PAS « zéro » : c'est « aucune politique n'existe ». */
+export type GraceDimensionState = 'UNCONFIGURED' | 'RUNNING' | 'EXPIRED' | 'NOT_APPLICABLE';
+/** La cause de suspension : demandée ≠ appliquée. La nuance porte le lot. */
+export type CauseDimensionState = 'NONE' | 'REQUESTED' | 'APPLIED' | 'REMOVED';
+/** `UNKNOWN` quand le projet n'a jamais publié d'instantané. Pas « OK ». */
+export type SiteDimensionState = 'ACCESSIBLE' | 'SUSPENDED' | 'UNKNOWN';
+
+export interface PaymentDefaultIncident {
+  paymentDefaultId: string;
+  projectId: string;
+  contractId: string | null;
+  environment: 'TEST' | 'PROD';
+  status: PaymentDefaultStatus;
+  amountDueCents: number;
+  currency: string;
+  invoiceNumber: string | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+  firstFailedAt: string;
+  lastFailedAt: string | null;
+  /** OBSERVATION Stripe. Le Panel ne l'a ni choisie ni programmée. */
+  nextPaymentAttemptAt: string | null;
+  attemptCount: number;
+  /** `null` = aucune politique. `0` = aucune clémence. JAMAIS confondus. */
+  graceDaysSnapshot: number | null;
+  graceDeadlineAt: string | null;
+  suspensionRequestedAt: string | null;
+  suspensionConfirmedAt: string | null;
+  causeRemovalConfirmedAt: string | null;
+  resolvedAt: string | null;
+  resolution: string | null;
+  transactionId: string | null;
+  /** Références techniques — volet « Détails », jamais la lecture courante. */
+  invoiceId: string | null;
+  subscriptionId: string | null;
+  paymentIntentId: string | null;
+  lastFailureCode: string | null;
+  demandsSuspension: boolean;
+}
+
+/** La mise en mots, décidée côté serveur par le mapper pur de présentation. */
+export interface PaymentDefaultDisplay {
+  paymentDefaultId: string;
+  status: PaymentDefaultStatus;
+  /** Le motif canonique. Défini une fois, jamais reformulé côté écran. */
+  reasonLabel: string;
+  /** Une phrase, PAS un verdict : les quatre dimensions restent affichées. */
+  headline: string;
+  payment: {
+    state: PaymentDimensionState;
+    label: string;
+    firstFailedAt: string | null;
+    lastFailedAt: string | null;
+    amountDueCents: number;
+    currency: string;
+    invoiceNumber: string | null;
+    hostedInvoiceUrl: string | null;
+    invoicePdfUrl: string | null;
+    attemptCount: number;
+    nextPaymentAttemptAt: string | null;
+    /**
+     * Une date absente ne dit pas « aucune tentative prévue » : elle dit que
+     * Stripe ne l'a pas communiquée. Le booléen porte cette nuance jusqu'ici
+     * pour que l'écran n'ait pas à la redécouvrir.
+     */
+    nextAttemptKnown: boolean;
+    nextAttemptLabel: string;
+    resolvedAt: string | null;
+  };
+  grace: {
+    state: GraceDimensionState;
+    label: string;
+    graceDaysSnapshot: number | null;
+    graceDeadlineAt: string | null;
+    note: string | null;
+  };
+  cause: {
+    state: CauseDimensionState;
+    label: string;
+    /** L'INTENTION du Panel. */
+    requestedAt: string | null;
+    /** L'OBSERVATION du résultat, côté projet. Jamais déduite. */
+    confirmedAt: string | null;
+    removalConfirmedAt: string | null;
+    appliedNow: boolean;
+    note?: string;
+  };
+  site: {
+    state: SiteDimensionState;
+    label: string;
+    accessible: boolean | null;
+    /** Étiquette d'affichage du projet — JAMAIS une preuve financière. */
+    dominantSource?: string | null;
+    otherCauses: { key: string; label: string }[];
+    causesKnown?: boolean;
+    note?: string;
+  };
+  /** `null` quand la politique courante n'a pas été fournie à la lecture. */
+  policy: {
+    drifted: boolean;
+    snapshot: number | null;
+    current: number | null;
+    note: string | null;
+  } | null;
+  technical: {
+    paymentDefaultId: string;
+    contractId: string | null;
+    invoiceId: string | null;
+    subscriptionId: string | null;
+    paymentIntentId: string | null;
+    transactionId: string | null;
+    lastFailureCode: string | null;
+    environment: string | null;
+  };
+}
+
+export interface PaymentDefaultEntry {
+  incident: PaymentDefaultIncident;
+  display: PaymentDefaultDisplay;
+}
+
+export interface PaymentDefaultsView {
+  projectId: string;
+  /** Le premier incident VIVANT. `null` si le client est à jour. */
+  active: PaymentDefaultEntry | null;
+  /** Tous les incidents, du plus récent au plus ancien. Historique compris. */
+  items: PaymentDefaultEntry[];
+  /** `false` = le projet n'a jamais publié son état. Pas « site accessible ». */
+  siteStatusKnown: boolean;
+  contractPaymentGraceDays: number | null;
+}

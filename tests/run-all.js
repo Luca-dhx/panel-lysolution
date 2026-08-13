@@ -76,6 +76,21 @@ const TESTS = [
   // réelle, jamais des conditions : une panne d'envoi ne défait aucune
   // suspension, et huit livraisons du même instantané n'écrivent qu'une fois.
   'finance-payment-default-notifications.test.js',
+  // L10.6B-3 — L'INCIDENT VOYAGE AVANT LA SANCTION. Deux suites de plus, parce
+  // qu'elles gardent deux choses distinctes :
+  //   · la PRÉSENTATION — un module PUR qui met un incident en mots sur quatre
+  //     dimensions qu'on ne fusionne jamais. C'est la partie la plus facile à
+  //     rendre fausse et la plus difficile à voir : une échéance reconstruite,
+  //     un `null` lu comme un zéro, une demande affichée comme un fait ne font
+  //     planter personne — ils produisent un écran qui ment ;
+  'finance-payment-default-presentation.test.js',
+  //   · la PROJECTION — l'incident part vers le projet dès le PREMIER échec, et
+  //     non plus seulement quand la cause de suspension devient pertinente. La
+  //     suite verrouille surtout la frontière : `PAYMENT_DEFAULT_CAUSE.active`
+  //     garde EXACTEMENT sa sémantique de cause appliquée au moteur, et
+  //     l'incident ne l'emprunte jamais — sans quoi les sites fermeraient
+  //     pendant leur délai de grâce.
+  'finance-payment-default-projection.test.js',
   'finance-ui.test.js',
   'panel-ui.test.js',
   'panel-meetings-ui.test.js',

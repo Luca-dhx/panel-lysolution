@@ -2801,3 +2801,142 @@ body {
   flex-wrap: wrap;
   gap: var(--p-space-2);
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   IMPAYÉS D'ABONNEMENT (L10.6B-3)
+
+   ══ POURQUOI DES SECTIONS SÉPARÉES, ET NON UNE LISTE PLATE ══════════════════
+
+   Parce que les quatre dimensions — paiement, grâce, suspension, accessibilité
+   — sont INDÉPENDANTES, et que la mise en page doit le montrer. Une liste plate
+   de vingt lignes laisserait le lecteur croire qu'elles décrivent une seule
+   progression, et il lirait « suspension demandée » comme la suite logique de
+   « paiement en échec » — alors qu'un délai de grâce non configuré fait que la
+   première n'arrivera jamais.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.finance-default-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+  padding: var(--p-space-4);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-md);
+  background: var(--p-surface-2, transparent);
+}
+
+.finance-default-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--p-space-3);
+}
+
+.finance-default-head h3 {
+  margin: 0;
+  font-size: var(--p-text-lg);
+}
+
+.finance-default-head p { margin: var(--p-space-1) 0 0; }
+
+.finance-default-amount {
+  font-size: var(--p-text-xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.finance-default-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+  padding-top: var(--p-space-3);
+  border-top: 1px solid var(--p-border);
+}
+
+.finance-default-section h4 {
+  margin: 0;
+  font-size: var(--p-text-sm);
+  font-weight: 600;
+  color: var(--p-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/*
+  Deux colonnes tant qu'il y a la place, UNE seule en dessous — même règle que
+  le détail d'un mouvement : un libellé et sa valeur écrasés côte à côte sur
+  320 px se coupent tous les deux.
+*/
+.finance-default-line {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: var(--p-space-3);
+  align-items: baseline;
+}
+
+.finance-default-label {
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+}
+
+.finance-default-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+  LA DÉRIVE DE POLITIQUE — encadrée, parce qu'elle compare DEUX valeurs et que
+  les confondre changerait la date de fermeture annoncée au client.
+*/
+.finance-default-drift {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+  margin-top: var(--p-space-2);
+  padding: var(--p-space-3);
+  border: 1px dashed var(--p-border-strong, var(--p-border));
+  border-radius: var(--p-radius-sm);
+}
+
+.finance-default-details {
+  padding-top: var(--p-space-3);
+  border-top: 1px solid var(--p-border);
+}
+
+/* Les identifiants techniques : lisibles, jamais tronqués en silence. */
+.finance-default-tech {
+  display: grid;
+  grid-template-columns: minmax(0, 14rem) minmax(0, 1fr);
+  gap: var(--p-space-2) var(--p-space-3);
+  margin: var(--p-space-3) 0 0;
+}
+
+.finance-default-tech dt {
+  color: var(--p-text-muted);
+  font-size: var(--p-text-sm);
+}
+
+.finance-default-tech dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.finance-default-history { margin-top: var(--p-space-4); }
+
+.finance-default-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+  margin-top: var(--p-space-3);
+}
+
+@media (max-width: 40rem) {
+  .finance-default-line,
+  .finance-default-tech { grid-template-columns: minmax(0, 1fr); gap: var(--p-space-1); }
+  .finance-default-amount { font-size: var(--p-text-lg); }
+}

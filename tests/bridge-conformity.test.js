@@ -121,8 +121,26 @@ section('Types d’entités synchronisées');
    * l'autorité de son accessibilité. Transporter un état aurait créé deux
    * maîtres pour la même question, et une régularisation aurait pu rouvrir un
    * site en maintenance technique.
+   *
+   * 18 depuis L10.6B-3 — `PAYMENT_DEFAULT_INCIDENT`, et il a fallu s'en
+   * expliquer avant de l'ajouter. `PAYMENT_DEFAULT_CAUSE.active` est une ENTRÉE
+   * du moteur de suspension du projet : elle est écrite dans
+   * `siteStatus.paymentDefault`, et la réconciliation en tire l'accessibilité.
+   *
+   * Or un incident EXISTE avant que la cause ne devienne active — c'est très
+   * exactement ce que le délai de grâce définit. Le faire voyager par la cause
+   * imposait l'un de deux mensonges : `active: true` pendant la grâce (fermer le
+   * site pendant la grâce, soit ce qu'elle empêche), ou `active: false` avec du
+   * contexte (que l'applicateur de cause remet à néant dans ce cas précis).
+   *
+   * Et structurellement : `SiteStatus` est un singleton à une seule cause,
+   * quand un projet peut connaître plusieurs incidents successifs.
+   *
+   * Deux types, deux rôles, jamais interchangeables :
+   *   CAUSE     « faut-il fermer ? »    → entrée du moteur, singleton
+   *   INCIDENT  « que se passe-t-il ? » → observation seule, collection
    */
-  check('17 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 17);
+  check('18 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 18);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

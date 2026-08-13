@@ -44,6 +44,7 @@ import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
 import { RefundModal } from '@/components/finance/RefundModal';
 import { PaymentRequestPanel } from '@/components/finance/PaymentRequestPanel';
+import { PaymentDefaultPanel } from '@/components/finance/PaymentDefaultPanel';
 import { RecurringCostList } from '@/components/finance/RecurringCostList';
 import { RecurringCostForm, StopRecurringDialog } from '@/components/finance/RecurringCostForm';
 import {
@@ -564,6 +565,35 @@ export function FinanceWorkspace({
       */}
       {sousOnglet === 'revenues' && verrouille && projectId ? (
         <PaymentRequestPanel projectId={projectId} projectName={projectName} />
+      ) : null}
+
+      {/*
+        ── LES IMPAYÉS D'ABONNEMENT — sous « Général », et sur une fiche
+        PROJET seulement (L10.6B-3).
+
+        ══ POURQUOI « GÉNÉRAL » ET NON « REVENUS » ═══════════════════════════
+
+        Parce qu'un impayé n'est pas un revenu manqué qu'on rangerait à côté
+        des autres : c'est un incident qui peut FERMER le site du client. Il
+        se lit à l'ouverture du dossier, pas après avoir choisi un sous-onglet.
+
+        Les prestations, elles, restent sous « Revenus » : une créance émise
+        est bien une question d'encaissement.
+
+        ══ SÉPARÉ DU LIVRET, ET DÉLIBÉRÉMENT ════════════════════════════════
+
+        Une facture impayée n'est ni un revenu, ni une transaction, ni un
+        remboursement. Elle n'entre dans AUCUN total affiché au-dessus : le
+        bénéfice du mois ne bouge pas parce qu'une carte a été refusée.
+
+        ══ SUR UNE FICHE PROJET SEULEMENT ═══════════════════════════════════
+
+        Un impayé appartient à quelqu'un. La page globale ne désigne personne :
+        l'y afficher aurait obligé à mélanger les incidents de tout le parc,
+        c'est-à-dire à apprendre à chaque lecteur qui ne paie pas.
+      */}
+      {sousOnglet === 'general' && verrouille && projectId ? (
+        <PaymentDefaultPanel projectId={projectId} />
       ) : null}
 
       {sousOnglet === 'costs' ? (

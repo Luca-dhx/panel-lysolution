@@ -36,7 +36,7 @@ import type {
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
   ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
   RefundEligibility, RefundOutcome, RefundRequest, StripeRefundReason,
-  PaymentRequest, PaymentRequestInput,
+  PaymentRequest, PaymentRequestInput, PaymentDefaultsView,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -1007,6 +1007,33 @@ export const finances = {
     request<{ paymentRequest: PaymentRequest }>('/api/finances/payment-requests', {
       method: 'POST', body,
     }),
+
+  /* ── Impayés d'abonnement (L10.6B-3) ─────────────────────────────────── */
+
+  /**
+   * LES INCIDENTS D'UN PROJET — incident actif, historique et détail d'un coup.
+   *
+   * ══ POURQUOI UN SEUL APPEL ════════════════════════════════════════════
+   *
+   * Parce que le serveur y applique UN SEUL instant de référence. Trois
+   * requêtes auraient donné trois `now` différents, et l'écran aurait pu
+   * afficher « grâce en cours » dans un bloc et « expirée » dans le suivant,
+   * pour le même incident, à une seconde d'intervalle.
+   *
+   * ══ CE QUE LE CLIENT NE RECONSTRUIT PAS ═══════════════════════════════
+   *
+   * Rien. Ni l'échéance de grâce, ni l'accessibilité, ni l'état de la cause :
+   * `display` porte des états et des phrases déjà décidés par le serveur.
+   * Recalculer ici afficherait la politique COURANTE du contrat sur un
+   * incident qui en a figé une autre.
+   *
+   * Aucun appel Stripe, aucun e-mail, aucune mutation : c'est un GET, et il
+   * le reste.
+   */
+  paymentDefaults: (projectId: string) =>
+    request<PaymentDefaultsView>(
+      `/api/finances/payment-defaults?projectId=${encodeURIComponent(projectId)}`,
+    ),
 
   /** ANNULE — la demande RESTE, avec son histoire et son motif. */
   cancelPaymentRequest: (paymentRequestId: string, reason?: string) =>

@@ -229,6 +229,42 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * régularisation aurait pu rouvrir un site en maintenance.
    */
   'PAYMENT_DEFAULT_CAUSE',
+  /**
+   * >= 1.7.x — L'INCIDENT DE PAIEMENT LUI-MÊME, poussé par le Panel (L10.6B-3).
+   *
+   * ══ POURQUOI IL NE POUVAIT PAS EMPRUNTER `PAYMENT_DEFAULT_CAUSE` ══════════
+   *
+   * Parce que `active`, sur ce type-là, a une signification EXACTE et vérifiable
+   * dans le code du projet : elle est écrite dans `siteStatus.paymentDefault`,
+   * puis le moteur de réconciliation en tire l'accessibilité. C'est une ENTRÉE
+   * DE MOTEUR.
+   *
+   * Or un incident EXISTE avant que la cause ne devienne active — c'est tout
+   * l'objet du délai de grâce. Le transporter par la cause aurait imposé l'un
+   * de ces deux mensonges :
+   *
+   *   `active: true` pendant la grâce   fermer le site pendant la grâce, soit
+   *                                     exactement ce que la grâce empêche ;
+   *
+   *   `active: false` avec des données  l'applicateur de cause remet à néant
+   *                                     tout le contexte quand la cause est
+   *                                     inactive — l'incident arriverait et
+   *                                     disparaîtrait dans la même écriture.
+   *
+   * Et, structurellement : `SiteStatus` est un SINGLETON avec UN sous-document
+   * de cause, alors qu'un projet peut connaître plusieurs incidents successifs.
+   * Un singleton n'héberge pas un historique.
+   *
+   * Les deux types sont donc ORTHOGONAUX, et le resteront :
+   *
+   *   CAUSE      « faut-il fermer ? »        → entrée du moteur, singleton
+   *   INCIDENT   « que se passe-t-il ? »     → observation, collection
+   *
+   * L'incident porte `causeActive` en LECTURE — pour que l'écran puisse
+   * expliquer ce qu'il montre — jamais comme autorité : l'accessibilité se lit
+   * dans `SiteStatus`, et nulle part ailleurs.
+   */
+  'PAYMENT_DEFAULT_INCIDENT',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
