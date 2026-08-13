@@ -29,7 +29,9 @@ import { derivePrimarySubHost, derivePrimarySubUrl, isCoveredByWildcard } from '
 import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { runLocalPreflight } from './localPreflight.js';
-import { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
+import {
+  rollbackToPrevious, describeRollbackState, verifyPreviousIntegrity,
+} from './rollback.js';
 import { inspectDestination, removeQuarantine, runDeprovision, runDestinationDelete } from './deprovision.js';
 import { probePort, readPortLandscape } from './ports.js';
 
@@ -76,9 +78,22 @@ export class DeploymentEngine {
     const { tx, ephemeral } = this._transport(transport, sessionId);
     try {
       const target = this.parseUrl(url);
-      const releases = await listReleases(tx, { host: target.host, remoteRoot });
-      const current = await currentRelease(tx, { host: target.host, remoteRoot });
-      return { host: target.host, current, releases };
+      /**
+       * UNE SEULE LECTURE (R10.2). Deux appels successifs interrogeaient le
+       * serveur deux fois pour la même photographie, et pouvaient la voir
+       * changer entre les deux. `describeRollbackState` rend l'ensemble d'un
+       * coup — et il rend aussi de quoi savoir si un retour arrière est
+       * seulement possible.
+       */
+      const state = await describeRollbackState(tx, { host: target.host, remoteRoot });
+      return {
+        host: target.host,
+        current: state.current,
+        releases: [state.current, state.previous].filter(Boolean),
+        previous: state.previous,
+        canRollback: state.canRollback,
+        slots: state.slots,
+      };
     } finally {
       if (ephemeral) await tx.close?.();
     }
@@ -91,19 +106,28 @@ export class DeploymentEngine {
     const { tx, ephemeral } = this._transport(transport, sessionId);
     try {
       const target = this.parseUrl(url);
-      return await verifyReleaseIntegrity(tx, { host: target.host, remoteRoot, releaseId });
+      /**
+       * `releaseId` est accepté et ignoré : le pipeline ne conserve qu'UNE
+       * génération précédente par emplacement (`.prev`), et c'est elle qu'on
+       * vérifie. Viser une release arbitraire n'a jamais fonctionné.
+       */
+      return await verifyPreviousIntegrity(tx, { host: target.host, remoteRoot });
     } finally {
       if (ephemeral) await tx.close?.();
     }
   }
 
   /**
-   * ROLLBACK vers une release précédente.
+   * ROLLBACK vers la version précédente.
    *
    * Toute la logique appartient au moteur (`rollback.js`) : vérification
-   * d'intégrité AVANT bascule, repointage atomique de `current`, relance du
-   * service, contrôle de santé, et restauration automatique de la release
-   * d'origine si la bascule échoue.
+   * d'intégrité de TOUS les `.prev` AVANT de toucher quoi que ce soit, échange
+   * de chaque emplacement, relance du service, contrôle de santé, et
+   * rétablissement automatique si l'échange ou la santé échoue.
+   *
+   * `releaseId` est accepté et IGNORÉ : le pipeline ne conserve qu'une seule
+   * génération précédente par emplacement. Viser une release arbitraire n'a
+   * jamais fonctionné, et le laisser croire serait pire que de le dire.
    *
    * @param {object} args
    * @param {string} args.url
@@ -116,11 +140,10 @@ export class DeploymentEngine {
     const { tx, ephemeral } = this._transport(transport, sessionId);
     try {
       const target = this.parseUrl(url);
-      return await rollbackToRelease({
+      return await rollbackToPrevious({
         transport: tx,
         host: target.host,
         backendPort: options.backendPort,
-        releaseId,
         remoteRoot: options.remoteRoot,
         env: options.env || 'PROD',
         onStep,

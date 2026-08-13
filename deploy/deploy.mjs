@@ -72,6 +72,7 @@ function printPlan(plan) {
     for (const pub of phase.publications ?? []) {
       console.log(`  · ${pub.id} (${pub.host}) : ${pub.next} → ${pub.target}, retour ${pub.prev}`);
     }
+    for (const swap of phase.swaps ?? []) console.log(`  ↩ ${swap}`);
     for (const caveat of phase.caveats ?? []) console.log(`  ⚠ ${caveat}`);
     if (phase.healthCheck) {
       console.log(`  ✓ contrôle de santé : ${phase.healthCheck.url} (ENV attendu ${phase.healthCheck.expectEnv})`);
@@ -141,16 +142,36 @@ async function execute(deployConfig, { mode, targetReleaseId }) {
       // afficher. Toute la mécanique (vérification d'intégrité, bascule
       // atomique, relance du service, contrôle de santé, restauration en cas
       // d'échec) appartient au moteur — voir deployment-engine/rollback.js.
-      const { current, releases } = await engine.listReleases({
+      const state = await engine.listReleases({
         url: deployConfig.urls.backendUrl, sessionId, remoteRoot: deployConfig.remoteRoot,
       });
-      console.log(`\n▸ releases disponibles (${releases.length}) — active : ${current ?? 'aucune'}`);
-      for (const id of releases) console.log(`  ${id === current ? '▸' : ' '} ${id}`);
+      console.log(`\n▸ version déployée  : ${state.current ?? 'inconnue'}`);
+      console.log(`▸ version précédente: ${state.previous ?? 'aucune'}`);
+      for (const slot of state.slots ?? []) {
+        console.log(`  ${slot.hasPrev ? '↩' : '·'} ${slot.id} — ${slot.hasPrev ? slot.prev : 'aucun .prev'}`);
+      }
+      /**
+       * REFUS TÔT, ET LISIBLE. Le moteur refuserait de toute façon, mais après
+       * une connexion et deux lectures : autant le dire ici, avec la raison.
+       */
+      if (!state.canRollback) {
+        console.error('\n✗ Aucun retour arrière possible : ce serveur n’a reçu qu’un seul '
+          + 'déploiement, ou un dossier de secours a été retiré.\n');
+        process.exitCode = 1;
+        return;
+      }
+      /**
+       * `--to` n'est plus honoré : le pipeline ne conserve qu'UNE génération
+       * précédente. Le taire laisserait croire qu'on a visé une release.
+       */
+      if (targetReleaseId && targetReleaseId !== state.previous) {
+        console.log(`\n⚠ --to ${targetReleaseId} ignoré : une seule version précédente existe `
+          + `(${state.previous}).`);
+      }
 
       const result = await engine.rollback({
         url: deployConfig.urls.backendUrl,
         sessionId,
-        releaseId: targetReleaseId,
         options: {
           remoteRoot: deployConfig.remoteRoot,
           backendPort: deployConfig.backendPort,

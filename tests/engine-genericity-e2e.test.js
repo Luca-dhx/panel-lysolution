@@ -138,7 +138,17 @@ for (const profile of ALL_PROFILES) {
   const expectedRoots = topo.publishable.map((a) => `${a.remoteRoot}.next`);
   check(`[${profile.id}] une publication par application déclarée`,
     expectedRoots.every((r) => uploadedDirs.includes(r)));
-  check(`[${profile.id}] le backend a été uploadé`, uploadedDirs.includes(topo.backendDir));
+  /**
+   * LE BACKEND EST UPLOADÉ DANS UN `.next`, COMME LES SPA (R10.2).
+   *
+   * Il était uploadé directement dans son dossier définitif : aucune version
+   * précédente n'était mise de côté, et le retour arrière n'avait donc rien
+   * vers quoi revenir. C'est la bascule qui lui donne son `.prev`.
+   */
+  check(`[${profile.id}] le backend a été uploadé dans son \`.next\``,
+    uploadedDirs.includes(`${topo.backendDir}.next`));
+  check(`[${profile.id}] …et jamais directement par-dessus la version en place`,
+    !uploadedDirs.includes(topo.backendDir));
   check(`[${profile.id}] aucun upload vers un chemin vide`,
     tx.uploads.every((u) => typeof u.localPath === 'string' && u.localPath.length > 0));
 

@@ -1,19 +1,38 @@
 /**
- * ROLLBACK du moteur de déploiement — testé sans VPS, via un transport
- * simulé qui rejoue un système de fichiers distant.
+ * ROLLBACK — le retour arrière, éprouvé sur un vrai système de fichiers simulé.
  *
- * Ce que ces tests verrouillent :
- *  - une release incomplète n'est JAMAIS activée ;
- *  - la bascule de `current` est atomique (ln -sfn) ;
- *  - un rollback en échec RESTAURE la release d'origine ;
- *  - le service est relancé et la santé contrôlée ;
+ * ══ POURQUOI CE DOUBLE A ÉTÉ REFAIT (R10.2) ═════════════════════════════════
+ *
+ * L'ancien double répondait à `ls -1 …/releases` et `readlink -f …/current` :
+ * il simulait une disposition que le pipeline ne produit PAS. Les contrôles
+ * passaient donc au vert sur un mécanisme inexistant — un filet de sécurité
+ * qui n'aurait pas retenu, et une recette qui l'affirmait pourtant.
+ *
+ * Celui-ci tient un VRAI système de fichiers en mémoire : `mkdir -p`, `rm -rf`,
+ * `mv`, `test -d/-f`, `cat`. Les commandes que le moteur émet y agissent
+ * réellement. Un déploiement se rejoue avec la commande d'échange EXACTE du
+ * pipeline, et le retour arrière est prouvé en relisant ce qui est servi.
+ *
+ * Ce que ces contrôles verrouillent :
+ *  - le pipeline met bien le backend de côté (`.prev`) — sans quoi il n'y a
+ *    rien vers quoi revenir ;
+ *  - un `.prev` incomplet n'est JAMAIS activé ;
+ *  - l'échange est son propre inverse : aller-retour prouvé sur les octets ;
+ *  - un rollback en échec RÉTABLIT la version d'origine ;
+ *  - les données partagées ne bougent pas ;
  *  - les refus portent des codes stables.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
-  rollbackToRelease,
+  rollbackToPrevious,
+  describeRollbackState,
+  verifyPreviousIntegrity,
+  rollbackSlots,
   listReleases,
   currentRelease,
-  verifyReleaseIntegrity,
 } from '../backend/src/deployment-engine/rollback.js';
 import { pm2AppName } from '../backend/src/deployment-engine/pm2.js';
 
@@ -25,56 +44,141 @@ const check = (name, cond) => {
 };
 const section = (t) => console.log(`\n${t}`);
 
+const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HOST = 'site.exemple.com';
+const ROOT = '/var/www';
+const SITE = `${ROOT}/${HOST}`;
+
 /**
- * Transport simulé : un « serveur » minimal en mémoire.
- * `releases` : { id: { complete: bool } } · `current` : id actif
- * `healthyReleases` : releases dont le backend répond au health check.
+ * LA COMPOSITION VIENT DU PROFIL. Ce fichier est MIROIR entre les deux dépôts,
+ * dont les profils diffèrent — une SPA d'un côté, deux de l'autre. Nommer une
+ * application en dur le rendrait faux dans l'un des deux.
  */
-function makeTransport({ releases = {}, current = null, healthyReleases = null, failSwitch = false } = {}) {
-  // `pm2Path` : chemin que PM2 a mémorisé. `null` = aucun process de ce nom.
-  const state = { current, commands: [], restarts: [], pm2Path: null };
-  const healthy = healthyReleases ?? Object.keys(releases);
+const { slots: SLOTS } = rollbackSlots({ host: HOST, remoteRoot: ROOT });
+const APPS = SLOTS.filter((s) => s.id !== 'backend').map((s) => s.id);
+/** La première SPA du profil — celle dont on relit les octets servis. */
+const APP = APPS[0];
+
+/* -------------------------------------------------------------------------- */
+/*  UN SYSTÈME DE FICHIERS DISTANT, EN MÉMOIRE                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Le strict nécessaire pour que les commandes du moteur AGISSENT.
+ *
+ * Un double qui se contente de répondre « OK » prouve qu'on a posé la bonne
+ * question, jamais qu'on obtient le bon résultat. Ici `mv` déplace vraiment, et
+ * c'est ce qui permet d'affirmer qu'un aller-retour ramène les mêmes octets.
+ */
+function makeFs() {
+  const dirs = new Set(['/', '/var', '/var/www']);
+  const files = new Map();
+
+  const sous = (p) => (chemin) => chemin === p || chemin.startsWith(`${p}/`);
+
+  return {
+    dirs,
+    files,
+    mkdirp(p) {
+      const parts = p.split('/').filter(Boolean);
+      let acc = '';
+      for (const seg of parts) { acc += `/${seg}`; dirs.add(acc); }
+    },
+    rmrf(p) {
+      const dedans = sous(p);
+      for (const d of [...dirs]) if (dedans(d)) dirs.delete(d);
+      for (const f of [...files.keys()]) if (dedans(f)) files.delete(f);
+    },
+    mv(a, b) {
+      if (!dirs.has(a) && !files.has(a)) return false;
+      const dedans = sous(a);
+      const rebase = (chemin) => `${b}${chemin.slice(a.length)}`;
+      for (const d of [...dirs]) if (dedans(d)) { dirs.delete(d); dirs.add(rebase(d)); }
+      for (const f of [...files.keys()]) {
+        if (dedans(f)) { const c = files.get(f); files.delete(f); files.set(rebase(f), c); }
+      }
+      return true;
+    },
+    write(p, contenu) {
+      this.mkdirp(p.split('/').slice(0, -1).join('/'));
+      files.set(p, contenu);
+    },
+    isDir: (p) => dirs.has(p),
+    isFile: (p) => files.has(p),
+    read: (p) => files.get(p) ?? '',
+  };
+}
+
+/**
+ * Transport simulé — exécute réellement les commandes sur le faux disque.
+ *
+ * `healthyVersions` : les versions dont le backend répond au contrôle de santé.
+ * `failSwapFor` : identifiant d'emplacement dont l'échange doit échouer.
+ */
+function makeTransport(disque, { healthyVersions = null, failSwapFor = null } = {}) {
+  const state = { commands: [], restarts: 0, pm2Path: null };
+
+  /** La version SERVIE : celle du manifeste présent dans le backend déployé. */
+  const versionServie = () => {
+    const brut = disque.read(`${SITE}/backend/build-manifest.json`);
+    try { return JSON.parse(brut).shortCommit; } catch { return null; }
+  };
+
+  const runOne = (cmd) => {
+    const c = cmd.trim();
+
+    let m = c.match(/^if \[ -d (\S+) \]; then mv (\S+) (\S+); fi$/);
+    if (m) { if (disque.isDir(m[1])) disque.mv(m[2], m[3]); return { code: 0, stdout: '', stderr: '' }; }
+
+    m = c.match(/^mkdir -p (.+)$/);
+    if (m) { for (const p of m[1].split(/\s+/)) disque.mkdirp(p); return { code: 0, stdout: '', stderr: '' }; }
+
+    m = c.match(/^rm -rf (.+)$/);
+    if (m) { for (const p of m[1].split(/\s+/)) disque.rmrf(p); return { code: 0, stdout: '', stderr: '' }; }
+
+    m = c.match(/^mv (\S+) (\S+)$/);
+    if (m) {
+      if (failSwapFor && m[1].includes(failSwapFor)) {
+        return { code: 1, stdout: '', stderr: 'permission denied' };
+      }
+      return disque.mv(m[1], m[2])
+        ? { code: 0, stdout: '', stderr: '' }
+        : { code: 1, stdout: '', stderr: 'no such file' };
+    }
+
+    m = c.match(/^test -([df]) (\S+)$/);
+    if (m) {
+      const ok = m[1] === 'd' ? disque.isDir(m[2]) : disque.isFile(m[2]);
+      return { code: ok ? 0 : 1, stdout: '', stderr: '' };
+    }
+
+    m = c.match(/^cat (\S+)/);
+    if (m) return { code: 0, stdout: disque.read(m[1]), stderr: '' };
+
+    return { code: 0, stdout: '', stderr: '' };
+  };
+
   const tx = {
     kind: 'fake',
-
     async exec(cmd) {
       state.commands.push(cmd);
 
-      if (/^ls -1 .*\/releases/.test(cmd)) {
-        return { code: 0, stdout: Object.keys(releases).join('\n'), stderr: '' };
-      }
-      if (/^readlink -f/.test(cmd)) {
-        return { code: 0, stdout: state.current ? `/var/www/site/releases/${state.current}` : '', stderr: '' };
-      }
-      if (/^ln -sfn/.test(cmd)) {
-        if (failSwitch) return { code: 1, stdout: '', stderr: 'permission denied' };
-        const m = cmd.match(/releases\/([^\s]+)\s/);
-        state.current = m ? m[1] : state.current;
-        return { code: 0, stdout: '', stderr: '' };
-      }
-      // Contrôles d'intégrité : `test -d … && echo OK || echo KO`
-      if (/^test -[df]/.test(cmd)) {
-        const m = cmd.match(/releases\/([^/\s]+)/);
-        const id = m?.[1];
-        const rel = releases[id];
-        const ok = rel && (rel.complete !== false || /test -d [^/]*\/releases\/[^/\s]+ &&/.test(cmd));
+      /**
+       * `test -d X && echo OK || echo KO` — L'IDIOME DU MOTEUR.
+       *
+       * Intercepté AVANT le découpage sur `&&` : c'est une seule question, pas
+       * une chaîne de commandes. Le découper rendait la réponse du dernier
+       * maillon (`echo`), donc toujours vide — et tout paraissait absent.
+       */
+      const sonde = cmd.trim().match(/^test -([df]) (\S+) && echo OK \|\| echo KO$/);
+      if (sonde) {
+        const ok = sonde[1] === 'd' ? disque.isDir(sonde[2]) : disque.isFile(sonde[2]);
         return { code: 0, stdout: ok ? 'OK' : 'KO', stderr: '' };
       }
 
-      /**
-       * ÉTAT PM2 MODÉLISÉ — répondre « aucun process » à jamais ne l'était pas.
-       *
-       * PM2 mémorise le chemin du script au premier `start` ; le moteur relit
-       * ensuite cette liste pour PROUVER qu'il exécute bien le fichier
-       * déployé. Un double qui n'enregistre rien simule un PM2 impossible.
-       */
-      // Le double déclare aussi STATUT, PID, redémarrages et port : le moteur
-      // ne se contente plus du chemin exécuté pour dire qu'un service est
-      // démarré. Un process qui boucle sur EADDRINUSE présentait le BON
-      // chemin — c'est précisément ce que le contrôle doit attraper.
       if (/pm2 jlist/.test(cmd)) {
         const liste = state.pm2Path === null ? [] : [{
-          name: pm2AppName('site.exemple.com'),
+          name: pm2AppName(HOST),
           pid: 4242,
           pm2_env: {
             pm_exec_path: state.pm2Path,
@@ -86,124 +190,326 @@ function makeTransport({ releases = {}, current = null, healthyReleases = null, 
         }];
         return { code: 0, stdout: JSON.stringify(liste), stderr: '' };
       }
-      if (/pm2 delete/.test(cmd)) {
-        state.pm2Path = null;
-        return { code: 0, stdout: '', stderr: '' };
-      }
-      if (/pm2 (start|reload)/.test(cmd)) {
-        state.restarts.push(state.current);
-        // Seul `start` fixe le chemin ; `reload` relance celui déjà mémorisé.
-        const demarrage = cmd.match(/cd (\S+) &&[\s\S]*pm2 start (\S+) --name/);
-        if (demarrage) state.pm2Path = `${demarrage[1]}/${demarrage[2]}`;
+      if (/pm2 delete/.test(cmd)) { state.pm2Path = null; return { code: 0, stdout: '', stderr: '' }; }
+      if (/pm2 (start|reload|restart)/.test(cmd)) {
+        state.restarts += 1;
+        const dem = cmd.match(/cd (\S+) &&[\s\S]*pm2 start (\S+) --name/);
+        if (dem) state.pm2Path = `${dem[1]}/${dem[2]}`;
         return { code: 0, stdout: '', stderr: '' };
       }
       if (/pm2 save/.test(cmd)) return { code: 0, stdout: '', stderr: '' };
       if (/curl .*\/health/.test(cmd)) {
-        return { code: 0, stdout: healthy.includes(state.current) ? '200' : '000', stderr: '' };
+        const v = versionServie();
+        const ok = healthyVersions === null || healthyVersions.includes(v);
+        return { code: 0, stdout: ok ? '200' : '000', stderr: '' };
       }
-      return { code: 0, stdout: '', stderr: '' };
+
+      // Le reste : chaînes `A && B && C`, exécutées dans l'ordre, arrêt au 1er échec.
+      let dernier = { code: 0, stdout: '', stderr: '' };
+      for (const part of cmd.split('&&')) {
+        dernier = runOne(part);
+        if (dernier.code !== 0) return dernier;
+      }
+      return dernier;
     },
-    async writeFile() {},
+    async writeFile(p, contenu) { disque.write(p, contenu); },
     async close() {},
   };
-  return { tx, state };
+  return { tx, state, versionServie };
 }
 
-// `healthRetries: 1` : aucun scénario n'a besoin d'attendre un service qui
-// démarre lentement — on teste la LOGIQUE, pas la patience.
+/**
+ * REJOUE UN DÉPLOIEMENT — avec la commande d'échange EXACTE du pipeline.
+ *
+ * C'est ce qui donne sa valeur à la recette : si le pipeline cesse un jour de
+ * mettre le backend de côté, ce n'est pas ce fichier qu'il faudra corriger,
+ * c'est le rollback qui n'aura plus rien — et le contrôle statique en fin de
+ * fichier rougira.
+ */
+function deployer(disque, version) {
+  /**
+   * LES EMPLACEMENTS VIENNENT DU PROFIL, jamais d'une liste écrite ici. Ce
+   * fichier est MIROIR entre les deux dépôts, dont les compositions diffèrent
+   * (une SPA d'un côté, deux de l'autre) : une liste en dur y serait fausse
+   * dans l'un des deux.
+   */
+  const { slots: reels } = rollbackSlots({ host: HOST, remoteRoot: ROOT });
+  const apps = reels.filter((s) => s.id !== 'backend').map((s) => s.id);
+  const slots = [
+    ...apps.map((id) => ({ target: `${SITE}/${id}`, next: `${SITE}/${id}.next`, prev: `${SITE}/${id}.prev` })),
+    { target: `${SITE}/backend`, next: `${SITE}/backend.next`, prev: `${SITE}/backend.prev` },
+  ];
+
+  // 1. dossiers `.next` neufs
+  for (const s of slots) { disque.rmrf(s.next); disque.mkdirp(s.next); }
+
+  // 2. contenu de l'artefact
+  const manifeste = JSON.stringify({ shortCommit: version, commitHash: `${version}0000`, builtAt: version });
+  for (const id of apps) {
+    disque.write(`${SITE}/${id}.next/index.html`, `<html>${version}</html>`);
+    disque.write(`${SITE}/${id}.next/version.json`, manifeste);
+  }
+  disque.write(`${SITE}/backend.next/package.json`, '{"name":"panel-backend"}');
+  disque.write(`${SITE}/backend.next/src/server.js`, `// ${version}`);
+  disque.write(`${SITE}/backend.next/build-manifest.json`, manifeste);
+
+  // 3. LA BASCULE — même forme que `pipeline.js`
+  for (const s of slots) disque.rmrf(s.prev);
+  for (const s of slots) {
+    if (disque.isDir(s.target)) disque.mv(s.target, s.prev);
+    disque.mv(s.next, s.target);
+  }
+
+  // 4. étape `dirs` : liens persistants + dépendances installées côté serveur
+  disque.mkdirp(`${SITE}/shared/uploads`);
+  disque.mkdirp(`${SITE}/shared/storage/media`);
+  disque.mkdirp(`${SITE}/backend/uploads`);
+  disque.mkdirp(`${SITE}/backend/storage`);
+  disque.mkdirp(`${SITE}/backend/node_modules`);
+  disque.write(`${SITE}/backend/.env`, `ENV=TEST\n# ${version}`);
+}
+
 const ARGS = {
-  host: 'site.exemple.com', backendPort: 4100, remoteRoot: '/var/www', env: 'TEST',
+  host: HOST, backendPort: 4100, remoteRoot: ROOT, env: 'TEST',
   healthRetries: 1, healthDelayMs: 1,
 };
 
-section('Inventaire des releases');
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('1. Les emplacements qui basculent — dérivés du profil');
 {
-  const { tx } = makeTransport({ releases: { 'r-001': {}, 'r-003': {}, 'r-002': {} }, current: 'r-003' });
-  const list = await listReleases(tx, ARGS);
-  check('releases triées de la plus récente à la plus ancienne',
-    JSON.stringify(list) === JSON.stringify(['r-003', 'r-002', 'r-001']));
-  check('release active identifiée', (await currentRelease(tx, ARGS)) === 'r-003');
+  const { slots, topo } = rollbackSlots({ host: HOST, remoteRoot: ROOT });
+  const ids = slots.map((s) => s.id);
+
+  check('le BACKEND fait partie des emplacements', ids.includes('backend'));
+  check('…et au moins une application publiable aussi', slots.length >= 2);
+  check('chaque emplacement a son `.prev`',
+    slots.every((s) => s.prev === `${s.target}.prev`));
+  check('les chemins viennent de la topologie',
+    slots.find((s) => s.id === 'backend').target === topo.backendDir);
+  check('aucun `releases/` ni `current` dans les chemins',
+    slots.every((s) => !/releases|\/current$/.test(s.target)));
 }
 
-section('Intégrité : une release incomplète est détectée');
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('2. Un seul déploiement — aucun retour arrière possible');
 {
-  const { tx } = makeTransport({ releases: { 'r-ok': {}, 'r-ko': { complete: false } }, current: 'r-ok' });
-  const good = await verifyReleaseIntegrity(tx, { ...ARGS, releaseId: 'r-ok' });
-  check('release complète : intègre', good.ok === true && good.failed.length === 0);
-  const bad = await verifyReleaseIntegrity(tx, { ...ARGS, releaseId: 'r-ko' });
-  check('release incomplète : refusée', bad.ok === false && bad.failed.length > 0);
-  check('…avec le détail de ce qui manque', bad.failed.every((f) => f.id && f.message));
-}
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  const { tx } = makeTransport(disque);
 
-section('Rollback nominal');
-{
-  const { tx, state } = makeTransport({ releases: { 'r-001': {}, 'r-002': {} }, current: 'r-002' });
-  const result = await rollbackToRelease({ transport: tx, ...ARGS });
-  check('bascule vers la release précédente', result.ok === true && result.to === 'r-001');
-  check('release d’origine mémorisée', result.from === 'r-002');
-  check('santé confirmée', result.healthy === true);
-  check('lien current effectivement repointé', state.current === 'r-001');
-  check('bascule atomique (ln -sfn)', state.commands.some((c) => /^ln -sfn .*r-001/.test(c)));
-  check('service relancé après bascule', state.restarts.includes('r-001'));
-  check('santé contrôlée après relance', state.commands.some((c) => /curl .*\/health/.test(c)));
-  check('étapes journalisées', result.steps.some((s) => s.step === 'rollback.verify' && s.status === 'ok'));
-}
+  const state = await describeRollbackState(tx, ARGS);
+  check('la version déployée est lue', state.current === 'aaaaaaa');
+  check('aucune version précédente', state.previous === null);
+  check('le retour arrière est REFUSÉ', state.canRollback === false);
+  check('…et les emplacements manquants sont nommés', state.missingPrevious.length > 0);
 
-section('Rollback vers une release explicite');
-{
-  const { tx, state } = makeTransport({ releases: { 'r-001': {}, 'r-002': {}, 'r-003': {} }, current: 'r-003' });
-  const result = await rollbackToRelease({ transport: tx, ...ARGS, releaseId: 'r-001' });
-  check('la release demandée est activée', result.to === 'r-001' && state.current === 'r-001');
-}
-
-section('Refus explicites (codes stables)');
-{
-  const cases = [
-    ['aucune release', { releases: {}, current: null }, {}, 'ROLLBACK_NO_RELEASE'],
-    ['une seule release, déjà active', { releases: { 'r-1': {} }, current: 'r-1' }, {}, 'ROLLBACK_NO_PREVIOUS_RELEASE'],
-    ['release inexistante', { releases: { 'r-1': {}, 'r-2': {} }, current: 'r-2' }, { releaseId: 'r-9' }, 'ROLLBACK_RELEASE_NOT_FOUND'],
-    ['release déjà active', { releases: { 'r-1': {}, 'r-2': {} }, current: 'r-2' }, { releaseId: 'r-2' }, 'ROLLBACK_ALREADY_ACTIVE'],
-    ['release corrompue', { releases: { 'r-1': { complete: false }, 'r-2': {} }, current: 'r-2' }, { releaseId: 'r-1' }, 'ROLLBACK_RELEASE_CORRUPT'],
-  ];
-  for (const [label, setup, extra, code] of cases) {
-    const { tx } = makeTransport(setup);
-    let got = null;
-    try { await rollbackToRelease({ transport: tx, ...ARGS, ...extra }); } catch (err) { got = err.code; }
-    check(`${label} → ${code}`, got === code);
-  }
-
-  // Une release corrompue ne doit RIEN avoir modifié.
-  const { tx, state } = makeTransport({ releases: { 'r-1': { complete: false }, 'r-2': {} }, current: 'r-2' });
-  try { await rollbackToRelease({ transport: tx, ...ARGS, releaseId: 'r-1' }); } catch { /* attendu */ }
-  check('release corrompue : le lien current n’a PAS bougé', state.current === 'r-2');
-  check('release corrompue : aucun redémarrage de service', state.restarts.length === 0);
-}
-
-section('Rollback en échec : la release d’origine est restaurée');
-{
-  // La cible est intègre mais son backend ne répond pas au health check.
-  const { tx, state } = makeTransport({
-    releases: { 'r-001': {}, 'r-002': {} },
-    current: 'r-002',
-    healthyReleases: ['r-002'], // seule l'ancienne répond
-  });
   let code = null;
-  try { await rollbackToRelease({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
-  check('échec signalé avec restauration', code === 'ROLLBACK_FAILED_RESTORED');
-  check('le site est revenu sur la release qui fonctionnait', state.current === 'r-002');
-  check('le service a été relancé sur la release restaurée',
-    state.restarts[state.restarts.length - 1] === 'r-002');
+  try { await rollbackToPrevious({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
+  check('le refus porte un code stable', code === 'ROLLBACK_NO_PREVIOUS_VERSION');
 }
 
-section('Échec de la bascule elle-même');
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('3. Deux déploiements — le `.prev` existe, backend compris');
 {
-  const { tx, state } = makeTransport({
-    releases: { 'r-001': {}, 'r-002': {} }, current: 'r-002', failSwitch: true,
-  });
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+  const { tx } = makeTransport(disque);
+
+  check('LE BACKEND A BIEN UN `.prev`', disque.isDir(`${SITE}/backend.prev`));
+  check('…avec ses dépendances', disque.isDir(`${SITE}/backend.prev/node_modules`));
+  check('…et son point d’entrée', disque.isFile(`${SITE}/backend.prev/src/server.js`));
+  check('la SPA aussi', disque.isDir(`${SITE}/${APP}.prev`));
+
+  const state = await describeRollbackState(tx, ARGS);
+  check('la version servie est la dernière', state.current === 'bbbbbbb');
+  check('la précédente est identifiée', state.previous === 'aaaaaaa');
+  check('le retour arrière est POSSIBLE', state.canRollback === true);
+
+  const integrity = await verifyPreviousIntegrity(tx, ARGS);
+  check('la version de secours est intègre', integrity.ok === true);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('4. ALLER-RETOUR — prouvé sur les octets servis');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+  const { tx, versionServie, state: txState } = makeTransport(disque);
+
+  check('avant : la version B est servie', versionServie() === 'bbbbbbb');
+  check('…et le HTML aussi', disque.read(`${SITE}/${APP}/index.html`).includes('bbbbbbb'));
+
+  const aller = await rollbackToPrevious({ transport: tx, ...ARGS });
+  check('le rollback réussit', aller.ok === true);
+  check('…et NOMME d’où l’on vient', aller.from === 'bbbbbbb');
+  check('…et où l’on va', aller.to === 'aaaaaaa');
+
+  check('APRÈS : la version A est servie', versionServie() === 'aaaaaaa');
+  check('…le HTML de la SPA aussi', disque.read(`${SITE}/${APP}/index.html`).includes('aaaaaaa'));
+  check('…et le service a été relancé', txState.restarts > 0);
+
+  /**
+   * L'ÉCHANGE EST SON PROPRE INVERSE : ce qu'on vient de quitter est devenu le
+   * `.prev`. C'est ce qui rend un rollback réversible sans second chemin de
+   * code — et ce qui permet à la restauration de rejouer la même opération.
+   */
+  const apres = await describeRollbackState(tx, ARGS);
+  check('la version quittée devient la précédente', apres.previous === 'bbbbbbb');
+  check('…et un second retour est possible', apres.canRollback === true);
+
+  const retour = await rollbackToPrevious({ transport: tx, ...ARGS });
+  check('le second rollback ramène en avant', retour.ok === true && retour.to === 'bbbbbbb');
+  check('LES OCTETS SONT CEUX DU DÉPART', versionServie() === 'bbbbbbb');
+  check('…y compris pour la SPA',
+    disque.read(`${SITE}/${APP}/index.html`).includes('bbbbbbb'));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('5. Les DONNÉES ne bougent jamais');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+
+  // Un justificatif déposé APRÈS le dernier déploiement, dans le partagé.
+  disque.write(`${SITE}/shared/storage/media/justificatif.pdf`, 'PDF-OCTETS');
+  disque.write(`${SITE}/shared/uploads/logo.webp`, 'IMG-OCTETS');
+
+  const { tx } = makeTransport(disque);
+  await rollbackToPrevious({ transport: tx, ...ARGS });
+
+  check('LE JUSTIFICATIF PRIVÉ EST INTACT',
+    disque.read(`${SITE}/shared/storage/media/justificatif.pdf`) === 'PDF-OCTETS');
+  check('…et le média public aussi',
+    disque.read(`${SITE}/shared/uploads/logo.webp`) === 'IMG-OCTETS');
+  check('le partagé n’a pas été déplacé', disque.isDir(`${SITE}/shared/storage/media`));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('6. Un `.prev` incomplet n’est JAMAIS activé');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+  // Les dépendances de la version de secours ont disparu : elle ne démarrerait pas.
+  disque.rmrf(`${SITE}/backend.prev/node_modules`);
+
+  const { tx, versionServie } = makeTransport(disque);
+  const integrity = await verifyPreviousIntegrity(tx, ARGS);
+  check('l’intégrité est refusée', integrity.ok === false);
+  check('…en nommant l’emplacement et la cause',
+    integrity.failed.some((f) => f.id === 'backend' && /dépendances/.test(f.message)));
+
   let code = null;
-  try { await rollbackToRelease({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
-  check('échec de repointage signalé', code === 'ROLLBACK_SWITCH_FAILED' || code === 'ROLLBACK_FAILED_RESTORED');
-  check('aucune release fantôme activée', state.current === 'r-002');
+  try { await rollbackToPrevious({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
+  check('le rollback est REFUSÉ', code === 'ROLLBACK_PREVIOUS_CORRUPT');
+  check('…et RIEN n’a bougé', versionServie() === 'bbbbbbb');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('7. Santé rouge après bascule — la version d’origine est RÉTABLIE');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+
+  // Seule B répond : revenir à A produira un contrôle de santé rouge.
+  const { tx, versionServie } = makeTransport(disque, { healthyVersions: ['bbbbbbb'] });
+
+  let code = null;
+  try { await rollbackToPrevious({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
+
+  check('l’échec est signalé', code === 'ROLLBACK_FAILED_RESTORED');
+  check('LA VERSION D’ORIGINE EST RÉTABLIE', versionServie() === 'bbbbbbb');
+  check('…et la SPA avec elle',
+    disque.read(`${SITE}/${APP}/index.html`).includes('bbbbbbb'));
+  check('…le `.prev` est de nouveau la version A',
+    disque.read(`${SITE}/backend.prev/build-manifest.json`).includes('aaaaaaa'));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('8. Échange impossible en cours de route — rétablissement partiel');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+
+  // Le backend refuse de bouger : les SPA ont déjà basculé quand l'échec tombe.
+  const { tx, versionServie } = makeTransport(disque, { failSwapFor: `${SITE}/backend` });
+
+  let code = null;
+  try { await rollbackToPrevious({ transport: tx, ...ARGS }); } catch (err) { code = err.code; }
+
+  check('l’échec est signalé', code === 'ROLLBACK_FAILED_RESTORED');
+  check('le backend n’a pas bougé', versionServie() === 'bbbbbbb');
+  /**
+   * LA SPA EST REVENUE À SA PLACE. Sans rétablissement, on servirait
+   * l'interface d'hier à l'API d'aujourd'hui — le pire des deux mondes.
+   */
+  check('LA SPA A ÉTÉ RÉTABLIE',
+    disque.read(`${SITE}/${APP}/index.html`).includes('bbbbbbb'));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('9. Adaptateurs historiques — le vocabulaire tient, le mécanisme est réel');
+{
+  const disque = makeFs();
+  deployer(disque, 'aaaaaaa');
+  deployer(disque, 'bbbbbbb');
+  const { tx } = makeTransport(disque);
+
+  const liste = await listReleases(tx, ARGS);
+  check('listReleases rend les versions réellement présentes',
+    JSON.stringify(liste) === JSON.stringify(['bbbbbbb', 'aaaaaaa']));
+  check('currentRelease rend la version servie',
+    (await currentRelease(tx, ARGS)) === 'bbbbbbb');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('10. GARDE-FOUS — le pipeline doit continuer de préparer le retour');
+{
+  const pipeline = fs.readFileSync(
+    path.join(racine, 'backend/src/deployment-engine/pipeline.js'), 'utf8',
+  );
+
+  /**
+   * SANS CECI, IL N'Y A RIEN VERS QUOI REVENIR. Le backend était uploadé
+   * directement par-dessus la version en place : aucun `.prev` n'existait, et
+   * le rollback n'avait aucune cible. C'est le défaut que R10.2 a fermé, et
+   * c'est le premier à pouvoir se rouvrir sans qu'on s'en aperçoive.
+   */
+  check('le backend est uploadé dans un `.next`',
+    /backendNext\s*=\s*`\$\{backendDir\}\.next`/.test(pipeline)
+    && /uploadDir\(artifact\.backendDir,\s*backendNext\)/.test(pipeline));
+  check('…et il figure dans la bascule, avec son `.prev`',
+    /\{\s*target:\s*backendDir,\s*next:\s*backendNext,\s*prev:\s*backendPrev\s*\}/.test(pipeline));
+  check('la bascule met l’ancienne version de côté',
+    /if \[ -d \$\{s\.target\} \]; then mv \$\{s\.target\} \$\{s\.prev\}; fi/.test(pipeline));
+
+  const rollbackBrut = fs.readFileSync(
+    path.join(racine, 'backend/src/deployment-engine/rollback.js'), 'utf8',
+  );
+  /**
+   * LA GARDE LIT LE CODE, PAS LA PROSE. Ce fichier EXPLIQUE longuement le
+   * mécanisme `releases/` qu'il a remplacé — une garde naïve rougirait sur la
+   * documentation de l'interdit qu'elle défend, et quelqu'un supprimerait le
+   * commentaire pour faire passer le test.
+   */
+  const rollback = rollbackBrut
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  /** Le mécanisme fictif ne doit pas revenir par la porte de derrière. */
+  check('le rollback ne construit plus de chemin `releases/`', !/releases\//.test(rollback));
+  check('…ni de lien `current`', !/currentLink/.test(rollback));
+  check('…et n’appelle plus `readlink -f`', !/readlink -f/.test(rollback));
+  check('l’échange est bien son propre inverse',
+    /mv \$\{slot\.target\} \$\{tmp\}[\s\S]*mv \$\{slot\.prev\} \$\{slot\.target\}[\s\S]*mv \$\{tmp\} \$\{slot\.prev\}/
+      .test(rollback));
+  check('les emplacements viennent de la topologie, jamais codés en dur',
+    /planTopology\(/.test(rollback));
 }
 
 console.log(`\n${pass} réussis, ${fail} échoués`);

@@ -142,36 +142,35 @@ export function buildPlan(deployConfig, { releaseId } = {}) {
 }
 
 /**
- * LE ROLLBACK — décrit tel qu'il est, réserve comprise.
+ * LE ROLLBACK — l'échange des `.prev`, décrit tel qu'il est (R10.2).
  *
- * ══ UNE RÉSERVE QUI DOIT SE VOIR ══════════════════════════════════════════
+ * Chaque emplacement déployé garde UNE génération précédente sous
+ * `<dossier>.prev`. Revenir en arrière consiste à les échanger — le backend
+ * comme les SPA. L'échange est son propre inverse : un rollback raté se défait
+ * par la même opération, et rejouer un rollback ramène au point de départ.
  *
- * `rollback.js` repointe un lien `current` vers un dossier `releases/<id>`. Or
- * le pipeline de déploiement ne crée NI l'un NI l'autre : il uploade dans un
- * `backend/` stable et bascule les SPA par `.next`/`.prev`.
- *
- * Sur une destination déployée par ce pipeline, `listReleases()` ne trouve donc
- * rien, et le rollback n'a aucune cible. Le filet réel est `.prev`, que
- * `rollback.js` n'utilise pas.
- *
- * Ce n'est pas corrigé ici — ce serait changer le comportement du moteur, ce
- * qui appartient à son propre lot. Mais la simulation cesse de laisser croire
- * qu'un rollback est planifié et prêt.
+ * Les données ne bougent pas : `uploads` et `storage` sont des liens vers le
+ * partagé persistant et suivent le dossier échangé.
  */
 export function buildRollbackPlan(deployConfig, { targetReleaseId } = {}) {
   const layout = describeRemoteLayout(deployConfig);
+  const emplacements = [
+    ...layout.publications.map((p) => `${p.target} ⇄ ${p.prev}`),
+    `${layout.backendDir} ⇄ ${layout.backendDir}.prev`,
+  ];
   return [
     {
       step: 'rollback.delegate',
-      description:
-        `Déléguer au moteur : engine.rollback({ releaseId: ${targetReleaseId ?? 'précédente'} })`,
+      description: 'Déléguer au moteur : engine.rollback() — échange de chaque emplacement avec son `.prev`',
       commands: [],
+      swaps: emplacements,
       caveats: [
-        'Le moteur cherche `<siteRoot>/releases/<id>` et un lien `<siteRoot>/current`.',
-        'Le pipeline de déploiement ne crée ni l’un ni l’autre : il uploade dans '
-        + `\`${layout.backendDir}\` et bascule les SPA par \`.next\`/\`.prev\`.`,
-        'Sur une destination déployée par ce pipeline, aucune release n’est donc '
-        + 'listable et le rollback n’a pas de cible. À traiter dans un lot du moteur.',
+        'Une seule génération précédente est conservée : `--to` est ignoré.',
+        'Le retour arrière est REFUSÉ si un seul emplacement n’a pas son `.prev`, '
+        + 'ou si la version de secours est incomplète (dépendances absentes).',
+        'Les médias et justificatifs ne bougent pas : `uploads` et `storage` sont '
+        + 'des liens vers le partagé persistant.',
+        ...(targetReleaseId ? [`\`--to ${targetReleaseId}\` sera ignoré.`] : []),
       ],
     },
   ];

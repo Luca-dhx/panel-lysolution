@@ -32,7 +32,12 @@ export {
   verifyServiceHealth,
 } from './ports.js';
 export { checkLocalHealth, checkPublicHealth } from './health.js';
-export { rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity } from './rollback.js';
+export {
+  // R10.2 — le vocabulaire du mécanisme réel.
+  rollbackToPrevious, describeRollbackState, verifyPreviousIntegrity, rollbackSlots,
+  // Adaptateurs historiques, conservés pour les appelants existants.
+  rollbackToRelease, listReleases, currentRelease, verifyReleaseIntegrity,
+} from './rollback.js';
 export {
   DEPROVISION_STEPS,
   DEPROVISION_STEP_IDS,

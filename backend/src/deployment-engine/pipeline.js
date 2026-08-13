@@ -138,23 +138,52 @@ export async function runPipeline({ transport, target, artifact, options, versio
         return { app, localDir, target: app.remoteRoot, next: `${app.remoteRoot}.next`, prev: `${app.remoteRoot}.prev` };
       });
 
+      /**
+       * ══ LE BACKEND BASCULE COMME LES SPA (R10.2) ═══════════════════════════
+       *
+       * Il était uploadé DIRECTEMENT dans son dossier définitif, par-dessus la
+       * version en place. Deux conséquences, toutes deux corrigées ici :
+       *
+       *  · aucun `.prev` n'existait pour lui — le rollback n'avait donc rien
+       *    vers quoi revenir, et `rollback.js` cherchait des `releases/` que ce
+       *    pipeline ne crée pas. Le retour arrière était inopérant ;
+       *
+       *  · `uploadDir` écrase fichier par fichier SANS jamais supprimer : un
+       *    module retiré du dépôt survivait indéfiniment sur le serveur. C'est
+       *    exactement le défaut que `.next` avait fermé pour les SPA.
+       *
+       * Le coût est nul : `npm ci` (étape `dirs`) efface de toute façon
+       * `node_modules` avant de réinstaller, et le `.prev` conserve le sien —
+       * une release précédente reste donc démarrable telle quelle.
+       */
+      const backendNext = `${backendDir}.next`;
+      const backendPrev = `${backendDir}.prev`;
+
       const nextDirs = publications.map((p) => p.next).join(' ');
-      await transport.exec(`rm -rf ${nextDirs} && mkdir -p ${nextDirs} ${backendDir} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`);
+      await transport.exec(`rm -rf ${nextDirs} ${backendNext} && mkdir -p ${nextDirs} ${backendNext} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`);
 
       const filesByApp = {};
       for (const p of publications) {
         const r = await transport.uploadDir(p.localDir, p.next);
         filesByApp[p.app.id] = r.files;
       }
-      const b = await transport.uploadDir(artifact.backendDir, backendDir);
+      const b = await transport.uploadDir(artifact.backendDir, backendNext);
 
-      // Bascule ATOMIQUE application par application : purge des anciens assets
-      // (plus d'index.html périmé servi en cache) et `.prev` de secours.
+      /**
+       * Bascule ATOMIQUE, application par application ET backend compris :
+       * purge des anciens assets (plus d'index.html périmé servi en cache) et
+       * `.prev` de secours — la seule chose vers laquelle un rollback puisse
+       * revenir.
+       */
+      const slots = [
+        ...publications.map((p) => ({ target: p.target, next: p.next, prev: p.prev })),
+        { target: backendDir, next: backendNext, prev: backendPrev },
+      ];
       const swap = [
-        `rm -rf ${publications.map((p) => p.prev).join(' ')}`,
-        ...publications.flatMap((p) => [
-          `if [ -d ${p.target} ]; then mv ${p.target} ${p.prev}; fi`,
-          `mv ${p.next} ${p.target}`,
+        `rm -rf ${slots.map((s) => s.prev).join(' ')}`,
+        ...slots.flatMap((s) => [
+          `if [ -d ${s.target} ]; then mv ${s.target} ${s.prev}; fi`,
+          `mv ${s.next} ${s.target}`,
         ]),
       ].join(' && ');
       await transport.exec(swap);

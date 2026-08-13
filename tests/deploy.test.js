@@ -238,16 +238,28 @@ section('Plan : dérivé du moteur, jamais réécrit');
     && upload.publications.every((p) => p.next.endsWith('.next') && p.prev.endsWith('.prev')));
 
   /**
-   * LE ROLLBACK DIT SA RÉSERVE. `rollback.js` cherche `releases/` + `current`,
-   * que le pipeline ne crée pas : la simulation ne doit pas laisser croire
-   * qu'un retour arrière est prêt.
+   * LE ROLLBACK DÉCRIT L'ÉCHANGE RÉEL (R10.2).
+   *
+   * La réserve que R10.1 devait afficher — « le pipeline ne crée pas les
+   * `releases/` que le moteur cherche » — n'existe plus : le rollback s'appuie
+   * désormais sur les `.prev` que le pipeline pose réellement. Ce qui reste à
+   * dire, c'est ce que l'échange touche, et ce qu'il ne touche pas.
    */
   const rollback = buildRollbackPlan(config, { targetReleaseId: 'r-precedente' });
   check('le rollback délègue au moteur', rollback[0].step === 'rollback.delegate');
   check('le rollback n’invente aucune commande', rollback[0].commands.length === 0);
+
+  const echanges = (rollback[0].swaps ?? []).join(' ');
+  check('l’échange du BACKEND est décrit',
+    echanges.includes('/var/www/panel.exemple.com/backend ⇄ /var/www/panel.exemple.com/backend.prev'));
+  check('…et celui des SPA aussi', (rollback[0].swaps ?? []).length >= 2);
+
   const reserve = (rollback[0].caveats ?? []).join(' ');
-  check('…et NOMME la réserve : le pipeline ne crée pas les releases attendues',
-    /releases/.test(reserve) && /ne crée/.test(reserve) && /pas de cible/.test(reserve));
+  check('une seule génération précédente est annoncée', /une seule génération/i.test(reserve));
+  check('…`--to` est annoncé comme ignoré', /--to/.test(reserve) && /ignoré/.test(reserve));
+  check('…et les données sont annoncées comme intouchées',
+    /uploads/.test(reserve) && /storage/.test(reserve) && /persistant/.test(reserve));
+  check('plus aucune réserve sur des releases inexistantes', !/pas de cible/.test(reserve));
 
   check('la chaîne de qualité couvre lint, typecheck, tests et build',
     ['quality.lint', 'quality.typecheck', 'quality.tests', 'artifact.build']
