@@ -202,6 +202,20 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    */
   'EMAIL_DELIVERY_EVENT',
   /**
+   * >= 1.7.x — LE RETOUR DE SIGNATURE, poussé par le Panel (R10.5C).
+   *
+   * Même raison d'être que `EMAIL_DELIVERY_EVENT`, et même leçon : après
+   * cutover, les webhooks Yousign suivent le COMPTE, donc le Panel. Sans cette
+   * entité, un contrat signé resterait « en cours » côté projet, et un projet
+   * éteint au mauvais moment perdrait le fait définitivement.
+   *
+   * Elle porte un fait NORMALISÉ — `SIGNATURE_SIGNER_SIGNED`,
+   * `SIGNATURE_COMPLETED`, `SIGNATURE_FAILED` — jamais l'événement brut du
+   * fournisseur : le projet n'a pas à connaître le vocabulaire de Yousign pour
+   * savoir qu'un contrat est signé.
+   */
+  'SIGNATURE_EVENT',
+  /**
    * >= 1.7.x — UNE PRESTATION À PAYER, poussée par le Panel (L10.5).
    *
    * DISTINCTE de `INVOICE` et de `PAYMENT`, et elle doit le rester. Ces deux-là

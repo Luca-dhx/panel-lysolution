@@ -140,7 +140,17 @@ section('Types d’entités synchronisées');
    *   CAUSE     « faut-il fermer ? »    → entrée du moteur, singleton
    *   INCIDENT  « que se passe-t-il ? » → observation seule, collection
    */
-  check('18 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 18);
+  /**
+   * DIX-NEUF depuis R10.5C : `SIGNATURE_EVENT` rejoint le miroir.
+   *
+   * Même raison d'être que `EMAIL_DELIVERY_EVENT` — après cutover, les webhooks
+   * suivent le COMPTE, donc le Panel. Sans cette entité, un contrat signé
+   * resterait « en cours » côté projet, et un projet éteint perdrait le fait.
+   *
+   * Le nombre reste écrit en dur : c’est lui qui force à relire le contrat
+   * quand une entité s’ajoute, plutôt que de la voir apparaître en silence.
+   */
+  check('19 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 19);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

@@ -798,6 +798,7 @@ components:
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
                   - EMAIL_DELIVERY_EVENT
+                  - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
                   - PAYMENT_DEFAULT_CAUSE
                   - PAYMENT_DEFAULT_INCIDENT
@@ -1204,6 +1205,7 @@ components:
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
             - EMAIL_DELIVERY_EVENT
+            - SIGNATURE_EVENT
             - PAYMENT_REQUEST
             - PAYMENT_DEFAULT_CAUSE
             - PAYMENT_DEFAULT_INCIDENT

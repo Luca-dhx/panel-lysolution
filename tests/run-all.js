@@ -122,6 +122,11 @@ const TESTS = [
   // même contrat, ressource étrangère, identifiant inventé, isolation
   // TEST/PROD) et la sortie tracée quand une issue reste indéterminée.
   'signature-reservations.test.js',
+  // R10.5C — la FORME du fait de signature qui traverse le pont. Deux détails
+  // y décident si l'événement arrive ou disparaît, et aucun des deux ne lève :
+  // un `entityId` qui n'est pas un UUID fait rejeter la page entière, et un
+  // signataire absent laisse le parcours s'arrêter à mi-chemin, en silence.
+  'signature-event-dispatch.test.js',
   // L8 — la connaissance Brevo : deux vocabulaires d'événements pour un seul
   // sens, quatre champs de date pour deux unités, et cinq objets qu'on
   // confondait. Enregistré ici en L5.1 — il était livré mais jamais exécuté.

@@ -1,6 +1,6 @@
 // TRANSPORT YOUSIGN — le seul endroit du Panel qui parle à Yousign (R10.5C).
 //
-// docs/yousign/R10_5C_YOUSIGN_CONTROL_PLANE_AUDIT.md.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md.
 //
 // ══ CE QUE CE MODULE PORTE, ET CE QU'IL NE DÉCIDE PAS ═══════════════════════
 //

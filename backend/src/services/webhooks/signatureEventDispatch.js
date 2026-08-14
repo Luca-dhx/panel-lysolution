@@ -1,6 +1,6 @@
 // LE CHEMIN RETOUR DE LA SIGNATURE — de Yousign jusqu'au bon projet (R10.5C).
 //
-// docs/yousign/R10_5C_YOUSIGN_CONTROL_PLANE_AUDIT.md §6.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §6.
 //
 // ══ POURQUOI L'ENDPOINT A DÉMÉNAGÉ ══════════════════════════════════════════
 //
@@ -26,6 +26,7 @@
 // rythme. Un projet éteint ne perd donc plus rien : il rattrape à la
 // reconnexion. C'est exactement ce que l'ancien endpoint local ne savait pas
 // faire, et c'est la raison d'être de ce module.
+import { createHash } from 'node:crypto';
 import logger from '../../utils/logger.js';
 import { emitChange } from '../sync/syncCore.service.js';
 import { findBinding, closeBinding, maskResourceId } from '../integratedApi/yousign/signatureOwnership.js';
@@ -85,6 +86,66 @@ function extractRequestId(payload) {
 }
 
 /**
+ * L'IDENTITÉ DE PONT — un UUID, parce que le contrat n'accepte que ça.
+ *
+ * ══ LE DÉFAUT QUE CETTE FONCTION EXISTE POUR ÉVITER ═══════════════════════
+ *
+ * `syncChangeSchema` impose `entityId: uuid`. Une référence de contrat de
+ * projet n'en est pas une — c'est un ObjectId de 24 hexadécimaux. Émettre la
+ * référence métier telle quelle faisait rejeter la PAGE ENTIÈRE en
+ * `BRIDGE_INVALID_PAYLOAD` : aucun événement de signature n'atteignait jamais
+ * le projet, et rien ne le signalait au Panel, qui croyait avoir livré.
+ * C'est exactement le défaut rencontré sur Brevo en L8.4.
+ *
+ * ══ POURQUOI DÉRIVÉ, ET NON TIRÉ AU HASARD ════════════════════════════════
+ *
+ * Deux faits concernant la MÊME demande doivent porter la même identité
+ * d'entité : c'est ce qui rend cohérents l'anti-écho et l'idempotence côté
+ * projet. Un UUID aléatoire par événement en aurait fait des entités
+ * distinctes, et un rejeu serait passé pour une nouveauté.
+ *
+ * La référence métier, elle, n'est pas perdue : elle voyage dans la charge
+ * utile (`contractRef`), qui est ce que l'applicateur lit réellement.
+ */
+export function toBridgeEntityId(seed) {
+  const h = createHash('sha256').update(`signature:${seed}`).digest('hex');
+  // Forme UUID v5-like : la version et la variante sont posées explicitement.
+  return [
+    h.slice(0, 8),
+    h.slice(8, 12),
+    `5${h.slice(13, 16)}`,
+    ((parseInt(h.slice(16, 17), 16) & 0x3) | 0x8).toString(16) + h.slice(17, 20),
+    h.slice(20, 32),
+  ].join('-');
+}
+
+/**
+ * L'identifiant du signataire — le SEUL fragment d'identité qui traverse.
+ *
+ * Sans lui, le projet apprend « quelqu'un a signé » sans savoir qui : il ne
+ * peut plus horodater la signature du développeur séparément de celle du
+ * client, ni ouvrir le contrat à la contresignature au bon moment. Le parcours
+ * s'arrêterait à mi-chemin en silence.
+ *
+ * C'est une référence OPAQUE du fournisseur, pas une donnée personnelle : ni
+ * nom, ni adresse. Le projet détient déjà la correspondance signataire→rôle,
+ * puisque c'est lui qui a déclaré les signataires à l'ouverture. On lui rend
+ * donc la clé de sa propre table, et rien de plus.
+ *
+ * L'alternative — faire redemander au projet « qui a signé ? » par une capacité
+ * — remettrait le Panel dans le chemin critique de l'application d'un fait déjà
+ * établi : un projet hors ligne au mauvais moment perdrait l'information.
+ */
+export function extractSignerId(payload) {
+  const brut = payload?.data?.signer?.id
+    ?? payload?.data?.signer_id
+    ?? payload?.signer?.id
+    ?? null;
+  const valeur = String(brut ?? '').trim();
+  return valeur === '' ? null : valeur;
+}
+
+/**
  * Achemine un événement de signature vers le projet propriétaire.
  *
  * Appelé APRÈS l'idempotence de réception : un rejeu du fournisseur n'arrive
@@ -136,18 +197,12 @@ export async function dispatchSignatureEvent({ provider, environment, payload, e
   await emitChange({
     entityType: SIGNATURE_ENTITY_TYPE,
     /**
-     * L'IDENTITÉ DE L'ENTITÉ EST LA RÉFÉRENCE MÉTIER DU PROJET, PAS CELLE DE
-     * YOUSIGN.
-     *
-     * Le contrat de pont impose un UUID pour `entityId`, et un identifiant
-     * Yousign n'en est pas nécessairement un — la page entière serait rejetée
-     * en `BRIDGE_INVALID_PAYLOAD`, et AUCUN événement n'atteindrait le projet.
-     * C'est exactement le défaut qu'avait connu Brevo en L8.4.
-     *
-     * C'est aussi le bon identifiant : l'entité dont on parle est LE CONTRAT,
-     * que le projet connaît déjà, et non l'objet du fournisseur.
+     * L'IDENTITÉ D'ENTITÉ EST DÉRIVÉE DE LA RÉFÉRENCE MÉTIER — voir
+     * `toBridgeEntityId`. Ni l'identifiant Yousign ni la référence de contrat
+     * du projet ne sont des UUID ; les émettre tels quels faisait rejeter la
+     * page entière. La référence métier reste lisible dans la charge utile.
      */
-    entityId: binding.contractRef,
+    entityId: toBridgeEntityId(binding.contractRef),
     /**
      * CHARGE UTILE MINIMALE. Ni nom de signataire, ni adresse, ni document : le
      * projet les détient, et les recopier ferait du journal durable du Panel un
@@ -157,6 +212,8 @@ export async function dispatchSignatureEvent({ provider, environment, payload, e
       event: businessEvent,
       contractRef: binding.contractRef,
       signatureRequestId,
+      /** Qui a signé — opaque, et absent des faits qui ne concernent personne. */
+      signerId: extractSignerId(payload),
       /** Le libellé du fournisseur — conservé pour le forensic. */
       providerEvent: String(eventType ?? payload?.event_name ?? ''),
       occurredAt: new Date().toISOString(),

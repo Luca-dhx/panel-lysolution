@@ -1,6 +1,6 @@
 // APPARTENANCE D'UNE DEMANDE DE SIGNATURE — la filiation forte (R10.5C).
 //
-// docs/yousign/R10_5C_YOUSIGN_CONTROL_PLANE_AUDIT.md §4.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §4.
 //
 // ══ LE PROBLÈME QUE CE MODÈLE FERME ═════════════════════════════════════════
 //

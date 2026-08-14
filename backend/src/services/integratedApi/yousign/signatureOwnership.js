@@ -1,6 +1,6 @@
 // APPARTENANCE D'UNE SIGNATURE — « cette demande est-elle à ce projet ? » (R10.5C).
 //
-// docs/yousign/R10_5C_YOUSIGN_CONTROL_PLANE_AUDIT.md §4.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §4.
 //
 // ══ LE PIÈGE QUE CE MODULE FERME ════════════════════════════════════════════
 //

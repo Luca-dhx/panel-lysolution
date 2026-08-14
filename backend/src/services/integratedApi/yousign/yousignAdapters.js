@@ -1,6 +1,6 @@
 // ADAPTATEURS YOUSIGN — les actes métier, et rien qu'eux (R10.5C).
 //
-// docs/yousign/R10_5C_YOUSIGN_CONTROL_PLANE_AUDIT.md §3.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §3.
 //
 // ══ CINQ CAPACITÉS, PAS ONZE VERBES ═════════════════════════════════════════
 //
