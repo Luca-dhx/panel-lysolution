@@ -61,6 +61,31 @@ export const WEBHOOK_DIAGNOSTIC = Object.freeze({
   WEBHOOK_REMOTE_ERROR: 'WEBHOOK_REMOTE_ERROR',
   /** Plafond d'endpoints atteint (Stripe : 16 par compte). */
   WEBHOOK_REMOTE_LIMIT_REACHED: 'WEBHOOK_REMOTE_LIMIT_REACHED',
+  /**
+   * LE FOURNISSEUR N'OFFRE PAS CETTE OPÉRATION DANS CE MONDE — ce n'est ni une
+   * panne, ni un défaut de droit, et surtout pas notre faute.
+   *
+   * ══ LE CAS RÉEL QUI A CRÉÉ CE CODE ════════════════════════════════════════
+   *
+   * Yousign refuse la CRÉATION de souscriptions webhook par l'API dans son bac
+   * à sable, et le dit lui-même : « This operation is not available in
+   * Sandbox. You can create Webhook Subscriptions for Sandbox environment only
+   * from the application, and not from the API. »
+   *
+   * Il répond par un 403, et un 403 tombait jusqu'ici dans
+   * `WEBHOOK_AUTH_INVALID`. L'opérateur lisait donc « authentification
+   * invalide » pour une clé parfaitement valide, qui lit d'ailleurs la liste
+   * des souscriptions sans difficulté — et il partait régénérer une clé qui
+   * n'aurait rien changé.
+   *
+   * ── LE GESTE ATTENDU N'EST PAS DE RÉESSAYER ────────────────────────────────
+   *
+   * Il est d'aller créer la souscription dans la CONSOLE du fournisseur. Le
+   * Panel la reprendra ensuite par sa réconciliation. C'est pour cela que ce
+   * code existe séparément : il appelle une action humaine précise, là où
+   * `WEBHOOK_REMOTE_ERROR` invite à réessayer indéfiniment.
+   */
+  WEBHOOK_REMOTE_UNSUPPORTED_IN_ENVIRONMENT: 'WEBHOOK_REMOTE_UNSUPPORTED_IN_ENVIRONMENT',
   /** L'état observé diverge de l'état désiré. */
   WEBHOOK_DRIFT: 'WEBHOOK_DRIFT',
   /** L'endpoint existe, mais aucun secret ne permet de vérifier ses appels. */
@@ -126,6 +151,12 @@ export function statusForDiagnostic(code) {
     case WEBHOOK_DIAGNOSTIC.WEBHOOK_UNSUPPORTED:
       return WEBHOOK_STATUS.UNSUPPORTED;
     case WEBHOOK_DIAGNOSTIC.WEBHOOK_CREDENTIALS_MISSING:
+    /**
+     * `PENDING` et non `ERROR` : rien n'est cassé, il manque un geste humain
+     * dans la console du fournisseur. Le classer en erreur ferait clignoter
+     * une alerte pour un état qu'aucun réessai ne résoudra.
+     */
+    case WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_UNSUPPORTED_IN_ENVIRONMENT:
     case WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_NOT_PUBLIC:
       // Ce n'est pas une panne : c'est un prérequis non encore rempli. Le
       // signaler en ERROR ferait sonner une alarme pour un Panel qu'on vient

@@ -195,6 +195,66 @@ ${button('Réinitialiser mon mot de passe', '{{auth.resetUrl}}')}
     },
   },
 
+  // ───────────────────────────────────────────────────────────────────────────
+  /**
+   * L'ACTIVATION DU PREMIER ACCÈS D'ADMINISTRATION D'UN PROJET (LOT 2C).
+   *
+   * Jumeau de `PASSWORD_RESET_REQUEST` par la mécanique — lien tokenisé, durée
+   * limitée, usage unique — et distinct par ce qu'il dit : son destinataire n'a
+   * jamais eu de mot de passe. Le confondre avec une réinitialisation
+   * demanderait à quelqu'un de retrouver un secret qui n'a jamais existé.
+   *
+   * Portée PROJECT (voir `panelEmailTemplateDefinitions.js`) : chaque projet
+   * peut réécrire ce HTML sous son propre branding, et aucun ne peut inventer
+   * une variable — le contrat ci-dessous est plateforme.
+   */
+  DEV_ACCOUNT_ACTIVATION: {
+    templateId: 'DEV_ACCOUNT_ACTIVATION',
+    defaultName: 'Compte — activation du premier accès',
+    defaultDescription:
+      "Envoyé à la création d'un compte d'administration sans mot de passe (duplication d'un projet, ou migration d'un compte hérité). Contient un lien tokenisé à durée limitée et usage unique, par lequel le titulaire CHOISIT son mot de passe. Aucun mot de passe n'est jamais transmis.",
+    defaultSubject: 'Activez votre accès — {{company.name}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: 'Nom du projet', description: 'Identité du projet à administrer.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'user.name', label: 'Nom du destinataire', description: 'Nom du compte concerné (ou son adresse à défaut).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'auth.activationUrl', label: "Lien d'activation", description: 'Lien tokenisé, à durée limitée et usage unique.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'auth.expiresMinutes', label: 'Validité (minutes)', description: 'Durée de validité du lien, en minutes.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'user.name': 'Jean Dupont (exemple)',
+      'auth.activationUrl': 'https://manager.exemple.fr/activer-mon-compte?token=exemple',
+      'auth.expiresMinutes': '60',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Choisissez votre mot de passe — lien valable {{auth.expiresMinutes}} minutes.',
+        heading: 'Activez votre accès',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{user.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Un accès d'administration vient d'être ouvert à votre nom pour {{company.name}}.
+              Il ne possède pas encore de mot de passe : cliquez ci-dessous pour choisir le vôtre.
+            </p>
+${button('Choisir mon mot de passe', '{{auth.activationUrl}}')}
+            <p style="margin:24px 0 8px;font-size:13px;line-height:1.6;color:${MUTED};">
+              Ce lien est valable {{auth.expiresMinutes}} minutes et ne peut être utilisé qu'une seule fois.
+              Passé ce délai, demandez-en un nouveau depuis la page de connexion.
+            </p>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Si vous n'attendiez pas cet accès, ignorez cet e-mail : sans mot de passe,
+              le compte reste inutilisable.
+            </p>
+            <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${MUTED};word-break:break-all;">
+              Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :<br>{{auth.activationUrl}}
+            </p>`,
+        footerHtml: `            Message envoyé automatiquement par {{company.name}} — aucun mot de passe ne vous sera jamais demandé par e-mail.`,
+      });
+    },
+  },
+
   CONTACT_ADMIN_NOTIFICATION: {
     templateId: 'CONTACT_ADMIN_NOTIFICATION',
     defaultName: 'Contact — notification aux administrateurs',
@@ -811,7 +871,341 @@ ${row('Demandé le', '{{test.requestedAt}}')}
       });
     },
   },
+
+  /* ═════════════════════════════════════════════════════════════════════════
+     LE CYCLE DE VIE D'UN PAIEMENT, VU PAR LE CLIENT D'UN PROJET.
+
+     ══ POURQUOI CES QUATRE CODES VIVENT ICI ═══════════════════════════════
+
+     Le registre est PLATEFORME : un code que le Panel ne connaît pas ne peut
+     pas partir, quelle que soit la qualité de sa déclaration côté projet.
+     C'est la leçon d'une recette réelle — le modèle existait dans le projet,
+     son résolveur produisait ses variables, le rendu passait, et l'envoi
+     échouait en `CAPABILITY_INPUT_INVALID : Modèle inconnu`.
+
+     ══ CE QU'ILS NE DOUBLENT PAS ══════════════════════════════════════════
+
+     `SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT` parle APRÈS la fermeture, au nom
+     de L.Y Solution. Ces quatre-là parlent AVANT, au nom du site : un
+     encaissement confirmé, un prélèvement refusé, un dernier avertissement,
+     une régularisation. Aucun instant n'est couvert deux fois.
+     ═════════════════════════════════════════════════════════════════════════ */
+
+  CONTRACT_PAYMENT_RECEIVED_ADMIN: {
+    templateId: 'CONTRACT_PAYMENT_RECEIVED_ADMIN',
+    defaultName: 'Paiement — encaissement confirmé au client',
+    defaultDescription:
+      "Confirme au client d'un projet que son règlement a bien été encaissé. Distinct du reçu du prestataire de paiement, qui prouve un débit sans dire ce qui a été acheté ni où retrouver son contrat.",
+    defaultSubject: 'Paiement reçu — {{contract.reference}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat (CTR-AAAA-NNNN).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.name', label: 'Nom du contrat', description: 'Nom donné au contrat.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'payment.amountIncludingTax', label: 'Montant TTC', description: 'Montant encaissé, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'payment.paidOn', label: 'Payé le', description: "Date et heure de l'encaissement constaté.", type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'payment.label', label: 'Objet du paiement', description: 'Ce qui a été réglé (frais de lancement, abonnement…).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'manager.contractUrl', label: 'Lien Manager', description: 'Lien vers le contrat dans le Manager du projet.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'contract.name': 'Contrat de démonstration 2026',
+      'payment.amountIncludingTax': { amount: 1200, currency: 'EUR' },
+      'payment.paidOn': '2026-08-18T15:58:49.000Z',
+      'payment.label': 'Frais de lancement',
+      'manager.contractUrl': 'https://manager.exemple.fr/contrat',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre règlement a bien été encaissé.',
+        heading: 'Votre paiement est bien reçu',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Nous confirmons l'encaissement de votre règlement. Aucune action
+              n'est attendue de votre part.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Objet', '{{payment.label}}')}
+${row('Contrat', '{{contract.reference}}')}
+${row('Intitulé', '{{contract.name}}')}
+${row('Montant TTC', '{{payment.amountIncludingTax}}')}
+${row('Payé le', '{{payment.paidOn}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Voir mon contrat', '{{manager.contractUrl}}')}`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
+
+  CONTRACT_PAYMENT_OVERDUE_ADMIN: {
+    templateId: 'CONTRACT_PAYMENT_OVERDUE_ADMIN',
+    defaultName: 'Impayé — premier échec de prélèvement',
+    defaultDescription:
+      "Prévient le client qu'un prélèvement a échoué, PENDANT que son service fonctionne encore. Envoyé une seule fois à l'ouverture de l'incident : les tentatives suivantes appartiennent au prestataire de paiement, qui prévient déjà le porteur de la carte.",
+    defaultSubject: 'Votre paiement n’a pas abouti — {{contract.reference}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.amountDue', label: 'Montant dû', description: 'Somme restant due, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'incident.invoiceNumber', label: 'Facture', description: 'Numéro de la facture concernée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.attemptCount', label: 'Tentatives', description: 'Nombre de tentatives observées.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.graceDeadline', label: 'Échéance', description: "Date jusqu'à laquelle le service reste assuré. Vaut une phrase explicite lorsqu'aucun délai n'est configuré.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'manager.billingUrl', label: 'Lien facturation', description: "Lien vers l'espace facturation du Manager.", type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'incident.amountDue': { amount: 11880, currency: 'EUR' },
+      'incident.invoiceNumber': 'QWSK7ZZY-0002',
+      'incident.attemptCount': '1',
+      'incident.graceDeadline': '24 août 2026',
+      'manager.billingUrl': 'https://manager.exemple.fr/factures',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Un prélèvement n’a pas abouti — votre service fonctionne toujours.',
+        heading: 'Votre paiement n’a pas abouti',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Un prélèvement n'a pas pu aboutir. <strong>Votre service fonctionne
+              normalement</strong> : il vous reste le temps de régulariser.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Contrat', '{{contract.reference}}')}
+${row('Facture', '{{incident.invoiceNumber}}')}
+${row('Montant dû', '{{incident.amountDue}}')}
+${row('Tentatives', '{{incident.attemptCount}}')}
+${row('Service assuré jusqu’au', '{{incident.graceDeadline}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:${MUTED};">
+              La mise à jour de votre moyen de paiement suffit : la prochaine
+              tentative est planifiée par notre prestataire de paiement.
+            </p>
+${button('Régulariser mon paiement', '{{manager.billingUrl}}')}`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
+
+  CONTRACT_PAYMENT_OVERDUE_CRITICAL_ADMIN: {
+    templateId: 'CONTRACT_PAYMENT_OVERDUE_CRITICAL_ADMIN',
+    defaultName: 'Impayé — délai de grâce épuisé, action requise',
+    defaultDescription:
+      "Dernier avertissement avant fermeture : le délai de grâce est épuisé. « incident.serviceState » porte une phrase produite par le projet — elle n'affirme JAMAIS une fermeture qui n'a pas été confirmée.",
+    defaultSubject: 'Action requise — votre service est menacé ({{contract.reference}})',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.amountDue', label: 'Montant dû', description: 'Somme restant due, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'incident.invoiceNumber', label: 'Facture', description: 'Numéro de la facture concernée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.graceDeadline', label: 'Échéance dépassée le', description: 'Date à laquelle le délai de grâce a expiré.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.serviceState', label: 'État du service', description: "Phrase EXACTE sur l'état du service. Distingue une suspension demandée d'une suspension confirmée : jamais une affirmation non prouvée.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'manager.billingUrl', label: 'Lien facturation', description: "Lien vers l'espace facturation du Manager.", type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'incident.amountDue': { amount: 11880, currency: 'EUR' },
+      'incident.invoiceNumber': 'QWSK7ZZY-0002',
+      'incident.graceDeadline': '16 août 2026',
+      'incident.serviceState': 'La suspension de votre site est en cours d’application.',
+      'manager.billingUrl': 'https://manager.exemple.fr/factures',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Action requise — le délai accordé est dépassé.',
+        heading: 'Votre service est menacé',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Le délai accordé pour régulariser votre règlement est dépassé.
+              <strong>{{incident.serviceState}}</strong>
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Contrat', '{{contract.reference}}')}
+${row('Facture', '{{incident.invoiceNumber}}')}
+${row('Montant dû', '{{incident.amountDue}}')}
+${row('Échéance dépassée le', '{{incident.graceDeadline}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Régulariser maintenant', '{{manager.billingUrl}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Dès réception du règlement, votre service est rétabli sans démarche
+              supplémentaire.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
+
+  CONTRACT_PAYMENT_RECOVERED_ADMIN: {
+    templateId: 'CONTRACT_PAYMENT_RECOVERED_ADMIN',
+    defaultName: 'Impayé — régularisation confirmée',
+    defaultDescription:
+      "Referme le cycle : le règlement est passé. Sans ce message, un client averti deux fois d'un problème n'apprend jamais qu'il est résolu, et le dernier message qu'il conserve est une menace de fermeture.",
+    defaultSubject: 'Paiement régularisé — {{contract.reference}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.amountDue', label: 'Montant régularisé', description: 'Somme régularisée, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'incident.resolvedOn', label: 'Régularisé le', description: 'Date de la régularisation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.serviceState', label: 'État du service', description: "Phrase EXACTE : « rétabli » seulement si le site avait réellement été fermé, « resté accessible » sinon.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'manager.billingUrl', label: 'Lien facturation', description: "Lien vers l'espace facturation du Manager.", type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'incident.amountDue': { amount: 11880, currency: 'EUR' },
+      'incident.resolvedOn': '18 août 2026',
+      'incident.serviceState': 'Votre site est de nouveau accessible.',
+      'manager.billingUrl': 'https://manager.exemple.fr/factures',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre règlement est bien passé — l’incident est clos.',
+        heading: 'Votre paiement est régularisé',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Votre règlement est bien passé et l'incident est clos.
+              <strong>{{incident.serviceState}}</strong>
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Contrat', '{{contract.reference}}')}
+${row('Montant régularisé', '{{incident.amountDue}}')}
+${row('Régularisé le', '{{incident.resolvedOn}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Voir mes factures', '{{manager.billingUrl}}')}`,
+        footerHtml: '            {{developer.companyName}} — merci de votre confiance. Une question ? {{developer.supportEmail}}',
+      });
+    },
+  },
+
+  /**
+   * L'ALERTE TECHNIQUE — L.Y SOLUTION PARLE À SES DÉVELOPPEURS.
+   *
+   * ══ POURQUOI PANEL, ALORS QUE L'INCIDENT NAÎT DANS UN PROJET ═════════════
+   *
+   * Même raisonnement que `CONTRACT_CANCELLATION_DEV_NOTIFICATION` : la
+   * propriété suit la COMMUNICATION, jamais l'origine des variables. Ici
+   * l'émetteur est L.Y Solution, le destinataire est un développeur — natif du
+   * projet ou fédéré — et le contenu nomme des composants internes. Rien de
+   * tout cela n'appartient au client, et ce message ne doit jamais porter son
+   * apparence.
+   */
+  PLATFORM_INCIDENT_DEV_ALERT: {
+    templateId: 'PLATFORM_INCIDENT_DEV_ALERT',
+    defaultName: 'Incident technique — alerte aux développeurs du projet',
+    defaultDescription:
+      "Alerte les développeurs responsables d'un projet — natifs ET fédérés — d'un incident technique DURABLE nécessitant une intervention. Jamais un journal d'erreurs : un échec transitoire qui se répare seul n'entre pas ici.",
+    defaultSubject: '[{{incident.environment}}] Incident {{incident.kind}} — {{incident.component}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'incident.kind', label: 'Nature', description: "Famille d'incident (CAPABILITY_FAILURE, PANEL_PROJECTION_FAILURE, DEPLOYMENT_FAILURE, SERVICE_UNAVAILABLE).", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.component', label: 'Composant', description: 'Composant précis concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.environment', label: 'Environnement', description: 'TEST ou PROD.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.occurrences', label: 'Occurrences', description: "Nombre de constats avant l'alerte.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.firstSeenOn', label: 'Premier constat', description: 'Date et heure du premier constat.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.errorCode', label: 'Code', description: "Code d'erreur stable.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.errorMessage', label: 'Message', description: "Message d'erreur borné — jamais une trace complète, jamais un secret.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.summary', label: 'Résumé', description: 'Conséquence métier en une phrase.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'project.name', label: 'Projet', description: 'Projet concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'manager.eventsUrl', label: 'Lien événements', description: 'Lien vers le journal des événements (vue DEV).', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      'incident.kind': 'CAPABILITY_FAILURE',
+      'incident.component': 'billing.checkout.create',
+      'incident.environment': 'TEST',
+      'incident.occurrences': '3',
+      'incident.firstSeenOn': '18 août 2026 à 16:12',
+      'incident.errorCode': 'BRIDGE_UNAVAILABLE',
+      'incident.errorMessage': 'Le Panel n’a pas répondu après 3 tentatives.',
+      'incident.summary': 'Une capacité du Panel est indisponible : les paiements ne peuvent plus être ouverts.',
+      'project.name': 'Projet de démonstration',
+      'manager.eventsUrl': 'https://manager.exemple.fr/dev/evenements',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Incident technique — une intervention est nécessaire.',
+        heading: 'Incident technique',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              <strong>{{project.name}}</strong> — {{incident.summary}}
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Nature', '{{incident.kind}}')}
+${row('Composant', '{{incident.component}}')}
+${row('Environnement', '{{incident.environment}}')}
+${row('Occurrences', '{{incident.occurrences}}')}
+${row('Premier constat', '{{incident.firstSeenOn}}')}
+${row('Code', '{{incident.errorCode}}')}
+${row('Message', '{{incident.errorMessage}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Ouvrir le journal des événements', '{{manager.eventsUrl}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Cette alerte n'est émise que pour un incident DURABLE : une panne
+              transitoire déjà réparée ne la déclenche pas.
+            </p>`,
+        footerHtml: '            Alerte technique automatique — destinée à l’équipe de développement.',
+      });
+    },
+  },
 });
+
 
 /** Identifiants connus. C'est la LISTE DE RÉFÉRENCE : la base n'en fait pas foi. */
 export const EMAIL_TEMPLATE_IDS = Object.freeze(Object.keys(EMAIL_TEMPLATE_REGISTRY));

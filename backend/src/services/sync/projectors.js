@@ -21,6 +21,7 @@ import {
   BRIDGE_ERROR_CODES,
   BridgeError,
   contractPayloadSchema,
+  emailTemplateUsagePayloadSchema,
   nowIso,
   projectPresentationPayloadSchema,
   siteStatusPayloadSchema,
@@ -30,6 +31,7 @@ import { PanelDiagnostic } from '../../models/PanelSyncState.model.js';
 export { stampOf } from './projectGeneration.js';
 import {
   PanelProjectContract,
+  PanelProjectEmailTemplateUsage,
   PanelProjectMember,
   PanelProjectPresentation,
   PanelProjectSiteStatus,
@@ -329,12 +331,106 @@ async function confirmerDefautsDePaiement(args) {
 }
 
 /** Table FERMÉE — le cœur n'applique que ce qui y figure. */
+/**
+ * DÉCLARATION D'USAGE DES MODÈLES D'E-MAIL — et sa réconciliation IMMÉDIATE.
+ *
+ * ══ POURQUOI LA RÉCONCILIATION EST ICI, DANS LE PROJECTEUR ═════════════════
+ *
+ * Elle aurait pu attendre le prochain démarrage du Panel. Le scénario qui
+ * l'interdit est le seul qui compte vraiment : un projet DUPLIQUÉ, appairé à
+ * l'instant, qui envoie son premier e-mail dans la minute — l'activation du
+ * premier accès d'administration. Différer la pose, c'est refuser ce message-là,
+ * et le refuser au pire moment de la vie d'un projet.
+ *
+ * Le pont garantit déjà tout ce qu'il faut pour que ce soit sûr : l'écriture
+ * arrive une seule fois (anti-écho par `writeId`), dans l'ordre (LWW sur
+ * `modifiedAt`), et une livraison rejouée est un non-événement.
+ *
+ * ══ LA RÉVISION DÉCIDE S'IL Y A QUELQUE CHOSE À FAIRE ══════════════════════
+ *
+ * Un projet redémarre plusieurs fois par jour et redéclare à chaque fois. Sans
+ * cette comparaison, chaque démarrage produirait une écriture, une entrée de
+ * journal et une réconciliation complète — du bruit dans lequel un vrai
+ * changement finirait par se perdre. Révision identique ⇒ on rafraîchit
+ * l'horodatage de réception, et rien d'autre.
+ *
+ * ══ UNE RÉCONCILIATION QUI ÉCHOUE NE PERD PAS LA DÉCLARATION ═══════════════
+ *
+ * La projection est écrite AVANT : si la pose des instances échoue à mi-chemin,
+ * l'état désiré est tout de même enregistré, et le filet de démarrage
+ * (`reconcileProjectTemplates`) le rattrapera. L'inverse — réconcilier puis
+ * écrire — perdrait la déclaration sur la première panne.
+ */
+async function applyProjectEmailTemplateUsage({ projectId, change, stamp }) {
+  if (change.deleted) {
+    /**
+     * Le projet retire sa déclaration entière. On efface la PROJECTION — plus
+     * aucun modèle n'est actif pour lui — mais JAMAIS les instances : le
+     * contenu écrit par un humain ne disparaît pas parce qu'un runtime s'est
+     * tu. Le voir disparaître de l'écran est réversible ; le perdre ne l'est pas.
+     */
+    await PanelProjectEmailTemplateUsage.deleteOne({ projectId });
+    return;
+  }
+
+  const u = parsePayload(emailTemplateUsagePayloadSchema, change.payload, 'PROJECT_EMAIL_TEMPLATE_USAGE');
+  const connue = await PanelProjectEmailTemplateUsage.findOne({ projectId }).select('revision').lean();
+  const inchangee = connue?.revision === u.revision;
+
+  await PanelProjectEmailTemplateUsage.updateOne(
+    { projectId },
+    {
+      $set: {
+        projectId,
+        templateCodes: u.templateCodes,
+        revision: u.revision,
+        declaredAt: u.declaredAt ?? null,
+        sourceModifiedAt: change.modifiedAt,
+        ...stamp,
+      },
+    },
+    { upsert: true },
+  );
+
+  if (inchangee) return;
+
+  /**
+   * L'import est DYNAMIQUE, et c'est délibéré : le service de modèles importe
+   * le registre, le validateur et le moteur de rendu. Le charger au sommet de
+   * ce fichier ferait entrer tout le domaine e-mail dans le noyau de
+   * synchronisation, que la garde d'architecture veut mince.
+   */
+  const { reconcileDeclaredProjectEmailTemplates } = await import(
+    '../email/panelEmailTemplate.service.js'
+  );
+  const rapport = await reconcileDeclaredProjectEmailTemplates(projectId, u.templateCodes, {
+    actor: { userId: 'bridge', userEmail: '' },
+  });
+
+  await PanelProjectEmailTemplateUsage.updateOne(
+    { projectId },
+    {
+      $set: {
+        lastReconciliation: {
+          at: nowIso(),
+          provisioned: rapport.provisioned,
+          existing: rapport.existing,
+          unknown: rapport.unknown,
+          forbidden: rapport.forbidden,
+          removed: rapport.removed,
+        },
+      },
+    },
+  );
+}
+
 export const PROJECTORS = Object.freeze({
   DIAGNOSTIC: applyDiagnostic,
   PROJECT_PRESENTATION: applyProjectPresentation,
   CONTRACT: applyContract,
   TEAM_MEMBER: applyTeamMember,
   PROJECT_SITE_STATUS: applyProjectSiteStatus,
+  PROJECT_EMAIL_TEMPLATE_USAGE: applyProjectEmailTemplateUsage,
 });
 
 /** Types réellement appliqués — dérivés de la table, jamais réécrits à côté. */
@@ -388,6 +484,7 @@ export const PROJECTION_PRESENT = Object.freeze({
   PROJECT_PRESENTATION: ({ projectId }) => PanelProjectPresentation.exists({ projectId }),
   CONTRACT: ({ projectId }) => PanelProjectContract.exists({ projectId }),
   PROJECT_SITE_STATUS: ({ projectId }) => PanelProjectSiteStatus.exists({ projectId }),
+  PROJECT_EMAIL_TEMPLATE_USAGE: ({ projectId }) => PanelProjectEmailTemplateUsage.exists({ projectId }),
   // Une collection : la présence se juge SUR LA LIGNE, pas sur le projet.
   TEAM_MEMBER: ({ projectId, change }) =>
     PanelProjectMember.exists({ projectId, entityId: change.entityId }),

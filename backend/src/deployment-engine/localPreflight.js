@@ -21,10 +21,19 @@
  * immédiatement s'il doit agir sur SA machine ou sur l'infrastructure.
  */
 import { getGitSourceInfo, localExec, PROJECT_ROOT } from './build.js';
+import { describeRootSource, inspectProjectRoot } from './projectRoot.js';
 
-/** Un contrôle, au même format que ceux du préflight distant. */
-function check(id, label, ok, { required = true, detail = null, scope = 'local' } = {}) {
-  return { id, label, ok, required, detail, scope };
+/**
+ * Un contrôle, au même format que ceux du préflight distant.
+ *
+ * `summary` est la phrase qui nomme le PROBLÈME, à distinguer du `label` qui
+ * nomme le contrôle. Les deux divergent nécessairement : un contrôle s'intitule
+ * « Source Git commitée » et son échec se dit « Source Git non commitée ». Sans
+ * cette distinction, l'appelant qui compose un refus à partir du `label`
+ * annonce à l'opérateur l'exact contraire de ce qui s'est produit.
+ */
+function check(id, label, ok, { required = true, detail = null, scope = 'local', summary = null } = {}) {
+  return { id, label, ok, required, detail, scope, summary: ok ? null : (summary ?? label) };
 }
 
 /**
@@ -74,9 +83,63 @@ export async function listDirtyFiles(root = PROJECT_ROOT, exec = localExec) {
  * @param {Function} [args.exec]      Exécuteur (injectable pour les tests).
  * @returns {Promise<{ok:boolean, checks:object[], failedChecks:object[], git:object}>}
  */
-export async function runLocalPreflight({ env = 'PROD', root = PROJECT_ROOT, exec = localExec } = {}) {
+export async function runLocalPreflight({
+  env = 'PROD', root = null, exec = localExec, profile, fsMod, processEnv = process.env,
+} = {}) {
   const checks = [];
-  const git = await getGitSourceInfo(root, exec);
+
+  /**
+   * ══ LES SOURCES SONT-ELLES SEULEMENT LÀ ? ═════════════════════════════════
+   *
+   * ── LE DÉFAUT CORRIGÉ ─────────────────────────────────────────────────────
+   * Ce préflight ne contrôlait QUE la propreté Git. Une machine qui ne détient
+   * pas les sources du projet le passait donc intégralement — mieux : hors
+   * dépôt Git, il déclarait explicitement « contrôle non applicable » et
+   * rendait `ok: true`. Le déploiement démarrait, créait son run, ouvrait SSH,
+   * traversait le préflight serveur et les phases DNS, puis échouait à
+   * `artifact.build` sur « vitrine/package.json manquant ».
+   *
+   * C'est précisément la faute que ce module existe pour interdire : un fait
+   * LOCAL, connaissable instantanément et sans rien toucher, découvert APRÈS
+   * des mutations distantes. La présence des sources est un prérequis local au
+   * même titre que la propreté du dépôt — elle est donc contrôlée ICI.
+   *
+   * Ce contrôle ne remplace pas celui de `buildArtifact` : le build reste seul
+   * juge au moment de construire. Il le DEVANCE, ce qui n'est pas la même
+   * chose — et c'est toute la différence entre un refus sans trace et un
+   * échec après DNS.
+   */
+  const inspection = await inspectProjectRoot({
+    root, profile, env: processEnv, ...(fsMod ? { fsMod } : {}),
+  });
+  const racine = inspection.root;
+
+  checks.push(check('source.layout', 'Sources du projet présentes', inspection.ok, {
+    required: true,
+    scope: 'local',
+    summary: 'Sources du projet introuvables sur cette machine',
+    detail: inspection.ok
+      ? `${Object.keys(inspection.apps).length} application(s) trouvée(s) sous ${racine} `
+        + `(racine ${describeRootSource(inspection.source)}).`
+      : `${inspection.missing.map((m) => `${m.dir}/${m.requires}`).join(', ')} introuvable(s) sous `
+        + `${racine} (racine ${describeRootSource(inspection.source)}). `
+        + 'Cette machine ne détient pas les sources du projet : le déploiement ne peut pas '
+        + 'construire l’artefact depuis ici.',
+  }));
+  // Les absents voyagent avec le contrôle, comme les fichiers non commités :
+  // l'interface les affiche sans avoir à relancer quoi que ce soit.
+  if (!inspection.ok) {
+    checks[checks.length - 1].files = inspection.missing.map((m) => ({
+      path: `${m.dir}/${m.requires}`, state: 'absent',
+    }));
+    checks[checks.length - 1].projectRoot = racine;
+    checks[checks.length - 1].projectRootSource = inspection.source;
+  }
+
+  // Le contrôle Git porte sur la racine RETENUE — pas sur une autre. Deux
+  // autorités de racine dans le même préflight en feraient un préflight qui
+  // parle de deux projets.
+  const git = await getGitSourceInfo(racine, exec);
 
   if (!git.isGit) {
     // Hors dépôt Git, il n'y a rien à exiger : on le DIT plutôt que de laisser
@@ -87,12 +150,13 @@ export async function runLocalPreflight({ env = 'PROD', root = PROJECT_ROOT, exe
     }));
   } else {
     const mustBeClean = requiresCleanSource(env);
-    const dirty = git.isDirty ? await listDirtyFiles(root, exec) : { files: [], total: 0 };
+    const dirty = git.isDirty ? await listDirtyFiles(racine, exec) : { files: [], total: 0 };
     const ok = !git.isDirty || !mustBeClean;
 
     checks.push(check('source.clean', 'Source Git commitée', ok, {
       // En TEST le contrôle est informatif : il signale sans bloquer.
       required: mustBeClean,
+      summary: 'Source Git non commitée',
       detail: git.isDirty
         ? `${dirty.total} fichier(s) non commité(s) sur ${git.branch || 'branche inconnue'}.`
         : `Commit ${git.shortCommit || 'inconnu'} sur ${git.branch || 'branche inconnue'}.`,
@@ -104,7 +168,16 @@ export async function runLocalPreflight({ env = 'PROD', root = PROJECT_ROOT, exe
   }
 
   const failedChecks = checks.filter((c) => !c.ok && c.required !== false);
-  return { ok: failedChecks.length === 0, checks, failedChecks, git };
+  // La racine retenue voyage avec le résultat : un refus doit pouvoir NOMMER
+  // l'endroit qu'il a regardé, sinon l'opérateur ne peut rien en faire.
+  return {
+    ok: failedChecks.length === 0,
+    checks,
+    failedChecks,
+    git,
+    projectRoot: racine,
+    projectRootSource: inspection.source,
+  };
 }
 
 export default { runLocalPreflight, listDirtyFiles, requiresCleanSource };

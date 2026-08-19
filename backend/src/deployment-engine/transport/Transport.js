@@ -68,23 +68,24 @@ export class Transport {
 }
 
 /**
- * Exécute une commande et lève une DeploymentError si le code de sortie est ≠ 0.
- * Utilitaire partagé par les modules qui exigent le succès d'une étape.
+ * ══ IL N'Y A PLUS D'UTILITAIRE FACULTATIF ICI ═══════════════════════════════
+ *
+ * `execOrThrow(transport, command, { step })` occupait cette place : elle
+ * exécutait, comparait le code de sortie à zéro, et levait sinon. Exactement ce
+ * qu'il fallait faire.
+ *
+ * Elle n'a JAMAIS eu d'appelant. Pendant ce temps, les cinq commandes du chemin
+ * critique du pipeline — dont la bascule qui publie la nouvelle version et le
+ * `npm ci` du backend — étaient lancées, attendues, et leur code de sortie
+ * ignoré.
+ *
+ * C'est le sort ordinaire d'une primitive facultative : elle rassure celui qui
+ * l'écrit sans contraindre celui qui l'ignore. Elle est remplacée par
+ * `remoteCommand.js`, qui exige une CLASSE et un IDENTIFIANT à chaque appel, et
+ * qu'une garde d'architecture rend obligatoire sur le chemin critique.
+ *
+ * La laisser offrirait une seconde façon de faire — la mauvaise, puisque
+ * personne ne l'avait adoptée.
  */
-export async function execOrThrow(transport, command, { step, timeoutMs, input } = {}) {
-  const res = await transport.exec(command, { timeoutMs, input });
-  if (res.code !== 0) {
-    const { DeploymentError } = await import('../errors.js');
-    // On tronque stderr et ne révèle jamais la commande complète (peut contenir
-    // des chemins sensibles, jamais de secret : le mot de passe passe hors ligne
-    // de commande).
-    const detail = (res.stderr || res.stdout || '').trim().slice(0, 500);
-    throw new DeploymentError('REMOTE_COMMAND_FAILED', `Échec de commande distante (${step || 'exec'}).`, {
-      step,
-      details: { code: res.code, stderr: detail },
-    });
-  }
-  return res;
-}
 
 export default Transport;

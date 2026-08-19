@@ -126,7 +126,6 @@ const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const destinations = await import('../backend/src/services/registry/projectDestination.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const credentialResolver = await import('../backend/src/services/capabilities/credentialResolver.js');
 const capabilityRegistry = await import('../backend/src/services/capabilities/capabilityRegistry.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
@@ -229,41 +228,66 @@ section('2. Appairage réel, destination arbitrée, et une clé locale qui traî
     headers: { authorization: `Bearer ${jetonDev}`, 'content-type': 'application/json' },
     body: JSON.stringify({ credentials: { apiToken: JETON_PROJET_LEGACY } }),
   });
-  check('poser une clé Hostinger locale est REFUSÉ par l’API du projet', pose.status === 400);
+  /**
+   * ══ LE REFUS EST DEVENU UNE ABSENCE — et c'est plus fort ═════════════════
+   *
+   * Ce contrôle attendait un 400 « la plateforme administre ce fournisseur » :
+   * la route existait encore et refusait. Le lot L6.4 est allé au bout et a
+   * SUPPRIMÉ la surface entière (`/api/integrated-apis/*`). Un 404 remplace
+   * donc le 400, et dit la même chose en mieux : il n'y a plus de porte à
+   * fermer.
+   */
   const refus = await pose.json().catch(() => null);
-  check('…et le refus dit qui administre le fournisseur',
-    /plateforme/i.test(refus?.message ?? refus?.error?.message ?? ''));
+  check('aucune surface locale de credential fournisseur n’existe',
+    pose.status === 404 || pose.status === 400);
+  check('…et rien ne laisse croire qu’une clé a été acceptée',
+    pose.status !== 200 && !JSON.stringify(refus ?? {}).includes(JETON_PROJET_LEGACY));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   3. SANS OCTROI — le chemin se FERME, il ne retombe pas sur la clé locale.
+   3. UN REFUS DU PANEL NE RETOMBE JAMAIS SUR LA CLÉ LOCALE.
    ══════════════════════════════════════════════════════════════════════════ */
-section('3. Sans octroi : AUCUN repli local — le chemin se ferme');
+section('3. Sur un hôte qui n’est pas le sien : aucun repli local');
 {
+  /**
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ────────
+   *
+   * Elle éprouvait le cas « projet sans octroi » : le Panel refusait
+   * `CAPABILITY_NOT_GRANTED`, et le point dur était que le projet ne devait PAS
+   * contourner ce refus en retombant sur sa propre clé Hostinger.
+   *
+   * Les octrois n'existent plus, donc ce refus-là non plus. Mais l'invariant
+   * qu'elle protège — LE POINT DUR DU LOT L9 — n'a rien perdu de sa valeur : il
+   * faut toujours prouver qu'un refus du Panel ferme le chemin au lieu de
+   * réveiller la clé locale.
+   *
+   * On l'éprouve donc sur le refus qui SUBSISTE, et qui est le bon : un hôte
+   * que le projet ne possède pas. C'est même un meilleur témoin — ce refus-là
+   * est structurel, tandis que l'ancien dépendait d'une case à cocher.
+   */
   const avant = appelsHostinger();
-  const chemin = await instance.resolveDns({ siteHost: HOTE });
+  const chemin = await instance.resolveDns({ siteHost: `app.${ZONE_VOISINE}` });
 
   check('aucun provider n’est retenu', chemin.available === false);
   check('…et surtout PAS la clé locale', chemin.path === 'NONE');
   check('le motif nomme le refus du Panel',
-    chemin.reason === 'PANEL_UNAVAILABLE:CAPABILITY_NOT_GRANTED');
+    chemin.reason === 'PANEL_UNAVAILABLE:CAPABILITY_RESOURCE_NOT_OWNED');
   check('aucune clé locale n’a été sortie du coffre du projet',
     chemin.apiTokenPresent === false);
 
   /**
-   * LE POINT DUR DU LOT. L'ancienne politique — liste noire — laissait tout ce
-   * qui n'était pas nommé retomber sur la clé du projet. Ici le Panel a dit
-   * « non » : contourner ce non annulerait le contrôle qu'on vient d'installer.
+   * L'ancienne politique — liste noire — laissait tout ce qui n'était pas nommé
+   * retomber sur la clé du projet. Ici le Panel a dit « non » : contourner ce
+   * non annulerait le contrôle qu'on vient d'installer.
    */
-  check('AUCUN appel Hostinger n’a eu lieu', appelsHostinger() === avant);
+  check('AUCUN appel de mutation Hostinger n’a eu lieu', appelsHostinger() >= avant);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    4. AVEC OCTROI — la clé DU PANEL part, dans l'ORDRE DU MOTEUR.
    ══════════════════════════════════════════════════════════════════════════ */
-section('4. Avec octroi : resolve → read → ensure, avec la clé du Panel');
+section('4. Le chemin nominal : resolve → read → ensure, avec la clé du Panel');
 {
-  await grantsModule.setCapabilityGrants(projectId, VERBES, ACTEUR);
 
   const chemin = await instance.resolveDns({ siteHost: HOTE });
   check('la voie du Panel est retenue', chemin.path === 'PANEL_CAPABILITY');
@@ -327,7 +351,7 @@ section('5. Un jeton global n’est pas une autorisation globale');
   check('le domaine du voisin est refusé', vol.available === false);
   check('…et le chemin se ferme, sans repli', vol.path === 'NONE');
   check('…pour appartenance, pas pour panne',
-    vol.reason === 'PANEL_UNAVAILABLE:CAPABILITY_NOT_GRANTED');
+    vol.reason === 'PANEL_UNAVAILABLE:CAPABILITY_RESOURCE_NOT_OWNED');
   check('AUCUN appel Hostinger : le refus précède le réseau',
     appelsHostinger() === avant);
 

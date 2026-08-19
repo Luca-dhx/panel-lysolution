@@ -14,8 +14,9 @@ import { randomUUID } from 'node:crypto';
 import PanelDeploymentRun from '../../models/PanelDeploymentRun.model.js';
 import ApiError from '../../utils/ApiError.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
-import { CANONICAL_STEPS } from '../../deployment-engine/steps.js';
+import { CANONICAL_STEPS, PUBLICATION, publicationVerdict } from '../../deployment-engine/steps.js';
 import { DEPROVISION_STEPS } from '../../deployment-engine/deprovision.js';
+import { RecorderUnavailableError, redactRecorderCause } from './recorderErrors.js';
 
 /** Un journal ne doit pas faire exploser la limite BSON de 16 Mo. */
 /** Borne du journal reprenable (suffisant pour un déploiement complet). */
@@ -71,29 +72,61 @@ export async function createRun({
     }))
     : [];
 
-  await PanelDeploymentRun.create({
-    runId,
-    targetId: target.targetId,
-    targetName: target.name,
-    url: target.url,
-    host: target.host,
-    environment: target.environment,
-    operationType,
-    status: 'running',
-    steps: checklist,
-    startedAt: nowIso(),
-    user,
-    selfDeployment,
-  });
+  /**
+   * ══ RIEN NE COMMENCE SANS JOURNAL ═══════════════════════════════════════
+   *
+   * C'est la PREMIÈRE écriture durable du déploiement, et la seule qui n'ait
+   * aucune raison d'être tolérante : à ce stade, rien n'a encore été touché —
+   * ni DNS, ni SSH, ni un octet sur le serveur. Un run qui n'existe pas en base
+   * est un déploiement dont personne ne pourra jamais dire ce qu'il a fait ;
+   * mieux vaut ne pas le commencer.
+   *
+   * L'erreur est TYPÉE et CAVIARDÉE : une `MongooseServerSelectionError` porte
+   * l'URI de connexion dans son message, et cette route la rendrait telle
+   * quelle à un navigateur.
+   */
+  try {
+    await PanelDeploymentRun.create({
+      runId,
+      targetId: target.targetId,
+      targetName: target.name,
+      url: target.url,
+      host: target.host,
+      environment: target.environment,
+      operationType,
+      status: 'running',
+      steps: checklist,
+      startedAt: nowIso(),
+      user,
+      selfDeployment,
+    });
+  } catch (err) {
+    throw new RecorderUnavailableError(
+      'Opération refusée : le journal de déploiement n’a pas pu être ouvert. '
+      + 'Rien n’a été modifié — ni le domaine, ni le serveur.',
+      { cause: redactRecorderCause(err) },
+    );
+  }
   return runId;
 }
 
-/** Le worker s'annonce : c'est lui qui tient désormais la plume. */
+/**
+ * Le worker s'annonce : c'est lui qui tient désormais la plume.
+ *
+ * ── POURQUOI ELLE REND SI ELLE A TROUVÉ SON RUN ────────────────────────────
+ *
+ * Un `updateOne` qui ne trouve rien ne lève pas : il rend `matchedCount: 0`, en
+ * silence. Un worker lancé pour un run qui n'existe pas — création refusée,
+ * document effacé — déployait donc pour de bon, en écrivant chacune de ses
+ * étapes dans le vide. Le fait est RENDU pour que l'appelant puisse s'arrêter
+ * là où l'arrêt ne coûte encore rien.
+ */
 export async function attachWorker(runId, pid) {
-  await PanelDeploymentRun.updateOne(
+  const res = await PanelDeploymentRun.updateOne(
     { runId },
     { $set: { workerPid: pid, workerHeartbeatAt: nowIso() } },
   );
+  return { attached: (res?.matchedCount ?? res?.n ?? 0) > 0 };
 }
 
 export async function heartbeat(runId) {
@@ -242,6 +275,15 @@ export async function readEventsSince(runId, since = 0) {
 export async function finalizeRun(runId, {
   status, summary = null, error = null, version = null, releaseId = null, deployedUrl = null,
   structuredReport = null, markdownReport = null,
+  journalComplete = true, journalDegradedAtStepId = null,
+  /**
+   * LA PANNE DE PERSISTANCE VOYAGE À CÔTÉ, JAMAIS À LA PLACE.
+   *
+   * `error` est l'erreur PRIMAIRE : ce qui a réellement fait échouer le
+   * déploiement. Écraser `npm ci a échoué` par « le journal est tombé » ferait
+   * chercher la panne dans la base alors qu'elle est sur le serveur.
+   */
+  persistenceError = null,
 }) {
   const doc = await PanelDeploymentRun.findOne({ runId }).select('startedAt steps').lean();
   if (!doc) return null;
@@ -266,11 +308,27 @@ export async function finalizeRun(runId, {
   }
   await appendEvent(runId, 'status', { status, summary });
 
+  /**
+   * CE QUE LE PUBLIC A VU — déduit des ÉTAPES, jamais du verdict global.
+   *
+   * Un run en échec peut parfaitement avoir publié : c'est même le cas qui
+   * compte. Lire `status` pour en décider reviendrait à réécrire l'histoire
+   * dans le sens le plus rassurant.
+   */
+  const verdict = publicationVerdict(steps);
+
   await PanelDeploymentRun.updateOne({ runId }, {
     $set: {
+      publication: {
+        state: verdict.state,
+        boundaryStepId: verdict.boundaryStepId,
+        journalComplete: journalComplete !== false,
+        degradedAtStepId: journalDegradedAtStepId,
+      },
       status,
       summary,
       error,
+      persistenceError,
       version,
       releaseId,
       deployedUrl,
@@ -343,6 +401,23 @@ export function describeRun(doc) {
     staleWorker: Boolean(stale),
     steps: doc.steps ?? [],
     log: doc.log ?? [],
+    /**
+     * CE QUE LE PUBLIC A VU, ET SI ON A SU L'ÉCRIRE — deux faits distincts que
+     * l'écran doit pouvoir montrer ensemble.
+     *
+     * Un run peut être en ERREUR et avoir PUBLIÉ ; il peut avoir publié et
+     * n'avoir pas su le journaliser. Ne rendre que `status` obligeait l'écran
+     * à deviner, et le pire conseil possible dans ce cas — « relancez » —
+     * était aussi le plus naturel.
+     */
+    publication: {
+      state: doc.publication?.state ?? PUBLICATION.NOT_REACHED,
+      boundaryStepId: doc.publication?.boundaryStepId ?? null,
+      journalComplete: doc.publication?.journalComplete !== false,
+      degradedAtStepId: doc.publication?.degradedAtStepId ?? null,
+    },
+    /** La panne de journal, à CÔTÉ de `error` — jamais à sa place. */
+    persistenceError: doc.persistenceError ?? null,
     startedAt: doc.startedAt,
     finishedAt: doc.finishedAt,
     durationMs: doc.durationMs,
@@ -427,21 +502,63 @@ export async function finalizeOrphanRuns() {
   const orphans = await PanelDeploymentRun.find({
     status: 'running',
     $or: [{ workerHeartbeatAt: null }, { workerHeartbeatAt: { $lt: cutoff } }],
-  }).select('runId').lean();
+  }).select('runId steps').lean();
 
   for (const orphan of orphans) {
+    /**
+     * ══ « INCONNU » N'EST PAS « RIEN N'A EU LIEU » ══════════════════════════
+     *
+     * Un run interrompu peut parfaitement avoir publié : c'est même le cas qui
+     * compte. Le processus meurt pendant l'installation des dépendances, la
+     * bascule de release est FAITE depuis longtemps, et le site sert déjà la
+     * nouvelle version.
+     *
+     * La reprise lisait ce cas comme les autres et n'écrivait qu'un statut.
+     * On relit donc l'étape frontière — la seule chose qui puisse trancher — et
+     * on inscrit son verdict. C'est cette information, et elle seule, qui
+     * permettra à la réconciliation du prochain lot de savoir s'il faut aller
+     * VÉRIFIER le serveur ou simplement relancer.
+     *
+     * Le journal est marqué INCOMPLET sans hésitation : un worker mort n'a pas
+     * écrit sa fin, donc la chronologie s'arrête avant la vérité.
+     */
+    const verdict = publicationVerdict(orphan.steps ?? []);
+    const publie = verdict.state === PUBLICATION.OCCURRED;
+    const peutEtrePublie = verdict.state === PUBLICATION.POSSIBLE;
+
     await PanelDeploymentRun.updateOne({ runId: orphan.runId }, {
       $set: {
         status: 'interrupted',
         finishedAt: nowIso(),
         workerPid: null,
+        'publication.state': verdict.state,
+        'publication.boundaryStepId': verdict.boundaryStepId,
+        'publication.journalComplete': false,
+        'publication.degradedAtStepId': verdict.boundaryStepId,
         summary: 'Exécution interrompue : le processus n’a pas conclu. '
-          + 'Son issue est INCONNUE — vérifiez l’état réel du serveur avant de relancer.',
+          + (publie
+            ? 'La nouvelle version A ÉTÉ MISE EN LIGNE avant l’interruption — '
+              + 'le site la sert probablement déjà. Vérifiez son état réel AVANT de relancer : '
+              + 'relancer sans vérifier redéploierait par-dessus une version en service.'
+            : peutEtrePublie
+              ? 'La mise en ligne avait COMMENCÉ et son issue est inconnue. '
+                + 'Vérifiez l’état réel du serveur avant de relancer.'
+              : 'La mise en ligne n’avait pas commencé : le site sert toujours sa version précédente.'),
       },
     });
   }
   return orphans.length;
 }
+
+/**
+ * ── OÙ EST PASSÉE LA FILE D'ÉCRITURES ──────────────────────────────────────
+ *
+ * Elle vivait ici, sous le nom `createStepJournal`. Elle a rejoint
+ * `runRecorder.service.js` avec ce qui lui manquait : la mémoire de ses échecs,
+ * les deux régimes séparés par la frontière de publication, la conclusion, et
+ * un contrat éprouvable seul. Ce module reste ce qu'il doit être — les
+ * PRIMITIVES d'écriture du run — et ne décide plus de doctrine.
+ */
 
 export default {
   createRun, attachWorker, heartbeat, recordStep, appendLog, appendEvent, readEventsSince, finalizeRun,

@@ -26,11 +26,49 @@ import {
   requestContractProtection,
 } from '../services/contract/contractActions.service.js';
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
+import { readProjectAccounts } from '../services/registry/projectAccounts.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 import {
   deleteDestination, describeByEnvironment, destinationKey, loadActiveDestinationHosts,
   markDestinationEmpty, outboundBaseUrl,
 } from '../services/registry/projectDestination.service.js';
+
+/**
+ * `GET /api/projects/:projectId/accounts` — LES COMPTES DU PROJET, EN DIRECT.
+ *
+ * ══ POURQUOI CE N'EST PAS DANS LA FICHE ═══════════════════════════════════
+ *
+ * La fiche (`detail`) rassemble une dizaine de lectures locales et rend en
+ * quelques millisecondes. Cette lecture-ci sort du Panel, traverse le réseau
+ * et dépend d'un projet qui peut être en train de redémarrer. Les fondre
+ * ferait dépendre TOUTE la fiche de la disponibilité du projet — et une fiche
+ * qui ne s'affiche pas est précisément ce dont on a besoin quand le projet va
+ * mal.
+ *
+ * Séparées, l'écran peint la fiche tout de suite et la liste des comptes
+ * quand elle arrive, avec son propre état d'indisponibilité.
+ *
+ * ══ AUCUNE ÉCRITURE, ET IL N'Y EN AURA PAS ════════════════════════════════
+ *
+ * Le Panel REGARDE. Les comptes locaux se gèrent dans le Manager du projet,
+ * les identités L.Y Solution dans « Comptes L.Y Solution ». Une mutation à
+ * distance créerait une troisième autorité sur la même donnée.
+ */
+export async function accounts(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const lecture = await readProjectAccounts(record);
+
+  /**
+   * `no-store` EXPLICITE, malgré la règle globale de `/api`.
+   *
+   * Elle est déjà posée pour tout `/api`, et c'est très bien. On la répète ici
+   * parce que cette réponse est la SEULE de la fiche à prétendre décrire
+   * l'instant : si un jour quelqu'un ouvre un cache sur une sous-arborescence,
+   * la ligne qui suit dira pourquoi celle-ci n'en veut pas.
+   */
+  res.set('Cache-Control', 'no-store, must-revalidate');
+  return ok(res, lecture);
+}
 
 /**
  * Ce que la fiche doit savoir pour dater la génération d'un projet.

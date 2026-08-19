@@ -1,9 +1,16 @@
 import type {
+  AccessibleProject,
   ContractAction,
   ContractOperation,
   ContractProtection,
   PanelUser,
+  OwnProfile,
+  PanelUserCreated,
+  PanelUserRow,
   PanelVersion,
+  ProjectAccountsRead,
+  ProjectAccessMode,
+  Role,
   PublicProject,
 } from '@/types';
 import type {
@@ -14,6 +21,17 @@ import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type { PanelTheme } from '@/lib/useTheme';
 import type { EmailSenderScreen, EmailSenderTestReport } from '@/types.emailSender';
+import type {
+  EmailTemplateDetail,
+  EmailTemplatePreview,
+  EmailTemplateReadiness,
+  EmailTemplateScope,
+  EmailTemplateScopeRef,
+  EmailTemplateSummary,
+  EmailTemplateTestSendResult,
+  EmailTemplateVersionDetail,
+  EmailTemplateVersionSummary,
+} from '@/types.emailTemplates';
 import type { ProjectDestination, ProjectDestinationsByEnvironment } from '@/types';
 import type {
   ActionDescriptor, ActionPreparation, Execution, ExecutionRow, ExecutionStats,
@@ -23,12 +41,13 @@ import type {
   VersionDetail, VersionRow,  SaveResult,
 } from '@/types.company';
 import type {
-  CapabilityGrantsView, CapabilityView, CommercialReadinessView, CommercialState,
+  CapabilityView,
   CredentialSetView, IntegratedApiEnvironment, ProviderAvailability, ProviderView,
   ValidatedCredentialSet, WebhookStateView,
 } from '@/types.integratedApi';
 import type {
-  DeploymentOverview, DeploymentRun, DeploymentTarget, DestinationInspection, PanelSelfInfo,
+  DeploymentOverview, DeploymentReadiness, DeploymentRun, DeploymentTarget,
+  DestinationInspection, PanelSelfInfo,
   ReleaseList, RunRow, StartedOperation, TargetDetail,
   DeployStreamEvent,
 } from '@/types.deployment';
@@ -54,18 +73,144 @@ export const tokenStore = {
   },
 };
 
+/**
+ * ══ LA TAXONOMIE DES ÉCHECS — UNE SEULE, ET ELLE DÉCIDE DU LOGOUT ═══════════
+ *
+ * Avant elle, le client ne connaissait que deux situations : « 401 » et « le
+ * reste ». Un backend qui redémarre, une base momentanément injoignable, une
+ * passerelle qui répond 502, un `fetch` qui rejette : tout tombait dans « le
+ * reste », et l'appelant — au premier rang duquel `AuthContext` — traitait ce
+ * fourre-tout comme une session perdue.
+ *
+ * Chaque famille appelle une conduite DIFFÉRENTE, et c'est tout l'objet de ce
+ * type :
+ *
+ *   AUTH_INVALID         la session est PROUVÉE invalide → et seulement là,
+ *                        on efface le jeton ;
+ *   FORBIDDEN            authentifié, mais pas autorisé — la session est bonne ;
+ *   SERVICE_UNAVAILABLE  le service démarre, s'arrête, ou sa base est absente ;
+ *   SERVER_ERROR         le serveur a répondu, et sa réponse est un bogue ;
+ *   NETWORK_ERROR        aucune réponse n'est jamais arrivée ;
+ *   TIMEOUT             la réponse n'est pas arrivée à temps ;
+ *   CLIENT_ERROR         la demande était mal formée ou refusée sur le fond.
+ *
+ * Aucune de ces familles, sauf la première, ne peut déconnecter qui que ce soit.
+ */
+export type ApiFailureKind =
+  | 'AUTH_INVALID'
+  | 'FORBIDDEN'
+  | 'SERVICE_UNAVAILABLE'
+  | 'SERVER_ERROR'
+  | 'NETWORK_ERROR'
+  | 'TIMEOUT'
+  | 'CLIENT_ERROR';
+
+/**
+ * Réseau injoignable : aucune réponse n'a jamais été reçue.
+ *
+ * NON exporté, délibérément. Un consommateur n'a jamais besoin de comparer un
+ * statut brut : `isOffline()` répond à la même question sans exposer le codage.
+ * L'exporter créerait une seconde façon de poser la question, et c'est
+ * exactement ainsi qu'une politique d'erreurs se met à diverger d'un écran à
+ * l'autre.
+ */
+const OFFLINE_STATUS = 0;
+
+/**
+ * Les codes métier par lesquels le backend annonce une indisponibilité
+ * TEMPORAIRE. Ils accompagnent un 503 et disent explicitement que la session
+ * reste valide — c'est ce qui permet d'afficher « ça revient » plutôt que
+ * « reconnectez-vous ».
+ */
+const CODES_INDISPONIBILITE = new Set([
+  'PANEL_SERVICE_STARTING',
+  'PANEL_SERVICE_STOPPING',
+  'PANEL_DATABASE_UNAVAILABLE',
+]);
+
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly details?: unknown;
+  /** La famille d'échec — à préférer TOUJOURS au statut brut. */
+  readonly kind: ApiFailureKind;
 
-  constructor(status: number, message: string, code?: string, details?: unknown) {
+  constructor(
+    status: number,
+    message: string,
+    code?: string,
+    details?: unknown,
+    kind?: ApiFailureKind,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.kind = kind ?? classifyFailure(status, code);
   }
+
+  /**
+   * Réessayer À L'IDENTIQUE peut-il aboutir ?
+   *
+   * Vrai uniquement pour ce qui est transitoire par nature. Un 400, un 403 ou
+   * un 409 métier donneront exactement le même refus au second essai : les
+   * réessayer ne fait que retarder le message que l'utilisateur doit lire.
+   */
+  get retryable(): boolean {
+    return this.kind === 'SERVICE_UNAVAILABLE'
+      || this.kind === 'NETWORK_ERROR'
+      || this.kind === 'TIMEOUT';
+  }
+
+  /**
+   * Cette erreur prouve-t-elle que la session n'est plus valable ?
+   *
+   * C'est la SEULE question dont la réponse autorise à effacer le jeton. Elle
+   * n'est jamais vraie pour une panne : une panne n'a aucune opinion sur une
+   * identité, elle n'a simplement pas pu la vérifier.
+   */
+  get provesSessionInvalid(): boolean {
+    return this.kind === 'AUTH_INVALID';
+  }
+}
+
+/**
+ * Le statut HTTP et le code métier décident ensemble — dans cet ordre de
+ * précision : le CODE l'emporte quand il existe, parce qu'il en sait plus.
+ *
+ * `AUTH_INVALID` n'est PAS attribué ici sur la seule foi d'un 401 : la fonction
+ * rend `CLIENT_ERROR` pour un 401 non confirmé, et c'est `request()` qui
+ * promeut en `AUTH_INVALID` après vérification auprès de `/api/auth/me`. Un 401
+ * peut parler d'autre chose que de notre session — un code d'appairage refusé,
+ * par exemple — et le croire sur parole déconnectait sur une faute de frappe.
+ */
+function classifyFailure(status: number, code?: string): ApiFailureKind {
+  if (code && CODES_INDISPONIBILITE.has(code)) return 'SERVICE_UNAVAILABLE';
+  if (status === OFFLINE_STATUS) return 'NETWORK_ERROR';
+  if (status === 408 || status === 504) return 'TIMEOUT';
+  if (status === 502 || status === 503) return 'SERVICE_UNAVAILABLE';
+  if (status === 403) return 'FORBIDDEN';
+  if (status >= 500) return 'SERVER_ERROR';
+  return 'CLIENT_ERROR';
+}
+
+/** Vrai si le serveur n'a jamais répondu — à distinguer d'une réponse en erreur. */
+export function isOffline(err: unknown): boolean {
+  return err instanceof ApiError && err.kind === 'NETWORK_ERROR';
+}
+
+/**
+ * Vrai si le service est momentanément hors d'état de répondre — démarrage,
+ * arrêt, base absente, passerelle sans amont. L'écran doit alors ATTENDRE.
+ */
+export function isServiceUnavailable(err: unknown): boolean {
+  return err instanceof ApiError && err.kind === 'SERVICE_UNAVAILABLE';
+}
+
+/** Vrai si l'erreur PROUVE que la session est invalide. Rien d'autre ne le prouve. */
+export function provesSessionInvalid(err: unknown): boolean {
+  return err instanceof ApiError && err.provesSessionInvalid;
 }
 
 interface Envelope<T> {
@@ -79,6 +224,19 @@ interface Envelope<T> {
 interface RequestOptions {
   method?: string;
   body?: unknown;
+  /**
+   * Renvoyer au login quand la session est PROUVÉE invalide.
+   *
+   * Le nom a gardé sa forme historique, mais sa portée a changé : la
+   * redirection n'a plus lieu sur un 401 quelconque, seulement sur un 401
+   * confirmé par `/api/auth/me`. Mettre `false` conserve l'exception, sans la
+   * redirection — ce dont `me()` a besoin pour laisser `AuthContext` décider.
+   */
+  redirectOnUnauthorized?: boolean;
+  /** Nombre de tentatives supplémentaires sur erreur TRANSITOIRE. */
+  retries?: number;
+  /** Délai maximal d'une tentative. Au-delà : `TIMEOUT`, jamais un blocage. */
+  timeoutMs?: number;
 }
 
 /**
@@ -159,12 +317,99 @@ export async function uploadImage(
   };
 }
 
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+/**
+ * UNE SEULE REDIRECTION VERS /login PAR CHARGEMENT DE PAGE.
+ *
+ * Sans ce verrou, une rafale de requêtes qui échouent ensemble assignerait
+ * `location` autant de fois qu'il y a de requêtes — chaque assignation annulant
+ * les `fetch` en vol, ce qui amplifie la cascade au lieu de la calmer.
+ */
+let redirectionEnCours = false;
+
+/**
+ * ══ SEUL `/api/auth/me` FAIT AUTORITÉ SUR LA VALIDITÉ D'UNE SESSION ═════════
+ *
+ * ── CE QUI ARRIVAIT ─────────────────────────────────────────────────────────
+ *
+ * Toute réponse 401 valait « votre session a expiré » : jeton effacé,
+ * redirection immédiate. Or un 401 ne parle pas forcément de NOTRE session — le
+ * contrat du pont, par exemple, refuse un code d'appairage invalide avec ce
+ * même statut. Une faute de frappe déconnectait l'utilisateur.
+ *
+ * ── LA VÉRIFICATION EST À VOL UNIQUE ────────────────────────────────────────
+ *
+ * Quand plusieurs requêtes reçoivent un 401 en même temps — ce qui est le cas
+ * normal d'un écran qui charge six panneaux — elles ne déclenchent qu'UNE
+ * vérification. Les autres attendent son verdict. Sans cela, six requêtes de
+ * contrôle partiraient de front vers un backend déjà en difficulté, et leurs
+ * verdicts pourraient diverger.
+ *
+ * ── UNE PANNE PENDANT LA VÉRIFICATION NE DÉCONNECTE PAS ─────────────────────
+ *
+ * Si le contrôle lui-même n'aboutit pas, on rend `false` : « je n'ai pas pu
+ * vérifier » n'est pas « c'est invalide ». C'est exactement la confusion que
+ * tout ce module existe pour supprimer.
+ */
+let verificationEnVol: Promise<boolean> | null = null;
+
+async function sessionProuveeInvalide(path: string, token: string): Promise<boolean> {
+  // Le contrôle EST `/api/auth/me` : le refaire depuis lui tournerait en rond.
+  if (path.startsWith('/api/auth/me')) return true;
+  // La connexion elle-même refuse des identifiants, pas une session.
+  if (path.startsWith('/api/auth/login')) return false;
+
+  if (!verificationEnVol) {
+    verificationEnVol = (async () => {
+      try {
+        const controle = await fetch('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        return controle.status === 401;
+      } catch {
+        // « Je n'ai pas pu vérifier » n'est pas « c'est invalide ». C'est la
+        // confusion que tout ce module existe pour supprimer.
+        return false;
+      } finally {
+        /**
+         * LIBÉRÉ DÈS QUE LE VERDICT EST RENDU — et surtout pas plus tard.
+         *
+         * ── LE DÉFAUT QU'UNE LIBÉRATION DIFFÉRÉE INTRODUISAIT ───────────────
+         * Une version antérieure relâchait ce verrou par un `setTimeout(…, 0)`.
+         * Or `await` ne franchit que la file des microtâches : deux requêtes
+         * successives peuvent parfaitement s'enchaîner sans qu'aucun minuteur
+         * n'ait eu l'occasion de s'exécuter. La seconde réutilisait alors le
+         * verdict de la première — y compris un « session invalide » rendu pour
+         * une requête sans aucun rapport.
+         *
+         * Vider ici fait exactement ce qu'un verrou à vol unique doit faire :
+         * les appelants CONCURRENTS partagent la promesse déjà en vol ; tout
+         * appelant postérieur au verdict revérifie. Un verdict n'est jamais
+         * réutilisé au-delà de la rafale qui l'a provoqué.
+         */
+        verificationEnVol = null;
+      }
+    })();
+  }
+  return verificationEnVol;
+}
+
+/** Attente courte entre deux tentatives — bornée, jamais infinie. */
+const PALIERS_ATTENTE_MS = [250, 500, 1000, 2000];
+
+function patienter(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+/**
+ * Une TENTATIVE — sans réessai, sans décision d'authentification.
+ *
+ * Isolée pour que la politique de réessai, au-dessus, n'ait à connaître que
+ * des `ApiError` déjà classées.
+ */
+async function tenter<T>(path: string, options: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
   const token = tokenStore.get();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   let bodyInit: string | undefined;
   if (options.body !== undefined) {
@@ -172,47 +417,160 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     bodyInit = JSON.stringify(options.body);
   }
 
+  /**
+   * UN DÉLAI MAXIMAL, TOUJOURS.
+   *
+   * Un `fetch` sans borne peut attendre indéfiniment quand un proxy garde la
+   * connexion ouverte sans jamais répondre — l'interface reste alors sur un
+   * chargement que rien ne conclut. Une borne transforme cette attente en un
+   * échec NOMMÉ, donc réessayable.
+   */
+  const delai = options.timeoutMs ?? 30_000;
+  const minuteur = new AbortController();
+  const echeance = setTimeout(() => minuteur.abort(), delai);
+
   let res: Response;
   try {
     res = await fetch(path, {
       method: options.method ?? 'GET',
       headers,
       body: bodyInit,
+      signal: minuteur.signal,
     });
-  } catch {
-    throw new ApiError(0, 'Impossible de contacter le serveur du Panel.');
+  } catch (err) {
+    // `abort` déclenché par NOTRE minuteur : c'est un dépassement de délai, pas
+    // une absence de réseau. Les confondre ferait afficher « serveur éteint »
+    // pour un serveur simplement lent.
+    if ((err as Error)?.name === 'AbortError') {
+      throw new ApiError(
+        408,
+        'Le serveur du Panel n’a pas répondu à temps.',
+        'PANEL_REQUEST_TIMEOUT',
+        undefined,
+        'TIMEOUT',
+      );
+    }
+    throw new ApiError(
+      OFFLINE_STATUS,
+      'Impossible de contacter le serveur du Panel.',
+      'PANEL_BACKEND_UNREACHABLE',
+      undefined,
+      'NETWORK_ERROR',
+    );
+  } finally {
+    clearTimeout(echeance);
   }
 
   let payload: Envelope<T> | null = null;
   try {
     payload = (await res.json()) as Envelope<T>;
   } catch {
+    // Corps non-JSON : c'est la signature d'une page d'erreur de proxy (nginx
+    // rend du HTML sur 502/504). L'absence de corps n'est PAS une erreur
+    // applicative — le classement se fera sur le seul statut.
     payload = null;
-  }
-
-  if (res.status === 401 && !path.startsWith('/api/auth/login')) {
-    tokenStore.clear();
-    if (window.location.pathname !== '/login') {
-      window.location.assign('/login');
-    }
-    throw new ApiError(
-      401,
-      payload?.message ?? 'Session expirée. Veuillez vous reconnecter.',
-      payload?.code,
-      payload?.details,
-    );
   }
 
   if (!res.ok || !payload || payload.success !== true) {
     throw new ApiError(
       res.status,
-      payload?.message ?? `Erreur HTTP ${res.status}`,
+      payload?.message ?? messageParDefaut(res.status),
       payload?.code,
       payload?.details,
     );
   }
 
   return payload.data as T;
+}
+
+/** Ce qu'on dit quand le serveur n'a rien dit — sans jamais accuser la session. */
+function messageParDefaut(status: number): string {
+  if (status === 502 || status === 503) {
+    return 'Service momentanément indisponible. Votre session reste valide.';
+  }
+  if (status === 504) return 'Le serveur du Panel n’a pas répondu à temps.';
+  if (status >= 500) return 'Le serveur a répondu par une erreur interne.';
+  return `Erreur HTTP ${status}`;
+}
+
+export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  /**
+   * RÉESSAI BORNÉ, ET SUR LES SEULES ERREURS TRANSITOIRES.
+   *
+   * Par défaut, seules les LECTURES sont réessayées : rejouer un POST déjà reçu
+   * mais dont la réponse s'est perdue créerait un doublon — un second
+   * déploiement, une seconde facture. Une écriture qui veut être réessayée doit
+   * le demander explicitement, en connaissance de son idempotence.
+   */
+  const methode = (options.method ?? 'GET').toUpperCase();
+  const essaisMax = options.retries ?? (methode === 'GET' ? PALIERS_ATTENTE_MS.length : 0);
+
+  let derniere: ApiError | null = null;
+  for (let tentative = 0; tentative <= essaisMax; tentative += 1) {
+    try {
+      return await tenter<T>(path, options);
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      derniere = err;
+
+      /**
+       * LE 401 EST LE SEUL CAS OÙ L'ON INTERROGE L'AUTORITÉ.
+       *
+       * Et le verdict ne change QUE la classification. Aucun autre statut ne
+       * peut produire `AUTH_INVALID`, donc aucun autre statut ne peut effacer
+       * un jeton — c'est l'invariant que ce lot installe.
+       */
+      if (err.status === 401) {
+        const token = tokenStore.get();
+        const invalide = token ? await sessionProuveeInvalide(path, token) : false;
+        if (!invalide) {
+          // 401 qui ne parle pas de notre session : on le remonte tel quel,
+          // sans toucher au jeton et sans rediriger.
+          throw new ApiError(401, err.message, err.code, err.details, 'CLIENT_ERROR');
+        }
+        tokenStore.clear();
+        if (
+          options.redirectOnUnauthorized !== false
+          && !redirectionEnCours
+          && window.location.pathname !== '/login'
+        ) {
+          redirectionEnCours = true;
+          window.location.assign('/login');
+        }
+        throw new ApiError(
+          401,
+          err.message || 'Session expirée. Veuillez vous reconnecter.',
+          err.code,
+          err.details,
+          'AUTH_INVALID',
+        );
+      }
+
+      const reste = tentative < essaisMax;
+      if (!err.retryable || !reste) throw err;
+      await patienter(PALIERS_ATTENTE_MS[Math.min(tentative, PALIERS_ATTENTE_MS.length - 1)]);
+    }
+  }
+  // Inatteignable : la boucle rend ou lève. Présent pour que le type soit total.
+  throw derniere ?? new ApiError(0, 'Requête impossible.');
+}
+
+/**
+ * LA PORTÉE D'UN MODÈLE, SÉRIALISÉE — un seul endroit, et c'est délibéré.
+ *
+ * Le serveur REFUSE tout champ de portée trouvé dans un corps de requête : la
+ * faille corrigée par L11.1 était exactement cela, un `PUT` portant
+ * `{"projectId":"…"}` qui créait un document invisible de l'IHM et pourtant
+ * servi en production. Concentrer la sérialisation ici garantit qu'aucun appel
+ * ne peut, par distraction, remettre la portée dans le corps.
+ *
+ * Portée absente ⇒ aucun paramètre ⇒ le serveur retient PANEL. C'est le défaut
+ * sûr : le contenu de L.Y Solution, jamais celui d'un client.
+ */
+function scopeQuery(scope?: EmailTemplateScopeRef): string {
+  if (!scope || scope.scopeType === 'PANEL') return '';
+  const params = new URLSearchParams({ scope: 'PROJECT', projectId: scope.scopeId });
+  return `?${params.toString()}`;
 }
 
 export const api = {
@@ -222,7 +580,19 @@ export const api = {
       body: { email, password },
     }),
 
-  me: () => request<{ user: PanelUser }>('/api/auth/me'),
+  forgotPassword: (email: string) =>
+    request<{ accepted: boolean; message: string }>('/api/auth/forgot-password', {
+      method: 'POST',
+      body: { email },
+    }),
+
+  resetPassword: (token: string, password: string, passwordConfirmation: string) =>
+    request<{ reset: boolean }>('/api/auth/reset-password', {
+      method: 'POST',
+      body: { token, password, passwordConfirmation },
+    }),
+
+  me: () => request<{ user: PanelUser }>('/api/auth/me', { redirectOnUnauthorized: false }),
 
   version: () => request<PanelVersion>('/api/version'),
 
@@ -378,7 +748,155 @@ export const api = {
   readEmailSenderTest: (testId: string) =>
     request<EmailSenderTestReport>(`/api/email-sender/test/${testId}`),
 
-  /* ── THÈME DU PANEL ──────────────────────────────────────────────────── */
+  /* ── MODÈLES E-MAIL — SCOPÉS (L11.1) ─────────────────────────────────────
+   *
+   * La portée voyage en QUERY, jamais dans le corps : le serveur refuse tout
+   * champ de portée trouvé dans un corps (`PANEL_EMAIL_TEMPLATE_SCOPE_IN_BODY`).
+   * Ce n'est pas une contrainte de style — c'est la correction d'une faille où
+   * un `PUT` portant `{"projectId":"…"}` créait un document invisible de l'IHM
+   * et pourtant servi en production.
+   *
+   * `scopeQuery()` est le SEUL endroit du client qui sérialise une portée.
+   */
+  /* ── COMPTES DU PANEL ET ACCÈS AUX PROJETS (L12.B-F) ─────────────────────
+   *
+   * Le frontend ne constitue JAMAIS l'autorité : il envoie un mode et, en
+   * EXPLICIT, une liste d'identifiants. Le serveur vérifie chacun contre le
+   * registre, refuse les inconnus et les non appairés, et écarte lui-même la
+   * liste dans les modes où elle n'est pas lue.
+   */
+  /**
+   * SON PROPRE PROFIL — aucune identité n'est transmise : le serveur lit la
+   * session. Il n'existe aucun paramètre par lequel désigner quelqu'un d'autre.
+   */
+  getOwnProfile: () => request<OwnProfile>('/api/panel-users/me'),
+  /**
+   * Un seul champ, et c'est volontaire : le serveur REFUSE tout le reste
+   * (`PANEL_USER_SELF_FORBIDDEN_FIELD`). Élargir ce type sans élargir la
+   * doctrine produirait un écran qui promet ce que l'API refuse.
+   */
+  updateOwnProfile: (data: { displayName: string }) =>
+    request<PanelUser>('/api/panel-users/me', { method: 'PATCH', body: data }),
+
+  /**
+   * LES COMPTES D'UN PROJET — lecture VIVANTE chez l'autorité voisine.
+   *
+   * `retries: 0` : ce n'est pas une lecture idempotente bon marché, c'est un
+   * aller-retour vers un autre service. Le réessai automatique masquerait une
+   * indisponibilité que l'écran doit justement annoncer.
+   */
+  getProjectAccounts: (projectId: string) =>
+    request<ProjectAccountsRead>(`/api/projects/${projectId}/accounts`, { retries: 0 }),
+
+  listPanelUsers: () => request<PanelUserRow[]>('/api/panel-users'),
+  listAccessibleProjects: () => request<AccessibleProject[]>('/api/panel-users/projects'),
+
+  /* ── ADMINISTRATION DES COMPTES — SUPER_ADMIN, côté serveur ───────────────
+   *
+   * ══ UN SEUL `PATCH`, ET NON UNE ROUTE PAR CHAMP ═══════════════════════════
+   *
+   * `setPanelUserEnabled` et `setPanelUserProjectAccess` ont disparu. Deux
+   * appels pour une seule décision d'opérateur, c'était deux événements
+   * d'audit et un état intermédiaire observable — un compte réactivé une
+   * demi-seconde avant de recevoir ses accès. Le serveur accepte les quatre
+   * champs ensemble, et n'accepte QUE ceux-là.
+   *
+   * AUCUN MOT DE PASSE NE TRANSITE PAR CES APPELS. La création n'en demande
+   * pas ; la prise de possession passe par le lien d'activation.
+   */
+  createPanelUser: (data: { email: string; displayName: string; role: Role }) =>
+    request<PanelUserCreated>('/api/panel-users', { method: 'POST', body: data }),
+  updatePanelUser: (
+    userId: string,
+    data: {
+      displayName?: string;
+      role?: Role;
+      enabled?: boolean;
+      projectAccess?: { mode: ProjectAccessMode; projectIds?: string[] };
+    },
+  ) => request<PanelUserRow & { changed: string[] }>(`/api/panel-users/${userId}`, {
+    method: 'PATCH',
+    body: data,
+  }),
+  deletePanelUser: (userId: string) =>
+    request<{ userId: string; email: string; deleted: boolean; selfDeletion: boolean }>(
+      `/api/panel-users/${userId}`,
+      { method: 'DELETE' },
+    ),
+  /** (Re)déclenche le lien d'activation. Ne rend jamais le jeton, ni le lien. */
+  sendPanelUserInvitation: (userId: string) =>
+    request<{ userId: string; email: string; invitation: { sent: boolean; code: string | null } }>(
+      `/api/panel-users/${userId}/invitation`,
+      { method: 'POST' },
+    ),
+
+  /* ── FÉDÉRATION D'IDENTITÉ (L12.B-UI) ────────────────────────────────────
+   *
+   * `returnUrl` est envoyé au SERVEUR pour qu'il le valide contre les origines
+   * qu'il connaît pour ce projet — jamais pour qu'il l'utilise tel quel. Le
+   * serveur rend une adresse RECOMPOSÉE, et c'est celle-là qu'on suit.
+   *
+   * `state` est transmis pour le journal : il permettra de rapprocher une
+   * émission d'une consommation. Il ne décide de rien côté Panel — c'est le
+   * PROJET qui l'a émis et qui le vérifiera.
+   */
+  issueFederationAssertion: (projectId: string, data: { returnUrl: string; state: string }) =>
+    request<{
+      assertion: string;
+      returnUrl: string | null;
+      audience: string;
+      issuer: string;
+      expiresAt: string;
+      kid: string;
+      jti: string;
+    }>(`/api/federation/projects/${projectId}/assertion`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  listEmailTemplateScopes: () =>
+    request<EmailTemplateScope[]>('/api/email-templates/scopes'),
+  listEmailTemplates: (scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateSummary[]>(`/api/email-templates${scopeQuery(scope)}`),
+  getEmailTemplate: (templateId: string, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateDetail>(`/api/email-templates/${templateId}${scopeQuery(scope)}`),
+  updateEmailTemplate: (templateId: string, data: {
+    name?: string;
+    description?: string;
+    subject?: string;
+    html?: string;
+    enabled?: boolean;
+    expectedVersion: number;
+  }, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateDetail>(`/api/email-templates/${templateId}${scopeQuery(scope)}`, {
+      method: 'PUT',
+      body: data,
+    }),
+  previewEmailTemplate: (
+    templateId: string,
+    draft?: { subject?: string; html?: string },
+    scope?: EmailTemplateScopeRef,
+  ) =>
+    request<EmailTemplatePreview>(`/api/email-templates/${templateId}/preview${scopeQuery(scope)}`, {
+      method: 'POST',
+      body: draft ?? {},
+    }),
+  getEmailTemplateReadiness: (templateId: string, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateReadiness>(`/api/email-templates/${templateId}/readiness${scopeQuery(scope)}`),
+  sendEmailTemplateTest: (templateId: string, recipientEmail: string, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateTestSendResult>(`/api/email-templates/${templateId}/test-send${scopeQuery(scope)}`, {
+      method: 'POST',
+      body: { recipientEmail },
+    }),
+  listEmailTemplateVersions: (templateId: string, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateVersionSummary[]>(`/api/email-templates/${templateId}/versions${scopeQuery(scope)}`),
+  getEmailTemplateVersion: (templateId: string, version: number, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateVersionDetail>(`/api/email-templates/${templateId}/versions/${version}${scopeQuery(scope)}`),
+  restoreEmailTemplateVersion: (templateId: string, version: number, scope?: EmailTemplateScopeRef) =>
+    request<EmailTemplateDetail>(
+      `/api/email-templates/${templateId}/versions/${version}/restore${scopeQuery(scope)}`,
+      { method: 'POST' },
+    ),
   getTheme: () => request<{ theme: PanelTheme }>('/api/theme'),
   saveTheme: (theme: PanelTheme) =>
     request<{ theme: PanelTheme }>('/api/theme', { method: 'PUT', body: theme }),
@@ -682,42 +1200,15 @@ export const integratedApis = {
   capabilities: () => request<{ capabilities: CapabilityView[] }>('/api/integrated-apis/capabilities'),
 
   /**
-   * LES OCTROIS D'UN PROJET (L3) — « que ce projet a-t-il le droit de
-   * demander ? ». Lecture ouverte à tout compte du Panel : c'est la première
-   * question quand un projet dit « ça ne marche pas ».
-   */
-  grants: (projectId: string) =>
-    request<CapabilityGrantsView>(`/api/projects/${projectId}/capability-grants`),
-
-  /**
-   * REMPLACE la liste. Remplacement et non fusion : une autorisation doit se
-   * lire d'un coup d'œil sur l'écran qui l'édite. Réservée aux comptes DEV.
-   */
-  setGrants: (projectId: string, capabilities: string[]) =>
-    request<CapabilityGrantsView>(`/api/projects/${projectId}/capability-grants`, {
-      method: 'PUT',
-      body: { capabilities },
-    }),
-
-  /**
-   * OUVERTURE COMMERCIALE (L3.1) — « cette instance a-t-elle le droit d'agir
-   * pour de vrai ? ». Lecture ouverte : constater qu'une instance n'est pas
-   * ouverte est un diagnostic, pas un secret.
-   */
-  commercialReadiness: (projectId: string) =>
-    request<CommercialReadinessView>(`/api/projects/${projectId}/commercial-readiness`),
-
-  /**
-   * OUVRE ou REFERME. Réservée aux comptes DEV.
+   * ── QUATRE APPELS ONT ÉTÉ SUPPRIMÉS ICI ───────────────────────────────────
    *
-   * Le corps porte l'ÉTAT VISÉ, jamais un verbe : un client qui rejoue sa
-   * requête doit arriver au même endroit, pas à l'état inverse.
+   *   grants / setGrants                    éditaient les capacités cochées
+   *   commercialReadiness / setCommercialReadiness   ouvraient le commerce
+   *
+   * Les routes correspondantes n'existent plus côté Panel. `capabilities()`
+   * ci-dessus reste le seul appel de cette famille : il rend le catalogue de
+   * l'INSTANCE, sans état par projet et sans rien à cocher.
    */
-  setCommercialReadiness: (projectId: string, state: CommercialState, reason?: string) =>
-    request<CommercialReadinessView>(`/api/projects/${projectId}/commercial-readiness`, {
-      method: 'PUT',
-      body: { state, ...(reason ? { reason } : {}) },
-    }),
 
   get: (provider: string) => request<ProviderView>(`/api/integrated-apis/${provider}`),
 
@@ -797,6 +1288,19 @@ export const probeProject = (url: string) =>
  * se déployer lui-même sans qu'une requête coupée fasse perdre le résultat.
  */
 export const deployment = {
+  /**
+   * PRÉREQUIS — appelé AVANT de proposer le bouton, jamais après l'avoir cliqué.
+   *
+   * C'est cet appel qui remplace la découverte de l'indisponibilité PAR le
+   * déploiement lui-même. Il est en lecture, ne transporte aucun secret, et
+   * rend un état structuré : l'écran sait alors nommer ce qui manque au lieu
+   * d'afficher « serveur injoignable » sur quatre pannes différentes.
+   */
+  readiness: (targetId?: string) =>
+    request<DeploymentReadiness>(
+      `/api/deployment/readiness${targetId ? `?targetId=${encodeURIComponent(targetId)}` : ''}`,
+    ),
+
   overview: () => request<DeploymentOverview>('/api/deployment'),
 
   /** Ce que le Panel sait de lui-même — à consulter avant de configurer. */

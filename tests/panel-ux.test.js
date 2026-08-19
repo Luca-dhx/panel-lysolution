@@ -38,9 +38,17 @@ section('1. Deux espaces, et le menu reflète la règle');
   check('TOUTE entrée Développeur est marquée devOnly',
     dev.every((i) => i.devOnly));
 
-  // Un ADMIN ne doit voir que la Gestion. C'est le filtre `navItemsFor`.
-  check('le filtre du menu ne garde les entrées DEV que pour un DEV',
-    /!item\.devOnly \|\| role === 'DEV'/.test(nav));
+  /*
+    Un ADMIN ne doit voir que la Gestion. C'est le filtre `navItemsFor`.
+
+    ── LE PRÉDICAT A CHANGÉ, PAS LA RÈGLE (LOT SUPER_ADMIN) ──────────────────
+    Il testait `role === 'DEV'`. Avec deux rôles, une comparaison ÉTAIT la
+    hiérarchie ; avec trois, elle enfermait dehors le rôle le PLUS élevé —
+    un SUPER_ADMIN devant un menu vide, sans le moindre message. Le filtre
+    consulte désormais l'échelle, qui vit dans `@/auth/roles`.
+  */
+  check('le filtre du menu ne garde les entrées DEV que pour les développeurs',
+    /!item\.devOnly \|\| isPanelDeveloper\(role\)/.test(nav));
   check('la barre latérale utilise ce filtre, jamais NAV_ITEMS brut',
     layout.includes('navItemsFor(') && !/NAV_ITEMS\.map/.test(layout));
 
@@ -90,8 +98,28 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
    * serveur, où une URL tapée ne la contourne pas.
    */
   const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company', '/panel'];
+
+  /**
+   * LES ROUTES D'AUTHENTIFICATION — hors garde par NATURE, et nommées ici.
+   *
+   * Les mettre derrière la garde DEV serait une contradiction : on ne peut pas
+   * exiger un compte identifié de quelqu'un qui vient précisément récupérer
+   * l'accès au sien. Elles sont donc énumérées, comme l'exige ce contrôle —
+   * inscrire une route oblige à dire pourquoi.
+   *
+   *   /forgot-password · /reset-password  parcours de récupération, sans session
+   *   /federation/authorize               couloir d'autorisation projet : SOUS
+   *                                       `RequireAuth`, mais hors coquille —
+   *                                       il n'est pas réservé aux DEV, un ADMIN
+   *                                       autorise aussi ses accès
+   *   /mon-profil                         son propre compte : tout compte du
+   *                                       Panel y a droit, DEV comme ADMIN
+   */
+  const AUTH_ET_COMPTE = ['/forgot-password', '/reset-password', '/federation/authorize', '/mon-profil'];
   const technical = routes.filter(
-    (r) => !BUSINESS.includes(r.path) && r.path !== '/login' && r.path !== '*',
+    (r) => !BUSINESS.includes(r.path)
+      && !AUTH_ET_COMPTE.includes(r.path)
+      && r.path !== '/login' && r.path !== '*',
   );
 
   check(`le routeur déclare ${routes.length} routes sous la coquille`, routes.length >= 15);
@@ -108,7 +136,8 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
   // La garde renvoie un ADMIN vers son tableau de bord, elle ne le laisse pas
   // sur un écran vide ni sur une erreur.
   const guard = read('frontend/src/auth/RequireDev.tsx');
-  check('la garde refuse tout rôle autre que DEV', /user\?\.role !== 'DEV'/.test(guard));
+  check('la garde refuse tout rôle sans capacités développeur',
+    /!isPanelDeveloper\(user\?\.role\)/.test(guard));
   check('…et redirige vers l’accueil', /<Navigate to="\/" replace \/>/.test(guard));
 }
 

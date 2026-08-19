@@ -100,6 +100,28 @@ export async function rejectsWith(fn, code) {
  * une panne de convergence. Le retour se fait donc sur LE MÊME port.
  */
 export async function startServer(app, { port = 0 } = {}) {
+  /**
+   * ══ LE SERVICE EST DÉCLARÉ PRÊT — UNE SUITE QUI DÉMARRE A FINI DE DÉMARRER ═
+   *
+   * Le backend distingue désormais « vivant » et « prêt » : il ouvre son port
+   * immédiatement et REFUSE les routes métier en `503 PANEL_SERVICE_STARTING`
+   * tant que l'amorçage n'est pas terminé. C'est la bonne conception — un
+   * frontend doit pouvoir distinguer « ça démarre » de « c'est cassé ».
+   *
+   * Mais une suite de test a déjà fait, à la main et dans l'ordre, tout ce que
+   * l'amorçage fait : base montée, connexion établie, comptes semés. Sans cette
+   * ligne, chaque appel HTTP de chaque suite reçoit un 503, et l'on croit lire
+   * un défaut d'autorisation là où il n'y a qu'un service qui s'estime encore
+   * en train de naître.
+   *
+   * L'import est PARESSEUX et l'échec TOLÉRÉ : le harnais ne doit pas exiger
+   * l'existence d'un module de disponibilité pour démarrer un serveur.
+   */
+  try {
+    const { markReady } = await import('../../backend/src/services/health/readiness.service.js');
+    markReady();
+  } catch { /* pas de garde de disponibilité dans cette version — rien à faire */ }
+
   const server = await new Promise((resolve) => {
     const s = app.listen(port, () => resolve(s));
   });

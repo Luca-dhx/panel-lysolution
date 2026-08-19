@@ -72,6 +72,31 @@ async function announceFromChanges(record, changes) {
   } catch (err) {
     logger.warn(`[destination] Annonce impossible pour ${record.projectId} : ${err.message}`);
   }
+
+  /**
+   * ══ CE CANAL N'ÉCRIT PAS `runtime.publicBackendUrl`, ET C'EST DÉLIBÉRÉ ═════
+   *
+   * La tentation est forte : la projection porte l'adresse du backend, elle
+   * arrive à chaque changement, et la fiche affiche parfois une adresse
+   * périmée. Le raccourci a été écrit, puis retiré — une suite de bout en bout
+   * l'a arrêté net, et elle avait raison.
+   *
+   * Les deux valeurs ne sont pas de même nature :
+   *
+   *     publicBackendUrl              OPÉRATIONNELLE — « je réponds ICI »
+   *     PROJECT_PRESENTATION.network  DÉCLARATIVE    — « je vise CE domaine »
+   *
+   * Elles coïncident en production, ce qui rend la confusion facile et son
+   * effet invisible — jusqu'à ce qu'elles divergent : port éphémère, recette
+   * locale, DNS pas encore basculé. Le Panel se met alors à rappeler un domaine
+   * parfaitement exact où personne n'écoute, et conclut que le projet est
+   * tombé. C'est exactement ce que `pairing.service.js` documentait déjà.
+   *
+   * La projection alimente donc la DESTINATION, ci-dessus, et rien d'autre.
+   * L'adresse opérationnelle vient de l'appairage et du battement (>= 1.9.0) :
+   * les deux seuls canaux où le projet dit où il répond au moment où il le dit.
+   * Voir `services/registry/projectNetworkDeclaration.js`.
+   */
 }
 
 // jamais un échec global silencieux.

@@ -2,7 +2,7 @@
 //
 // Ce que cette suite prouve :
 //
-//   1. le registre est code-first, aligné avec L1, L1.75 et L8 ;
+//   1. le registre est code-first, aligné avec L1 et L8 ;
 //   2. l'autorité vient du jeton, jamais de la charge utile ;
 //   3. l'ordre des refus est celui qui garantit « zéro appel fournisseur » ;
 //   4. l'entrée est stricte : provider, environment et clés sont REFUSÉS ;
@@ -11,6 +11,8 @@
 //
 // L'E2E (capability-gateway-e2e) prouve la même chose par le pont réel ; ici on
 // isole la mécanique pour que chaque refus soit attribuable à UNE cause.
+import { existsSync } from 'node:fs';
+
 import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, stopMemoryMongo,
@@ -23,12 +25,10 @@ await connectTestDatabase();
 const registry = await import('../backend/src/services/capabilities/capabilityRegistry.js');
 const errors = await import('../backend/src/services/capabilities/capabilityErrors.js');
 const contextModule = await import('../backend/src/services/capabilities/invocationContext.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const adapters = await import('../backend/src/services/capabilities/providerAdapters.js');
 const gateway = await import('../backend/src/services/capabilities/capabilityGateway.service.js');
 const resolver = await import('../backend/src/services/capabilities/credentialResolver.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const commercial = await import('../backend/src/services/integratedApi/commercialReadiness.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const registryStore = (await import('../backend/src/services/registry/registryStore.js')).default;
 
@@ -45,8 +45,15 @@ const CHECKOUT = 'billing.checkout.create';
 /** Entrée valide minimale de `email.sender.verify`. */
 const ENTREE = () => ({ recipient: { email: 'ops@garage.fr' }, operationId: 'op-0000000001' });
 
-/** Fiche de projet AUTHENTIFIÉE — ce que rend `requireBridgeAuth`. */
-async function projet({ projectId, grants = [], commercialState = 'LIVE', environment = 'TEST' } = {}) {
+/**
+ * Fiche de projet AUTHENTIFIÉE — ce que rend `requireBridgeAuth`.
+ *
+ * Elle ne porte plus ni `capabilityGrants` ni `commercialState` : les deux
+ * champs ont quitté le schéma. Une fiche minimale — appairée, avec un
+ * environnement — suffit désormais à invoquer, et c'est précisément ce que la
+ * simplification voulait obtenir.
+ */
+async function projet({ projectId, environment = 'TEST' } = {}) {
   const at = new Date().toISOString();
   const record = {
     projectId,
@@ -56,8 +63,6 @@ async function projet({ projectId, grants = [], commercialState = 'LIVE', enviro
     updatedAt: at,
     pairing: { status: 'PAIRED', bridgeTokenHash: 'h', pairedAt: at },
     runtime: { environment },
-    capabilityGrants: grants,
-    commercialState,
   };
   await registryStore.remove(projectId);
   await registryStore.insert(record);
@@ -99,7 +104,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
 /* ========================================================================== */
 {
   const problemes = registry.assertRegistryAlignment();
-  check(`alignement L1 × L1.75 × L8 (${problemes.length} écart(s))`, problemes.length === 0);
+  check(`alignement L1 × L8 (${problemes.length} écart(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
 
   const adapt = adapters.assertAdapterAlignment(registry.listCapabilityDefinitions());
@@ -196,11 +201,21 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'signature.document.download',
     'signature.request.cancel',
   ].sort();
+  /**
+   * DÉCLARÉES ET SERVIES SONT DÉSORMAIS LA MÊME LISTE.
+   *
+   * Cette assertion comparait `listMigratedCapabilities()` — les capacités
+   * portant `migrated: true` — à la liste attendue. Le booléen ayant disparu,
+   * elle compare l'INVENTAIRE COMPLET : figurer au registre, c'est être servie.
+   *
+   * `billing.subscription.reconcile` a quitté cette liste sans y être
+   * remplacée : elle était déclarée et servie par personne.
+   */
   check(`les capacités servies sont EXACTEMENT les ${SERVIES.length} attendues`,
-    JSON.stringify(registry.listMigratedCapabilities().map((c) => c.code).sort())
+    JSON.stringify(registry.listCapabilityDefinitions().map((c) => c.code).sort())
     === JSON.stringify(SERVIES));
-  check('email.send_template est désormais SERVIE',
-    registry.getCapabilityDefinition(SEND).migrated === true);
+  check('aucune capacité ne porte de drapeau de migration',
+    registry.listCapabilityDefinitions().every((c) => !('migrated' in c) && !('migrationNote' in c)));
   /**
    * Son idempotence reste `UNKNOWN_ON_TIMEOUT`, et c'est ce qui déclenche la
    * réservation au goulot de la passerelle : Brevo n'offre aucune clé sur
@@ -209,13 +224,14 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   check('…avec une idempotence qui exige une réservation',
     registry.getCapabilityDefinition(SEND).idempotency === 'UNKNOWN_ON_TIMEOUT');
   /**
-   * SEPT capacités Stripe sont servies ; une seule reste fermée.
-   * Ce n'est pas une étape de calendrier : `billing.invoice.list` demanderait
-   * une liste plus large que son dû, et son appartenance ne se prouve pas objet
-   * par objet. Les sept autres s'ancrent toutes sur un lien prouvé — par
-   * création (L6.2B/D/E) ou par filiation (L6.2F).
+   * DOUZE capacités Stripe, et plus aucune « fermée ».
+   *
+   * La treizième — `billing.subscription.reconcile` — a été retirée du
+   * registre. Elle s'ancrait sur un lien prouvé comme les autres ; ce qui lui
+   * manquait, c'était un exécutant, et sa lecture est déjà couverte par
+   * `billing.subscription.retrieve`.
    */
-  const stripeServies = registry.capabilitiesForProvider('STRIPE').filter((c) => c.migrated);
+  const stripeServies = registry.capabilitiesForProvider('STRIPE');
   check('douze capacités Stripe sont servies', stripeServies.length === 12);
   /**
    * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
@@ -266,11 +282,19 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   check('la LECTURE se rejoue sans conséquence', lecture?.idempotency === 'SAFE_RETRY');
   check('…et ne réserve donc aucune opération', lecture?.correlationField === null);
 
-  // L'effet vient de L1.75, jamais recopié ici.
-  check('l’effet de email.sender.verify est CONFIGURATION',
-    registry.getCapabilityDefinition(VERIFY).effectNature === commercial.EFFECT.CONFIGURATION);
-  check('l’effet de billing.checkout.create est FINANCIAL_WRITE',
-    registry.getCapabilityDefinition(CHECKOUT).effectNature === commercial.EFFECT.FINANCIAL_WRITE);
+  /**
+   * LA NATURE DE L'EFFET A DISPARU DU REGISTRE.
+   *
+   * Deux assertions vérifiaient ici que `effectNature` valait CONFIGURATION
+   * pour la vérification Brevo et FINANCIAL_WRITE pour l'ouverture de session.
+   * Cette taxinomie n'avait qu'un lecteur, la politique de pré-ouverture, et
+   * disparaît avec elle. On vérifie donc l'inverse : qu'elle ne subsiste nulle
+   * part, faute de quoi elle finirait par se voir rebrancher.
+   */
+  check('aucune capacité ne porte de nature d’effet',
+    registry.listCapabilityDefinitions().every((c) => !('effectNature' in c)));
+  check('…et la vue publique non plus',
+    registry.describeCapabilities().every((c) => !('effectNature' in c) && !('migrated' in c)));
 
   // La vue publique ne doit rien apprendre du fournisseur.
   const vue = registry.describeCapability(VERIFY);
@@ -323,41 +347,78 @@ section('2. CONTEXTE — l’autorité vient du jeton, pas du corps');
   check('fiche sans environnement déclaré → accepté, servi en TEST',
     contextModule.buildInvocationContext({ panelProject: neuf }).environment === 'TEST');
 
-  // L'ouverture est FERMÉE par défaut : une base muette ne doit pas ouvrir.
-  const sansEtat = await projet({ projectId: 'projet-muet', commercialState: null });
-  check('commercialState absent → PREOPENING (fermé par défaut)',
-    contextModule.resolveCommercialState(sansEtat) === commercial.DEFAULT_COMMERCIAL_STATE);
-  check('commercialState aberrant → PREOPENING',
-    contextModule.resolveCommercialState({ commercialState: 'OUVERT_LOL' })
-    === commercial.DEFAULT_COMMERCIAL_STATE);
+  /**
+   * LE CONTEXTE NE PORTE PLUS D'ÉTAT D'OUVERTURE.
+   *
+   * Trois assertions vérifiaient ici que `commercialState` absent ou aberrant
+   * retombait sur PREOPENING — le défaut fermé. La notion ayant disparu, ce
+   * qu'on vérifie est qu'elle n'a laissé aucun résidu dans le contexte : un
+   * champ survivant serait relu un jour, et sa valeur par défaut refermerait
+   * silencieusement ce que la simplification vient d'ouvrir.
+   */
+  check('le contexte ne porte aucun état d’ouverture', !('commercialState' in ctx));
+  check('…ni la projection d’audit', !('commercialState' in decrit));
+  check('resolveCommercialState n’existe plus',
+    contextModule.resolveCommercialState === undefined);
+
+  /**
+   * UNE FICHE NUE SUFFIT — c'est le cœur de la simplification.
+   *
+   * Ni octroi, ni état d'ouverture : un projet appairé, dont le monde concorde,
+   * obtient un contexte d'invocation complet.
+   */
+  const nue = await projet({ projectId: 'projet-nu-context' });
+  const ctxNu = contextModule.buildInvocationContext({ panelProject: nue, payload: {} });
+  check('une fiche sans octroi ni état d’ouverture produit un contexte valide',
+    ctxNu.projectId === 'projet-nu-context' && ctxNu.environment === 'TEST');
 }
 
 /* ========================================================================== */
-section('3. OCTROIS — fermés par défaut, et une seule autorité');
+section('3. AUCUN OCTROI — un projet appairé peut demander ce qui est servi');
 /* ========================================================================== */
 {
-  const nu = await projet({ projectId: 'projet-nu', grants: [] });
-  check('un projet appairé n’a AUCUN octroi par défaut', grantsModule.grantedCodes(nu).length === 0);
+  /**
+   * CETTE SECTION A CHANGÉ DE SENS, ET C'EST L'OBJET DE LA MISSION.
+   *
+   * Elle prouvait « fermé par défaut » : un projet appairé sans octroi recevait
+   * `CAPABILITY_NOT_GRANTED`. Elle prouve désormais l'inverse — qu'aucune liste
+   * ne conditionne l'invocation — et surtout que le refus qui la remplaçait
+   * n'existe plus nulle part.
+   *
+   * Ce que la fermeture par défaut protégeait réellement — l'accès aux
+   * ressources d'autrui — est éprouvé par
+   * `capability-multi-project-isolation.test.js`, qui vise l'appartenance.
+   */
+  const nu = await projet({ projectId: 'projet-nu' });
 
-  const refus = await invoquer(nu, VERIFY, ENTREE());
-  check('sans octroi → CAPABILITY_NOT_GRANTED', refus.code === CODES.NOT_GRANTED);
-  check('…et le refus est un 403', refus.error.statusCode === 403);
-  check('…et l’issue journalisée est BLOCKED', refus.error.outcome === CAPABILITY_OUTCOMES.BLOCKED);
+  check('le module d’octrois n’existe plus',
+    !existsSync(new URL('../backend/src/services/capabilities/capabilityGrants.js', import.meta.url)));
+  check('le vocabulaire de refus ne porte plus NOT_GRANTED',
+    CODES.NOT_GRANTED === undefined);
+  check('…ni BLOCKED_PREOPENING', CODES.BLOCKED_PREOPENING === undefined);
 
-  // Un code inconnu ne peut pas être stocké : l'écran ne peut pas mentir.
-  let invalide = null;
-  try { await grantsModule.setCapabilityGrants('projet-nu', ['pwn.everything'], ACTEUR); }
-  catch (err) { invalide = err; }
-  check('accorder une capacité inconnue → refusé', invalide?.code === 'PANEL_CAPABILITY_UNKNOWN');
-
-  const apres = await grantsModule.setCapabilityGrants('projet-nu', [VERIFY, SEND], ACTEUR);
-  check('deux capacités accordées', apres.granted.length === 2);
-  check('…et les DEUX sont réellement effectives depuis L8.4B',
-    apres.capabilities.filter((c) => c.effective).length === 2);
-
-  // Remplacement, pas fusion : la liste se lit d'un coup d'œil.
-  const reduit = await grantsModule.setCapabilityGrants('projet-nu', [VERIFY], ACTEUR);
-  check('l’écriture REMPLACE la liste', reduit.granted.length === 1 && reduit.granted[0] === VERIFY);
+  /**
+   * L'APPEL TRAVERSE TOUTES LES GARDES D'AUTORISATION.
+   *
+   * Le coffre est encore vide à ce stade de la suite — il n'est peuplé qu'en
+   * section 6 — donc l'invocation s'arrête aux identifiants. C'est précisément
+   * ce qui rend cette assertion probante : `CREDENTIALS_MISSING` est la
+   * DERNIÈRE étape de la passerelle, et l'atteindre prouve que rien en amont
+   * n'a refusé. Avant la simplification, ce même appel mourait deux étapes plus
+   * haut, sur `CAPABILITY_NOT_GRANTED`.
+   *
+   * La preuve POSITIVE — un projet nu qui exécute réellement chez le
+   * fournisseur — est en section 6, une fois le coffre peuplé : la fiche `p6`
+   * n'a elle non plus ni octroi ni état d'ouverture.
+   */
+  const provider = fournisseur(async () => reponse(200, { companyName: 'Garage Test' }));
+  const passe = await invoquer(nu, VERIFY, ENTREE(), provider);
+  check('un projet sans aucun octroi n’est plus refusé pour défaut de droit',
+    passe.code !== 'CAPABILITY_NOT_GRANTED');
+  check('…il traverse jusqu’à la dernière étape, le coffre',
+    passe.code === CODES.CREDENTIALS_MISSING);
+  check('…et aucun appel fournisseur n’est parti pour autant',
+    provider.appels.length === 0);
 }
 
 /* ========================================================================== */
@@ -367,62 +428,43 @@ section('4. ORDRE DES REFUS — la garantie « zéro appel fournisseur »');
   const provider = fournisseur(async () => reponse(200, { companyName: 'X' }));
 
   // Capacité inconnue : refusée avant même de lire la fiche.
-  const inconnue = await invoquer(await projet({ projectId: 'p1', grants: [VERIFY] }), 'pwn.everything', {}, provider);
+  const inconnue = await invoquer(await projet({ projectId: 'p1' }), 'pwn.everything', {}, provider);
   check('capacité inconnue → CAPABILITY_UNKNOWN', inconnue.code === CODES.UNKNOWN);
   check('…et un 404', inconnue.error.statusCode === 404);
+  check('…sans avoir touché le fournisseur', provider.appels.length === 0);
 
-  // PRÉ-OUVERTURE × écriture financière : refusée AVANT la disponibilité et
-  // AVANT le coffre. C'est la jonction L1.75 × L2 × L3.
-  const ferme = await projet({ projectId: 'p2', grants: [CHECKOUT], commercialState: 'PREOPENING' });
-  const bloque = await invoquer(ferme, CHECKOUT, {}, provider);
-  check('PREOPENING × FINANCIAL_WRITE → BLOCKED_PREOPENING', bloque.code === CODES.BLOCKED_PREOPENING);
-  check('…issue BLOCKED', bloque.error.outcome === CAPABILITY_OUTCOMES.BLOCKED);
-  check('…et le détail NOMME l’effet refusé', bloque.error.details?.effect === commercial.EFFECT.FINANCIAL_WRITE);
-
-  // La même capacité, commerce OUVERT (LIVE) : le refus devient « pas migrée ».
-  // C'est la preuve que le blocage venait bien de la politique, pas du hasard.
   /**
-   * `billing.checkout.create` est SERVIE depuis L6.2B : le refus qu'on lit ici
-   * n'est donc plus « pas migrée » mais « entrée non conforme » — la preuve
-   * porte quand même, et même mieux : le commerce ouvert a laissé l'appel
-   * DESCENDRE jusqu'au contrat d'entrée, là où la pré-ouverture l'arrêtait
-   * avant tout. C'est exactement ce qu'on voulait démontrer.
-   */
-  const ouvert = await projet({ projectId: 'p3', grants: [CHECKOUT], commercialState: 'LIVE' });
-  const passe = await invoquer(ouvert, CHECKOUT, {}, provider);
-  check('LIVE × FINANCIAL_WRITE → la politique ne bloque plus',
-    passe.code !== CODES.BLOCKED_PREOPENING);
-  check('…le refus vient désormais du contrat d’entrée', passe.code === CODES.INPUT_INVALID);
-
-  // Et une capacité Stripe encore fermée refuse toujours par NOT_MIGRATED.
-  /**
-   * L6.3B a SERVI `billing.invoice.list` : cette sonde a donc changé de sujet.
-   * `billing.subscription.reconcile` reste fermée — elle attend une stratégie
-   * de rejeu, pas un calendrier — et sert désormais de témoin.
-   */
-  const ferme2 = await projet({ projectId: 'p3b', grants: ['billing.subscription.reconcile'], commercialState: 'LIVE' });
-  const pasMigre = await invoquer(ferme2, 'billing.subscription.reconcile', {}, provider);
-  check('LIVE × non migrée → CAPABILITY_NOT_AVAILABLE', pasMigre.code === CODES.NOT_AVAILABLE);
-  check('…motif NOT_MIGRATED', pasMigre.error.details?.reason === 'NOT_MIGRATED');
-
-  // Une capacité de communication n'est PAS bloquée en pré-ouverture : une
-  // instance doit pouvoir envoyer la réinitialisation qui l'ouvrira.
-  const comm = await projet({ projectId: 'p4', grants: [SEND], commercialState: 'PREOPENING' });
-  const communication = await invoquer(comm, SEND, {}, provider);
-  /**
-   * LA POLITIQUE N'A PAS BOUGÉ — c'est l'ÉTAPE ATTEINTE qui a changé.
+   * LA CAPACITÉ RETIRÉE EST DÉSORMAIS INCONNUE, ET NON « INDISPONIBLE ».
    *
-   * Avant L8.4B, la capacité n'était pas servie : le refus tombait à l'étape
-   * « est-ce migré ? », avant toute validation d'entrée. Elle l'est désormais,
-   * donc un corps vide est refusé une étape PLUS LOIN — pour entrée invalide,
-   * et non pour pré-ouverture.
+   * `billing.subscription.reconcile` répondait `CAPABILITY_NOT_AVAILABLE` avec
+   * le motif `NOT_MIGRATED` : elle EXISTAIT au registre, et refusait. C'était
+   * l'état « déclarée, mais pas servie » que la mission devait supprimer.
    *
-   * Ce que l'assertion prouve reste le même, et c'est le point : une capacité
-   * de COMMUNICATION_WRITE n'est PAS bloquée par la pré-ouverture. Une
-   * instance doit pouvoir envoyer la réinitialisation qui l'ouvrira.
+   * Elle ne figure plus nulle part, donc le refus change de nature — c'est le
+   * même que pour un code inventé. C'est exactement ce qu'on voulait : pas
+   * d'état intermédiaire entre « exposée et servie » et « inexistante ».
    */
-  check('PREOPENING × COMMUNICATION_WRITE n’est PAS bloqué par la politique',
-    communication.code === CODES.INPUT_INVALID);
+  const retiree = await invoquer(
+    await projet({ projectId: 'p3b' }), 'billing.subscription.reconcile', {}, provider,
+  );
+  check('la capacité retirée → CAPABILITY_UNKNOWN (et non NOT_AVAILABLE)',
+    retiree.code === CODES.UNKNOWN);
+  check('…et aucun motif NOT_MIGRATED ne subsiste',
+    retiree.error.details?.reason !== 'NOT_MIGRATED');
+
+  /**
+   * L'ÉCRITURE FINANCIÈRE DESCEND JUSQU'AU CONTRAT D'ENTRÉE.
+   *
+   * Elle était refusée en amont par la pré-ouverture, avec
+   * `BLOCKED_PREOPENING`, tant qu'un opérateur n'avait pas basculé la fiche en
+   * LIVE. Ce refus n'existe plus : l'appel atteint la validation d'entrée, et
+   * c'est elle — puis l'appartenance, vérifiée par l'adaptateur — qui décide.
+   */
+  const financiere = await invoquer(await projet({ projectId: 'p2' }), CHECKOUT, {}, provider);
+  check('écriture financière → plus aucun refus d’ouverture commerciale',
+    financiere.code === CODES.INPUT_INVALID);
+  check('…et toujours zéro appel fournisseur sur une entrée invalide',
+    provider.appels.length === 0);
 
   check('AUCUN appel fournisseur sur tous ces refus', provider.appels.length === 0);
 }
@@ -432,7 +474,7 @@ section('5. ENTRÉE STRICTE — le projet ne choisit ni monde ni fournisseur');
 /* ========================================================================== */
 {
   const provider = fournisseur(async () => reponse(200, { companyName: 'X' }));
-  const fiche = await projet({ projectId: 'p5', grants: [VERIFY] });
+  const fiche = await projet({ projectId: 'p5' });
 
   const interdits = [
     ['environment', { ...ENTREE(), environment: 'PROD' }],
@@ -466,7 +508,7 @@ section('6. IDENTIFIANTS — le coffre L1, et une doctrine de disponibilité');
 /* ========================================================================== */
 {
   const provider = fournisseur(async () => reponse(200, { companyName: 'L.Y Solution' }));
-  const fiche = await projet({ projectId: 'p6', grants: [VERIFY] });
+  const fiche = await projet({ projectId: 'p6' });
 
   // Le seed crée des jeux VIDES : leur existence ne prouve rien.
   const vide = await invoquer(fiche, VERIFY, ENTREE(), provider);
@@ -519,7 +561,7 @@ section('6. IDENTIFIANTS — le coffre L1, et une doctrine de disponibilité');
 section('7. AUCUN SECRET NE SORT — réponse, journal, erreur');
 /* ========================================================================== */
 {
-  const fiche = await projet({ projectId: 'p7', grants: [VERIFY] });
+  const fiche = await projet({ projectId: 'p7' });
   const journal = [];
   const original = console.log;
   console.log = (...args) => { journal.push(args.join(' ')); };
@@ -554,7 +596,7 @@ section('7. AUCUN SECRET NE SORT — réponse, journal, erreur');
 section('8. ÉCHECS FOURNISSEUR — et le silence, qui n’est pas un échec');
 /* ========================================================================== */
 {
-  const fiche = await projet({ projectId: 'p8', grants: [VERIFY] });
+  const fiche = await projet({ projectId: 'p8' });
 
   for (const status of [400, 401, 403, 429, 500, 503]) {
     const r = await invoquer(fiche, VERIFY, ENTREE(),
@@ -616,7 +658,7 @@ section('9. IDEMPOTENCE — une stratégie par capacité, jamais une seule');
 section('10. ENVIRONNEMENT — résolu deux fois, jamais choisi');
 /* ========================================================================== */
 {
-  const fiche = await projet({ projectId: 'p9', grants: [VERIFY] });
+  const fiche = await projet({ projectId: 'p9' });
   const ctx = contextModule.buildInvocationContext({ panelProject: fiche });
   const definition = registry.getCapabilityDefinition(VERIFY);
 

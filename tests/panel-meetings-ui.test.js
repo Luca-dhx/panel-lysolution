@@ -285,6 +285,14 @@ section('7. Filtres : aucun menu déroulant du système');
   check(`aucun filtre ne repose sur un select natif${fautifs.length ? ` — ${[...new Set(fautifs)].join(', ')}` : ''}`,
     fautifs.length === 0);
   /**
+   * `pages/EmailTemplatesPage.tsx` A REJOINT CETTE LISTE — et c'est légitime.
+   *
+   * Son `<select>` est le SÉLECTEUR DE PORTÉE : « Panel » ou l'un des projets.
+   * Ce n'est pas un filtre sur une liste déjà affichée, mais le choix de ce que
+   * l'écran administre — la même nature qu'un champ de formulaire, et le widget
+   * natif y a la même valeur sur mobile. Le contrôle du dessus, lui, continue
+   * d'interdire tout `<select>` dans un filtre.
+   *
    * `pages/CompanyPage.tsx` A QUITTÉ CETTE LISTE — et c'est un progrès.
    *
    * Son dernier `<select>` natif est parti avec la restructuration de « Mon
@@ -295,8 +303,8 @@ section('7. Filtres : aucun menu déroulant du système');
   check(`les selects restants sont tous des champs de formulaire (${[...new Set(restants)].join(', ')})`,
     [...new Set(restants)].sort().join('|')
       === 'components/EventConfirmation.tsx|components/EventForms.tsx'
-      + '|pages/DeploymentPage.tsx|pages/IntegratedApisPage.tsx|pages/ProjectActionsPage.tsx'
-      + '|pages/ThemePage.tsx');
+      + '|pages/DeploymentPage.tsx|pages/EmailTemplatesPage.tsx|pages/IntegratedApisPage.tsx'
+      + '|pages/ProjectActionsPage.tsx|pages/ThemePage.tsx');
 
   for (const page of ['ActionsPage', 'FleetPage', 'IntegratedApisPage', 'ProjectDetailPage']) {
     check(`${page} filtre avec le sélecteur thémé`,

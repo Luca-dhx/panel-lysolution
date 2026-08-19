@@ -46,6 +46,12 @@
 #     contrats partagent un même numéro pour qu'un seul en-tête suffise à
 #     décrire ce que parle un pont.
 #     Compatible 1.0.x, 1.1.x, 1.2.x et 1.3.x.
+#   1.8.0 — ADDITIF, DÉCLARATION D'USAGE DES MODÈLES D'E-MAIL :
+#     nouvel entityType `PROJECT_EMAIL_TEMPLATE_USAGE`, poussé par le projet.
+#     Le projet ANNONCE les templateCode qu'il consomme ; le Panel provisionne
+#     les instances manquantes et retire de la vue active celles qui ne sont
+#     plus déclarées — sans jamais supprimer un contenu. Rétrocompatible : un
+#     Panel antérieur refuse cette entité proprement et tout le reste continue.
 #   1.5.0 (L3) — ADDITIF, PASSERELLE DE CAPACITÉS :
 #     POST /bridge/v1/capabilities/{code}/invoke. Le projet demande une
 #     INTENTION MÉTIER ; le Panel résout le fournisseur, l'environnement, le
@@ -66,7 +72,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.5.0
+  version: 1.9.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -477,6 +483,98 @@ paths:
         '409':
           description: Version majeure du contrat non supportée.
 
+  /bridge/v1/federation/introspect:
+    post:
+      operationId: introspectFederatedPrincipal
+      tags: [federation]
+      summary: L'identite developpeur federee est-elle ENCORE valable ?
+      description: >
+        LE SEUL MOYEN DE COUPER UNE SESSION FEDEREE SANS TOUCHER A LA BASE DU
+        PROJET.
+
+        Une assertion federee vit trois minutes ; la session projet qu'elle
+        ouvre vit plus longtemps. Entre les deux, le compte peut etre desactive,
+        son acces au projet retire, l'appairage revoque. Sans ce verbe, la seule
+        facon de fermer l'acces serait d'editer la base du projet a la main —
+        exactement ce que la federation existe pour eviter.
+
+        Le Panel verifie que le compte existe, qu'il est actif, que son role
+        ouvre l'acces developpeur, que son contrat d'acces couvre CE projet, et
+        — si `tokenVersion` est fourni — que la session batie sur cette version
+        tient encore.
+
+        LA REPONSE NE DIT JAMAIS POURQUOI ELLE REFUSE. « inconnu »,
+        « desactive » et « sans acces ici » sont indistinguables : un projet
+        compromis pourrait sinon enumerer les employes de l'agence en essayant
+        des identifiants. La reaction du projet est de toute facon la meme dans
+        les trois cas — fermer la session.
+
+        Le projet ne nomme pas le projet pour lequel il demande : celui qui fait
+        autorite est deduit du bridgeToken. Il ne peut demander que pour lui.
+
+        POST bien qu'il s'agisse d'une lecture : la requete porte un identifiant
+        d'utilisateur et une version de session, qui n'ont rien a faire dans les
+        journaux d'acces des intermediaires.
+
+        Compatible 1.0.x a 1.5.x : un projet qui ignore cet endpoint reste
+        pleinement conforme, un Panel qui ne le sert pas aussi.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [panelUserId]
+              properties:
+                panelUserId:
+                  type: string
+                  description: Identifiant du compte Panel, tel que l'assertion le portait.
+                tokenVersion:
+                  type: integer
+                  nullable: true
+                  minimum: 0
+                  description: >
+                    Version de session sur laquelle la session projet a ete
+                    batie. Absente, la reponse porte sur l'etat courant du
+                    compte ; presente, elle dit aussi si la session tient encore.
+      responses:
+        '200':
+          description: >
+            Verdict. `principal` n'est present QUE lorsque la reponse est oui.
+          headers:
+            X-Bridge-Contract-Version:
+              $ref: '#/components/headers/ContractVersionHeader'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [active]
+                properties:
+                  active: { type: boolean }
+                  principal:
+                    type: object
+                    additionalProperties: false
+                    required: [panelUserId, role, enabled]
+                    properties:
+                      panelUserId: { type: string }
+                      displayName: { type: string }
+                      email: { type: string }
+                      role: { type: string }
+                      enabled: { type: boolean }
+                      tokenVersion: { type: integer }
+        '400':
+          description: Entree non conforme (BRIDGE_INVALID_PAYLOAD).
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Version majeure du contrat non supportee.
+
 components:
   securitySchemes:
     bridgeToken:
@@ -797,6 +895,8 @@ components:
                   - MEETING
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
+            - PROJECT_EMAIL_TEMPLATE_USAGE
+                  - PROJECT_EMAIL_TEMPLATE_USAGE
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
@@ -1146,6 +1246,49 @@ components:
               additionalProperties:
                 type: string
                 enum: [OK, WARNING, ERROR, UNKNOWN]
+            network:
+              type: object
+              description: >
+                ADDITIF (contrat >= 1.9.0) : les adresses PUBLIQUES que ce projet
+                sert REELLEMENT, telles que sa configuration reseau appliquee les
+                declare. Ferme le defaut suivant : le Panel posait
+                runtime.publicBackendUrl au bootstrap et ne la relisait jamais,
+                si bien qu'un projet redeploye sur un autre domaine gardait
+                indefiniment l'adresse du jour de son appairage — corrigible
+                seulement par un REAPPAIRAGE, c'est-a-dire en detruisant une
+                relation de confiance pour rafraichir une donnee d'exploitation.
+                L'invariant pose ici : l'appairage est une relation d'IDENTITE,
+                l'URL publique est un ETAT COURANT ; le second n'est jamais fige
+                par le premier. PROJECT_PRESENTATION.network reste l'autorite
+                ARBITREE (LWW, anti-echo, file durable) et n'est pas remplacee :
+                elle ne part qu'au CHANGEMENT, quand ce canal-ci REPETE. Tous les
+                champs sont optionnels ; un projet anterieur n'en publie aucun et
+                reste pleinement conforme. Un champ non configure est OMIS — le
+                Panel conserve alors ce qu'il savait plutot que de l'effacer.
+              properties:
+                publicBackendUrl:
+                  type: string
+                  format: uri
+                  nullable: true
+                  description: L'API publique — celle que le Panel doit appeler.
+                publicSiteUrl:
+                  type: string
+                  format: uri
+                  nullable: true
+                  description: Le site public — celui que le client consulte.
+                managerUrl:
+                  type: string
+                  format: uri
+                  nullable: true
+                  description: L'espace de gestion du client.
+                declaredAt:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: >
+                    L'horloge du PROJET — informative. Le Panel horodate sur la
+                    RECEPTION : une horloge de projet en derive ne doit pas
+                    pouvoir figer une adresse.
         engines:
           type: object
           description: >
@@ -1204,6 +1347,7 @@ components:
             - MEETING
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
+            - PROJECT_EMAIL_TEMPLATE_USAGE
             - EMAIL_DELIVERY_EVENT
             - SIGNATURE_EVENT
             - PAYMENT_REQUEST

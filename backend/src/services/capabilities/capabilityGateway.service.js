@@ -7,31 +7,43 @@
 //   1. la capacité existe-t-elle ?            registre code-first, fail closed
 //   2. qui parle ?                            jeton de pont, jamais la charge utile
 //   3. quel monde ?                           runtime de l'instance (L2)
-//   4. a-t-il le droit ?                      octrois de capacité (L3)
-//   5. le commerce est-il ouvert ?            politique L1.75
-//   6. la capacité est-elle servie ?          adaptateur présent
-//   7. l'entrée est-elle conforme ?           schéma strict
-//   8. a-t-on des identifiants ?              coffre L1
-//   9. exécuter                               adaptateur
-//
-// Trois choix d'ordre méritent une justification, parce qu'ils ne sont pas
-// interchangeables :
-//
-// · La POLITIQUE COMMERCIALE passe AVANT la disponibilité de l'adaptateur et
-//   AVANT les identifiants. C'est ce qui garantit qu'une écriture financière
-//   refusée en pré-ouverture ne touche RIEN — pas même le coffre. Si l'on
-//   testait d'abord « est-ce migré ? », la preuve « zéro appel fournisseur »
-//   reposerait sur l'absence d'adaptateur, c'est-à-dire sur un accident de
-//   calendrier, et non sur la politique.
+//   4. l'entrée est-elle conforme ?           schéma strict
+//   5. a-t-on des identifiants ?              coffre L1
+//   6. exécuter                               adaptateur, qui prouve l'appartenance
 //
 // · L'ENTRÉE est validée AVANT les identifiants. Un corps malformé ne doit pas
 //   faire déchiffrer une clé : le coffre ne s'ouvre que pour un appel qui va
 //   réellement partir.
 //
-// · L'ENVIRONNEMENT est résolu AVANT tout le reste, et l'ouverture commerciale
-//   ne le modifie JAMAIS. Une instance en pré-ouverture est en PROD : on lui
-//   refuse d'agir, on ne la bascule pas en TEST. Confondre les deux recréerait
-//   `activeMode` sous un autre nom — exactement ce que L2 a supprimé.
+// · L'ENVIRONNEMENT est résolu AVANT tout le reste. Une instance sert UN monde,
+//   celui de son runtime, et personne ne le choisit — surtout pas le projet.
+//
+// ── CE QUI A DISPARU DE CETTE LISTE, ET POURQUOI ────────────────────────────
+//
+// Trois étapes ont été retirées. Aucune ne protégeait une ressource :
+//
+//   · L'OCTROI (`capabilityGrants`) demandait « a-t-on coché cette case pour ce
+//     projet ? ». Une case cochée à la main n'établit rien : elle ne dit pas à
+//     qui appartient le contrat qu'on va facturer. C'était une configuration
+//     déguisée en autorisation — un projet légitime restait bloqué tant qu'un
+//     opérateur n'avait pas deviné quelle case il lui manquait.
+//
+//   · L'OUVERTURE COMMERCIALE refusait les écritures financières et légales
+//     tant qu'un opérateur n'avait pas basculé la fiche en LIVE. Décision
+//     assumée de la mission de simplification : un projet appairé et configuré
+//     agit sans geste supplémentaire.
+//
+//   · « EST-ELLE SERVIE ? » (`migrated`) n'a plus d'objet : une capacité figure
+//     au registre ou n'y figure pas, et l'alignement exige un adaptateur pour
+//     chacune.
+//
+// ── CE QUI PROTÈGE RÉELLEMENT, ET QUI N'A PAS BOUGÉ ─────────────────────────
+//
+// L'authentification du pont, l'accord des mondes, le contrat d'entrée strict,
+// la présence des identifiants dans le coffre — et surtout l'APPARTENANCE,
+// vérifiée par chaque adaptateur sur la ressource qu'il touche. C'est elle, et
+// elle seule, qui empêche un projet de rembourser le paiement d'un autre : une
+// case cochée ne l'a jamais fait.
 //
 // ── CE QUE LE PROJET NE PEUT PAS FAIRE ──────────────────────────────────────
 //
@@ -40,7 +52,6 @@
 // jeton d'appairage et de l'instance qui répond.
 import logger from '../../utils/logger.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
-import { canExecute, DECISION } from '../integratedApi/commercialReadiness.js';
 import { getCapabilityDefinition, IDEMPOTENCY } from './capabilityRegistry.js';
 import {
   CLAIM, DEFAULT_CONVERGENCE, claimOperation, settleSucceeded, settleFailure,
@@ -49,7 +60,6 @@ import {
   INVOCATION_SOURCES, buildInvocationContext, buildPanelSelfContext,
   describeContext, partitionKey,
 } from './invocationContext.js';
-import { assertGranted } from './capabilityGrants.js';
 import { resolveCredentialsForCapability } from './credentialResolver.js';
 import { executeCapability } from './providerAdapters.js';
 import {
@@ -57,7 +67,6 @@ import {
   CapabilityError,
   capabilityUnknown,
   capabilityNotAvailable,
-  capabilityBlockedPreopening,
   capabilityInputInvalid,
   capabilityOperationInFlight,
   capabilityOperationUnresolved,
@@ -87,7 +96,12 @@ export async function invokeCapability({
    * `PANEL_INTERNAL` est le Panel agissant POUR un projet sans que le projet
    * demande rien — le remboursement depuis l'onglet Finances. Le projet reste
    * le périmètre entier : appartenance, monde, identifiants et journal en
-   * dépendent. Une seule étape change, l'octroi — voir plus bas.
+   * dépendent.
+   *
+   * Cette source relâchait autrefois UNE étape, l'octroi de capacité. Les
+   * octrois ayant disparu, elle ne relâche plus rien : les trois sources
+   * traversent désormais exactement les mêmes contrôles, et ne se distinguent
+   * que par le périmètre qu'elles désignent et par ce que le journal en dit.
    */
   source = INVOCATION_SOURCES.PROJECT_BRIDGE,
 }) {
@@ -118,8 +132,8 @@ export async function invokeCapability({
      * `buildInvocationContext` exige un `panelProject` — et c'est bien : pour
      * un projet, l'absence de fiche signifie que la garde d'authentification a
      * été contournée. Le Panel écrivant à ses propres exploitants n'a pas de
-     * fiche du tout, et lui en fabriquer une ferait décider d'un envoi par
-     * l'état d'ouverture et les octrois d'un projet arbitraire.
+     * fiche du tout, et lui en fabriquer une ferait porter son envoi par le
+     * périmètre — donc par les ressources — d'un projet arbitraire.
      *
      * Le contexte est donc construit par une fonction DISTINCTE, atteignable
      * uniquement par cette source. Aucun chemin projet ne peut y arriver : la
@@ -139,64 +153,29 @@ export async function invokeCapability({
   }
 
   try {
-    // ── 4. A-T-IL LE DROIT ? ────────────────────────────────────────────────
+    // ── 4. L'ENTRÉE EST-ELLE CONFORME ? ─────────────────────────────────────
     /**
-     * L'OCTROI RÉPOND À « CE PROJET PEUT-IL DEMANDER CECI ? », ET RIEN D'AUTRE.
+     * LA PREMIÈRE QUESTION EST DÉSORMAIS CELLE DU CONTRAT.
      *
-     * Quand le Panel agit lui-même (L10.4), aucun projet ne demande. Exiger
-     * l'octroi reviendrait à obliger un opérateur à s'accorder à lui-même, sur
-     * la fiche du client, le droit d'utiliser son propre outil — puis à laisser
-     * ce droit ouvert, où il deviendrait exactement ce qu'il prétendait
-     * empêcher : un pont projet capable d'appeler `billing.refund`.
+     * Elle l'était déjà en pratique : les trois étapes qui la précédaient
+     * n'interrogeaient que des états de configuration — une case cochée, un
+     * booléen d'ouverture, un booléen de migration. Aucune ne regardait ce que
+     * l'appel voulait faire, ni à quelle ressource il voulait le faire.
      *
-     * Le contraire est donc plus sûr. Un pont projet reste refusé faute
-     * d'octroi, et la source interne, elle, n'est atteignable que par une route
-     * du Panel derrière l'authentification opérateur. AUCUNE autre étape n'est
-     * sautée : politique commerciale, migration, contrat, coffre, réservation,
-     * appartenance et journal s'appliquent à l'identique.
+     * Ce que le projet demande est validé ici ; À QUI cela appartient est
+     * établi plus bas, par l'adaptateur, qui est le seul à savoir lire un
+     * contrat, un client Stripe ou une zone DNS.
      */
-    /**
-     * `PANEL_SELF` rejoint `PANEL_INTERNAL` pour la même raison, en plus fort
-     * encore : il n'y a pas de projet du tout. Un octroi répond à « ce projet
-     * peut-il demander ceci » — la question n'a pas de sujet.
-     */
-    if (context.source !== INVOCATION_SOURCES.PANEL_INTERNAL
-      && context.source !== INVOCATION_SOURCES.PANEL_SELF) {
-      assertGranted(context, definition);
-    }
-
-    // ── 5. LE COMMERCE EST-IL OUVERT POUR CET EFFET ? ───────────────────────
-    // Rien n'a encore été lu du coffre, aucun adaptateur n'a été atteint : un
-    // refus ici garantit zéro contact fournisseur, par construction.
-    const verdict = canExecute({
-      capability: definition.code,
-      commercialState: context.commercialState,
-    });
-    if (verdict.decision !== DECISION.ALLOWED) {
-      if (verdict.decision === DECISION.BLOCKED_PREOPENING) {
-        throw capabilityBlockedPreopening(definition.code, definition.effectNature);
-      }
-      // `UNKNOWN_CAPABILITY` / `INVALID_STATE` : la politique ne sait pas
-      // trancher. Fail closed — on ne devine pas le droit d'agir pour de vrai.
-      throw capabilityNotAvailable(definition.code, verdict.decision);
-    }
-
-    // ── 6. LA CAPACITÉ EST-ELLE SERVIE ? ────────────────────────────────────
-    if (!definition.migrated) {
-      throw capabilityNotAvailable(definition.code, 'NOT_MIGRATED');
-    }
-
-    // ── 7. L'ENTRÉE EST-ELLE CONFORME ? ─────────────────────────────────────
     const input = parseInput(definition, payload);
 
-    // ── 8. A-T-ON DES IDENTIFIANTS ? ────────────────────────────────────────
+    // ── 5. A-T-ON DES IDENTIFIANTS ? ────────────────────────────────────────
     // Les valeurs déchiffrées sont obtenues et consommées dans la même
     // expression : elles ne sont jamais liées à une variable de portée large,
     // jamais journalisées, jamais attachées à une erreur.
     const resolved = await resolveCredentialsForCapability(context, definition);
 
     /**
-     * ── 9. RÉSERVER L'OPÉRATION — LE DERNIER GESTE AVANT LE FOURNISSEUR ─────
+     * ── 6. RÉSERVER L'OPÉRATION — LE DERNIER GESTE AVANT LE FOURNISSEUR ─────
      *
      * ══ POURQUOI ICI, ET NULLE PART AILLEURS ═══════════════════════════════
      *
@@ -251,7 +230,7 @@ export async function invokeCapability({
       };
     }
 
-    // ── 10. EXÉCUTER ────────────────────────────────────────────────────────
+    // ── 7. EXÉCUTER ─────────────────────────────────────────────────────────
     let raw;
     try {
       raw = await executeCapability({
@@ -305,6 +284,8 @@ export async function invokeCapability({
           ? result[definition.correlationField]
           : result.providerMessageId) ?? null,
         durationMs,
+        /** Les coordonnées du document rendu, quand il y en a un (L11.1). */
+        artefact: describeArtefact(result),
       });
     }
 
@@ -312,6 +293,7 @@ export async function invokeCapability({
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
       durationMs,
       operationId: actId ?? null,
+      artefact: describeArtefact(result),
     });
 
     return {
@@ -352,7 +334,6 @@ function fallbackContext(panelProject, requestId) {
   return {
     projectId: panelProject?.projectId ?? null,
     environment: null,
-    commercialState: null,
     requestId: requestId ?? null,
     source: INVOCATION_SOURCES.PROJECT_BRIDGE,
   };
@@ -549,7 +530,37 @@ function parseOutput(definition, raw) {
  * l'action a eu lieu chez le fournisseur, et lever ici ferait croire au projet
  * qu'elle n'a pas eu lieu — c'est-à-dire l'inciterait à la rejouer.
  */
-async function audit(context, definition, { outcome, durationMs, errorCode = null, operationId = null }) {
+/**
+ * L'ARTEFACT PRODUIT — juste assez pour dire QUOI est parti (L11.1).
+ *
+ * ── CE QU'ELLE RÉPARE ───────────────────────────────────────────────────────
+ *
+ * L'audit d'ownership avait relevé que le journal ne portait que le code du
+ * modèle. On savait donc qu'un `PASSWORD_RESET_REQUEST` était parti — jamais
+ * LEQUEL : celui du Panel, ou celui de SB Auto, et dans quelle version. La
+ * question « quel document exact est parti, pour quel projet ? » n'avait pas de
+ * réponse *a posteriori*, ce qui est la définition d'un journal insuffisant.
+ *
+ * ── POURQUOI UNE LISTE BLANCHE, ET PAS `...result` ──────────────────────────
+ *
+ * Une sortie de capacité peut contenir un identifiant de message, demain autre
+ * chose. Recopier la sortie entière dans un journal lu sans précaution ferait
+ * entrer, un jour, une donnée qui n'a rien à y faire. On nomme donc les champs,
+ * un par un, et aucun d'eux n'est une donnée personnelle : ce sont des
+ * coordonnées de DOCUMENT.
+ */
+function describeArtefact(result) {
+  if (!result || typeof result !== 'object') return null;
+  const artefact = {};
+  for (const field of ['templateCode', 'templateScope', 'templateScopeId', 'templateVersion', 'templateSource']) {
+    if (result[field] !== undefined) artefact[field] = result[field];
+  }
+  return Object.keys(artefact).length ? artefact : null;
+}
+
+async function audit(context, definition, {
+  outcome, durationMs, errorCode = null, operationId = null, artefact = null,
+}) {
   const observation = {
     capability: definition.code,
     provider: definition.provider,
@@ -558,6 +569,7 @@ async function audit(context, definition, { outcome, durationMs, errorCode = nul
     durationMs,
     outcome,
     errorCode,
+    ...(artefact ? { artefact } : {}),
   };
 
   logger.info(`[capabilities] ${JSON.stringify(observation)}`);

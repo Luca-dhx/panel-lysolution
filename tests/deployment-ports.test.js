@@ -622,7 +622,16 @@ section('ARCHITECTURE — le moteur lit le serveur, l’application tient la bas
   check('le moteur des ports n’importe AUCUN modèle du Panel',
     !/models\//.test(moteur));
   check('…ni le registre applicatif', !/portRegistry/.test(moteur));
-  check('…il ne parle qu’au Transport', /transport\.exec/.test(moteur));
+  /**
+   * IL NE PARLE QU'AU TRANSPORT — À TRAVERS LE CONTRAT.
+   *
+   * Ce contrôle cherchait `transport.exec`. Depuis que toute commande distante
+   * passe par le contrat canonique (`sonde` / `runRemoteCommand`), cette
+   * orthographe a disparu du moteur — mais l'invariant, lui, est intact et même
+   * renforcé : le module reçoit un transport et ne connaît rien d'autre.
+   */
+  check('…il ne parle qu’au Transport, via le contrat de commande',
+    /sonde\(transport,|runRemoteCommand\(transport,/.test(moteur));
 
   const registre = lire('backend', 'src', 'services', 'deployment', 'portRegistry.service.js');
   check('le registre s’appuie sur le moteur pour lire le serveur',

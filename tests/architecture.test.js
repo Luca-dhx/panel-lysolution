@@ -100,6 +100,22 @@ section('Le transport réseau vers les projets est exclusif');
     // garde d'environnement, la borne de concurrence et le timeout court
     // auraient été recopiés — donc, un jour, oubliés quelque part.
     'backend/src/services/sync/syncDelivery.service.js',
+    /**
+     * LOT COMPTES VIVANTS — la LECTURE des comptes d'un projet.
+     *
+     * ══ POURQUOI ELLE PORTE LE CLIENT ELLE-MÊME ═══════════════════════════
+     *
+     * Le moteur d'exécution ne convient pas : il modélise des RUNS — des
+     * actes approuvables, journalisés, potentiellement longs. Celle-ci est une
+     * lecture d'écran, synchrone, qui doit répondre en quelques centaines de
+     * millisecondes ou dire qu'elle n'a pas pu. La faire passer par un run
+     * créerait une trace d'exécution à chaque affichage de fiche.
+     *
+     * Elle est étroite et sans effet de bord : un seul GET, aucune écriture
+     * chez le projet, aucune écriture chez nous — le Panel ne conserve RIEN de
+     * ce qu'elle rapporte, et c'est tout l'objet du lot.
+     */
+    'backend/src/services/registry/projectAccounts.service.js',
   ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
   check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,
@@ -172,6 +188,34 @@ section('Aucune dépendance vers le dépôt voisin');
     path.join('tests', 'deployment-transactionality.test.js'),
     // Harnais cross-dépôt : démarre un VRAI SB Auto, dans son processus.
     path.join('tests', 'helpers', 'sbauto-remote.js'),
+    /**
+     * L11.1 — PARITÉ DES DEUX REGISTRES DE VARIABLES.
+     *
+     * Deux registres coexistent tant que l'envoi projet n'est pas retiré : celui
+     * du Panel, et son exemplaire d'origine côté projet. L'audit d'ownership les
+     * a comparés clé par clé — ils sont identiques — et a relevé qu'AUCUN test ne
+     * le garantissait. Une variable requise ajoutée d'un seul côté produirait un
+     * refus d'envoi en PRODUCTION, découvert chez un destinataire.
+     *
+     * Le contrôle ne peut donc pas vivre ailleurs : comparer deux contrats exige
+     * de lire les deux. Il se retire proprement si le voisin est absent — il
+     * déclare alors le contrôle NON EXÉCUTÉ, jamais vert.
+     */
+    path.join('tests', 'email-template-multi-project.test.js'),
+    /**
+     * LOT COMPTES VIVANTS — LA GARDE DE PARITÉ DE REPRÉSENTATION.
+     *
+     * Cette suite importe, depuis le dépôt voisin, la LISTE DES CHAMPS du
+     * contrat de compte (`PROJECT_ACCOUNT_VIEW_FIELDS`). C'est délibéré et
+     * c'est le seul moyen de tenir la promesse du lot : le Panel et le Manager
+     * décrivent les mêmes personnes avec les mêmes champs.
+     *
+     * Comparer une liste écrite ICI à la réponse du projet ne prouverait rien —
+     * les deux dériveraient ensemble le jour où quelqu'un les met à jour toutes
+     * les deux « pour faire passer le test ». En lisant le contrat À LA SOURCE,
+     * un champ ajouté d'un seul côté fait tomber la suite.
+     */
+    path.join('tests', 'project-accounts-live.test.js'),
   ];
   const workspaceAware = [...testFiles, ...backendFiles, ...frontendFiles, ...deployFiles]
     .filter((file) => !file.endsWith('architecture.test.js')) // le contrôleur ne s'audite pas lui-même

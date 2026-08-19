@@ -24,7 +24,6 @@ const transport = await import('../backend/src/services/integratedApi/stripe/str
 const ownership = await import('../backend/src/services/integratedApi/stripe/stripeResourceOwnership.js');
 const providerRegistry = await import('../backend/src/services/integratedApi/providerRegistry.js');
 const environment = await import('../backend/src/services/integratedApi/environment.js');
-const commercial = await import('../backend/src/services/integratedApi/commercialReadiness.js');
 
 const { STRIPE_CAPABILITIES, STRIPE_CAPABILITY_CODES } = capabilities;
 const { TRANSPORT_CODES, OUTCOMES } = transport;
@@ -81,7 +80,12 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * vaut toujours rien. La seule restée fermée est `billing.invoice.list`, qui
    * demanderait une liste plus large que son dû.
    */
-  const servies = STRIPE_CAPABILITY_CODES.filter((c) => STRIPE_CAPABILITIES[c].migrated);
+  /**
+   * FIGURER AU CATALOGUE, C'EST ÊTRE SERVIE. Le filtre sur `migrated` a
+   * disparu avec le booléen : le catalogue ne décrit plus que des contrats
+   * réellement exécutés.
+   */
+  const servies = [...STRIPE_CAPABILITY_CODES];
   check('douze capacités servies — toutes', servies.length === 12);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
@@ -139,10 +143,18 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
     }));
   check('…et l’abonnement est ancré par FILIATION, pas par création',
     STRIPE_CAPABILITIES['billing.subscription.retrieve'].requiresResourceOwnership === true);
-  check('chaque capacité NON servie porte une note de migration',
-    STRIPE_CAPABILITY_CODES
-      .filter((c) => !STRIPE_CAPABILITIES[c].migrated)
-      .every((c) => Boolean(STRIPE_CAPABILITIES[c].migrationNote)));
+  /**
+   * IL N'Y A PLUS DE CAPACITÉ NON SERVIE, DONC PLUS DE NOTE DE MIGRATION.
+   *
+   * Ce contrôle exigeait qu'une capacité fermée explique ce qui la retenait. Il
+   * rendait l'état « déclarée mais pas servie » acceptable en le documentant —
+   * et c'est exactement ainsi que `billing.subscription.reconcile` a pu y rester
+   * des lots entiers, avec une note parfaitement à jour.
+   */
+  check('aucune capacité ne porte de note de migration',
+    STRIPE_CAPABILITY_CODES.every((c) => !('migrationNote' in STRIPE_CAPABILITIES[c])));
+  check('aucune capacité ne porte de drapeau de migration',
+    STRIPE_CAPABILITY_CODES.every((c) => !('migrated' in STRIPE_CAPABILITIES[c])));
 
   /**
    * LE REMBOURSEMENT EST DÉSORMAIS CONTRACTUALISÉ (L10.4).
@@ -290,25 +302,50 @@ section('3. COMMERCIAL READINESS — l’écriture financière avant l’ouvertu
     financieres.includes('billing.subscription.cancel_now')
     && financieres.includes('billing.subscription.cancel_at_period_end'));
 
+  /**
+   * ── CE QUE `financial` PILOTE, ET CE QU'IL NE PILOTE PLUS ─────────────────
+   *
+   * Ce drapeau commandait deux choses : la DOCTRINE DE REJEU (idempotence
+   * fournisseur et poignée de corrélation obligatoires) et l'ACCÈS (refus en
+   * pré-ouverture). La seconde a disparu avec la politique d'ouverture.
+   *
+   * Ce qu'on vérifie ici est donc ce qui reste, et c'est le plus important :
+   * une écriture financière ne part JAMAIS sans clé d'idempotence ni moyen de
+   * retrouver l'objet qu'elle a produit. C'est cela qui empêche un double
+   * débit — la pré-ouverture, elle, ne protégeait que les instances qui
+   * n'avaient encore aucun client.
+   */
   for (const code of financieres) {
-    const verdict = commercial.canExecute({ capability: code, commercialState: 'PREOPENING' });
-    check(`${code} : bloquée en pré-ouverture`, verdict.decision === commercial.DECISION.BLOCKED_PREOPENING);
-    const ouvert = commercial.canExecute({ capability: code, commercialState: 'LIVE' });
-    check(`${code} : autorisée une fois ouverte`, ouvert.decision === commercial.DECISION.ALLOWED);
+    check(`${code} : porte une idempotence fournisseur`,
+      STRIPE_CAPABILITIES[code].idempotency === 'PROVIDER_IDEMPOTENT');
+    /**
+     * L'appartenance n'est exigée que de celles qui CONSOMMENT une ressource
+     * préexistante. `billing.checkout.create` n'en consomme aucune : elle CRÉE
+     * la session, et la lie aussitôt — son appartenance naît de l'acte, elle ne
+     * le précède pas. Exiger une preuve d'appartenance d'elle reviendrait à
+     * demander de posséder ce qui n'existe pas encore.
+     */
+    const definition = STRIPE_CAPABILITIES[code];
+    if (definition.resourceKind) {
+      check(`${code} : exige la preuve d’appartenance de sa ressource`,
+        definition.requiresResourceOwnership === true);
+    } else {
+      check(`${code} : crée sa ressource, et porte de quoi la lier`,
+        Boolean(definition.correlationField ?? true));
+    }
   }
 
-  // Les LECTURES ne sont PAS bloquées : diagnostiquer et réconcilier doivent
-  // rester possibles avant l'ouverture — c'est même ce qu'on fait à ce moment-là.
-  const lectures = STRIPE_CAPABILITY_CODES.filter((c) => !STRIPE_CAPABILITIES[c].financial);
-  for (const code of lectures) {
-    const connu = commercial.CAPABILITY_EFFECTS[code] !== undefined;
-    if (!connu) {
-      check(`${code} : effet proposé READ_ONLY (câblage L1.75 attendu)`,
-        STRIPE_CAPABILITIES[code].effectNature === commercial.EFFECT.READ_ONLY);
-      continue;
-    }
-    check(`${code} : autorisée en pré-ouverture`,
-      commercial.canExecute({ capability: code, commercialState: 'PREOPENING' }).decision === commercial.DECISION.ALLOWED);
+  /**
+   * ET AUCUNE CAPACITÉ NE PORTE PLUS DE NATURE D'EFFET.
+   *
+   * La taxinomie (READ_ONLY, FINANCIAL_WRITE, LEGAL_WRITE…) n'avait qu'un
+   * lecteur — la politique d'ouverture — et disparaît avec elle. On le vérifie
+   * plutôt que de la relire : une classification que rien n'applique finirait
+   * par diverger en silence.
+   */
+  for (const code of STRIPE_CAPABILITY_CODES) {
+    check(`${code} : aucune nature d’effet déclarée`,
+      !('effectNature' in STRIPE_CAPABILITIES[code]));
   }
 }
 

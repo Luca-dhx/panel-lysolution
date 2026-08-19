@@ -53,9 +53,15 @@ section('Chemins du contrat PanelBridge (servis par le Panel)');
   // voulu doit faire échouer ce test, pas se fondre dans un comptage dynamique.
   // C'est la raison d'être de cette ligne : un canal qui livre un secret ne
   // doit jamais pouvoir apparaître discrètement.
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 8);
+  // 9 depuis L12.B, qui ajoute l'introspection d'identité fédérée — le seul
+  // moyen pour un projet d'apprendre qu'une session développeur doit être
+  // fermée. Comme le canal de vérification, elle est nommée ci-dessous : un
+  // chemin de plus doit se déclarer, jamais se fondre dans un comptage.
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 9);
   check('le canal de vérification est au contrat',
     inMirror.includes('/bridge/v1/webhooks/{provider}/verification-secret'));
+  check('l’introspection d’identité fédérée est au contrat',
+    inMirror.includes('/bridge/v1/federation/introspect'));
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
   check('la passerelle de capacités est au contrat',
     inMirror.includes('/bridge/v1/capabilities/{code}/invoke'));
@@ -65,7 +71,7 @@ section('Chemins du contrat ProjectBridge (consommés par le Panel)');
 {
   const inSpec = specPaths(projectSpec, /^ {2}(\/api\/project-bridge\/v1\/[^\s:]+):\s*$/gm).sort();
   const inMirror = Object.values(contract.PROJECT_API_ROUTES).sort();
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 9);
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 10);
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
   check('GET /manifest présent (ajout 1.1.0)', inMirror.includes('/api/project-bridge/v1/manifest'));
 }
@@ -141,6 +147,10 @@ section('Types d’entités synchronisées');
    *   INCIDENT  « que se passe-t-il ? » → observation seule, collection
    */
   /**
+   * VINGT depuis 1.8.0 : `PROJECT_EMAIL_TEMPLATE_USAGE` rejoint le miroir — le
+   * projet déclare les modèles d'e-mail qu'il consomme, et le Panel s'y
+   * conforme au lieu de deviner.
+   *
    * DIX-NEUF depuis R10.5C : `SIGNATURE_EVENT` rejoint le miroir.
    *
    * Même raison d'être que `EMAIL_DELIVERY_EVENT` — après cutover, les webhooks
@@ -150,7 +160,7 @@ section('Types d’entités synchronisées');
    * Le nombre reste écrit en dur : c’est lui qui force à relire le contrat
    * quand une entité s’ajoute, plutôt que de la voir apparaître en silence.
    */
-  check('19 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 19);
+  check('20 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 20);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',
@@ -168,9 +178,10 @@ section('Types d’entités synchronisées');
    * dernier état métier exposé au Panel qui ne voyageait pas, et qu'un écran
    * allait donc lire directement chez le projet à chaque affichage.
    */
-  check('les cinq types appliqués sont nommés',
-    contract.APPLIED_ENTITY_TYPES.length === 5
-    && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT', 'TEAM_MEMBER', 'PROJECT_SITE_STATUS']
+  check('les six types appliqués sont nommés',
+    contract.APPLIED_ENTITY_TYPES.length === 6
+    && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT', 'TEAM_MEMBER',
+      'PROJECT_SITE_STATUS', 'PROJECT_EMAIL_TEMPLATE_USAGE']
       .every((t) => contract.APPLIED_ENTITY_TYPES.includes(t)));
   check('statuts d’accusé conformes', ['APPLIED', 'DUPLICATE', 'IGNORED', 'REJECTED'].every(
     (s) => contract.ACK_STATUS[s] === s && panelSpec.includes(s),
@@ -248,7 +259,7 @@ section('ProjectManifest (ajout 1.1.0) : identique aux deux specs, miroir confor
 
 section('Client sortant : une méthode par opération du contrat');
 {
-  check('9 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 9);
+  check('10 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 10);
   const client = new ProjectBridgeClient({ baseUrl: 'https://exemple.invalid', bridgeToken: 'x' });
   check('chaque méthode existe sur le client',
     PROJECT_BRIDGE_CLIENT_METHODS.every((m) => typeof client[m] === 'function'));
@@ -273,13 +284,14 @@ section('Client sortant : la version de contrat part SUR LE FIL, à chaque appel
     });
   };
 
-  // Un jeu d'arguments par méthode : le contrat en compte 9, toutes doivent
+  // Un jeu d'arguments par méthode : le contrat en compte 10, toutes doivent
   // être exercées — une méthode ajoutée sans argument ici fera échouer le
   // compte plus bas, jamais passer silencieusement.
   const invocations = {
     ping: (c) => c.ping(),
     getIdentity: (c) => c.getIdentity(),
     getHealth: (c) => c.getHealth(),
+    getAccounts: (c) => c.getAccounts(),
     getManifest: (c) => c.getManifest(),
     deliverChanges: (c) => c.deliverChanges([]),
     readLocalChanges: (c) => c.readLocalChanges({ cursor: null, limit: 10 }),

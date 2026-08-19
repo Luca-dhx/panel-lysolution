@@ -257,8 +257,18 @@ async function rearm(existing, { projectId, capability, operationId, at, from })
     : { claim: CLAIM.IN_FLIGHT, operation: existing };
 }
 
-/** L'opération a abouti : on fige le résultat qu'un rejeu devra rendre. */
-export async function settleSucceeded(operation, { providerMessageId = null, durationMs = null } = {}) {
+/**
+ * L'opération a abouti : on fige le résultat qu'un rejeu devra rendre.
+ *
+ * `artefact` porte, pour un envoi de modèle, LES COORDONNÉES DU DOCUMENT
+ * RÉELLEMENT RENDU (L11.1). Il n'est connu qu'ici : la réservation précède le
+ * rendu, et écrire une version devinée à ce moment-là serait un mensonge daté.
+ * Absent pour toute capacité qui n'est pas un envoi — les champs restent `null`,
+ * ce qui se lit « sans objet » et non « perdu ».
+ */
+export async function settleSucceeded(operation, {
+  providerMessageId = null, durationMs = null, artefact = null,
+} = {}) {
   const at = nowIso();
   await PanelCapabilityOperation.updateOne(
     { projectId: operation.projectId, capability: operation.capability, operationId: operation.operationId },
@@ -270,6 +280,9 @@ export async function settleSucceeded(operation, { providerMessageId = null, dur
         settledAt: at,
         errorCode: null,
         errorMessage: '',
+        ...(artefact?.templateScope !== undefined ? { templateScope: artefact.templateScope ?? null } : {}),
+        ...(artefact?.templateScopeId !== undefined ? { templateScopeId: artefact.templateScopeId ?? null } : {}),
+        ...(artefact?.templateVersion !== undefined ? { templateVersion: artefact.templateVersion ?? null } : {}),
       },
     },
   );
@@ -333,6 +346,10 @@ export function describeOperation(operation) {
     status: operation.status,
     providerMessageId: operation.providerMessageId ?? null,
     templateCode: operation.templateCode ?? null,
+    /** La portée et la version RÉELLEMENT expédiées — `null` hors envoi de modèle. */
+    templateScope: operation.templateScope ?? null,
+    templateScopeId: operation.templateScopeId ?? null,
+    templateVersion: operation.templateVersion ?? null,
     environment: operation.environment,
     attempts: operation.attempts ?? 0,
     startedAt: operation.startedAt,

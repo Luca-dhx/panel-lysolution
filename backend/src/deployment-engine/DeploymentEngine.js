@@ -13,7 +13,7 @@
  */
 import { parseTargetUrl, wildcardBasesFromEnv } from './url.js';
 import { runPreflight } from './preflight.js';
-import { runPipeline } from './pipeline.js';
+import { runPipeline, PIPELINE_STEPS } from './pipeline.js';
 import { getProjectVersion, buildArtifact, localExec } from './build.js';
 import { duplicateProject } from '../duplication-engine/duplication.js';
 import { createBackup, restoreBackup, listBackups } from './backup.js';
@@ -24,11 +24,16 @@ import { DeploymentError, PreflightError, ValidationError } from './errors.js';
 import { RunRecorder } from './report/RunRecorder.js';
 import { createRedactor } from './report/sanitize.js';
 import { renderMarkdown } from './report/markdown.js';
-import { toCanonical, canonicalStep, CANONICAL_ORDER } from './steps.js';
+import {
+  toCanonical, isLastRawOfStep, canonicalStep, publicationBoundaryStep,
+  CANONICAL_ORDER, RUN_MODES,
+} from './steps.js';
+import { createDeploymentStepTracker } from './stepTracker.js';
 import { derivePrimarySubHost, derivePrimarySubUrl, isCoveredByWildcard } from './hostnames.js';
 import { resolveVpsIp, checkDomainPointsToVps } from './dns.js';
 import { dnsPlanPhase, dnsMutationPhase } from './dns/dnsPhase.js';
 import { runLocalPreflight } from './localPreflight.js';
+import { DNS_REMEDIATION_HINTS } from './config/project.profile.js';
 import {
   rollbackToPrevious, describeRollbackState, verifyPreviousIntegrity,
 } from './rollback.js';
@@ -449,15 +454,41 @@ export class DeploymentEngine {
      * tant qu'il en reste une.
      */
     const ouvertes = new Set();
+    /**
+     * ══ LE TRACEUR S'INTERPOSE — définition d'un côté, exécution de l'autre ══
+     *
+     * `emitStep` résolvait déjà le libellé depuis le registre. Ce qu'il ne
+     * faisait pas : refuser une étape hors registre, un statut hors vocabulaire
+     * ou une transition impossible. Un `nginx.config` mal orthographié produisait
+     * un événement d'apparence normale, portant son identifiant comme libellé,
+     * ignoré par la checklist — aucune erreur, juste une ligne qui n'arrive
+     * jamais.
+     *
+     * NON STRICT, et c'est délibéré : une violation de protocole est un défaut
+     * de PROGRAMMATION, pas une raison d'interrompre un déploiement en cours sur
+     * une machine réelle. Elle est enregistrée, journalisée, et le rapport la
+     * porte ; les tests, eux, la font échouer.
+     */
+    const tracker = createDeploymentStepTracker({
+      mode: options.preflightOnly ? RUN_MODES.PRECHECK : RUN_MODES.DEPLOYMENT,
+      strict: false,
+    });
     const emitStep = (stepId, status, extra = {}) => {
       const meta = canonicalStep(stepId);
+      const accepte = tracker.record(stepId, status);
+      if (!accepte) {
+        // Le protocole a été violé : on le DIT, plutôt que d'émettre un
+        // événement qui donnerait une histoire fausse à l'écran et au rapport.
+        recorder.note?.(`Protocole d'étapes : ${tracker.violations().slice(-1)[0]}`);
+        return;
+      }
       recorder.markStep(stepId, { status, ...extra });
       if (status === 'running') { recorder.setCurrentStep(stepId); ouvertes.add(stepId); }
       else ouvertes.delete(stepId);
-      const typeMap = { running: 'step.started', ok: 'step.succeeded', warning: 'step.warning', error: 'step.failed', skipped: 'step.skipped' };
+      const typeMap = { running: 'step.started', ok: 'step.succeeded', warning: 'step.warning', error: 'step.failed', skipped: 'step.skipped', cancelled: 'step.skipped' };
       emit(typeMap[status] || 'step.progress', {
         stepId,
-        label: meta.label,
+        label: tracker.label(stepId),
         status,
         publicMessage: extra.publicMessage || null,
         technicalMessage: extra.technicalMessage || null,
@@ -482,6 +513,33 @@ export class DeploymentEngine {
         });
         if (!finalStepId) finalStepId = stepId;
       }
+
+      /**
+       * ══ ON NE DÉCLARE PAS « DÉPLOYÉ » CE QU'ON N'A PAS FAIT ═══════════════
+       *
+       * Avant de conclure au SUCCÈS, on demande au traceur si une étape
+       * OBLIGATOIRE du mode courant est restée en attente. C'est la garantie
+       * qu'un chemin de sortie oublié — un `return` ajouté un jour pour traiter
+       * un cas particulier — ne peut pas produire un déploiement « réussi »
+       * dont la moitié n'a pas eu lieu.
+       *
+       * La vérification ne s'applique QU'AU SUCCÈS : sur un échec, le premier
+       * défaut est déjà nommé, et le masquer par « étape manquante » ferait
+       * perdre la vraie cause.
+       */
+      if (finalStatus === 'ok') {
+        const manquantes = tracker.missingRequired();
+        if (manquantes.length > 0) {
+          finalStatus = 'error';
+          finalStepId = finalStepId || manquantes[0];
+          errorSummary = {
+            code: 'DEPLOYMENT_PHASE_MISSING',
+            step: manquantes[0],
+            message: `Déploiement incomplet : étape(s) obligatoire(s) non abouties — ${manquantes.join(', ')}.`,
+          };
+        }
+      }
+
       recorder.finalize({ status: finalStatus, finalStepId, errorSummary });
       const structuredReport = recorder.toStructured();
       const markdownReport = redactor.truncate(renderMarkdown(structuredReport), 200_000);
@@ -494,6 +552,16 @@ export class DeploymentEngine {
         managerHost,
         managerUrl,
         steps: recorder.orderedSteps(),
+        /**
+         * LA CHECKLIST DÉRIVE DU REGISTRE ET DE L'EXÉCUTION.
+         *
+         * Ni une troisième liste, ni un instantané figé : le registre donne les
+         * étapes applicables au mode et leurs libellés, le traceur donne leur
+         * état réel. Un rapport ne peut donc plus affirmer qu'une étape s'est
+         * bien passée autrement qu'en la citant telle qu'elle a été observée.
+         */
+        checklist: tracker.checklist(),
+        protocolViolations: tracker.violations(),
         structuredReport,
         markdownReport,
         errorSummary,
@@ -682,6 +750,63 @@ export class DeploymentEngine {
       recorder.markStep('artifact.build', { technicalMessage: `${builtList} · API front=${apiMode}` });
       emitStep('artifact.build', 'ok', { publicMessage: 'Version prête.' });
 
+      /* ══════════════════════════════════════════════════════════════════════
+         LA BARRIÈRE DE PUBLICATION.
+
+         ══ CE QU'ELLE EMPÊCHE ═══════════════════════════════════════════════
+
+         Le pipeline qui suit BASCULE la release : à partir de la première
+         seconde de `artifact.upload`, ce que sert le serveur a changé. Tout ce
+         qui précède est réversible sans que personne ne l'ait vu ; rien de ce
+         qui suit ne l'est.
+
+         Avant ce lot, le Panel pouvait franchir cette frontière alors que son
+         journal durable était tombé : il modifiait la production sans plus être
+         capable d'écrire ce qu'il était en train de faire. Le rapport du run
+         restait figé à l'étape d'avant, et personne — ni l'écran, ni le
+         prochain démarrage — ne pouvait dire jusqu'où le déploiement était allé.
+
+         ══ POURQUOI UN PORT, ET NON UN `await` SUR CHAQUE ÉVÉNEMENT ═════════
+
+         Le moteur n'écrit pas en base : c'est sa règle, et la respecter est ce
+         qui le rend miroir entre les projets. Attendre chaque `onEvent`
+         transformerait un observateur en dépendance, avec sa réentrance et son
+         ordre à garantir.
+
+         Il POSE donc une question, une seule fois, à l'instant qui compte :
+         « ce que je viens de faire est-il durablement écrit ? ». L'application
+         y répond avec ce qu'elle sait. Sans réponse fournie, le moteur passe —
+         un moteur sans journal durable reste un moteur qui déploie.
+         ══════════════════════════════════════════════════════════════════════ */
+      if (typeof options.assertDurable === 'function') {
+        try {
+          await options.assertDurable({ boundary: publicationBoundaryStep()?.id ?? null, version });
+        } catch (err) {
+          finalStepId = publicationBoundaryStep()?.id ?? 'artifact.upload';
+          errorSummary = {
+            code: err.code || 'DEPLOYMENT_RECORDER_UNAVAILABLE',
+            step: finalStepId,
+            message: err.message || 'Journal durable indisponible : publication refusée.',
+          };
+          /**
+           * L'ÉTAPE DE PUBLICATION N'EST MÊME PAS OUVERTE.
+           *
+           * La marquer `running` puis `error` laisserait croire qu'on a
+           * commencé à transférer. On la déclare ÉCHOUÉE sans l'avoir tentée,
+           * ce qui est exactement ce qui s'est passé.
+           */
+          emitStep(finalStepId, 'running');
+          emitStep(finalStepId, 'error', {
+            errorCode: errorSummary.code,
+            publicMessage: 'Publication refusée : le journal du déploiement n’est plus enregistré.',
+            technicalMessage: errorSummary.message,
+          });
+          recorder.setDiagnosis(this._diagnose(errorSummary.code, finalStepId, preflight, recorder));
+          emit('deployment.failed', { status: 'error', finalStepId, errorCode: errorSummary.code });
+          return finish();
+        }
+      }
+
       // -------------------- Pipeline distant --------------------
       const running = new Set();
       const pipeline = await runPipeline({
@@ -699,7 +824,24 @@ export class DeploymentEngine {
             }
           } else if (raw.status === 'ok') {
             this._captureSection(recorder, raw);
-            emitStep(canon, 'ok', { durationMs: raw.durationMs, technicalMessage: raw.detail ? JSON.stringify(raw.detail).slice(0, 500) : null });
+            /**
+             * ══ UNE ÉTAPE COMPOSÉE N'EST RÉUSSIE QU'À SON DERNIER GESTE ═════
+             *
+             * `certbot` puis `reload` composent « Activation HTTPS ». Le moteur
+             * dédoublonnait les DÉPARTS mais émettait un `ok` à chaque geste
+             * terminé : l'étape était déclarée réussie dès la fin de `certbot`,
+             * donc AVANT que la configuration ne soit appliquée. Si `reload`
+             * échouait, l'écran affichait « Activation HTTPS ✔ » puis
+             * « Activation HTTPS ✘ » sur la même ligne.
+             *
+             * Le traceur a rendu ce défaut visible en refusant la transition
+             * `ok → running` du second geste. On ne clôt donc l'étape qu'au
+             * dernier de ses gestes — une donnée, puisque l'ordre du pipeline
+             * est déclaré.
+             */
+            if (isLastRawOfStep(raw.step, PIPELINE_STEPS)) {
+              emitStep(canon, 'ok', { durationMs: raw.durationMs, technicalMessage: raw.detail ? JSON.stringify(raw.detail).slice(0, 500) : null });
+            }
           } else if (raw.status === 'error') {
             emitStep(canon, 'error', { durationMs: raw.durationMs, errorCode: raw.error?.code, technicalMessage: raw.error?.message });
             finalStepId = canon;
@@ -822,11 +964,11 @@ export class DeploymentEngine {
         checks.push('Vérifiez l’adresse IP, le port SSH (22), le mot de passe root et le pare-feu.');
       }
     } else if (stepId === 'dns.verify' || code === 'DNS_NOT_RESOLVED') {
-      checks.push('Vérifiez que le domaine résout vers l’IP du VPS, ou activez la gestion automatique du domaine (Hostinger) dans DEV → Intégrations API.');
+      checks.push(DNS_REMEDIATION_HINTS.notResolved);
     } else if (stepId === 'dns.zone') {
       checks.push('Ce domaine n’est pas géré par le compte configuré. Vérifiez qu’il figure dans le portefeuille Hostinger, ou gérez le DNS manuellement.');
     } else if (stepId === 'dns.provider' || (code || '').startsWith('HOSTINGER_')) {
-      checks.push('Vérifiez la clé API Hostinger (DEV → Intégrations API) et ses permissions DNS.');
+      checks.push(DNS_REMEDIATION_HINTS.provider);
     } else if (stepId === 'dns.read' && code === 'HOSTINGER_RECORD_CONFLICT') {
       checks.push('Un enregistrement existant entre en conflit. Comparez l’ancienne et la nouvelle valeur, puis confirmez la correction ou ajustez le DNS manuellement.');
     } else if (code === 'PREFLIGHT_FAILED') {
@@ -866,14 +1008,13 @@ export class DeploymentEngine {
   }
 
   /** DUPLICATION du projet courant. */
-  async duplicate(input, { onLog, onPhase, stamp, destParent, runSeed } = {}) {
+  async duplicate(input, { onLog, onPhase, stamp, destParent } = {}) {
     return duplicateProject(input, {
       mongoUri: this.mongoUri,
       onLog,
       onPhase,
       stamp,
       destParent,
-      runSeed,
     });
   }
 

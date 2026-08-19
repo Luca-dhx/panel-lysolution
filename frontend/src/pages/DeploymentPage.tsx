@@ -10,7 +10,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
 import { DetailList, Disclosure, Metric } from '@/components/supervision';
-import { deployment as api, errorMessage } from '@/lib/api';
+import {
+  deployment as api, errorMessage, isOffline, isServiceUnavailable,
+} from '@/lib/api';
 import type { DeploymentOverview, DeploymentTarget, PanelSelfInfo } from '@/types.deployment';
 
 export function DeploymentPage() {
@@ -18,6 +20,15 @@ export function DeploymentPage() {
   const [self, setSelf] = useState<PanelSelfInfo | null>(null);
   const [editing, setEditing] = useState<DeploymentTarget | 'new' | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * UNE INDISPONIBILITÉ N'EST PAS UNE ERREUR — et ne se présente pas comme telle.
+   *
+   * Un backend qui démarre, une base momentanément absente, une passerelle sans
+   * amont : rien de tout cela n'appelle une action de l'opérateur, et rien ne
+   * demande de se reconnecter. L'afficher en rouge à côté d'un vrai refus de
+   * déploiement apprend à ignorer les deux.
+   */
+  const [indisponible, setIndisponible] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -26,13 +37,55 @@ export function DeploymentPage() {
       setData(overview);
       setSelf(selfInfo);
       setError(null);
+      setIndisponible(false);
     } catch (err) {
-      setError(errorMessage(err, 'Déploiement indisponible.'));
+      if (isServiceUnavailable(err) || isOffline(err)) {
+        setIndisponible(true);
+        setError(null);
+      } else {
+        setIndisponible(false);
+        setError(errorMessage(err, 'Déploiement indisponible.'));
+      }
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
+  /**
+   * TANT QUE LE SERVICE EST ABSENT, ON RÉESSAIE — rapide d'abord, puis espacé.
+   *
+   * La condition d'arrêt est le SUCCÈS, jamais un compteur : dès que `load()`
+   * aboutit, `indisponible` retombe et le minuteur est démonté. L'écran revient
+   * donc seul, sans rechargement manuel.
+   *
+   * L'espacement croît jusqu'à trente secondes pour la même raison qu'ailleurs :
+   * une panne longue ne se répare pas en étant interrogée, et insister ajoute
+   * de la charge à un service qui a besoin de calme pour redémarrer.
+   */
+  const [essais, setEssais] = useState(0);
+  useEffect(() => {
+    if (!indisponible) {
+      setEssais(0);
+      return undefined;
+    }
+    const paliers = [1000, 2000, 5000, 10_000, 30_000];
+    const minuteur = setTimeout(() => {
+      setEssais((n) => n + 1);
+      void load();
+    }, paliers[Math.min(essais, paliers.length - 1)]);
+    return () => clearTimeout(minuteur);
+  }, [indisponible, essais, load]);
+
+  if (indisponible && !data) {
+    return (
+      <div className="page">
+        <div className="alert" role="status" aria-live="polite">
+          <strong>Service momentanément indisponible.</strong>
+          {' '}Reconnexion en cours… Votre session est conservée.
+        </div>
+      </div>
+    );
+  }
   if (error && !data) return <div className="page"><div className="alert alert-error">{error}</div></div>;
   if (!data || !self) return <div className="page"><p className="muted">Chargement…</p></div>;
 
@@ -46,6 +99,13 @@ export function DeploymentPage() {
         </p>
       </header>
 
+      {indisponible ? (
+        <div className="alert" role="status" aria-live="polite">
+          <strong>Service momentanément indisponible.</strong>
+          {' '}Reconnexion en cours… Votre session est conservée, les données
+          affichées datent du dernier échange réussi.
+        </div>
+      ) : null}
       {error ? <div className="alert alert-error">{error}</div> : null}
       {notice ? <div className="alert alert-success">{notice}</div> : null}
 

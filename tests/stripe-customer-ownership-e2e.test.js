@@ -131,8 +131,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -222,8 +220,6 @@ section('2. Deux projets appairés, accordés');
 {
   idA = await appairer(projetA);
   idB = await appairer(projetB);
-  await grantsModule.setCapabilityGrants(idA, [ENSURE, CHECKOUT], ACTEUR);
-  await grantsModule.setCapabilityGrants(idB, [ENSURE, CHECKOUT], ACTEUR);
   await projetA.syncNow();
   await projetB.syncNow();
   await semer(idA, CONTRAT_A1, 'CTR-A1');
@@ -232,27 +228,33 @@ section('2. Deux projets appairés, accordés');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   3. PRÉ-OUVERTURE — la politique GÉNÉRIQUE, sans exception Stripe
+   3. UN PROJET APPAIRÉ AGIT — sans geste de configuration préalable
    ══════════════════════════════════════════════════════════════════════════ */
-section('3. En pré-ouverture, la politique décide — et elle AUTORISE');
+section('3. Aucune ouverture commerciale n’est requise');
 {
   const avant = creations().length;
-  const enPreouverture = await projetA.invokeCapability({
+  const cree = await projetA.invokeCapability({
     code: ENSURE,
     input: { contractRef: CONTRAT_A1, customer: { email: 'client@garage.fr', name: 'Garage A' } },
   });
 
   /**
-   * `billing.customer.ensure` est REVERSIBLE_EXTERNAL_WRITE dans la table de
-   * L1.75, pas FINANCIAL_WRITE : créer un client ne débite rien et se supprime.
-   * La pré-ouverture ne l'interdit donc PAS — et ce n'est pas une exception
-   * Stripe, c'est la politique générique appliquée à un effet réversible.
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ────────
    *
-   * On le vérifie ici plutôt que de l'affirmer, et on vérifie SURTOUT que la
-   * différence vient de l'effet : la capacité financière du même projet, au
-   * même instant, est refusée.
+   * Elle opposait deux capacités du MÊME projet au MÊME instant :
+   * `billing.customer.ensure` (réversible) passait en pré-ouverture, et
+   * `billing.checkout.create` (financière) était refusée. La différence venait
+   * de la nature de l'effet, et c'était la démonstration que la politique était
+   * générique plutôt qu'une exception écrite pour Stripe.
+   *
+   * La politique a été supprimée : les deux passent désormais, et le projet n'a
+   * eu à traverser AUCUN geste d'ouverture pour cela. C'est le résultat visé
+   * par la simplification, et il se vérifie ici sur le chemin réel.
+   *
+   * Ce qui borne encore chacune est ailleurs, et n'a pas bougé : le contrat
+   * d'entrée, puis l'appartenance du contrat visé — éprouvée à la section 5.
    */
-  check('le client est AUTORISÉ en pré-ouverture', enPreouverture.ok === true);
+  check('le client est créé sans aucune ouverture préalable', cree.ok === true);
   check('…et il a réellement été créé', creations().length === avant + 1);
 
   const financiere = await projetA.invokeCapability({
@@ -263,12 +265,9 @@ section('3. En pré-ouverture, la politique décide — et elle AUTORISE');
       operationId: `launch-${CONTRAT_A1}-v1-a1-TEST`,
     },
   });
-  check('…tandis que l’écriture FINANCIÈRE reste bloquée',
-    financiere.code === 'CAPABILITY_BLOCKED_PREOPENING');
-  check('…et le refus nomme l’effet', financiere.panelDetails?.effect === 'FINANCIAL_WRITE');
-
-  await commercial.setCommercialReadiness(idA, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2D' });
-  await commercial.setCommercialReadiness(idB, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2D' });
+  check('…et l’écriture FINANCIÈRE passe elle aussi', financiere.ok === true);
+  check('…sans refus d’ouverture commerciale',
+    financiere.code !== 'CAPABILITY_BLOCKED_PREOPENING');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

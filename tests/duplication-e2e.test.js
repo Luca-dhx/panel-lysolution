@@ -41,6 +41,17 @@ const readEnv = (file) => Object.fromEntries(
 );
 
 const sourceEnv = readEnv(path.join(projectRoot, 'backend', '.env'));
+
+/**
+ * LA SENTINELLE DE NON-COPIE — déposée dans les `node_modules` de la SOURCE.
+ *
+ * Aucune installation ne peut la produire : sa présence dans la copie ne
+ * pourrait signifier qu'une chose, et c'est exactement ce qu'on interdit.
+ * Elle est retirée au nettoyage, quoi qu'il arrive.
+ */
+const SENTINELLE = '.duplication-e2e-sentinelle';
+const sentinellePath = path.join(projectRoot, 'backend', 'node_modules', SENTINELLE);
+fs.writeFileSync(sentinellePath, 'recette de duplication : ce fichier ne doit jamais être copié');
 const logs = [];
 const phases = [];
 
@@ -53,8 +64,20 @@ try {
       folderName,
       dbTest: 'panel_copie_test',
       dbProd: 'panel_copie_prod',
+      /**
+       * ══ LE PREMIER DÉVELOPPEUR : UNE IDENTITÉ, PAS UN SECRET (lot 2C) ═════
+       *
+       * Cet appel postait `devPassword`. Le moteur ne l'accepte plus — et pas
+       * par oubli : il le REFUSE bruyamment, parce qu'un client qui continue de
+       * l'envoyer croirait avoir choisi un mot de passe pendant que le compte
+       * réel s'active par un tout autre chemin. On se conforme donc au contrat
+       * actuel — nom et adresse — et le refus lui-même est éprouvé plus bas,
+       * là où il devient un invariant plutôt qu'une panne de recette.
+       */
       devEmail: 'dev@copie.test',
-      devPassword: 'MotDePasseCopie!42',
+      devName: 'Developpeuse de recette',
+      adminEmail: 'admin@copie.test',
+      adminPassword: 'RecetteCopie!2026#panel',
       githubRepositoryUrl: 'https://github.com/exemple/panel-copie.git',
     },
     {
@@ -71,6 +94,37 @@ try {
   duplicationError = err;
 }
 
+section('Le contrat périmé du premier développeur est REFUSÉ');
+{
+  /**
+   * Un client d'API antérieur au lot 2C poste encore `devPassword`. Le laisser
+   * passer en silence serait le pire des deux mondes : il croirait avoir fixé
+   * le secret d'un compte qui, lui, s'activera par courriel. On vérifie donc
+   * que le moteur refuse, et qu'il refuse AVANT de toucher au disque — un
+   * dossier à demi copié serait à nettoyer à la main.
+   */
+  let refus = null;
+  try {
+    await duplicateProject(
+      {
+        projectName: 'Panel Copie Perimee', folderName: `${folderName}-perime`,
+        dbTest: 'panel_perime_test', dbProd: 'panel_perime_prod',
+        devEmail: 'dev@copie.test', devName: 'Developpeuse de recette',
+        adminEmail: 'admin@copie.test', adminPassword: 'RecetteCopie!2026#panel',
+        devPassword: 'MotDePasseCopie!42',
+      },
+      { sourceRoot: projectRoot, destParent: workDir, mongoUri, stamp: 'recette', runSeed: false },
+    );
+  } catch (err) { refus = err; }
+
+  check('le moteur refuse `devPassword`', refus !== null);
+  check('…en nommant le blocage', refus?.details?.blocker === 'FIRST_DEV_PASSWORD_REFUSED');
+  check('…et en disant par où le secret se choisit désormais',
+    /lien d’activation|lien d'activation/.test(refus?.message ?? ''));
+  check('…sans avoir rien écrit sur le disque',
+    !fs.existsSync(path.join(workDir, `${folderName}-perime`)));
+}
+
 section('La duplication s’exécute réellement');
 {
   check(`duplication aboutie${duplicationError ? ` — ${duplicationError.message}` : ''}`, duplicationError === null);
@@ -84,8 +138,24 @@ section('Structure : la copie est un projet complet');
   for (const entry of ['backend', 'frontend', 'docs', 'tests', 'deploy', 'README.md']) {
     check(`${entry} présent dans la copie`, fs.existsSync(path.join(destRoot, entry)));
   }
-  check('node_modules NON copié (régénéré à l’installation)',
-    !fs.existsSync(path.join(destRoot, 'backend', 'node_modules')));
+  /**
+   * ══ « NON COPIÉ » NE SE PROUVE PLUS PAR L'ABSENCE ═══════════════════════
+   *
+   * Ce contrôle vérifiait que `backend/node_modules` n'existait pas dans la
+   * copie. Il ne le peut plus : la duplication INSTALLE désormais les
+   * dépendances depuis le lockfile de la copie — c'est même la section
+   * suivante qui l'exige. Le dossier existe donc, et pour une bonne raison.
+   *
+   * Ce que la section veut dire reste vrai et reste vérifiable : le contenu
+   * de la copie n'est pas un décalque de celui de la source. On dépose donc
+   * une sentinelle dans les `node_modules` SOURCE avant la duplication ; si
+   * elle réapparaît dans la copie, c'est qu'elle a été copiée — une
+   * installation propre ne l'inventerait jamais.
+   */
+  check('node_modules NON copié — la sentinelle de la source ne s’y trouve pas',
+    !fs.existsSync(path.join(destRoot, 'backend', 'node_modules', SENTINELLE)));
+  check('…et la copie a bien SES dépendances, installées et non décalquées',
+    fs.existsSync(path.join(destRoot, 'backend', 'node_modules')));
   check('.git NON copié (la copie est un projet neuf)', !fs.existsSync(path.join(destRoot, '.git')));
 }
 
@@ -166,7 +236,19 @@ section('Identité : la copie ne se prend pas pour sa source');
   check('nom du projet réécrit', copyEnv.PANEL_NAME === 'Panel Copie Recette');
   check('dépôt GitHub de la COPIE, jamais celui de la source',
     copyEnv.PROJECT_GITHUB_REPOSITORY_URL === 'https://github.com/exemple/panel-copie.git');
-  check('compte DEV initial propre à la copie', copyEnv.SEED_DEV_EMAIL === 'dev@copie.test');
+  /**
+   * L'IDENTITÉ DU PREMIER DÉVELOPPEUR, PAS SON SECRET (lot 2C).
+   *
+   * Ce contrôle lisait `SEED_DEV_EMAIL`. Le couple d'amorçage a été remplacé :
+   * l'assistant écrit `FIRST_DEV_EMAIL` / `FIRST_DEV_NAME`, et le secret n'est
+   * plus écrit nulle part — il se choisit par le lien d'activation.
+   */
+  check('identité du premier développeur, propre à la copie',
+    copyEnv.FIRST_DEV_EMAIL === 'dev@copie.test');
+  check('…avec son nom, tel qu’il a été saisi',
+    (copyEnv.FIRST_DEV_NAME ?? '').replace(/^"|"$/g, '') === 'Developpeuse de recette');
+  check('…et AUCUNE identité d’amorçage héritée de la source',
+    copyEnv.SEED_DEV_EMAIL === undefined);
   check('variables non concernées préservées',
     copyEnv.MONGODB_URI !== undefined && copyEnv.ENV !== undefined);
 }
@@ -216,8 +298,21 @@ section('Validité : la copie est du code exécutable');
     path.join(backendSrc, 'config', 'env.js'),
   ).href;
   const copyEnv = readEnv(path.join(destRoot, 'backend', '.env'));
+  /**
+   * L'ENVIRONNEMENT DU HARNAIS N'EST PAS CELUI DE LA COPIE.
+   *
+   * Ce processus a chargé le `.env` de la SOURCE : `process.env` porte donc
+   * ses identifiants d'amorçage. Les laisser filtrer ferait juger la copie sur
+   * des valeurs qu'elle ne possède pas — et, en `ENV=PROD`, la ferait refuser
+   * pour une raison qui n'est pas la sienne. On les retire explicitement : une
+   * copie fraîche n'en a aucun.
+   */
+  const environnementHarnais = { ...process.env };
+  delete environnementHarnais.SEED_DEV_EMAIL;
+  delete environnementHarnais.SEED_DEV_PASSWORD;
+
   const baseEnv = {
-    ...process.env,
+    ...environnementHarnais,
     PANEL_SKIP_DOTENV: '1',
     ENV: 'TEST',
     MONGODB_URI: mongoUri,
@@ -226,12 +321,21 @@ section('Validité : la copie est du code exécutable');
     JWT_SECRET: copyEnv.JWT_SECRET,
     JWT_EXPIRES_IN: copyEnv.JWT_EXPIRES_IN || '12h',
     BRIDGE_ENCRYPTION_KEY: copyEnv.BRIDGE_ENCRYPTION_KEY,
-    // Les identifiants seed sont ceux de la COPIE : l'environnement du
-    // harnais de test porte ceux du projet source, que le mode PROD refuse
-    // à juste titre (identifiants de développement connus).
-    SEED_DEV_EMAIL: copyEnv.SEED_DEV_EMAIL,
-    SEED_DEV_PASSWORD: copyEnv.SEED_DEV_PASSWORD,
+    /**
+     * AUCUN MOT DE PASSE D'AMORÇAGE N'EST REPRIS — il n'y en a plus.
+     *
+     * `SEED_DEV_PASSWORD` figure dans `ENV_KEYS_TO_STRIP` : le `.env` d'une
+     * copie n'en porte pas, et `copyEnv.SEED_DEV_PASSWORD` est donc `undefined`
+     * par construction. On charge la configuration SANS lui, ce qui est
+     * précisément l'état réel d'une copie fraîche. Le refus en mode PROD des
+     * identifiants de développement connus reste éprouvé plus bas, en les
+     * fournissant explicitement.
+     */
   };
+  check('le `.env` de la copie ne porte AUCUN mot de passe d’amorçage',
+    copyEnv.SEED_DEV_PASSWORD === undefined && copyEnv.SEED_ADMIN_PASSWORD === undefined);
+  check('…mais il porte bien l’IDENTITÉ du premier développeur',
+    copyEnv.FIRST_DEV_EMAIL === 'dev@copie.test');
   const loadConfig = (overrides = {}) => {
     const env = { ...baseEnv, ...overrides };
     for (const [k, v] of Object.entries(overrides)) if (v === undefined) delete env[k];
@@ -260,6 +364,8 @@ section('Validité : la copie est du code exécutable');
 section('Nettoyage');
 {
   await fsp.rm(workDir, { recursive: true, force: true });
+  await fsp.rm(sentinellePath, { force: true });
+  check('la sentinelle est retirée de la source', !fs.existsSync(sentinellePath));
   check('dossier temporaire supprimé', !fs.existsSync(workDir));
   check('aucune trace dans le dépôt', !fs.existsSync(path.join(projectRoot, '..', folderName)));
 }

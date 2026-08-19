@@ -31,21 +31,16 @@
 import { z } from 'zod';
 
 import { getProviderDefinition } from '../providerRegistry.js';
-import { CAPABILITY_EFFECTS, EFFECT } from '../commercialReadiness.js';
 
 /**
- * ── LA TABLE `PROPOSED_EFFECTS` A DISPARU (L9.1) ────────────────────────────
+ * ── LES EFFETS ONT DISPARU AVEC L'OUVERTURE COMMERCIALE ─────────────────────
  *
- * Elle a existé le temps d'un lot. L9 ne pouvait pas écrire dans
- * `commercialReadiness.js` — le fichier portait le travail non committé d'un
- * autre chantier — et proposait donc ses trois effets localement, en se laissant
- * écraser par la table officielle dès qu'elle connaîtrait les codes.
- *
- * Le câblage a eu lieu : les trois codes sont dans `CAPABILITY_EFFECTS`, et
- * c'est la SEULE autorité. Garder la proposition « au cas où » aurait laissé
- * une seconde table capable de fournir un effet à une capacité que la politique
- * officielle aurait, elle, oubliée — c'est-à-dire de masquer exactement la
- * dérive que le contrôle d'alignement doit voir.
+ * Ce fichier lisait `CAPABILITY_EFFECTS` pour attacher un `effectNature` à
+ * chaque verbe DNS. Cette taxinomie n'avait qu'un seul lecteur — la politique
+ * de pré-ouverture, qui décidait quels effets étaient interdits tant qu'une
+ * instance n'était pas déclarée ouverte. La politique supprimée, la taxinomie
+ * n'était plus lue par personne : la garder aurait été conserver une
+ * classification que rien ne vérifie et que rien n'applique.
  */
 
 /** Permission de la famille. `dns:write` existe déjà au registre L3. */
@@ -136,27 +131,19 @@ const recordEnsureOutput = z.object({
 /*  DÉFINITIONS                                                               */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Même fabrique que le registre L3 : `effectNature` est LU dans la table de
- * L1.75, jamais recopié. Une capacité dont l'effet manque là-bas sort d'ici
- * avec `null`, et `validateHostingerCapabilities()` le refuse — un effet absent
- * rendrait la capacité invisible à la politique commerciale.
- */
+/** Même fabrique que le registre L3 — déclarée ici, c'est servie. */
 function capability(code, options) {
   const definition = getProviderDefinition('HOSTINGER');
   return Object.freeze({
     code,
     provider: 'HOSTINGER',
     scope: definition?.scope ?? null,
-    effectNature: CAPABILITY_EFFECTS[code] ?? null,
     label: options.label,
-    migrated: true,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
     timeoutMs: options.timeoutMs,
     idempotency: options.idempotency,
     requiredPermissions: Object.freeze([...options.requiredPermissions]),
-    migrationNote: null,
     /**
      * MARQUEUR L9 — cette capacité désigne une RESSOURCE, et son appartenance
      * doit être prouvée avant exécution. Lu par l'adaptateur ; un test vérifie
@@ -217,20 +204,6 @@ export function validateHostingerCapabilities() {
   for (const [code, definition] of Object.entries(HOSTINGER_CAPABILITIES)) {
     if (definition.code !== code) problems.push(`code incohérent : « ${code} ».`);
     if (definition.provider !== 'HOSTINGER') problems.push(`${code} : fournisseur inattendu.`);
-    /**
-     * LA DÉRIVE QUI COMPTE : un effet absent de la table de L1.75.
-     *
-     * La politique commerciale interroge cette table par code. Un code qu'elle
-     * ignore reçoit `UNKNOWN_CAPABILITY` — refus, donc fail closed — mais le
-     * symptôme serait « le DNS ne marche plus » sans que rien ne désigne la
-     * cause. On le fait échouer ici, au démarrage, là où c'est lisible.
-     */
-    if (!definition.effectNature) {
-      problems.push(`${code} : aucun effet déclaré dans commercialReadiness — la politique ne le verrait pas.`);
-    }
-    if (definition.effectNature && !Object.values(EFFECT).includes(definition.effectNature)) {
-      problems.push(`${code} : effet inconnu « ${definition.effectNature} ».`);
-    }
     // PANEL_GLOBAL : c'est l'invariant du lot. Une portée par environnement
     // ferait chercher un jeu TEST qui n'existe pas, et refuserait tout.
     if (definition.scope !== 'PANEL_GLOBAL') {

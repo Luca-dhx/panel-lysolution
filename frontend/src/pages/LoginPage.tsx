@@ -1,19 +1,39 @@
 import { useState } from 'react';
 import { usePanelBranding, panelTitleFor } from '@/lib/usePanelBranding';
 import type { FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { errorMessage } from '@/lib/api';
 
 interface LocationState {
-  from?: { pathname?: string };
+  from?: { pathname?: string; search?: string };
+}
+
+/**
+ * LE RETOUR APRÈS CONNEXION — CHEMIN **ET** PARAMÈTRES (L12.B-UI).
+ *
+ * `RequireAuth` transmet la `location` entière, mais on n'en lisait que le
+ * `pathname` : tout ce qui vivait dans la query était perdu à la connexion.
+ * Sans conséquence tant qu'aucun écran n'en portait — puis le parcours de
+ * fédération est arrivé, dont l'adresse EST ses paramètres
+ * (`?projectId=…&state=…&returnUrl=…`).
+ *
+ * Un développeur non connecté au Panel qui cliquait « Se connecter avec
+ * L.Y Solution » se serait donc authentifié, puis serait retombé sur une page
+ * d'autorisation sans savoir quoi autoriser.
+ */
+function retourApresConnexion(state: LocationState | null): string {
+  const chemin = state?.from?.pathname;
+  if (!chemin) return '/';
+  return `${chemin}${state?.from?.search ?? ''}`;
 }
 
 export function LoginPage() {
   const { user, loading, login } = useAuth();
+  const branding = usePanelBranding();
   const location = useLocation();
   const navigate = useNavigate();
-  const from = (location.state as LocationState | null)?.from?.pathname ?? '/';
+  const from = retourApresConnexion(location.state as LocationState | null);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -47,7 +67,6 @@ export function LoginPage() {
    * la barre latérale, restreinte à ce qui est public par nature. Le cache
    * l'a déjà peinte avant le premier rendu : ce hook ne fait que la confirmer.
    */
-  const branding = usePanelBranding();
   const titre = panelTitleFor(branding.companyName);
 
   return (
@@ -80,10 +99,16 @@ export function LoginPage() {
         <label className="field">
           <span className="field-label">Adresse e-mail</span>
           <input
+            id="login-email"
+            name="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="username"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+            autoFocus
             required
           />
         </label>
@@ -91,6 +116,8 @@ export function LoginPage() {
         <label className="field">
           <span className="field-label">Mot de passe</span>
           <input
+            id="login-password"
+            name="password"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -98,6 +125,12 @@ export function LoginPage() {
             required
           />
         </label>
+
+        <div className="auth-helper-row">
+          <Link className="auth-link" to="/forgot-password">
+            Mot de passe oublié ?
+          </Link>
+        </div>
 
         <button type="submit" className="btn btn-primary btn-block" disabled={submitting}>
           {submitting ? 'Connexion…' : 'Se connecter'}

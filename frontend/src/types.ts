@@ -1,10 +1,90 @@
-export type Role = 'ADMIN' | 'DEV';
+/**
+ * LES RÔLES DU PANEL — miroir de `backend/src/services/auth/panelRoles.js`.
+ *
+ * `SUPER_ADMIN` est le rôle SOUVERAIN : tout ce qu'un DEV peut faire, plus
+ * l'administration complète des comptes. Il n'existe QUE dans le Panel — un
+ * projet client ne le reçoit jamais, la fédération le projette en `DEV`.
+ *
+ * L'échelle ne se compare pas à la main : voir `@/auth/roles`.
+ */
+export type Role = 'ADMIN' | 'DEV' | 'SUPER_ADMIN';
+
+/**
+ * L'ACCÈS D'UN COMPTE PANEL AUX PROJETS DU PARC (L12.B-F).
+ *
+ * `NONE` est le DÉFAUT, y compris pour un DEV : le rôle ne suffit pas, l'accès
+ * est un acte daté et attribué. `ALL_PAIRED` est DYNAMIQUE — il couvre les
+ * projets appairés d'aujourd'hui et ceux de demain, et n'est jamais figé en
+ * liste d'identifiants.
+ */
+export type ProjectAccessMode = 'NONE' | 'EXPLICIT' | 'ALL_PAIRED';
+
+export interface ProjectAccess {
+  mode: ProjectAccessMode;
+  /** Lu UNIQUEMENT en mode EXPLICIT. Vide ailleurs. */
+  projectIds: string[];
+}
 
 export interface PanelUser {
   userId: string;
   email: string;
   displayName: string;
   role: Role;
+  /**
+   * `enabled` et `projectAccess` sont DEUX notions distinctes — un compte peut
+   * être parfaitement actif dans le Panel sans aucun accès projet. Les fondre
+   * dans un seul interrupteur ferait perdre l'un des deux.
+   */
+  enabled?: boolean;
+  projectAccess?: ProjectAccess;
+}
+
+/**
+ * SON PROPRE PROFIL (L12.C) — ce que `/api/panel-users/me` rend.
+ *
+ * `projectAccess.projects` porte les NOMS résolus par le serveur : l'écran ne
+ * doit pas avoir besoin de la liste du parc pour afficher « Demo SB Auto »
+ * plutôt qu'un UUID — il n'a pas le droit de la lire s'il n'est pas DEV.
+ */
+export interface OwnProfile extends PanelUser {
+  enabled: boolean;
+  projectAccess: ProjectAccess & {
+    projects?: { projectId: string; projectName: string }[];
+  };
+}
+
+/** Une ligne de l'écran d'administration des comptes. */
+export interface PanelUserRow extends PanelUser {
+  enabled: boolean;
+  projectAccess: ProjectAccess;
+  createdAt?: string;
+  passwordChangedAt?: string | null;
+  /**
+   * LE COMPTE A-T-IL ÉTÉ PRIS EN MAIN ?
+   *
+   * Dérivé de `passwordChangedAt` par le serveur. Un compte créé par
+   * invitation porte un mot de passe que personne ne connaît : tant que son
+   * titulaire n'a pas suivi le lien d'activation, il existe sans être
+   * accessible. Information d'écran, jamais une garde.
+   */
+  activated?: boolean;
+  grantedAt?: string | null;
+  grantedBy?: string | null;
+}
+
+/** Ce que rend la création d'un compte — le sort de l'invitation compris. */
+export interface PanelUserCreated extends PanelUserRow {
+  invitation: { sent: boolean; code: string | null };
+}
+
+/** Un projet tel que le SERVEUR le propose à la sélection. */
+export interface AccessibleProject {
+  projectId: string;
+  projectName: string;
+  pairingStatus: string | null;
+  environment: string | null;
+  /** `false` ⇒ non appairé : le serveur refusera de l'accorder. */
+  selectable: boolean;
 }
 
 export interface PanelVersion {
@@ -50,7 +130,19 @@ export interface PublicProject {
     environment: 'TEST' | 'PROD' | null;
     softwareVersion: string | null;
     contractVersion: string | null;
+    /**
+     * L'ADRESSE PUBLIQUE DE L'API — VIVANTE depuis le contrat de pont 1.9.0.
+     *
+     * Elle était posée au bootstrap et jamais revue : la fiche annonçait
+     * l'adresse du jour de l'appairage, et seul un RÉAPPAIRAGE pouvait la
+     * corriger. Elle est désormais rafraîchie par ce que le projet DÉCLARE —
+     * battement (>= 1.9.0) ou projection de présentation (>= 1.4.x).
+     */
     publicBackendUrl: string | null;
+    /** Quand le Panel l'a APPRISE — jamais l'horloge du projet. */
+    publicBackendUrlUpdatedAt?: string | null;
+    /** `BOOTSTRAP` | `HEARTBEAT` | `PRESENTATION` — jamais deviné. */
+    publicBackendUrlSource?: string | null;
     lastHeartbeatAt: string | null;
     /**
      * QUAND LE PANEL A REÇU ET APPLIQUÉ UN ÉTAT MÉTIER — jamais le battement
@@ -132,9 +224,24 @@ export interface BusinessPresentation {
   receivedAt: string;
 }
 
+/**
+ * LA RÉCURRENCE CONTRACTUELLE — « tous les <interval> <unit> ».
+ * `3 + MONTH` se lit « tous les trois mois », et le montant de la ligne est ce
+ * qui est débité à CHACUN de ces rendez-vous — jamais un prix mensuel.
+ */
+export interface BusinessRecurrence {
+  unit: 'MONTH' | 'YEAR';
+  interval: number;
+}
+
 export interface BusinessAmount {
   amountIncludingTax: number | null;
   currency: string | null;
+  /** La périodicité, quand le projet la publie. `null` = projection antérieure. */
+  recurrence?: BusinessRecurrence | null;
+  /** Le libellé français publié par le projet. Jamais ce qui fait foi. */
+  recurrenceLabel?: string | null;
+  /** HÉRITAGE : l'UNITÉ seule (`MONTH`/`YEAR`), sous son ancien nom. */
   interval?: string | null;
 }
 
@@ -414,4 +521,46 @@ export interface ProjectDestination {
 export interface ProjectDestinationsByEnvironment {
   TEST: { active: ProjectDestination | null; pending: ProjectDestination | null; history: ProjectDestination[] };
   PROD: { active: ProjectDestination | null; pending: ProjectDestination | null; history: ProjectDestination[] };
+}
+/**
+ * UN COMPTE D'UN PROJET — la représentation CANONIQUE, publiée par le projet.
+ *
+ * ══ POURQUOI CE TYPE EST ICI ET NON DÉRIVÉ D'UNE PROJECTION DU PANEL ════════
+ *
+ * Parce que le Panel ne possède pas cette donnée. Elle est lue en direct chez
+ * le projet, dans la forme que son propre Manager utilise
+ * (`services/accounts/projectAccountView.js` côté projet). Toute divergence
+ * entre les deux est un défaut, et une suite la fait tomber.
+ *
+ * `role` est un rôle DE PROJET. Un `SUPER_ADMIN` du Panel apparaît ici en
+ * `DEV`, source `PANEL` : la hiérarchie du Panel ne franchit pas la frontière.
+ */
+export interface ProjectAccountView {
+  id: string;
+  displayName: string;
+  email: string;
+  role: string;
+  source: 'LOCAL' | 'PANEL';
+  principalType: 'LOCAL_USER' | 'PANEL_USER';
+  enabled: boolean;
+  /**
+   * `PENDING_ACTIVATION` n'est pas `DISABLED` : un accès JAMAIS OUVERT n'est pas
+   * un accès RETIRÉ. Le premier se répare par un lien d'activation, le second
+   * par un interrupteur — les confondre fait chercher au mauvais endroit.
+   */
+  status: 'ACTIVE' | 'DISABLED' | 'PENDING_ACTIVATION';
+  /** Renseigné pour une identité fédérée seulement : fraîcheur de ce qu'on sait. */
+  lastSyncedAt: string | null;
+  createdAt: string | null;
+}
+
+/** Ce que rend la lecture vivante des comptes d'un projet. */
+export interface ProjectAccountsRead {
+  available: boolean;
+  accounts: ProjectAccountView[];
+  summary: { total: number; local: number; panel: number; disabled: number } | null;
+  /** L'heure de lecture, posée par le PROJET. Jamais calculée par le Panel. */
+  readAt: string | null;
+  reason: string | null;
+  message: string | null;
 }

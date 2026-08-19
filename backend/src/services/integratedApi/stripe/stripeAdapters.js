@@ -888,6 +888,7 @@ async function priceEnsure({ definition, context, credentials, input, fetchImpl 
     /** `EXISTING` dès que le TARIF était déjà là : c'est lui qui compte. */
     status: price.status,
     interval: intent.interval,
+    intervalCount: intent.intervalCount,
     amount: intent.amount,
     currency: intent.currency,
   };

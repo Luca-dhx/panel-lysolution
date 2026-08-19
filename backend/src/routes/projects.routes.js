@@ -4,6 +4,7 @@ import { Router } from 'express';
 import asyncHandler from '../utils/asyncHandler.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
+  accounts,
   declare,
   cancelContract,
   contractDocument,
@@ -19,9 +20,6 @@ import {
   revokePairing,
   setContractProtectionHandler,
 } from '../controllers/projects.controller.js';
-import {
-  commercialReadiness, grants, putCommercialReadiness, putGrants,
-} from '../controllers/capabilities.controller.js';
 
 const router = Router();
 
@@ -52,6 +50,13 @@ router.post(
 
 // Sonde d'URL — POST par commodité de corps, mais AUCUNE écriture : elle
 // interroge une adresse et rend un constat.
+/**
+ * LES COMPTES D'UN PROJET — lecture VIVANTE, capacités développeur.
+ *
+ * Montée avec les autres lectures de fiche. Elle ne mute rien : c'est une
+ * fenêtre sur l'autorité voisine, pas une prise de contrôle.
+ */
+router.get('/:projectId/accounts', requirePanelDev, asyncHandler(accounts));
 router.post('/probe', requirePanelDev, asyncHandler(probe));
 
 router.post('/', requirePanelDev, asyncHandler(declare));
@@ -77,41 +82,17 @@ router.post('/destinations/:destinationId/empty', requirePanelDev, asyncHandler(
 router.delete('/destinations/:destinationId', requirePanelDev, asyncHandler(deleteDestinationHandler));
 
 /**
- * ── CAPACITÉS ACCORDÉES (L3) ────────────────────────────────────────────────
+ * ── QUATRE ROUTES ONT ÉTÉ SUPPRIMÉES ICI ────────────────────────────────────
  *
- * LECTURE pour tout compte du Panel : « que ce projet a-t-il le droit de
- * demander ? » est un diagnostic d'exploitation, pas un secret — et c'est la
- * première question quand un projet dit « ça ne marche pas ».
+ *   GET/PUT  /:projectId/capability-grants
+ *   GET/PUT  /:projectId/commercial-readiness
  *
- * ÉCRITURE réservée aux DEV : accorder une capacité ouvre un chemin vers un
- * fournisseur réel, avec les identifiants du Panel. Même doctrine que les
- * routes du coffre, et pour le même risque.
+ * Les deux premières éditaient la liste des capacités cochées d'un projet ; les
+ * deux suivantes ouvraient ou refermaient son commerce. Toutes quatre servaient
+ * à débloquer, projet par projet, un chemin que l'appairage avait déjà établi.
+ *
+ * Le catalogue des actions servies par cette instance reste lisible, mais il
+ * n'est plus rattaché à un projet : `GET /api/integrated-api/capabilities`.
  */
-router.get('/:projectId/capability-grants', asyncHandler(grants));
-router.put('/:projectId/capability-grants', requirePanelDev, asyncHandler(putGrants));
-
-/**
- * ── OUVERTURE COMMERCIALE (L3.1) ────────────────────────────────────────────
- *
- * LECTURE pour tout compte du Panel. « Cette instance est-elle ouverte ? » est
- * la deuxième question quand un paiement est refusé, juste après « a-t-elle le
- * droit de demander ce verbe ? ». La cacher aux ADMIN les obligerait à demander
- * à un DEV pour lire un fait qui n'est pas un secret.
- *
- * ÉCRITURE réservée aux DEV, et c'est le geste le plus lourd de cette surface :
- * il autorise des opérations financières et de signature RÉELLES. Le contrôle
- * ne peut vivre que là — le projet, lui, authentifie le PONT et non l'humain,
- * et il ne doit de toute façon jamais pouvoir déclarer son propre droit de
- * dépenser (voir `commercialReadiness.service.js`).
- *
- * PUT et non POST : le corps porte l'ÉTAT VISÉ, pas un verbe. Un client qui
- * rejoue sa requête arrive au même endroit, jamais à l'état inverse.
- */
-router.get('/:projectId/commercial-readiness', asyncHandler(commercialReadiness));
-router.put(
-  '/:projectId/commercial-readiness',
-  requirePanelDev,
-  asyncHandler(putCommercialReadiness),
-);
 
 export default router;

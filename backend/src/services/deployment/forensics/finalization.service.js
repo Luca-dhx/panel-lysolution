@@ -78,16 +78,37 @@ export async function verifyFinalization(runId, targetId, { expectDeployed = tru
     [`réservation de port=${checks.portStatus} au lieu de ACTIVE`]: !checks.portActive,
   }).filter(([, ko]) => ko).map(([libelle]) => libelle);
 
-  await PanelDeploymentRun.updateOne({ runId }, {
-    $set: {
-      'finalization.attemptedAt': new Date(),
-      'finalization.succeeded': finalized,
-      'finalization.error': finalized ? null : manquants.join(' ; '),
-      'finalization.targetState': checks.state,
-      'finalization.checks': checks,
-      ...(finalized ? {} : { status: 'finalization_failed' }),
-    },
-  }).catch(() => {});
+  /**
+   * ══ CETTE ÉCRITURE-CI N'EST PAS UN TÉMOIN ══════════════════════════════════
+   *
+   * Elle était terminée par `.catch(() => {})`, comme les entrées de journal
+   * qui l'entourent. Ce n'est pourtant pas la même chose : c'est elle qui
+   * REQUALIFIE le run en `finalization_failed`. Avalée, un run dont l'état
+   * persistant n'a PAS atteint sa forme finale restait affiché « réussi » — et
+   * le seul écran qui aurait pu le contredire était celui qui venait d'échouer
+   * à l'écrire.
+   *
+   * On la laisse donc échouer VISIBLEMENT : l'appelant (le travail de
+   * déploiement) journalise la cause, et le verdict rendu dit que la
+   * finalisation n'a pas pu être inscrite.
+   */
+  let verdictEcrit = true;
+  try {
+    await PanelDeploymentRun.updateOne({ runId }, {
+      $set: {
+        'finalization.attemptedAt': new Date(),
+        'finalization.succeeded': finalized,
+        'finalization.error': finalized ? null : manquants.join(' ; '),
+        'finalization.targetState': checks.state,
+        'finalization.checks': checks,
+        ...(finalized ? {} : { status: 'finalization_failed' }),
+      },
+    });
+  } catch (err) {
+    verdictEcrit = false;
+    // eslint-disable-next-line no-console
+    console.error(`[finalisation] verdict du run ${runId} NON inscrit : ${err.message}`);
+  }
 
   await journal(runId, {
     source: SOURCES.FINALIZATION,
@@ -101,7 +122,7 @@ export async function verifyFinalization(runId, targetId, { expectDeployed = tru
     pid: reservation?.pid ?? null,
   });
 
-  return { finalized, checks, targetState: checks.state, missing: manquants };
+  return { finalized, checks, targetState: checks.state, missing: manquants, verdictPersisted: verdictEcrit };
 }
 
 export default { verifyFinalization };

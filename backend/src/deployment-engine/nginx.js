@@ -22,6 +22,7 @@
  * sous-domaine géré, ou certificat dédié Let's Encrypt) — voir certbot.js.
  */
 import { API_SUBDOMAIN, APPS, HTTP_MAX_BODY_MB } from './config/project.profile.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand } from './remoteCommand.js';
 
 /** Chemin du fichier de conf sites-available pour un hôte. */
 export function nginxConfigPath(host) {
@@ -147,6 +148,8 @@ function staticSiteLocations() {
     location = /version.json { add_header Cache-Control "no-cache"; }
     location = /build-manifest.json { add_header Cache-Control "no-cache"; }
 
+${moduleScriptLocation()}
+
     location /assets/ {
         expires 1y;
         add_header Cache-Control "public, immutable";
@@ -155,6 +158,55 @@ function staticSiteLocations() {
 
     location / {
         try_files $uri $uri/ /index.html;
+    }`;
+}
+
+/**
+ * LES MODULES `.mjs` SONT DU JAVASCRIPT — et nginx ne le sait pas tout seul.
+ *
+ * ══ LE DÉFAUT QUE CE BLOC FERME ═════════════════════════════════════════════
+ *
+ * La table `mime.types` livrée avec nginx ne connaît pas l'extension `.mjs` sur
+ * les versions encore largement déployées. Un module servi depuis `/assets/`
+ * repartait donc en `application/octet-stream`.
+ *
+ * Le navigateur applique aux scripts de MODULE un contrôle de type STRICT
+ * (spécification HTML) : il refuse d'exécuter ce qui n'est pas annoncé comme du
+ * JavaScript. Constaté en recette réelle sur le Manager, au clic « Configurer
+ * les zones » :
+ *
+ *     Failed to load module script: The server responded with a
+ *     non-JavaScript MIME type of "application/octet-stream".
+ *
+ * PDF.js, dont le worker est un `.mjs`, basculait alors sur un « fake worker »,
+ * qui échouait à son tour — et l'écran restait en chargement, sans fin.
+ *
+ * ══ POURQUOI UN `location` DÉDIÉ, ET PAS UN `types` DANS `/assets/` ═════════
+ *
+ * Un bloc `types { … }` ne COMPLÈTE pas la table héritée : il la REMPLACE pour
+ * la portée où il apparaît. Le poser dans `/assets/` pour y ajouter une seule
+ * extension ferait perdre toutes les autres — CSS, polices, images repartiraient
+ * en type par défaut. Le remède serait pire que le mal, et invisible jusqu'au
+ * premier écran mal rendu.
+ *
+ * On isole donc l'extension dans son propre `location` avec une table VIDE et
+ * un `default_type` explicite : c'est l'idiome nginx pour forcer un type sans
+ * toucher au reste. Une expression régulière l'emporte sur le préfixe
+ * `/assets/`, ce bloc doit donc reporter la même politique de cache — les noms
+ * restent empreintés par le contenu.
+ *
+ * ══ GÉNÉRIQUE, ET C'EST LE POINT ═══════════════════════════════════════════
+ *
+ * La règle porte sur l'EXTENSION, jamais sur un nom de fichier ni sur un hash.
+ * Tout module d'un build futur en bénéficie sans qu'on y revienne.
+ */
+function moduleScriptLocation() {
+  return `    location ~* \\.mjs$ {
+        types { }
+        default_type application/javascript;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
     }`;
 }
 
@@ -407,10 +459,41 @@ async function installConfig(transport, target, content) {
   // Écriture dans un fichier temporaire puis déplacement en sudo (droits root).
   const tmp = `/tmp/${target.host}.nginx.conf`;
   await transport.writeFile(tmp, content);
-  await transport.exec(`sudo mv ${tmp} ${configPath}`);
-  await transport.exec(`sudo ln -sf ${configPath} ${enabledPath}`);
+  /**
+   * CRITIQUES : sans elles, `nginx -t` validerait la configuration PRÉCÉDENTE.
+   *
+   * Les deux codes de sortie n'étaient pas lus. Un `mv` refusé (droits, disque)
+   * laissait l'ancien fichier en place ; le test qui suit passait donc au vert
+   * — sur l'ancienne configuration — et le déploiement se poursuivait en
+   * croyant avoir publié la nouvelle.
+   */
+  await runRemoteCommand(transport, {
+    commandId: 'nginx.install_config',
+    command: `sudo mv ${tmp} ${configPath}`,
+    commandClass: COMMAND_CLASS.CRITICAL,
+    timeoutMs: TIMEOUTS.FILESYSTEM,
+    step: 'nginx',
+  });
+  await runRemoteCommand(transport, {
+    commandId: 'nginx.enable_site',
+    command: `sudo ln -sf ${configPath} ${enabledPath}`,
+    commandClass: COMMAND_CLASS.CRITICAL,
+    timeoutMs: TIMEOUTS.FILESYSTEM,
+    step: 'nginx',
+  });
 
-  const test = await transport.exec('sudo nginx -t 2>&1');
+  /**
+   * SONDE : `nginx -t` RÉPOND. Un code non nul dit « la configuration est
+   * invalide », ce qui est une réponse — c'est la lecture de sa sortie, juste
+   * en dessous, qui en fait un échec avec son diagnostic.
+   */
+  const test = await runRemoteCommand(transport, {
+    commandId: 'nginx.test',
+    command: 'sudo nginx -t 2>&1',
+    commandClass: COMMAND_CLASS.PROBE,
+    timeoutMs: TIMEOUTS.QUICK,
+    step: 'nginx',
+  });
   const ok = /syntax is ok/i.test(test.stdout + test.stderr) && /test is successful/i.test(test.stdout + test.stderr);
   if (!ok) {
     // Atomicité : une conf invalide vient d'être ACTIVÉE (symlink sites-enabled).
@@ -418,7 +501,18 @@ async function installConfig(transport, target, content) {
     // les sites du serveur. On désactive donc immédiatement le lien : la conf
     // fautive reste dans sites-available (pour diagnostic) mais Nginx redevient
     // rechargeable. On ne recharge pas : l'ancienne conf active reste en place.
-    await transport.exec(`sudo rm -f ${enabledPath}`).catch(() => {});
+    /**
+     * NETTOYAGE : on désactive la configuration fautive pour que Nginx reste
+     * rechargeable. Son échec ne doit pas remplacer le diagnostic de
+     * configuration invalide, qui est l'information utile.
+     */
+    await runRemoteCommand(transport, {
+      commandId: 'nginx.disable_invalid_site',
+      command: `sudo rm -f ${enabledPath}`,
+      commandClass: COMMAND_CLASS.CLEANUP,
+      timeoutMs: TIMEOUTS.QUICK,
+      step: 'nginx',
+    }).catch(() => {});
     const { DeploymentError } = await import('./errors.js');
     throw new DeploymentError('NGINX_CONFIG_INVALID', 'La configuration Nginx générée est invalide.', {
       step: 'nginx',
@@ -428,8 +522,27 @@ async function installConfig(transport, target, content) {
   return configPath;
 }
 
+/**
+ * RECHARGEMENT — CRITIQUE, et son code de sortie n'était pas lu.
+ *
+ * ══ POURQUOI LE `||` NE SUFFISAIT PAS ══════════════════════════════════════
+ *
+ * `systemctl reload nginx || sudo nginx -s reload` a un repli légitime : les
+ * deux mécanismes coexistent selon les installations. Mais la chaîne rend le
+ * code du SECOND si le premier échoue — et personne ne le lisait. Les deux
+ * pouvaient donc échouer : la configuration validée n'était jamais appliquée,
+ * et le déploiement continuait en croyant le site publié.
+ *
+ * Le repli reste ; c'est son résultat qui est désormais exigé.
+ */
 async function reloadNginx(transport) {
-  await transport.exec('sudo systemctl reload nginx || sudo nginx -s reload');
+  await runRemoteCommand(transport, {
+    commandId: 'nginx.reload',
+    command: 'sudo systemctl reload nginx || sudo nginx -s reload',
+    commandClass: COMMAND_CLASS.CRITICAL,
+    timeoutMs: TIMEOUTS.SERVICE,
+    step: 'nginx',
+  });
 }
 
 /**

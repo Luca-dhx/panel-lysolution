@@ -48,6 +48,10 @@ import {
 } from '../../integratedApi/stripe/stripeResourceBinding.js';
 import { SUPPORTED_CURRENCIES } from '../money.js';
 import {
+  OWNERSHIP_OUTCOME,
+  resolveStripeRevenueOwnership,
+} from './stripeRevenueOwnership.js';
+import {
   FACT_KIND,
   NOT_A_FACT,
   CANONICAL_TYPES,
@@ -396,43 +400,92 @@ export async function projectFact(factId) {
   if (fait.kind === FACT_KIND.REFUND) return projectRefundFact(fait);
 
   /**
-   * ── L'APPARTENANCE — PAR LE LIEN, JAMAIS PAR LES METADATA ────────────────
+   * ── L'APPARTENANCE — PAR LE GRAPHE INTERNE, JAMAIS PAR LES METADATA ──────
    *
-   * La ressource porteuse a été retenue par le normalisateur : la session pour
-   * un paiement de frais, l'ABONNEMENT pour une facture. On interroge le
-   * registre d'appartenance (L6.2A), et lui seul.
+   * ══ CE QUI A CHANGÉ EN L10.7, ET POURQUOI ════════════════════════════════
+   *
+   * On interrogeait le registre de liens sur UNE SEULE ressource : celle que
+   * le normalisateur avait retenue sur la charge utile. Quand Stripe a cessé
+   * d'émettre `invoice.payment_intent` à plat, une facture de prestation
+   * ponctuelle s'est retrouvée sans abonnement ET sans intention : plus aucune
+   * ressource à interroger, donc `UNOWNED / NO_OWNERSHIP_RESOURCE` — alors que
+   * le Panel possédait la session qui avait produit ce paiement, et l'avait
+   * écrite de sa propre main.
+   *
+   * La résolution consulte désormais TOUTES les identités corrélables du fait,
+   * dans un ordre figé, et n'accepte qu'un LIEN comme preuve. Voir
+   * `stripeRevenueOwnership.js` — en particulier pourquoi le client en est
+   * exclu, et pourquoi l'absence de preuve reste `UNOWNED`.
    */
-  if (!fait.ownershipResourceType || !fait.ownershipResourceId) {
+  const appartenance = await resolveStripeRevenueOwnership(fait);
+
+  if (appartenance.outcome === OWNERSHIP_OUTCOME.NO_CANDIDATE) {
+    /**
+     * AUCUNE RESSOURCE CORRÉLABLE — il n'y a rien à chercher, et rien à
+     * attendre. C'est le seul cas où `UNOWNED` est un verdict et non une
+     * étape : ce fait ne porte aucune identité que le graphe puisse relier.
+     */
     return marquer(fait, PROJECTION_STATUS.UNOWNED, SKIP_REASON.NO_OWNERSHIP_RESOURCE);
   }
 
-  const lien = await findBinding({
-    environment: fait.environment,
-    resourceType: fait.ownershipResourceType,
-    resourceId: fait.ownershipResourceId,
-  });
-
-  if (!lien) {
-    /**
-     * PAS ENCORE DE LIEN — et ce n'est pas forcément une anomalie.
-     *
-     * Stripe n'ordonne pas ses livraisons : `invoice.paid` peut arriver avant
-     * la session qui a fait adopter l'abonnement. Le fait reste PENDING, et il
-     * sera repris dès l'adoption. Le classer UNOWNED tout de suite fermerait
-     * la porte à cette convergence.
-     */
-    logger.info(
-      `[finance] revenu en attente d'appartenance — ${fait.objectType} `
-      + `${maskResourceId(fait.objectId)} (${fait.environment}) via `
-      + `${fait.ownershipResourceType} ${maskResourceId(fait.ownershipResourceId)}.`,
-    );
-    return marquer(fait, PROJECTION_STATUS.PENDING, SKIP_REASON.NO_BINDING);
-  }
-  if (lien.revokedAt) {
+  if (appartenance.outcome === OWNERSHIP_OUTCOME.REVOKED) {
     return marquer(fait, PROJECTION_STATUS.REVOKED, SKIP_REASON.BINDING_REVOKED);
   }
 
-  const projectId = lien.projectId;
+  if (appartenance.outcome !== OWNERSHIP_OUTCOME.RESOLVED) {
+    /**
+     * PAS DE LIEN — et il reste à décider si c'est une ATTENTE ou une IMPASSE.
+     *
+     * Stripe n'ordonne pas ses livraisons : `invoice.paid` peut arriver avant
+     * la session qui fera adopter l'abonnement ou l'intention. Tant qu'une
+     * ressource APPARENTÉE est désignée, quelqu'un peut encore la faire
+     * adopter : le fait reste `PENDING`, et il sera repris à ce moment-là.
+     *
+     * Quand le fait ne désigne que LUI-MÊME, personne n'ira le lier : le
+     * verdict honnête est `UNOWNED`. Il n'est pas définitif pour autant — la
+     * convergence générale réexamine aussi les `UNOWNED` (L10.7), et un
+     * événement ultérieur qui enrichit la corroboration rouvre la porte.
+     */
+    if (!appartenance.hasRelatedCandidate) {
+      logger.info(
+        `[finance] revenu sans appartenance prouvable — ${fait.objectType} `
+        + `${maskResourceId(fait.objectId)} (${fait.environment}) ; `
+        + 'aucune ressource apparentée désignée.',
+      );
+      return marquer(fait, PROJECTION_STATUS.UNOWNED, SKIP_REASON.NO_OWNERSHIP_RESOURCE);
+    }
+
+    logger.info(
+      `[finance] revenu en attente d'appartenance — ${fait.objectType} `
+      + `${maskResourceId(fait.objectId)} (${fait.environment}) ; `
+      + `${appartenance.candidates.length} candidat(s) sans lien.`,
+    );
+    return marquer(fait, PROJECTION_STATUS.PENDING, SKIP_REASON.NO_BINDING);
+  }
+
+  const projectId = appartenance.projectId;
+
+  /**
+   * PAR QUELLE RESSOURCE LA PREUVE A ÉTÉ FAITE — écrit sur le fait.
+   *
+   * Le fait pouvait n'en désigner aucune (c'était le défaut). Une fois la
+   * preuve établie, on l'inscrit : sans elle, un audit ultérieur ne saurait
+   * pas dire si ce revenu a été attribué par filiation Stripe ou par le
+   * graphe interne, et la convergence ciblée n'aurait rien à quoi s'accrocher.
+   */
+  if (appartenance.via
+      && (fait.ownershipResourceType !== appartenance.via.resourceType
+        || fait.ownershipResourceId !== appartenance.via.resourceId)) {
+    await PanelProviderRevenueFact.updateOne(
+      { factId: fait.factId },
+      {
+        $set: {
+          ownershipResourceType: appartenance.via.resourceType,
+          ownershipResourceId: appartenance.via.resourceId,
+        },
+      },
+    ).catch(() => null);
+  }
   const revendique = fait.corroboration?.claimedProjectId ?? null;
   const claimMismatch = Boolean(revendique && revendique !== projectId);
   if (claimMismatch) {
@@ -791,10 +844,35 @@ async function adoptIntentFromSession({ environment, eventType, payload }) {
 
   const session = payload?.data?.object ?? null;
   const sessionId = typeof session?.id === 'string' ? session.id : null;
-  const intentId = typeof session?.payment_intent === 'string'
-    ? session.payment_intent
-    : session?.payment_intent?.id ?? null;
-  if (!sessionId || !intentId) return;
+  if (!sessionId) return;
+
+  const idDe = (valeur) => {
+    if (typeof valeur === 'string' && valeur.trim()) return valeur.trim();
+    if (valeur && typeof valeur === 'object' && typeof valeur.id === 'string') return valeur.id;
+    return null;
+  };
+  const intentId = idDe(session.payment_intent);
+  /**
+   * L10.7 — LA FACTURE QUE CETTE SESSION PRODUIT.
+   *
+   * ══ LE CHAÎNON QUI MANQUAIT ══════════════════════════════════════════════
+   *
+   * Une session `mode: payment` avec `invoice_creation` DÉSIGNE sa facture, sur
+   * la charge utile, au moment où elle est payée. C'est la seule occasion où
+   * les deux identités se rencontrent : la facture, elle, ne parlera jamais de
+   * la session.
+   *
+   * On ne s'en servait pas. L'appartenance de la facture reposait donc
+   * entièrement sur des champs que Stripe a depuis déplacés — et quand ils ont
+   * disparu, plus rien ne reliait un revenu encaissé à son projet.
+   *
+   * Poser le lien ICI est l'application exacte de l'adoption par filiation
+   * (L6.2F) : la session est POSSÉDÉE, l'événement est un webhook SIGNÉ, et
+   * c'est Stripe lui-même qui désigne la facture. Aucune métadonnée, aucun
+   * appel fournisseur, aucune corrélation devinée.
+   */
+  const invoiceId = idDe(session.invoice);
+  if (!intentId && !invoiceId) return;
 
   /** LA SESSION DOIT ÊTRE POSSÉDÉE. Sans lien, aucune filiation à transmettre. */
   const lien = await findBinding({
@@ -804,34 +882,57 @@ async function adoptIntentFromSession({ environment, eventType, payload }) {
   });
   if (!lien || lien.revokedAt) return;
 
-  const deja = await findBinding({
-    environment,
-    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
-    resourceId: intentId,
-  });
-  if (deja) return;
-
-  await bindResource({
-    projectId: lien.projectId,
-    environment,
-    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
-    resourceId: intentId,
-    source: BINDING_SOURCES.LEARNED_FROM_WEBHOOK,
-    proof: {
-      derivedFromResourceType: STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
-      derivedFromResourceId: sessionId,
-    },
-  });
-
   /**
-   * L'ADOPTION VIENT DE CRÉER UN LIEN : une facture arrivée AVANT elle peut
-   * enfin trouver son projet. Même mécanisme que l'adoption d'abonnement.
+   * DEUX FILIATIONS, LE MÊME GESTE — et chacune converge pour son compte.
+   *
+   * Les traiter ensemble plutôt qu'en deux fonctions évite une asymétrie qu'on
+   * paierait plus tard : c'est le MÊME instant qui prouve les deux, et un
+   * ordre d'arrivée différent ne doit pas donner un résultat différent.
    */
-  await convergePendingFactsFor({
-    environment,
-    resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT,
-    resourceId: intentId,
-  }).catch(() => null);
+  const filiations = [
+    intentId ? { resourceType: STRIPE_RESOURCE_TYPES.PAYMENT_INTENT, resourceId: intentId } : null,
+    invoiceId ? { resourceType: STRIPE_RESOURCE_TYPES.INVOICE, resourceId: invoiceId } : null,
+  ].filter(Boolean);
+
+  for (const filiation of filiations) {
+    // eslint-disable-next-line no-await-in-loop
+    const deja = await findBinding({
+      environment,
+      resourceType: filiation.resourceType,
+      resourceId: filiation.resourceId,
+    }).catch(() => null);
+
+    if (!deja) {
+      // eslint-disable-next-line no-await-in-loop
+      await bindResource({
+        projectId: lien.projectId,
+        environment,
+        resourceType: filiation.resourceType,
+        resourceId: filiation.resourceId,
+        source: BINDING_SOURCES.LEARNED_FROM_WEBHOOK,
+        proof: {
+          derivedFromResourceType: STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION,
+          derivedFromResourceId: sessionId,
+        },
+      }).catch((err) => {
+        logger.warn(
+          `[finance] filiation ${filiation.resourceType} non adoptée depuis `
+          + `${maskResourceId(sessionId)} — ${err?.message ?? 'erreur inconnue'}.`,
+        );
+      });
+    }
+
+    /**
+     * L'ADOPTION VIENT DE CRÉER UN LIEN : un fait arrivé AVANT elle peut enfin
+     * trouver son projet. Même mécanisme que l'adoption d'abonnement.
+     */
+    // eslint-disable-next-line no-await-in-loop
+    await convergePendingFactsFor({
+      environment,
+      resourceType: filiation.resourceType,
+      resourceId: filiation.resourceId,
+    }).catch(() => null);
+  }
 }
 
 /**
@@ -1148,10 +1249,34 @@ export function refundDescriptionOf(fait) {
 export async function convergePendingFactsFor({ environment, resourceType, resourceId } = {}) {
   if (!environment || !resourceType || !resourceId) return { projected: 0 };
 
+  /**
+   * ══ POURQUOI CE FILTRE REGARDE AUSSI LA CORROBORATION (L10.7) ════════════
+   *
+   * Il ne cherchait que par `ownershipResource*` — le champ que le
+   * normalisateur remplit. Or le fait qui a le PLUS besoin d'être repris est
+   * précisément celui qui n'a pas pu le remplir : une facture sans abonnement
+   * et sans intention à plat porte `null` dans les deux colonnes.
+   *
+   * L'adoption de son intention ou de sa facture créait donc bien le lien
+   * manquant, appelait bien cette fonction — et ne trouvait rien. Le revenu
+   * restait `UNOWNED` pour toujours, avec sa preuve à côté, dans la même base.
+   *
+   * On interroge donc les DEUX : la ressource désignée, et les identités
+   * secondaires que le fait a conservées. C'est la même question posée aux
+   * deux endroits où la réponse peut se trouver.
+   */
+  const parRessource = { ownershipResourceType: resourceType, ownershipResourceId: resourceId };
+  const parCorroboration = {
+    [STRIPE_RESOURCE_TYPES.SUBSCRIPTION]: { 'corroboration.subscriptionId': resourceId },
+    [STRIPE_RESOURCE_TYPES.PAYMENT_INTENT]: { 'corroboration.paymentIntentId': resourceId },
+    [STRIPE_RESOURCE_TYPES.CHECKOUT_SESSION]: { 'corroboration.checkoutSessionId': resourceId },
+    /** Une facture est son PROPRE objet canonique — c'est là qu'on la retrouve. */
+    [STRIPE_RESOURCE_TYPES.INVOICE]: { objectType: CANONICAL_TYPES.INVOICE, objectId: resourceId },
+  }[resourceType] ?? null;
+
   const enAttente = await PanelProviderRevenueFact.find({
     environment,
-    ownershipResourceType: resourceType,
-    ownershipResourceId: resourceId,
+    $or: parCorroboration ? [parRessource, parCorroboration] : [parRessource],
     projectionStatus: { $in: [PROJECTION_STATUS.PENDING, PROJECTION_STATUS.UNOWNED] },
   }).select('factId').lean();
 
@@ -1183,9 +1308,28 @@ export async function convergePendingFactsFor({ environment, resourceType, resou
  * pas transformer chaque ouverture d'écran en balayage complet.
  */
 export async function convergePendingRevenue({ limit = 200 } = {}) {
+  /**
+   * ══ `UNOWNED` FAIT PARTIE DE CE QUI CONVERGE (L10.7) ═════════════════════
+   *
+   * Ce balayage ne reprenait que les faits `PENDING`. Un fait classé `UNOWNED`
+   * — parce qu'au moment où il est arrivé il ne présentait aucune ressource
+   * corrélable — n'était donc PLUS JAMAIS réexaminé, même quand la preuve de
+   * son appartenance arrivait quelques secondes plus tard.
+   *
+   * C'était un état terminal de fait, sans que rien ne le déclare terminal :
+   * un revenu réellement encaissé y entrait par un accident d'ordonnancement
+   * et n'en sortait plus. Le seul recours était une intervention manuelle —
+   * exactement ce que la projection automatique existe pour éviter.
+   *
+   * `UNOWNED` redevient donc ce qu'il aurait toujours dû être : un diagnostic
+   * révisable. Le coût est nul quand il n'y a rien à reprendre — la résolution
+   * sort sur `NO_CANDIDATE` sans toucher au registre de liens — et la garantie,
+   * elle, cesse de dépendre de l'ordre dans lequel Stripe a livré ses annonces.
+   */
   const enAttente = await PanelProviderRevenueFact.find({
-    projectionStatus: PROJECTION_STATUS.PENDING,
-  }).sort({ firstSeenAt: 1 }).limit(limit).select('factId').lean();
+    projectionStatus: { $in: [PROJECTION_STATUS.PENDING, PROJECTION_STATUS.UNOWNED] },
+  }).sort({ firstSeenAt: 1 }).limit(limit).select('factId')
+    .lean();
 
   let projected = 0;
   for (const { factId } of enAttente) {

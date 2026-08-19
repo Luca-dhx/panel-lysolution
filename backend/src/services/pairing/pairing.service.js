@@ -20,6 +20,10 @@ import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import registryStore from '../registry/registryStore.js';
 import { normalizeBackendUrl } from '../registry/projectIdentity.js';
+import {
+  NETWORK_DECLARATION_SOURCES,
+  applyDeclaredNetwork,
+} from '../registry/projectNetworkDeclaration.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 
@@ -241,7 +245,24 @@ export async function bootstrap(dto) {
   // bootstrap qui n'en annonce aucune ne doit pas effacer celle qu'on a
   // saisie à la déclaration : on ne remplace que ce qui est réellement dit.
   const announcedUrl = normalizeBackendUrl(dto.publicBackendUrl);
-  if (announcedUrl) record.runtime.publicBackendUrl = announcedUrl;
+  if (announcedUrl) {
+    /**
+     * L'APPAIRAGE EST UN PREMIER CONTACT, PAS UNE AUTORITÉ PERMANENTE (1.9.0).
+     *
+     * Cette ligne écrivait l'adresse et c'était la SEULE écriture de toute la
+     * vie de la fiche : le Panel restait ensuite sur l'adresse du jour de
+     * l'appairage, quoi que le projet déclare par la suite.
+     *
+     * Elle passe donc par la règle commune, qui l'horodate et la source. Le
+     * bootstrap y est délibérément le canal le plus faible — voir
+     * `applyDeclaredNetwork()` : il pose la valeur initiale, il ne revient pas
+     * sur une déclaration vivante plus récente.
+     */
+    applyDeclaredNetwork(record, {
+      backendUrl: announcedUrl,
+      source: NETWORK_DECLARATION_SOURCES.BOOTSTRAP,
+    });
+  }
 
   // Le Manifest reçu par le pont fait foi : il remplace toute saisie manuelle.
   if (bridgeManifest !== null) {

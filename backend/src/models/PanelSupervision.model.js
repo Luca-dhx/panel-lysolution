@@ -94,6 +94,56 @@ export const EVENT_TYPES = Object.freeze({
   INTEGRATED_API_PUBLISHED: 'INTEGRATED_API_PUBLISHED',
   PROJECT_DISCOVERED: 'PROJECT_DISCOVERED',
   /**
+   * L12.A — ACCÈS DÉVELOPPEUR FÉDÉRÉ, délivré ou refusé.
+   *
+   * Deux types et non un seul avec une issue en donnée : un refus d'accès est
+   * ce qu'un exploitant vient chercher, et il doit pouvoir le filtrer sans lire
+   * le contenu de chaque événement. Le refus porte toujours son `reasonCode`.
+   *
+   * Ces événements ne portent JAMAIS l'assertion elle-même — seulement son
+   * `jti`, son `kid` et sa date d'expiration.
+   */
+  /**
+   * L12.C — UN COMPTE A MODIFIÉ SON PROPRE PROFIL.
+   *
+   * Distinct d'une administration : l'acteur et la cible sont le même compte.
+   * Les confondre dans un seul type empêcherait de répondre à « qui a changé
+   * quoi sur qui », qui est la seule question qu'un journal d'identité doit
+   * savoir trancher.
+   */
+  PANEL_USER_PROFILE_UPDATED: 'PANEL_USER_PROFILE_UPDATED',
+  /**
+   * LOT SUPER_ADMIN — L'ADMINISTRATION DES IDENTITÉS DU PANEL.
+   *
+   * ── POURQUOI SIX TYPES ET NON UN SEUL `PANEL_USER_ADMINISTERED` ────────────
+   *
+   * Parce que ce ne sont pas six variantes d'un même acte, ce sont six
+   * questions d'enquête distinctes : « qui a promu qui », « qui a ouvert quel
+   * client à qui », « qui a été supprimé et par qui ». Un exploitant doit
+   * pouvoir filtrer sur l'une sans lire le contenu de toutes les autres — un
+   * type unique avec l'acte en donnée l'obligerait à ouvrir chaque événement.
+   *
+   * ── CE QUE LEUR `data` PORTE, ET CE QU'ELLE NE PORTERA JAMAIS ──────────────
+   *
+   * Porte : `actorUserId`, `actorEmail`, `targetUserId`, `targetEmail`,
+   * `targetDisplayName`, et le avant/après du seul champ concerné. L'adresse
+   * et le nom de la cible sont figés EN INSTANTANÉ — un événement qui ne
+   * porterait qu'un identifiant deviendrait illisible à la seconde où le
+   * compte est supprimé, ce qui est précisément le moment où l'on relit le
+   * journal.
+   *
+   * Ne porte jamais : mot de passe, empreinte, jeton de session, jeton de
+   * réinitialisation, assertion.
+   */
+  PANEL_USER_CREATED: 'PANEL_USER_CREATED',
+  PANEL_USER_UPDATED: 'PANEL_USER_UPDATED',
+  PANEL_USER_ROLE_CHANGED: 'PANEL_USER_ROLE_CHANGED',
+  PANEL_USER_ENABLED_CHANGED: 'PANEL_USER_ENABLED_CHANGED',
+  PANEL_USER_PROJECT_ACCESS_CHANGED: 'PANEL_USER_PROJECT_ACCESS_CHANGED',
+  PANEL_USER_DELETED: 'PANEL_USER_DELETED',
+  FEDERATED_ASSERTION_ISSUED: 'FEDERATED_ASSERTION_ISSUED',
+  FEDERATED_ASSERTION_DENIED: 'FEDERATED_ASSERTION_DENIED',
+  /**
    * L10.6B-2 — UN IMPAYÉ A RÉELLEMENT FERMÉ UN SITE.
    *
    * Écrit à la CONFIRMATION, quand le projet a renvoyé son état et prouvé que
@@ -116,30 +166,36 @@ export const EVENT_TYPES = Object.freeze({
   INTEGRATED_API_VALIDATION_SUCCEEDED: 'INTEGRATED_API_VALIDATION_SUCCEEDED',
   INTEGRATED_API_VALIDATION_FAILED: 'INTEGRATED_API_VALIDATION_FAILED',
   /**
-   * L3 — passerelle de capacités. Trois types, et la séparation compte.
+   * L3 — passerelle de capacités. Deux types, et la séparation compte.
    *
-   * Un OCTROI est une décision d'opérateur ; une INVOCATION est un fait
-   * d'exploitation ; un REFUS est un fait aussi, mais c'est celui qu'on relit
-   * quand quelque chose ne marche pas. Les fondre en un seul type obligerait à
-   * filtrer sur `data` pour répondre à « pourquoi ce projet n'arrive-t-il pas
-   * à envoyer ? » — la question la plus fréquente qu'on posera à ce journal.
+   * Une INVOCATION est un fait d'exploitation ; un REFUS est un fait aussi,
+   * mais c'est celui qu'on relit quand quelque chose ne marche pas. Les fondre
+   * en un seul type obligerait à filtrer sur `data` pour répondre à « pourquoi
+   * ce projet n'arrive-t-il pas à envoyer ? » — la question la plus fréquente
+   * qu'on posera à ce journal.
    *
    * Aucun de leurs `data` ne porte de secret : provider, environnement, code
    * de capacité, issue, durée. Jamais de clé, jamais d'entrée métier, jamais
    * d'adresse.
+   *
+   * ── TROIS TYPES ONT ÉTÉ RETIRÉS DE CE CATALOGUE ───────────────────────────
+   *
+   *   CAPABILITY_GRANTS_UPDATED   un opérateur venait de cocher des cases
+   *   COMMERCIAL_OPENED           un opérateur venait d'ouvrir le commerce
+   *   COMMERCIAL_CLOSED           …ou de le refermer
+   *
+   * Les trois traçaient des GESTES DE CONFIGURATION qui n'existent plus. Ils
+   * sont supprimés du vocabulaire et non conservés « au cas où » : un type
+   * d'événement que plus rien n'émet finit par être réutilisé pour autre chose,
+   * et la chronologie d'un projet ancien deviendrait alors illisible.
+   *
+   * Les événements DÉJÀ ÉCRITS en base ne sont pas effacés — ils racontent des
+   * décisions réellement prises, et une chronologie qu'on réécrit ne vaut plus
+   * rien. Le champ `type` n'est pas contraint par une énumération Mongoose, ils
+   * restent donc lisibles tels quels.
    */
-  CAPABILITY_GRANTS_UPDATED: 'CAPABILITY_GRANTS_UPDATED',
   CAPABILITY_INVOKED: 'CAPABILITY_INVOKED',
   CAPABILITY_REFUSED: 'CAPABILITY_REFUSED',
-  /**
-   * L3.1 — l'ouverture commerciale d'une instance.
-   *
-   * Ce sont les deux seuls événements du catalogue qui autorisent, ou
-   * retirent, le droit de dépenser de l'argent réel. Ils portent l'acteur et
-   * le motif : une ouverture doit rester imputable longtemps après.
-   */
-  COMMERCIAL_OPENED: 'COMMERCIAL_OPENED',
-  COMMERCIAL_CLOSED: 'COMMERCIAL_CLOSED',
   /**
    * L10.1 — le registre financier.
    *

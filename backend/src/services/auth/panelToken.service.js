@@ -5,7 +5,12 @@ import config from '../../config/env.js';
 
 export function issueUserToken(user) {
   return jwt.sign(
-    { sub: user.userId, email: user.email, role: user.role },
+    {
+      sub: user.userId,
+      email: user.email,
+      role: user.role,
+      ver: Number.isInteger(user.tokenVersion) ? user.tokenVersion : 0,
+    },
     config.jwt.secret,
     { expiresIn: config.jwt.expiresIn },
   );

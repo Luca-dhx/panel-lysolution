@@ -45,6 +45,12 @@
 #     son identité. Rien d'autre ne sort du ping : la composition (Manifest,
 #     santé, opérations) demeure derrière l'appairage. OPTIONNELS.
 #     Compatible 1.0.x, 1.1.x, 1.2.x et 1.3.x.
+#   1.8.0 — ADDITIF, DÉCLARATION D'USAGE DES MODÈLES D'E-MAIL :
+#     nouvel entityType `PROJECT_EMAIL_TEMPLATE_USAGE`, poussé par le projet.
+#     Le projet ANNONCE les templateCode qu'il consomme ; le Panel provisionne
+#     les instances manquantes et retire de la vue active celles qui ne sont
+#     plus déclarées — sans jamais supprimer un contenu. Rétrocompatible : un
+#     Panel antérieur refuse cette entité proprement et tout le reste continue.
 #   1.5.0 (L3) — RIEN DE NOUVEAU SUR CETTE SURFACE. La version accompagne
 #     l'ajout de la passerelle de capacités côté PanelBridge
 #     (POST /bridge/v1/capabilities/{code}/invoke). Les deux contrats partagent
@@ -61,7 +67,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.5.0
+  version: 1.9.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -177,6 +183,62 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ManifestResponseEnvelope'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/accounts:
+    get:
+      operationId: getAccounts
+      tags: [identity]
+      summary: Les comptes de ce projet, à l'instant.
+      description: >
+        LECTURE VIVANTE, en lecture seule. Le Panel affichait auparavant
+        « l'équipe du projet » depuis sa propre projection, alimentée par le
+        flux de synchronisation : une copie qui vieillissait, qui ne portait
+        que les comptes LOCAUX, et qui décrivait les mêmes personnes avec
+        d'autres champs que le Manager du projet.
+
+        Cette lecture rend les DEUX populations dans la représentation
+        canonique publiée par le projet — comptes locaux (source LOCAL) et
+        identités L.Y Solution projetées ici (source PANEL). Le rôle rendu est
+        TOUJOURS un rôle de projet : un SUPER_ADMIN du Panel apparaît en DEV,
+        car un projet ne connaît pas la hiérarchie du Panel.
+
+        La portée vient du jeton d'appairage : aucun identifiant de projet
+        n'est accepté, le seul projet dont cette instance puisse parler étant
+        elle-même. Aucune écriture n'est ni prévue ni possible — les comptes
+        locaux se gèrent dans le Manager, les identités L.Y Solution au Panel.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: >
+            Les comptes du projet, avec leur résumé et l'heure de lecture
+            posée par le projet lui-même (jamais par l'appelant).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [accounts, summary, readAt]
+                    properties:
+                      accounts:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProjectAccountView' }
+                      summary:
+                        type: object
+                        properties:
+                          total: { type: integer }
+                          local: { type: integer }
+                          panel: { type: integer }
+                          disabled: { type: integer }
+                      readAt: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/NotPaired' }
 
@@ -423,6 +485,51 @@ components:
             message: Version majeure du contrat non supportée.
 
   schemas:
+    ProjectAccountView:
+      type: object
+      description: >
+        LA REPRÉSENTATION CANONIQUE d'un compte de ce projet — la même que
+        celle servie au Manager du projet (`GET /api/accounts`,
+        `GET /api/accounts/all`). Toute divergence entre les deux est un
+        défaut, et une suite du Panel la fait tomber champ par champ.
+      required: [id, displayName, email, role, source, principalType, enabled, status]
+      properties:
+        id:
+          type: string
+          description: >
+            Identifiant stable dans le périmètre du projet. Préfixé `panel:`
+            pour une identité fédérée, afin qu'aucune collision ne soit
+            possible avec un identifiant local dans une liste fusionnée.
+        displayName: { type: string }
+        email: { type: string }
+        role:
+          type: string
+          description: >
+            LE RÔLE DANS CE PROJET, jamais celui du Panel. Un SUPER_ADMIN du
+            Panel apparaît ici en DEV : la hiérarchie du Panel ne franchit pas
+            la frontière, sans quoi une échelle étrangère déciderait de droits
+            chez un client.
+        source:
+          type: string
+          enum: [LOCAL, PANEL]
+        principalType:
+          type: string
+          enum: [LOCAL_USER, PANEL_USER]
+        enabled:
+          type: boolean
+          description: >
+            Pour une identité fédérée, c'est un REFLET daté du dernier contact
+            avec le Panel : il n'autorise rien. Un accès est refusé parce que
+            le Panel l'a dit à l'instant, jamais parce qu'une copie locale
+            disait « vrai ».
+        status:
+          type: string
+          enum: [ACTIVE, DISABLED]
+        lastSyncedAt:
+          type: [string, 'null']
+          description: Renseigné pour une identité fédérée seulement.
+        createdAt:
+          type: [string, 'null']
     ErrorResponse:
       type: object
       description: Enveloppe d'erreur commune (identique au sens inverse).
@@ -593,6 +700,8 @@ components:
                   - MEETING
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
+            - PROJECT_EMAIL_TEMPLATE_USAGE
+                  - PROJECT_EMAIL_TEMPLATE_USAGE
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
@@ -734,6 +843,7 @@ components:
             - MEETING
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
+            - PROJECT_EMAIL_TEMPLATE_USAGE
             - EMAIL_DELIVERY_EVENT
             - SIGNATURE_EVENT
             - PAYMENT_REQUEST

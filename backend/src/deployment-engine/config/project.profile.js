@@ -163,3 +163,22 @@ export default {
   BUILD_STAGING_PREFIX,
   HTTP_MAX_BODY_MB,
 };
+
+/**
+ * ══ LES CONSEILS DNS — ce que l'opérateur DE CE PROJET doit aller vérifier ══
+ *
+ * Ces deux phrases vivaient dans le cœur du moteur, et elles ne le pouvaient
+ * pas : elles nomment un ÉCRAN, et l'écran n'est pas le même des deux côtés.
+ * Le Panel administre lui-même ses intégrations ; un projet client, non — son
+ * DNS est tenu par la plateforme. Le cœur, resté identique dans les deux
+ * dépôts, disait donc nécessairement faux à l'un des deux.
+ *
+ * La différence descend ici, où elle a un sens et une seule définition.
+ */
+export const DNS_REMEDIATION_HINTS = Object.freeze({
+  /** `dns.verify` / `DNS_NOT_RESOLVED` — le domaine ne pointe pas vers le VPS. */
+  notResolved: 'Vérifiez que le domaine résout vers l’IP du VPS, ou activez la gestion '
+    + 'automatique du domaine (Hostinger) dans DEV → Intégrations API.',
+  /** `dns.provider` / `HOSTINGER_*` — le fournisseur DNS a refusé. */
+  provider: 'Vérifiez la clé API Hostinger (DEV → Intégrations API) et ses permissions DNS.',
+});

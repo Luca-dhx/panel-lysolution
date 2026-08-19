@@ -57,7 +57,10 @@ export {
   runDeprovision,
 } from './deprovision.js';
 export { planSites, servedHosts } from './nginx.js';
-export { Transport, execOrThrow } from './transport/Transport.js';
+export { Transport } from './transport/Transport.js';
+export {
+  COMMAND_CLASS, TIMEOUTS, RemoteCommandError, runRemoteCommand, strictShell, redactOutput,
+} from './remoteCommand.js';
 export { FakeTransport } from './transport/FakeTransport.js';
 export { SshTransport } from './transport/SshTransport.js';
 export * as passwordVault from './passwordVault.js';

@@ -29,10 +29,6 @@ import crypto from 'node:crypto';
 
 import { runtimeEnvironment } from '../integratedApi/environment.js';
 import {
-  DEFAULT_COMMERCIAL_STATE,
-  COMMERCIAL_STATE_VALUES,
-} from '../integratedApi/commercialReadiness.js';
-import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
   capabilityProjectScopeMismatch,
@@ -119,9 +115,10 @@ export function buildInvocationContext({
     projectName: panelProject.projectName ?? null,
     /** Le monde fournisseur. Constaté, jamais choisi. */
     environment,
-    /** L'ouverture commerciale. `null` en base se lit « jamais décidée ». */
-    commercialState: resolveCommercialState(panelProject),
-    /** La fiche complète — pour les octrois. Ne sort jamais vers le projet. */
+    /**
+     * La fiche complète — lue par les adaptateurs pour établir l'APPARTENANCE
+     * des ressources. Ne sort jamais vers le projet.
+     */
     panelProject,
     requestId: requestId || crypto.randomUUID(),
     source,
@@ -132,22 +129,8 @@ export function buildInvocationContext({
 /**
  * Contexte du Panel agissant POUR LUI-MÊME (R10.4).
  *
- * ── CE QU'IL NE RELÂCHE PAS ─────────────────────────────────────────────────
- *
- * L'état d'ouverture vaut `DEFAULT_COMMERCIAL_STATE`, c'est-à-dire
- * `PREOPENING`, c'est-à-dire le défaut FERMÉ. On aurait pu écrire `LIVE` en
- * arguant que le Panel n'est pas une instance cliente et n'a donc pas à être
- * « ouvert » — l'argument est vrai, et la conséquence aurait été mauvaise :
- * elle créait un chemin d'exécution qui ignore la politique commerciale, et
- * c'est précisément la classe de contournement que L1.75 existe pour empêcher.
- *
- * Concrètement cela ne change rien aujourd'hui : `email.send_template` est
- * `COMMUNICATION_WRITE`, autorisée en pré-ouverture. Si un jour on interdisait
- * cet effet avant ouverture, les e-mails du Panel s'arrêteraient aussi — et ce
- * serait la bonne réponse, immédiatement visible dans l'écran de test.
- *
- * L'environnement, lui, est celui du RUNTIME, exactement comme pour un projet :
- * il n'y a qu'un monde servi par instance de Panel, et il ne se choisit pas.
+ * L'environnement est celui du RUNTIME, exactement comme pour un projet : il
+ * n'y a qu'un monde servi par instance de Panel, et il ne se choisit pas.
  */
 export function buildPanelSelfContext({ requestId = null } = {}) {
   return Object.freeze({
@@ -160,7 +143,6 @@ export function buildPanelSelfContext({ requestId = null } = {}) {
     /** Le périmètre de PARTITION — registre d'opérations et journal, rien d'autre. */
     scope: PANEL_SELF_SCOPE,
     environment: runtimeEnvironment(),
-    commercialState: DEFAULT_COMMERCIAL_STATE,
     panelProject: null,
     requestId: requestId || crypto.randomUUID(),
     source: INVOCATION_SOURCES.PANEL_SELF,
@@ -206,18 +188,6 @@ export function resolveInstanceEnvironment(panelProject) {
 }
 
 /**
- * L'état d'ouverture retenu pour la décision.
- *
- * Une valeur absente ou inconnue retombe sur le défaut FERMÉ. Une base
- * corrompue, une migration à moitié faite ou une faute de frappe ne doivent
- * jamais ouvrir le commerce par accident.
- */
-export function resolveCommercialState(panelProject) {
-  const stored = panelProject?.commercialState ?? null;
-  return COMMERCIAL_STATE_VALUES.includes(stored) ? stored : DEFAULT_COMMERCIAL_STATE;
-}
-
-/**
  * Projection SÛRE du contexte — celle qui part au journal et à l'audit.
  *
  * `panelProject` est retiré : il porte les hachages d'appairage et la copie
@@ -229,7 +199,6 @@ export function describeContext(context) {
   return {
     projectId: context.projectId,
     environment: context.environment,
-    commercialState: context.commercialState,
     requestId: context.requestId,
     source: context.source,
   };
@@ -254,6 +223,5 @@ export default {
   partitionKey,
   assertProjectScope,
   resolveInstanceEnvironment,
-  resolveCommercialState,
   describeContext,
 };

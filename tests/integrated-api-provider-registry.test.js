@@ -103,6 +103,9 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
   const stripeWebhook = credentialRoles('STRIPE').find((r) => r.code === 'webhookSecret');
   check('le secret de webhook Stripe est auto-géré et non requis',
     stripeWebhook.autoManaged === true && stripeWebhook.required === false);
+  const brevoWebhook = credentialRoles('BREVO').find((r) => r.code === 'webhookSecret');
+  check('le jeton webhook Brevo est lui aussi auto-géré et non requis',
+    brevoWebhook.autoManaged === true && brevoWebhook.required === false);
 }
 
 section('Confidentialité par rôle — la clé publiable n’est pas un secret');

@@ -36,6 +36,7 @@
  */
 import { DeploymentError } from './errors.js';
 import { serviceName } from './config/project.profile.js';
+import { sonde } from './remoteCommand.js';
 
 /**
  * Codes d'erreur dédiés. Ils sont stables : l'interface, les rapports et les
@@ -87,7 +88,7 @@ export const NEVER_ALLOCATE = Object.freeze([
  * @returns {Promise<{readable:boolean, sockets:Array<{port:number, address:string, pid:number|null, process:string|null}>}>}
  */
 export async function readListeningSockets(transport) {
-  const res = await transport.exec('ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || echo __NO_TOOL__')
+  const res = await sonde(transport, 'ports.probe_listeners', 'ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || echo __NO_TOOL__')
     .catch(() => ({ stdout: '__NO_TOOL__' }));
   const sortie = String(res.stdout ?? '');
   if (sortie.includes('__NO_TOOL__') || sortie.trim().length === 0) {
@@ -120,7 +121,7 @@ export async function readListeningSockets(transport) {
  * c'est la valeur avec laquelle il a réellement été démarré.
  */
 export async function readPm2Processes(transport) {
-  const res = await transport.exec('pm2 jlist 2>/dev/null || echo "[]"').catch(() => ({ stdout: '[]' }));
+  const res = await sonde(transport, 'ports.probe_pm2', 'pm2 jlist 2>/dev/null || echo "[]"').catch(() => ({ stdout: '[]' }));
   let liste = [];
   try {
     liste = JSON.parse(res.stdout || '[]');
@@ -347,7 +348,7 @@ export async function verifyServiceHealth(transport, {
    */
   const journauxDuService = async () => {
     try {
-      const res = await transport.exec(`pm2 logs ${name} --lines 30 --nostream 2>/dev/null || true`,
+      const res = await sonde(transport, 'ports.probe_pm2_logs', `pm2 logs ${name} --lines 30 --nostream 2>/dev/null || true`,
         { timeoutMs: 15_000 });
       const brut = `${res.stdout ?? ''}${res.stderr ?? ''}`;
       if (!brut.trim()) return null;

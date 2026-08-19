@@ -15,6 +15,9 @@ import themeRoutes from './routes/theme.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import networkRoutes from './routes/network.routes.js';
 import emailSenderRoutes from './routes/emailSender.routes.js';
+import emailTemplatesRoutes from './routes/emailTemplates.routes.js';
+import federationRoutes from './routes/federation.routes.js';
+import panelUsersRoutes from './routes/panelUsers.routes.js';
 import signatureReservationsRoutes from './routes/signatureReservations.routes.js';
 import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
@@ -26,7 +29,10 @@ import providerWebhooksRoutes from './routes/providerWebhooks.routes.js';
 import { WEBHOOK_ROUTE_ROOT } from './services/webhooks/webhookCallback.js';
 import uploadRoutes from './routes/upload.routes.js';
 import deploymentRoutes from './routes/deployment.routes.js';
-import { healthRouter, versionRouter } from './routes/meta.routes.js';
+import {
+  healthRouter, livezRouter, readyzRouter, versionRouter,
+} from './routes/meta.routes.js';
+import requireServiceReady from './middlewares/readiness.middleware.js';
 import { errorHandler, notFoundHandler } from './middlewares/error.middleware.js';
 
 export function createApp() {
@@ -34,6 +40,31 @@ export function createApp() {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
   app.use(corsMiddleware);
+
+  /**
+   * ── LES SONDES D'ABORD, LA GARDE ENSUITE ──────────────────────────────────
+   *
+   * Elles sont montées AVANT tout le reste — avant les webhooks, avant le
+   * parseur JSON, avant la garde de disponibilité. Une sonde qui dépendrait de
+   * ce qui la précède ne pourrait plus rien diagnostiquer : c'est précisément
+   * quand la chaîne est cassée qu'on l'interroge.
+   */
+  app.use('/livez', livezRouter);
+  app.use('/readyz', readyzRouter);
+
+  /**
+   * ── LA GARDE DE DISPONIBILITÉ ─────────────────────────────────────────────
+   *
+   * Placée ici, elle couvre TOUT le reste : webhooks fournisseur, pont des
+   * projets, surface `/api`, médias. Aucune de ces surfaces ne peut aboutir
+   * sans base, et chacune produisait jusqu'ici sa propre erreur illisible —
+   * un `500` pour l'une, une attente de dix secondes pour l'autre.
+   *
+   * Elle rend un `503` porteur d'un code stable. C'est ce qui permet au
+   * frontend de distinguer « attends » de « reconnecte-toi », et à un
+   * fournisseur de webhook de réessayer au lieu d'abandonner.
+   */
+  app.use(requireServiceReady);
 
   /**
    * WEBHOOKS FOURNISSEUR — MONTÉS AVANT `express.json()`, ET C'EST L'INVARIANT.
@@ -97,6 +128,22 @@ export function createApp() {
    * L'ordre n'est pas cosmetique ici : il EST la garantie.
    */
   app.use('/api/public', publicRoutes);
+  /**
+   * FÉDÉRATION D'IDENTITÉ (L12.A) — À CÔTÉ DE `/api/public`, ET C'EST OBLIGATOIRE.
+   *
+   * ── LE PIÈGE D'ORDRE QUE CE PLACEMENT ÉVITE ────────────────────────────────
+   *
+   * La ligne suivante monte les événements sur `/api` NU. Son routeur pose
+   * `requirePanelUser` en `router.use`, qui s'applique donc à TOUTE requête
+   * `/api/*` qui l'atteint — y compris celles destinées à un routeur monté plus
+   * bas. Un `/api/federation` placé après recevait un 401 avant d'exister.
+   *
+   * Le jeu de clés doit rester joignable sans session : un projet qui vérifie
+   * une assertion n'est pas un utilisateur, il n'a rien à présenter, et des
+   * clés publiques n'ont rien à protéger. Sa place est donc ici, avec l'autre
+   * surface publique de `/api`.
+   */
+  app.use('/api/federation', federationRoutes);
   app.use('/api', eventsRoutes);
   /**
    * L10.1 — LE REGISTRE FINANCIER.
@@ -121,6 +168,8 @@ export function createApp() {
    * garde d'écriture de l'un finirait par servir à l'autre.
    */
   app.use('/api/email-sender', emailSenderRoutes);
+  app.use('/api/email-templates', emailTemplatesRoutes);
+  app.use('/api/panel-users', panelUsersRoutes);
   /**
    * Les réservations de signature bloquées (R10.5C).
    *

@@ -72,10 +72,70 @@ async function readJson(response) {
  * mérite son propre code parce qu'il ne se répare qu'en supprimant un endpoint
  * ailleurs (roadmap §8.2, plafond Stripe de 16).
  */
+/**
+ * LES PARAMÈTRES REFUSÉS, NOMMÉS — sans jamais recopier leur VALEUR.
+ *
+ * ══ CE QUE CETTE FONCTION EXISTE POUR RÉPARER ═══════════════════════════════
+ *
+ * Yousign refuse une charge invalide avec un `detail` générique — « You have
+ * some invalid params in your payload » — et un tableau `invalid_params` qui,
+ * lui, nomme exactement le champ fautif et la raison. On ne gardait que le
+ * premier. Résultat : une réconciliation en erreur pendant des jours, avec un
+ * message qui disait qu'il y avait un problème sans dire lequel, alors que le
+ * fournisseur l'avait écrit noir sur blanc dans la même réponse.
+ *
+ * ── ON NE GARDE QUE LE NOM ET LA RAISON ─────────────────────────────────────
+ *
+ * Jamais la valeur envoyée. Un `invalid_params` peut porter un champ qui
+ * contenait une adresse, un identifiant, ou — sur la route des souscriptions —
+ * un secret. Le nom du champ suffit toujours à comprendre ; sa valeur ne
+ * l'ajoute jamais et peut coûter cher.
+ */
+function invalidParams(json) {
+  const liste = Array.isArray(json?.invalid_params) ? json.invalid_params : [];
+  if (liste.length === 0) return null;
+  return liste
+    .map((p) => {
+      const nom = safeMessage(p?.name);
+      const raison = safeMessage(p?.reason);
+      if (!nom) return null;
+      return raison ? `${nom} (${raison})` : nom;
+    })
+    .filter(Boolean)
+    .join(', ') || null;
+}
+
 function remoteError(response, json) {
   const raw = json?.error?.message || json?.message || json?.detail || json?.title || '';
-  const message = safeMessage(raw || `Réponse ${response.status}.`);
+  const champs = invalidParams(json);
+  const message = safeMessage(
+    champs
+      ? `${raw || `Réponse ${response.status}.`} — champs refusés : ${champs}`
+      : (raw || `Réponse ${response.status}.`),
+  );
 
+  /**
+   * UN 403 QUI DIT « CETTE OPÉRATION N'EXISTE PAS ICI » N'EST PAS UN 403 DE DROIT.
+   *
+   * Yousign refuse la création de souscriptions par l'API dans son bac à
+   * sable, avec un 403 et une phrase qui l'explique. Le ranger avec les échecs
+   * d'authentification envoyait l'opérateur régénérer une clé valide.
+   *
+   * ── LA DÉTECTION SE FAIT SUR LA PHRASE, ET C'EST ASSUMÉ ────────────────────
+   *
+   * Le fournisseur ne donne aucun code machine pour distinguer ce cas : le
+   * statut est le même, le `type` aussi. La phrase est donc le SEUL
+   * discriminant disponible. Si elle change, on retombe sur
+   * `WEBHOOK_AUTH_INVALID` — c'est-à-dire sur le comportement d'avant, jamais
+   * pire. Un motif large et un repli sûr valent mieux qu'un diagnostic faux.
+   */
+  if (response.status === 403 && /not available in sandbox|only from the application/i.test(raw)) {
+    return new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_UNSUPPORTED_IN_ENVIRONMENT,
+      message,
+      { httpStatus: response.status },
+    );
+  }
   if (response.status === 401 || response.status === 403) {
     return new WebhookError(WEBHOOK_DIAGNOSTIC.WEBHOOK_AUTH_INVALID, message);
   }
@@ -349,6 +409,33 @@ export const yousignWebhookAdapter = Object.freeze({
         // sable, ni l'inverse.
         sandbox: String(environment).toUpperCase() === 'TEST',
         subscribed_events: events,
+        /**
+         * `scopes` — OBLIGATOIRE, et son absence était invisible.
+         *
+         * ══ CE QUE LE FOURNISSEUR RÉPONDAIT, ET CE QU'ON EN LISAIT ══════════
+         *
+         * Yousign refusait la création avec
+         * `400 { type: "parameters_not_valid", detail: "You have some invalid
+         * params in your payload.", invalid_params: [{ name: "scopes",
+         * reason: "This value should not be blank." }] }`.
+         *
+         * Le champ qui NOMME la cause est `invalid_params` — et notre
+         * traducteur d'erreur ne gardait que `detail`. La réconciliation
+         * affichait donc « You have some invalid params in your payload »,
+         * c'est-à-dire précisément la phrase qui ne dit pas lequel. Le
+         * traducteur a été corrigé en même temps que ce champ : voir
+         * `remoteError`.
+         *
+         * ── POURQUOI `['*']` ────────────────────────────────────────────────
+         *
+         * Le Panel est le point de collecte UNIQUE du parc : il reçoit les
+         * événements de signature de tous les projets qu'il administre, et
+         * c'est la centralisation qui donne son sens à la souscription. La
+         * restreindre supposerait de connaître à l'avance les périmètres de
+         * tous les projets futurs — et une souscription trop étroite perd des
+         * événements en silence, ce qui est le pire mode de défaillance ici.
+         */
+        scopes: ['*'],
         auto_retry: true,
         enabled: true,
       },
@@ -361,7 +448,15 @@ export const yousignWebhookAdapter = Object.freeze({
   async update(ctx, id, { url, events, description }) {
     const { response, json } = await yousignCall(ctx, `/webhooks/${encodeURIComponent(id)}`, {
       method: 'PATCH',
-      json: { endpoint: url, description, subscribed_events: events, enabled: true },
+      json: {
+        endpoint: url,
+        description,
+        subscribed_events: events,
+        // Même périmètre qu'à la création : une mise à jour qui l'omettrait
+        // ferait diverger une souscription réconciliée de sa propre création.
+        scopes: ['*'],
+        enabled: true,
+      },
     });
     if (!response.ok) throw remoteError(response, json);
   },

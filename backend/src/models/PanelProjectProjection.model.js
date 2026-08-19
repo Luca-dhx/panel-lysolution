@@ -122,10 +122,31 @@ const siteStatusSchema = new mongoose.Schema(
   { minimize: false, versionKey: false },
 );
 
+/**
+ * LA RÉCURRENCE PROJETÉE — « tous les <interval> <unit> », telle que le projet
+ * la dit. Jamais recalculée ici : le Panel reflète un engagement contractuel,
+ * il ne l'interprète pas.
+ *
+ * `null` se lit « projection antérieure au lot récurrence », et surtout pas
+ * « tous les mois » — c'est `interval` (hérité) qui répond alors. Voir
+ * `lib/contractRecurrence` côté écran et `stripePriceAuthority` côté tarif.
+ */
+const recurrenceSchema = new mongoose.Schema(
+  {
+    unit: { type: String, default: null },
+    interval: { type: Number, default: null },
+  },
+  { _id: false },
+);
+
 const amountSchema = new mongoose.Schema(
   {
     amountIncludingTax: { type: Number, default: null },
     currency: { type: String, default: null },
+    recurrence: { type: recurrenceSchema, default: null },
+    /** Libellé prêt à l'affichage, publié par le projet. Jamais la source. */
+    recurrenceLabel: { type: String, default: null },
+    /** HÉRITAGE : l'UNITÉ seule (`MONTH`/`YEAR`), sous son ancien nom. */
     interval: { type: String, default: null },
   },
   { _id: false },
@@ -266,6 +287,82 @@ const memberSchema = new mongoose.Schema(
 );
 memberSchema.index({ projectId: 1, entityId: 1 }, { unique: true });
 
+/**
+ * CE QU'UN PROJET DÉCLARE UTILISER COMME MODÈLES D'E-MAIL — projection.
+ *
+ * ══ POURQUOI CETTE COLLECTION EST L'AUTORITÉ DE L'USAGE ════════════════════
+ *
+ * Le Panel possédait jusqu'ici deux réponses à « quels modèles ce projet
+ * utilise-t-il ? », et aucune n'était juste : le drapeau global
+ * `provisionForProjects` (une décision de plateforme sur un besoin qu'elle ne
+ * connaît pas) et la simple existence d'une instance (une conséquence, prise
+ * pour une cause).
+ *
+ * La bonne réponse est celle du projet, et il la donne. Cette collection la
+ * conserve : c'est l'ÉTAT DÉSIRÉ, reçu par le pont, et le Panel s'y conforme.
+ *
+ * ══ ELLE NE PORTE PAS LE CONTENU, ET N'EN PORTERA JAMAIS ═══════════════════
+ *
+ * Ni sujet, ni HTML, ni version : le contenu vit dans `PanelEmailTemplate`,
+ * par portée, et son autorité reste le Panel. Ici on ne trouve QUE des codes.
+ * C'est la séparation qui permet à un projet de cesser d'utiliser un modèle
+ * sans que personne ne perde le texte qu'il avait écrit.
+ *
+ * ══ UNE LIGNE PAR PROJET ═══════════════════════════════════════════════════
+ *
+ * C'est un état, pas une collection d'objets : `PROJECT_PRESENTATION` et
+ * `PROJECT_SITE_STATUS` suivent la même règle.
+ */
+const emailTemplateUsageSchema = new mongoose.Schema(
+  {
+    projectId: { type: String, required: true, unique: true },
+
+    /** Les codes que le projet déclare consommer. Triés par l'émetteur. */
+    templateCodes: { type: [String], default: [] },
+
+    /**
+     * L'EMPREINTE DE LA LISTE, telle que le projet l'a calculée.
+     *
+     * C'est elle qui décide s'il y a quelque chose à faire : révision
+     * identique ⇒ aucune écriture, aucun journal, aucune réconciliation. Sans
+     * elle, chaque démarrage d'un projet produirait du bruit dans lequel un
+     * vrai changement finirait par se perdre.
+     */
+    revision: { type: String, required: true },
+
+    /** Quand le projet l'a annoncé (son horloge). Informatif. */
+    declaredAt: { type: String, default: null },
+
+    /**
+     * CE QUE LE PANEL EN A FAIT — le compte rendu de la dernière
+     * réconciliation. Un exploitant doit pouvoir répondre à « pourquoi ce
+     * projet n'a-t-il que huit modèles alors qu'il en déclare neuf ? » sans
+     * relire un journal.
+     *
+     * `unknown` est le signal le plus utile du lot : il nomme un projet
+     * déployé AVANT le Panel qui connaît son nouveau code.
+     */
+    lastReconciliation: {
+      at: { type: String, default: null },
+      provisioned: { type: [String], default: [] },
+      existing: { type: [String], default: [] },
+      unknown: { type: [String], default: [] },
+      forbidden: { type: [String], default: [] },
+      removed: { type: [String], default: [] },
+    },
+
+    sourceModifiedAt: { type: String, required: true },
+    ...SOURCE_FIELDS,
+    receivedAt: { type: String, required: true },
+  },
+  { minimize: false, versionKey: false },
+);
+
+export const PanelProjectEmailTemplateUsage = mongoose.model(
+  'PanelProjectEmailTemplateUsage',
+  emailTemplateUsageSchema,
+);
+
 export const PanelProjectMember = mongoose.model('PanelProjectMember', memberSchema);
 
 export const PanelProjectSiteStatus = mongoose.model(
@@ -283,5 +380,6 @@ export default {
   PanelProjectPresentation,
   PanelProjectContract,
   PanelProjectMember,
+  PanelProjectEmailTemplateUsage,
   PanelProjectSiteStatus,
 };

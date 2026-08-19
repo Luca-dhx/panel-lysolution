@@ -84,12 +84,97 @@ import {
  * qui aurait déjà consommé une place sur le plafond de 16.
  */
 const chains = new Map();
+let bindingIndexesReady = null;
 
 function serialize(key, work) {
   const previous = chains.get(key) ?? Promise.resolve();
   const next = previous.then(work, work);
   chains.set(key, next.catch(() => {}));
   return next;
+}
+
+export async function ensureWebhookBindingIndexes() {
+  if (!bindingIndexesReady) {
+    bindingIndexesReady = (async () => {
+      const legacyBindings = await PanelIntegratedApiWebhookBinding.find({
+        $or: [{ destination: { $exists: false } }, { destination: null }],
+      }).lean();
+
+      for (const legacy of legacyBindings) {
+        const explicitPanelBinding = await PanelIntegratedApiWebhookBinding.findOne({
+          provider: legacy.provider,
+          environment: legacy.environment,
+          destination: WEBHOOK_DESTINATION.PANEL,
+          projectId: null,
+          _id: { $ne: legacy._id },
+        }).lean();
+
+        if (explicitPanelBinding) {
+          await PanelIntegratedApiWebhookBinding.deleteOne({ _id: legacy._id });
+          logger.info(
+            `[webhooks] Binding legacy ${legacy.provider}/${legacy.environment} retiré : `
+            + 'un binding PANEL explicite existe déjà.',
+          );
+          continue;
+        }
+
+        await PanelIntegratedApiWebhookBinding.updateOne(
+          { _id: legacy._id },
+          {
+            $set: {
+              destination: WEBHOOK_DESTINATION.PANEL,
+              projectId: null,
+              updatedAt: legacy.updatedAt ?? nowIso(),
+            },
+          },
+        );
+        logger.info(
+          `[webhooks] Binding legacy ${legacy.provider}/${legacy.environment} migré vers `
+          + 'destination=PANEL.',
+        );
+      }
+
+      let legacyDropped = false;
+
+      try {
+        const indexes = await PanelIntegratedApiWebhookBinding.collection.indexes();
+        const legacy = indexes.find((index) =>
+          index.unique === true
+          && JSON.stringify(index.key) === JSON.stringify({ provider: 1, environment: 1 }));
+
+        if (legacy) {
+          await PanelIntegratedApiWebhookBinding.collection.dropIndex(legacy.name);
+          legacyDropped = true;
+          logger.info(
+            `[webhooks] Index historique « ${legacy.name} » retiré : `
+            + 'l’unicité vit désormais sur (provider, environment, destination, projectId).',
+          );
+        }
+      } catch (error) {
+        logger.warn(`[webhooks] Vérification de l’index historique impossible : ${error.message}`);
+      }
+
+      await PanelIntegratedApiWebhookBinding.createIndexes();
+
+      const indexes = await PanelIntegratedApiWebhookBinding.collection.indexes();
+      const current = indexes.find((index) =>
+        index.name === 'uniq_provider_environment_destination_project'
+        && index.unique === true,
+      );
+      if (!current) {
+        throw new Error(
+          'L’index « uniq_provider_environment_destination_project » est absent après synchronisation.',
+        );
+      }
+
+      return { legacyDropped, verified: true };
+    })().catch((error) => {
+      bindingIndexesReady = null;
+      throw error;
+    });
+  }
+
+  return bindingIndexesReady;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -290,6 +375,8 @@ export async function reconcileProviderWebhook({
   // FAIL CLOSED, et avant toute écriture : une callback PROD ne s'enregistre
   // jamais depuis une instance TEST.
   assertCallbackEnvironment(environment);
+
+  await ensureWebhookBindingIndexes();
 
   return serialize(`${capability.provider}:${environment}`, () =>
     runReconciliation({ capability, environment, fetchImpl, allowCreate, allowDelete }));
@@ -941,7 +1028,12 @@ export async function describeWebhookState(provider, { environment = runtimeEnvi
   }
 
   const [binding, callback] = await Promise.all([
-    PanelIntegratedApiWebhookBinding.findOne({ provider: capability.provider, environment }).lean(),
+    PanelIntegratedApiWebhookBinding.findOne({
+      provider: capability.provider,
+      environment,
+      destination: WEBHOOK_DESTINATION.PANEL,
+      projectId: null,
+    }).lean(),
     resolveWebhookCallback(capability.provider, { environment }).catch(() => null),
   ]);
 
@@ -993,6 +1085,7 @@ export async function describeAllWebhookStates({ environment = runtimeEnvironmen
 }
 
 export default {
+  ensureWebhookBindingIndexes,
   reconcileProviderWebhook,
   reconcileAllProviderWebhooks,
   describeWebhookState,

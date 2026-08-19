@@ -140,6 +140,14 @@ function role(code, label, options = {}) {
       : null,
     /** Indication générique de préfixe, quand l'environnement ne le distingue pas. */
     prefixHint: options.prefixHint ?? null,
+    /**
+     * HÔTE IMPOSÉ PAR ENVIRONNEMENT — le pendant de `prefixByEnvironment` pour
+     * une URL. Même doctrine, même filet : rattraper le monde saisi à l'envers
+     * AVANT que la valeur n'entre au coffre.
+     */
+    environmentHosts: options.environmentHosts
+      ? Object.freeze({ ...options.environmentHosts })
+      : null,
     defaultValue: options.defaultValue ?? null,
     hint: options.hint ?? null,
   });
@@ -182,7 +190,6 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       'billing.subscription.cancel_at_period_end',
       // L6.2G — la coupure immédiate, contractualisée pour la première fois.
       'billing.subscription.cancel_now',
-      'billing.subscription.reconcile',
       'billing.invoice.list',
       'billing.refund',
       // L6.3A — administrer l'endpoint webhook d'un projet. Le seul verbe
@@ -266,7 +273,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       role('webhookSecret', 'Secret partagé du webhook', {
         secret: true,
         required: false,
-        hint: 'Ce n’est pas une signature : Brevo renvoie l’en-tête que nous lui donnons.',
+        autoManaged: true,
+        hint: 'Généré et posé automatiquement par le Panel lors de la réconciliation ; Brevo renvoie simplement le Bearer que nous lui avons fourni.',
       }),
       /**
        * C'est NOUS qui posons le jeton Brevo : la rotation ne recrée donc pas
@@ -337,6 +345,34 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         defaultValue: environmentDefault({
           TEST: 'https://api-sandbox.yousign.app/v3',
           PROD: 'https://api.yousign.app/v3',
+        }),
+        /**
+         * L'HÔTE ATTENDU PAR ENVIRONNEMENT — une CONTRAINTE, pas un défaut.
+         *
+         * ══ L'INCIDENT QUI A RENDU CE CHAMP NÉCESSAIRE ═════════════════════
+         *
+         * Le jeu TEST a été enregistré avec `https://api.yousign.app/v3` —
+         * l'hôte de PRODUCTION. La clé de bac à sable était parfaitement
+         * valide ; envoyée à l'hôte de production, elle recevait
+         * `403 You cannot consume this service` sur CHAQUE route. Le Panel a
+         * conclu « clé invalide », et l'opérateur a cherché pendant ce temps
+         * du côté de sa clé.
+         *
+         * Un défaut n'y pouvait rien : c'est une valeur PROPOSÉE, qu'une
+         * saisie remplace. Ce qui manquait était une contrainte — un jeu TEST
+         * ne peut pas pointer vers l'hôte de production, et réciproquement.
+         * La règle vit ici, avec les hôtes, parce que c'est le seul endroit
+         * qui sait qu'ils sont deux.
+         *
+         * ── POURQUOI L'HÔTE ET NON L'URL ENTIÈRE ───────────────────────────
+         *
+         * Un chemin peut légitimement varier (`/v3`, un préfixe de proxy). Ce
+         * qui ne peut pas varier, c'est le MONDE qu'on interroge, et le monde
+         * est porté par l'hôte.
+         */
+        environmentHosts: Object.freeze({
+          TEST: 'api-sandbox.yousign.app',
+          PROD: 'api.yousign.app',
         }),
       }),
     ]),
@@ -455,6 +491,56 @@ export function defaultRoleValue(code, roleCode, environment = null) {
 }
 
 /**
+ * L'HÔTE QUE CE RÔLE DOIT VISER DANS CET ENVIRONNEMENT — `null` s'il est libre.
+ *
+ * Rendu séparément de `defaultRoleValue` parce que les deux répondent à des
+ * questions différentes : l'un PROPOSE une valeur, l'autre INTERDIT les
+ * autres. Confondre les deux avait un coût observé — un défaut correct et une
+ * valeur saisie incohérente, sans que rien ne s'y oppose.
+ */
+export function expectedHostFor(code, roleCode, environment = null) {
+  const definition = credentialRole(code, roleCode);
+  if (!definition?.environmentHosts || !environment) return null;
+  return definition.environmentHosts[environment] ?? null;
+}
+
+/**
+ * L'URL PROPOSÉE VISE-T-ELLE LE BON MONDE ?
+ *
+ * Rend `null` quand il n'y a rien à dire — pas de contrainte, pas
+ * d'environnement, pas de valeur — et un objet de refus sinon. Jamais une
+ * exception : l'appelant décide si c'est un 400 d'API ou un verdict de
+ * validation, et les deux existent.
+ */
+export function checkHostForEnvironment(code, roleCode, environment, value) {
+  const expected = expectedHostFor(code, roleCode, environment);
+  if (!expected) return null;
+  const brut = String(value ?? '').trim();
+  if (!brut) return null;
+
+  let host;
+  try {
+    host = new URL(brut).host.toLowerCase();
+  } catch {
+    return { expected, actual: null, reason: 'MALFORMED' };
+  }
+  if (host === expected.toLowerCase()) return null;
+
+  /**
+   * ON NOMME LE MONDE VISÉ QUAND ON LE RECONNAÎT.
+   *
+   * « cet hôte est celui de PROD » est actionnable ; « hôte inattendu » oblige
+   * à aller comparer deux chaînes soi-même. La reconnaissance se fait sur les
+   * hôtes DÉCLARÉS du fournisseur, jamais sur une heuristique de nom.
+   */
+  const definition = credentialRole(code, roleCode);
+  const autreMonde = Object.entries(definition.environmentHosts ?? {})
+    .find(([, h]) => h.toLowerCase() === host)?.[0] ?? null;
+
+  return { expected, actual: host, reason: autreMonde ? 'OTHER_ENVIRONMENT' : 'UNKNOWN_HOST', otherEnvironment: autreMonde };
+}
+
+/**
  * Environnements à provisionner pour un fournisseur.
  * `PANEL_GLOBAL` → `[null]` : un seul jeu, sans environnement.
  */
@@ -505,6 +591,8 @@ export function describeProviderDefinition(code, { environment = null } = {}) {
 }
 
 export default {
+  checkHostForEnvironment,
+  expectedHostFor,
   SCOPES,
   SCOPE_VALUES,
   ACTIVE_SCOPES,

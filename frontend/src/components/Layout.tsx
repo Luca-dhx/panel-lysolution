@@ -11,7 +11,7 @@
  * défilement du fond est bloqué pendant l'ouverture.
  */
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { SECTION_LABELS, SECTION_ORDER, navItemsFor } from '@/config/nav';
 import { usePanelVersion } from '@/lib/usePanelVersion';
@@ -131,7 +131,39 @@ export function Layout() {
               <span className="muted">Version indisponible</span>
             )}
           </div>
-          {user ? <p className="sidebar-user" title={user.displayName}>{user.email}</p> : null}
+          {/*
+            ON LIT SON NOM, PAS SON IDENTIFIANT. Le nom était jusqu'ici caché
+            dans un `title` — une info que le survol révèle, donc que personne
+            ne voit sur un téléphone. Il passe devant ; l'adresse reste en
+            dessous, en tant que précision : c'est elle qui départage deux
+            homonymes, pas l'inverse.
+          */}
+          {user ? (
+            <div className="sidebar-identity">
+              <div className="sidebar-identity-row">
+                <p className="sidebar-user-name" title={user.displayName || user.email}>
+                  {user.displayName || user.email}
+                </p>
+                {user.role ? (
+                  <span className="badge badge-neutral sidebar-user-role">{user.role}</span>
+                ) : null}
+              </div>
+              {user.displayName ? (
+                <p className="sidebar-user" title={user.email}>{user.email}</p>
+              ) : null}
+            </div>
+          ) : null}
+          {/*
+            MON PROFIL — JUSTE AU-DESSUS DE LA DÉCONNEXION (L12.C).
+
+            Une action liée au compte connecté, pas une destination de
+            navigation : sa place est au pied, contre l'identité qu'on vient de
+            lire, et non dans un menu où elle se confondrait avec les écrans
+            d'administration.
+          */}
+          <Link to="/mon-profil" className="btn btn-secondary btn-block sidebar-profile-link">
+            Mon profil
+          </Link>
           <button type="button" className="btn btn-secondary btn-block" onClick={handleLogout}>
             Déconnexion
           </button>

@@ -1603,6 +1603,8 @@ a:focus-visible {
     display: block;
   }
 
+  /* Le tiroir reste la MÊME barre : il change de place, pas de structure.
+     Détail des choix plus bas, après les règles de grille. */
   .sidebar {
     position: fixed;
     top: 0;
@@ -1613,6 +1615,8 @@ a:focus-visible {
     transform: translateX(-100%);
     transition: transform var(--p-motion-slow) var(--p-ease);
     box-shadow: var(--p-shadow-lg);
+    padding-bottom: max(var(--p-space-5), env(safe-area-inset-bottom));
+    overscroll-behavior: contain;
   }
 
   .drawer-open .sidebar {
@@ -1623,7 +1627,9 @@ a:focus-visible {
     display: block;
   }
 
+  /* La barre ne réserve plus de place : elle passe PAR-DESSUS le contenu. */
   .main-content {
+    margin-left: 0;
     padding: var(--p-space-4);
   }
 
@@ -1637,6 +1643,41 @@ a:focus-visible {
 
   .detail-list {
     grid-template-columns: 1fr;
+  }
+
+  /*
+   * ── LE TIROIR, SUITE : POURQUOI CES TROIS CHOIX ───────────────────────────
+   *
+   * 1. `top: 0; bottom: 0` lui donne la hauteur exacte de la fenêtre, et
+   *    `overflow: hidden` (hérité de la règle de base, dans `styles.css`)
+   *    garde l'en-tête et le pied épinglés : c'est la navigation, au milieu,
+   *    qui défile. Sur un téléphone court on atteint donc « Déconnexion »
+   *    quel que soit le nombre de rubriques — un compte DEV en ajoute une
+   *    section entière.
+   *
+   * 2. Le pied descend jusqu'à la barre gestuelle : `env(safe-area-inset-
+   *    bottom)` l'en écarte sur les écrans à encoche, sans rien changer
+   *    ailleurs (la valeur vaut 0 partout autrement).
+   *
+   * 3. Fermé, le tiroir sort du champ ET du parcours. Un simple
+   *    `translateX(-100%)` le rend invisible à l'œil mais pas au clavier ni
+   *    au lecteur d'écran : on traverserait une navigation fantôme avant
+   *    d'atteindre la page. `visibility` le retire vraiment — et sa
+   *    transition est retardée de la durée du glissement, sinon il
+   *    disparaîtrait avant d'avoir fini de sortir.
+   */
+  .app-shell:not(.drawer-open) .sidebar {
+    visibility: hidden;
+    transition:
+      transform var(--p-motion-slow) var(--p-ease),
+      visibility 0s linear var(--p-motion-slow);
+  }
+
+  /* Une cible tactile se vise au pouce, pas au pixel. */
+  .nav-link {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 
   /* Un tableau défile DANS son cadre, jamais la page : un défilement
@@ -1756,6 +1797,34 @@ a:focus-visible {
 @media (max-width: 480px) {
   .main-content {
     padding: var(--p-space-3);
+  }
+
+  /*
+   * TÉLÉPHONE ÉTROIT ET COURT — on rend de la hauteur à la navigation.
+   *
+   * Sur un écran de 320 × 568, l'en-tête et le pied prenaient à eux deux plus
+   * de la moitié de la barre : il restait trois liens visibles. Les marges
+   * internes et les écarts se resserrent, le logo perd un tiers de sa hauteur.
+   * Rien ne disparaît — c'est de l'espace vide qu'on reprend, pas du contenu.
+   */
+  .sidebar {
+    width: min(16rem, 86vw);
+    padding: var(--p-space-4) var(--p-space-3);
+    padding-bottom: max(var(--p-space-4), env(safe-area-inset-bottom));
+    gap: var(--p-space-4);
+  }
+
+  .sidebar-logo {
+    max-height: 2rem;
+  }
+
+  /* Le sous-titre redit ce que le logo montre déjà : il cède la place. */
+  .sidebar-subtitle {
+    display: none;
+  }
+
+  .sidebar-footer {
+    gap: var(--p-space-2);
   }
 
   h1 {

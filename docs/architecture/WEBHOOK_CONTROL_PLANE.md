@@ -210,17 +210,23 @@ n'est pas « on s'en fiche » — la **gravité** module l'alerte :
 
 ### 8.1 Quand la réconciliation se déclenche — et pourquoi pas ailleurs
 
-Deux déclencheurs, **et seulement deux** :
+Trois déclencheurs, et chacun correspond à une dérive réelle :
 
 1. **Au démarrage**, après l'ouverture du port et détachée. Enregistrer une
    callback avant d'écouter publierait une adresse morte, et certains
    fournisseurs désactivent un endpoint qui échoue trop souvent.
 2. **Quand l'adresse publique du Panel change** — `PUT /api/system-configuration/network`,
    et uniquement si `backendUrl` a réellement changé.
+3. **Quand un identifiant humain change pour un fournisseur à webhook** —
+   `saveCredentialSet()`, mais seulement pour le monde que sert cette
+   instance, et jamais pour un rôle `autoManaged`.
 
-Le second existe parce que c'est le **seul** cas où la callback devient
-obsolète sans redémarrage. Sans lui, les fournisseurs continueraient d'appeler
-l'ancien domaine jusqu'au prochain boot — dans le silence.
+Le second existe parce que c'est le cas où la callback devient obsolète sans
+redémarrage. Le troisième existe pour l'incident symétrique : une clé d'API
+nouvellement saisie rend soudain le provisioning possible, mais aucun boot ni
+changement d'adresse ne viendra forcément relancer la réconciliation. Sans ce
+crochet, l'état reste `PENDING` sur une preuve périmée — exactement le faux
+diagnostic qui a bloqué Brevo en août 2026.
 
 **Pourquoi PAS de crochet dans le pipeline de déploiement.** Ce pipeline
 déploie des *projets* ; son étape `runtimeConfig` écrit les URLs de la
@@ -230,9 +236,25 @@ lorsque le Panel se déploie **lui-même**, il redémarre : le déclencheur nº1
 couvre déjà ce cas. Ajouter une troisième exécution n'aurait rien couvert de
 plus, tout en donnant l'illusion d'une garantie supplémentaire.
 
-Le crochet nº2 est détaché : un fournisseur indisponible ne doit pas empêcher
-un opérateur de corriger l'adresse de son Panel — ce serait refuser la
-réparation à cause de la panne qu'elle répare.
+Les crochets nº2 et nº3 sont détachés : un fournisseur indisponible ne doit
+pas empêcher un opérateur de corriger l'adresse de son Panel, ni d'enregistrer
+une clé d'API valide — ce serait refuser la réparation à cause de la panne
+qu'elle répare.
+
+### 8.1 bis Migration de binding — l’héritage L6.3A
+
+Le lot L6.3A a élargi l'unicité du binding à
+`(provider, environment, destination, projectId)`. Une base déjà créée avec
+l'ancien index `uniq_provider_environment` peut donc porter deux traces du même
+monde :
+
+- un binding legacy sans `destination`, hérité d'avant L6.3A ;
+- un binding `PANEL` explicite, créé par le moteur actuel.
+
+La première réconciliation retire l'ancien index, migre un binding legacy vers
+`destination=PANEL` s'il est seul, ou le supprime s'il double déjà un binding
+explicite. Sans cette étape, une base historique peut accepter le provisioning
+réel tout en laissant l'écran et l'ingest relire le document périmé.
 
 ### 8.2 Joignabilité — le seul test possible
 

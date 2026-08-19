@@ -134,8 +134,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -215,10 +213,6 @@ section('2. Deux projets, chacun son contrat et son client');
   idA = await appairer(projetA);
   idB = await appairer(projetB);
   for (const id of [idA, idB]) {
-    await grantsModule.setCapabilityGrants(
-      id, [CHECKOUT, CUSTOMER_ENSURE, INVOICE_LIST, INVOICE_READ, PORTAL], ACTEUR,
-    );
-    await commercial.setCommercialReadiness(id, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.3B' });
   }
   await semer(idA, CONTRAT_A);
   await semer(idB, CONTRAT_B);

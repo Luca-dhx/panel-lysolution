@@ -15,12 +15,13 @@
 import { applyNginxConfig, applyNginxHttpOnly, deriveApiHost } from './nginx.js';
 import { ensureCertificate } from './certbot.js';
 import { pm2AppName, restartBackend } from './pm2.js';
-import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact } from './health.js';
+import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact, checkModuleMimeType } from './health.js';
 import { deriveNetworkUrls, describeRuntimeConfig } from './runtimeConfig.js';
 import { migrateUploads } from './uploads.js';
 import { planTopology } from './topology.js';
 import { DeploymentError } from './errors.js';
 import { REQUIRED_REMOTE_ENV } from './config/project.profile.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, strictShell } from './remoteCommand.js';
 
 /** Étapes ordonnées du pipeline (identité stable pour l'UI et l'historique). */
 export const PIPELINE_STEPS = [
@@ -160,7 +161,18 @@ export async function runPipeline({ transport, target, artifact, options, versio
       const backendPrev = `${backendDir}.prev`;
 
       const nextDirs = publications.map((p) => p.next).join(' ');
-      await transport.exec(`rm -rf ${nextDirs} ${backendNext} && mkdir -p ${nextDirs} ${backendNext} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`);
+      /**
+       * CRITIQUE : sans ces dossiers, tout ce qui suit écrit dans le vide. Le
+       * code de sortie n'était pas lu — un disque plein ou un droit manquant
+       * produisait un transfert « réussi » vers un chemin inexistant.
+       */
+      await runRemoteCommand(transport, {
+        commandId: 'release.prepare_dirs',
+        command: strictShell(`rm -rf ${nextDirs} ${backendNext}; mkdir -p ${nextDirs} ${backendNext} ${sharedUploads} ${sharedRoot}/storage/contracts /var/www/certbot`),
+        commandClass: COMMAND_CLASS.CRITICAL,
+        timeoutMs: TIMEOUTS.FILESYSTEM,
+        step: 'upload',
+      });
 
       const filesByApp = {};
       for (const p of publications) {
@@ -186,7 +198,26 @@ export async function runPipeline({ transport, target, artifact, options, versio
           `mv ${s.next} ${s.target}`,
         ]),
       ].join(' && ');
-      await transport.exec(swap);
+      /**
+       * ══ LA BASCULE EST LA PUBLICATION — et son code n'était pas lu ═════════
+       *
+       * C'est le `mv` qui met la nouvelle version en place. Un échec ici
+       * laissait `.next` en place, l'ancienne version servir, et le pipeline
+       * continuer comme si de rien n'était : les étapes suivantes
+       * configuraient, démarraient et vérifiaient une version qui n'avait
+       * jamais été publiée.
+       *
+       * `strictShell` en plus du `&&` : la chaîne contient un `if … then … fi`,
+       * dont le code de sortie est celui de la dernière commande exécutée — un
+       * `mv` échoué à l'intérieur d'un `if` ne rompait pas la chaîne.
+       */
+      await runRemoteCommand(transport, {
+        commandId: 'release.swap',
+        command: strictShell(swap),
+        commandClass: COMMAND_CLASS.CRITICAL,
+        timeoutMs: TIMEOUTS.FILESYSTEM,
+        step: 'upload',
+      });
 
       // Synchronise les médias vers le PARTAGÉ persistant (noms uniques → aucun
       // écrasement de contenu uploadé sur le site déployé).
@@ -203,8 +234,25 @@ export async function runPipeline({ transport, target, artifact, options, versio
       // Le backend sert /uploads et écrit ses PDF : ses dossiers pointent vers le
       // partagé persistant (symlink), de sorte que les médias survivent aux
       // redéploiements et restent servis par express.static.
-      await transport.exec(`rm -rf ${backendDir}/uploads ${backendDir}/storage && ln -sfn ${sharedUploads} ${backendDir}/uploads && ln -sfn ${sharedRoot}/storage ${backendDir}/storage`);
-      await transport.exec(`mkdir -p ${sharedRoot}/storage/contracts /var/www/certbot`);
+      /**
+       * CRITIQUE : ces liens rattachent la release aux données PERSISTANTES
+       * (médias, contrats). Sans eux, le site démarre sur des dossiers vides —
+       * un symptôme qu'on découvre côté client, pas au déploiement.
+       */
+      await runRemoteCommand(transport, {
+        commandId: 'release.link_shared',
+        command: strictShell(`rm -rf ${backendDir}/uploads ${backendDir}/storage; ln -sfn ${sharedUploads} ${backendDir}/uploads; ln -sfn ${sharedRoot}/storage ${backendDir}/storage`),
+        commandClass: COMMAND_CLASS.CRITICAL,
+        timeoutMs: TIMEOUTS.FILESYSTEM,
+        step: 'dirs',
+      });
+      await runRemoteCommand(transport, {
+        commandId: 'release.shared_dirs',
+        command: `mkdir -p ${sharedRoot}/storage/contracts /var/www/certbot`,
+        commandClass: COMMAND_CLASS.CRITICAL,
+        timeoutMs: TIMEOUTS.FILESYSTEM,
+        step: 'dirs',
+      });
 
       // SANS .env complet, le backend SORT au démarrage (« Missing MONGODB_URI »)
       // et l'échec n'apparaît que 2 étapes plus loin (health). Quand une config
@@ -259,8 +307,25 @@ export async function runPipeline({ transport, target, artifact, options, versio
         }
       }
 
-      // Dépendances backend de production.
-      await transport.exec(`cd ${backendDir} && npm ci --omit=dev`, { timeoutMs: 300_000 });
+      /**
+       * ══ LE DÉFAUT NOMMÉ PAR L'INJECTION D'ÉCHEC DU LOT PRÉCÉDENT ══════════
+       *
+       * `npm ci --omit=dev` était lancé, attendu, et son code de sortie ignoré.
+       * Une installation échouée laissait donc l'étape passer au vert ; le
+       * problème n'apparaissait qu'au contrôle de santé, après que la release
+       * eut été publiée, configurée et démarrée.
+       *
+       * Aucun réessai automatique : une installation de dépendances qui échoue
+       * échoue pour une raison (registre injoignable, lockfile incohérent,
+       * disque plein), et la rejouer masquerait la cause une fois sur deux.
+       */
+      await runRemoteCommand(transport, {
+        commandId: 'dependencies.npm_ci',
+        command: strictShell(`cd ${backendDir}; npm ci --omit=dev`),
+        commandClass: COMMAND_CLASS.CRITICAL,
+        timeoutMs: TIMEOUTS.INSTALL,
+        step: 'dirs',
+      });
       return { backendDir, envKeys, commit: artifact.manifest?.shortCommit || null, branch: artifact.manifest?.branch || null };
     });
 
@@ -475,6 +540,45 @@ export async function runPipeline({ transport, target, artifact, options, versio
         throw new DeploymentError('MEDIA_UNREACHABLE', `Des médias essentiels ne se téléchargent pas (HTTP/MIME) : ${broken.slice(0, 4).join(' · ')}.`, {
           step: 'validate', details: { broken: broken.slice(0, 8), brokenCount: media.brokenCount },
         });
+      }
+
+      /**
+       * LES MODULES `.mjs` SONT-ILS SERVIS COMME DU JAVASCRIPT ? — sur le LIVE.
+       *
+       * ══ POURQUOI CE CONTRÔLE MANQUAIT, ET CE QU'IL A COÛTÉ ═══════════════
+       *
+       * Un déploiement s'est achevé en succès alors que le serveur répondait
+       * encore `application/octet-stream` sur le worker de PDF.js — l'éditeur
+       * de zones restait en chargement sans fin. Aucune étape n'avait menti :
+       * simplement, AUCUNE ne posait la question qui comptait.
+       *
+       * Le générateur pouvait donc être corrigé, la suite verte, la
+       * configuration écrite… et le navigateur continuer d'échouer. Une chaîne
+       * de preuves qui ne touche jamais la réponse HTTP finale ne prouve pas la
+       * réponse HTTP finale.
+       *
+       * Le contrôle porte sur un module RÉELLEMENT présent dans le bundle
+       * déployé, sur CHAQUE hôte statique — jamais sur un fichier témoin, qui
+       * prouverait seulement qu'une règle existe pour un nom qui n'existe pas.
+       */
+      health.moduleMime = {};
+      for (const app of topo.publishable) {
+        // eslint-disable-next-line no-await-in-loop
+        const mime = await checkModuleMimeType(transport, app.host);
+        health.moduleMime[app.id] = mime;
+        if (mime.probed && !mime.ok) {
+          const { DeploymentError } = await import('./errors.js');
+          const fautifs = mime.modules
+            .filter((m) => !m.ok)
+            .map((m) => `${m.name} → ${m.status} ${m.contentType || 'type inconnu'}`);
+          throw new DeploymentError(
+            'MODULE_MIME_INVALID',
+            'Des modules JavaScript (.mjs) ne sont pas servis avec un type MIME JavaScript : '
+            + 'le navigateur refusera de les exécuter (contrôle strict des scripts de module). '
+            + fautifs.slice(0, 3).join(' · '),
+            { step: 'validate', details: { host: app.host, modules: mime.modules } },
+          );
+        }
       }
       // Healthcheck du domaine API dédié. Un 502/504 (proxy cassé) ou un ENV
       // divergent est bloquant ; simplement injoignable (DNS/cert pas encore

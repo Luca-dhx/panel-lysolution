@@ -10,6 +10,7 @@
  */
 import crypto from 'node:crypto';
 import { PUBLIC_MEDIA_PROBE_PATH } from './config/project.profile.js';
+import { TIMEOUTS, sonde } from './remoteCommand.js';
 
 /**
  * Diagnostic d'un backend qui NE RÉPOND PAS : statut PM2 + dernières lignes de
@@ -22,7 +23,7 @@ import { PUBLIC_MEDIA_PROBE_PATH } from './config/project.profile.js';
 export async function collectBackendDiagnostics(transport, { name } = {}) {
   const out = { status: null, restarts: null, logTail: '' };
   try {
-    const jlist = await transport.exec(`pm2 jlist 2>/dev/null || echo '[]'`);
+    const jlist = await sonde(transport, 'health.probe_pm2', `pm2 jlist 2>/dev/null || echo '[]'`);
     const app = JSON.parse(jlist.stdout || '[]').find((p) => p.name === name);
     if (app) {
       out.status = app.pm2_env?.status ?? null;
@@ -33,8 +34,7 @@ export async function collectBackendDiagnostics(transport, { name } = {}) {
   }
   // Dernières lignes de log PM2 (out + err) : contiennent la cause réelle de la
   // sortie du process (ex. échec de connexion MongoDB, MONGODB_URI manquant…).
-  const logs = await transport
-    .exec(`pm2 logs ${name} --lines 40 --nostream 2>&1 | tail -n 60`, { timeoutMs: 15_000 })
+  const logs = await sonde(transport, 'health.probe_pm2_logs', `pm2 logs ${name} --lines 40 --nostream 2>&1 | tail -n 60`, { timeoutMs: 15_000 })
     .catch(() => ({ stdout: '', stderr: '' }));
   out.logTail = `${logs.stdout || ''}${logs.stderr || ''}`.trim().slice(-1800);
   return out;
@@ -43,9 +43,7 @@ export async function collectBackendDiagnostics(transport, { name } = {}) {
 /** Vérifie le /health local (via le port PM2) sur le VPS. */
 export async function checkLocalHealth(transport, port, { retries = 8, delayMs = 2000 } = {}) {
   for (let i = 0; i < retries; i += 1) {
-    const res = await transport.exec(
-      `curl -fsS -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:${port}/health || echo 000`
-    );
+    const res = await sonde(transport, 'health.probe_local', `curl -fsS -m 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:${port}/health || echo 000`, { timeoutMs: TIMEOUTS.HEALTH });
     const codeStr = res.stdout.trim().slice(-3);
     if (codeStr === '200') return { ok: true, httpCode: 200, attempts: i + 1 };
     if (i < retries - 1) await sleep(delayMs);
@@ -56,9 +54,8 @@ export async function checkLocalHealth(transport, port, { retries = 8, delayMs =
 /** Vérifie le /health public (HTTPS via l'hôte) sur le VPS. */
 export async function checkPublicHealth(transport, host, { retries = 5, delayMs = 2000 } = {}) {
   for (let i = 0; i < retries; i += 1) {
-    const res = await transport.exec(
-      `curl -fsS -m 8 -w '\\n%{http_code}' https://${host}/health || echo '\\n000'`
-    );
+    const res = await sonde(transport, 'health.probe_public',
+      `curl -fsS -m 8 -w '\n%{http_code}' https://${host}/health || echo '\n000'`, { timeoutMs: TIMEOUTS.HEALTH });
     const lines = res.stdout.trim().split('\n');
     const codeStr = lines[lines.length - 1].trim();
     const body = lines.slice(0, -1).join('\n');
@@ -78,7 +75,7 @@ export async function checkPublicHealth(transport, host, { retries = 5, delayMs 
 
 /** Récupère (HEAD) une ressource : { code, mime } via curl. */
 async function headResource(transport, url) {
-  const res = await transport.exec(`curl -fsSL -m 8 -o /dev/null -w '%{http_code} %{content_type}' '${url}' || echo '000 none'`);
+  const res = await sonde(transport, 'health.probe_asset', `curl -fsSL -m 8 -o /dev/null -w '%{http_code} %{content_type}' '${url}' || echo '000 none'`, { timeoutMs: TIMEOUTS.HEALTH });
   const [code, ...rest] = (res.stdout || '000 none').trim().split(/\s+/);
   return { code: Number(code) || 0, mime: (rest.join(' ') || '').split(';')[0] || '' };
 }
@@ -119,7 +116,7 @@ export async function checkPublicMedia(transport, host, { origins: originSpec, p
   // qui n'expose aucun catalogue public de médias n'a pas de sonde : on le DIT
   // (`probed: false`) au lieu de retourner « ok » sans avoir rien vérifié.
   if (!path) return { ok: true, probed: false, reachable: false, localHits: [], checked: [], brokenCount: 0 };
-  const res = await transport.exec(`curl -fsS -m 8 https://${host}${path} || echo __ERR__`);
+  const res = await sonde(transport, 'health.probe_page', `curl -fsS -m 8 https://${host}${path} || echo __ERR__`, { timeoutMs: TIMEOUTS.HEALTH });
   const body = res.stdout || '';
   if (!body.trim() || body.includes('__ERR__')) return { ok: true, probed: true, reachable: false, localHits: [], checked: [], brokenCount: 0 };
 
@@ -194,7 +191,7 @@ export async function checkPublicMedia(transport, host, { origins: originSpec, p
 export async function checkApiHealth(transport, apiHost, { expectedEnv } = {}) {
   // Route canonique = /health (servie à la racine par le backend ; le domaine API
   // proxifie tout `/` vers le backend). PAS /api/health (inexistante → 404).
-  const res = await transport.exec(`curl -fsSL -m 8 -w '\\n%{http_code}' https://${apiHost}/health || echo '\\n000'`);
+  const res = await sonde(transport, 'health.probe_api', `curl -fsSL -m 8 -w '\\n%{http_code}' https://${apiHost}/health || echo '\\n000'`, { timeoutMs: TIMEOUTS.HEALTH });
   const lines = (res.stdout || '').trim().split('\n');
   const code = Number(lines[lines.length - 1]?.trim()) || 0;
   const body = lines.slice(0, -1).join('\n');
@@ -206,7 +203,7 @@ export async function checkApiHealth(transport, apiHost, { expectedEnv } = {}) {
 
 /** Récupère le CORPS d'une ressource via curl (null si injoignable). */
 async function fetchBody(transport, url) {
-  const res = await transport.exec(`curl -fsSL -m 10 '${url}' || echo __ERR__`);
+  const res = await sonde(transport, 'health.probe_url', `curl -fsSL -m 10 '${url}' || echo __ERR__`, { timeoutMs: TIMEOUTS.HEALTH });
   const body = res.stdout ?? '';
   if (body.includes('__ERR__') || !body.length) return null;
   return body;
@@ -263,6 +260,91 @@ export async function checkWebsiteArtifact(transport, host, expected, { label = 
   };
 }
 
+/**
+ * LES MODULES `.mjs` SONT-ILS SERVIS COMME DU JAVASCRIPT ? — sur le LIVE.
+ *
+ * ══ POURQUOI CETTE SONDE EXISTE ═════════════════════════════════════════════
+ *
+ * Un déploiement a pu s'achever en `deployment.succeeded` alors que le serveur
+ * répondait encore `application/octet-stream` sur le worker de PDF.js. Rien ne
+ * mentait : chaque étape avait bien réussi. Simplement, AUCUNE n'avait posé la
+ * question qui comptait — « le fichier est-il servi avec le bon type ? ».
+ *
+ * Le générateur pouvait donc être corrigé, la suite de tests verte, la
+ * configuration écrite… et le navigateur continuer d'échouer. Une chaîne de
+ * preuves qui ne touche jamais la réponse HTTP finale ne prouve pas la réponse
+ * HTTP finale.
+ *
+ * ══ CE QU'ELLE VÉRIFIE, ET SUR QUOI ════════════════════════════════════════
+ *
+ * Sur un module RÉELLEMENT présent dans le bundle déployé — jamais un fichier
+ * témoin fabriqué pour l'occasion, qui prouverait seulement qu'une règle
+ * existe pour un nom qui n'existe pas.
+ *
+ * Le contrôle du navigateur porte sur la famille `javascript` : `text/javascript`
+ * comme `application/javascript` conviennent. Tout le reste — au premier chef
+ * `application/octet-stream` — fait échouer les scripts de module.
+ *
+ * ══ ABSENCE DE MODULE N'EST PAS ÉCHEC ══════════════════════════════════════
+ *
+ * Un bundle sans `.mjs` rend `probed: false`. On le DIT, plutôt que de rendre
+ * un « ok » qui n'a rien constaté.
+ */
+const MIME_JAVASCRIPT = /(?:application|text)\/javascript/i;
+
+export async function checkModuleMimeType(transport, host, { maxModules = 3 } = {}) {
+  const vide = { ok: true, probed: false, host, modules: [] };
+
+  /**
+   * On demande au SERVEUR la liste de ses modules : le pipeline connaît le
+   * dossier publié, et c'est le seul endroit où l'on sait ce qui a réellement
+   * atterri. Déduire le nom depuis l'artefact local supposerait que l'upload
+   * s'est bien passé — précisément ce qu'on cherche à vérifier.
+   */
+  const liste = await sonde(
+    transport,
+    'health.module_mime.list',
+    `ls -1 /var/www/${host}/assets/*.mjs 2>/dev/null | head -${maxModules} || true`,
+    { timeoutMs: TIMEOUTS.HEALTH },
+  );
+  const chemins = (liste.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (chemins.length === 0) return vide;
+
+  const modules = [];
+  for (const chemin of chemins) {
+    const nom = chemin.split('/').pop();
+
+    /**
+     * DEUX FORMES, ET LA SECONDE EST CELLE QUE L'APPLICATION DEMANDE.
+     *
+     * Depuis que l'URL du worker porte l'identité de la release
+     * (`?build=<revision>`), c'est cette forme-là que le navigateur réclame.
+     * Ne sonder que l'URL nue laisserait passer une configuration qui casse dès
+     * qu'une chaîne de requête est présente — et le contrôle serait vert sur
+     * une adresse que personne n'appelle.
+     */
+    for (const suffixe of ['', '?build=sonde']) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await sonde(
+        transport,
+        'health.module_mime.head',
+        `curl -sS -o /dev/null -m 10 -w '%{http_code} %{content_type}' 'https://${host}/assets/${nom}${suffixe}' || echo '000 __ERR__'`,
+        { timeoutMs: TIMEOUTS.HEALTH },
+      );
+      const [statut, ...reste] = (res.stdout || '').trim().split(/\s+/);
+      const contentType = reste.join(' ');
+      modules.push({
+        name: nom + suffixe,
+        status: Number(statut) || 0,
+        contentType: contentType || null,
+        ok: Number(statut) === 200 && MIME_JAVASCRIPT.test(contentType || ''),
+      });
+    }
+  }
+
+  return { ok: modules.every((m) => m.ok), probed: true, host, modules };
+}
+
 function sleep(ms) {
   return new Promise((r) => {
     const t = setTimeout(r, ms);
@@ -270,4 +352,7 @@ function sleep(ms) {
   });
 }
 
-export default { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact };
+export default {
+  checkLocalHealth, checkPublicHealth, collectBackendDiagnostics,
+  checkPublicMedia, checkApiHealth, checkWebsiteArtifact, checkModuleMimeType,
+};

@@ -18,10 +18,22 @@
 //   1. le bouton « Connexion plateforme Brevo » atteint la clé DU PANEL ;
 //   2. la clé LOCALE du projet n'est jamais lue, jamais envoyée ;
 //   3. le projet ne peut pas choisir le monde — même en le demandant ;
-//   4. Panel absent ou octroi manquant → refus NOMMÉ, et AUCUN repli local ;
-//   5. l'état « vérifié » du credential local n'est pas estampillé par un test
-//      qui ne l'a pas éprouvé ;
+//   4. Panel absent ou refus du Panel → aucun repli sur la clé locale ;
+//   5. le projet n'expose PLUS AUCUNE surface de credential fournisseur ;
 //   6. aucun secret, d'aucun côté, dans aucune réponse ni aucune base.
+//
+// ══ CE QUI A CHANGÉ DEPUIS L'ÉCRITURE DE CETTE SUITE ════════════════════════
+//
+// Elle éprouvait une COEXISTENCE : le projet gardait une clé Brevo locale, et
+// l'on prouvait qu'elle ne servait jamais. Le lot L6.4 a supprimé la clé ET sa
+// surface — `/api/integrated-apis/*` n'existe plus, le bouton « Connexion
+// plateforme Brevo » non plus.
+//
+// L'invariant n'a pas disparu : il est devenu STRUCTUREL. On ne prouve donc
+// plus « la clé locale n'est pas lue » mais « il n'y a plus de clé locale à
+// lire, ni de porte par où en poser une ». La chaîne réelle est éprouvée par
+// le seul chemin qui subsiste — l'envoi d'un modèle, qui traverse la capacité
+// du Panel — et c'est celui qu'un opérateur actionne aujourd'hui.
 import http from 'node:http';
 
 import {
@@ -40,7 +52,13 @@ await connectTestDatabase();
    ══════════════════════════════════════════════════════════════════════════ */
 const CLE_PANEL_TEST = ['xkeysib', 'L82PANELTESTJAMAISAILLEURS00001'].join('-');
 const CLE_PANEL_PROD = ['xkeysib', 'L82PANELPRODJAMAISATTEINTE00002'].join('-');
-/** La clé que le PROJET détient encore. Elle ne doit plus JAMAIS sortir. */
+/**
+ * LA CLÉ QUE LE PROJET DÉTENAIT — sentinelle historique, conservée à dessein.
+ *
+ * Plus rien ne peut la poser : la surface a disparu. On la garde comme motif
+ * de fuite : si elle réapparaissait un jour dans une réponse ou une base, ce
+ * serait qu'une surface locale a été rouverte.
+ */
 const CLE_PROJET_LEGACY = ['xkeysib', 'L82PROJETLEGACYQUINEDOITPLUS003'].join('-');
 const TOUTES = [CLE_PANEL_TEST, CLE_PANEL_PROD, CLE_PROJET_LEGACY];
 
@@ -68,7 +86,6 @@ const BREVO_BASE = `http://127.0.0.1:${fauxBrevo.address().port}/v3`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -140,12 +157,22 @@ section('2. Appairage réel, et le projet conserve sa clé Brevo locale');
   jetonDev = await instance.managerToken();
   check('un vrai jeton DEV du projet est émis', typeof jetonDev === 'string' && jetonDev.length > 40);
 
-  // COEXISTENCE (phase 2 du lot) : la clé locale reste EN PLACE. Ce lot ne la
-  // supprime pas — il cesse simplement de s'en servir pour vérifier.
+  /**
+   * ══ LA SURFACE LOCALE N'EXISTE PLUS — ET C'EST LA PREUVE LA PLUS FORTE ════
+   *
+   * Cette section posait une clé Brevo dans le projet pour prouver ensuite
+   * qu'elle ne servait pas. Depuis L6.4 il n'y a plus de clé NI DE PORTE : on
+   * vérifie donc que la porte est bien murée. Un 404 ici vaut mieux que tous
+   * les « elle n'a pas servi » du monde — on ne peut pas mal utiliser ce qui
+   * n'existe pas.
+   */
   const pose = await appelProjet('PUT', '/api/integrated-apis/BREVO/modes/TEST', {
     credentials: { apiKey: CLE_PROJET_LEGACY },
   });
-  check('la clé legacy du projet est bien enregistrée chez lui', pose.status === 200);
+  check('le projet n’expose AUCUNE surface d’écriture de credential', pose.status === 404);
+
+  const lecture = await appelProjet('GET', '/api/integrated-apis/BREVO');
+  check('…ni de surface de LECTURE', lecture.status === 404);
 }
 
 /** Appel HTTP sur la VRAIE surface du Manager, avec un vrai jeton DEV. */
@@ -162,116 +189,142 @@ async function appelProjet(method, chemin, corps) {
   return { status: res.status, json };
 }
 
-/** Le bouton « Connexion plateforme Brevo », exactement. */
-const testerBrevo = (mode = 'TEST') =>
-  appelProjet('POST', `/api/integrated-apis/BREVO/modes/${mode}/test`);
+/**
+ * CE QUE LE BOUTON FAISAIT, ET QUI EXISTE TOUJOURS.
+ *
+ * L'écran « Connexion plateforme Brevo » a disparu avec la surface locale de
+ * credentials (L6.4) : sa route n'existe plus, et le service qui la servait
+ * n'a plus d'appelant. Ce qu'il FAISAIT, en revanche, n'a pas bougé d'un
+ * octet — il invoquait `email.sender.verify` auprès du Panel, avec le jeton de
+ * pont du projet.
+ *
+ * On invoque donc cette capacité DEPUIS L'INSTANCE DU PROJET, dans son
+ * processus, avec son jeton réel. C'est le même trajet, la même clé, la même
+ * question : « laquelle sort ? ». Ce que le test perd, c'est le rendu d'écran ;
+ * ce qu'il garde, c'est tout ce qui touche aux secrets.
+ */
+async function verifierExpediteur() {
+  return instance.invokeCapability({
+    code: VERIFY,
+    input: { operationId: `verify-${Date.now()}-${Math.random().toString(16).slice(2, 10)}` },
+  });
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
-   3. SANS OCTROI — le bouton refuse, et NE RETOMBE PAS sur la clé locale.
+   3. LE BOUTON MARCHE SANS RIEN ACCORDER — et la clé locale reste inerte.
    ══════════════════════════════════════════════════════════════════════════ */
-section('3. Sans octroi : refus NOMMÉ, et aucun repli local');
+section('3. La capacité atteint Brevo avec la clé DU PANEL');
 {
+  /**
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ────────
+   *
+   * Elle a déjà survécu à la suppression des octrois. Elle survit à celle de la
+   * surface locale. Ce qui reste est l'invariant réel du lot, et il n'a jamais
+   * changé : le succès vient de la clé DU PANEL, et aucune clé de projet
+   * n'atteint le fournisseur.
+   */
   const avant = appelsBrevo.length;
-  const { status, json } = await testerBrevo();
+  const resultat = await verifierExpediteur();
 
-  check('la route répond', status === 200);
-  check('le diagnostic est en ÉCHEC', json?.data?.status === 'FAILED');
-  check('l’autorité annoncée est la PLATEFORME', json?.data?.authority === 'PANEL');
-  check('le message nomme l’octroi manquant',
-    /accordé/i.test(json?.data?.message ?? ''));
-  check('le code de capacité est conservé',
-    json?.data?.details?.capabilityErrorCode === 'CAPABILITY_NOT_GRANTED');
+  check('la capacité répond', Boolean(resultat));
+  check('elle n’est pas refusée', resultat?.outcome !== 'REFUSED');
 
-  // LE POINT DUR DU LOT : aucun repli. Un repli aurait appelé Brevo avec la
-  // clé locale et affiché « connexion réussie » — le pire des diagnostics.
-  check('AUCUN appel Brevo n’a eu lieu', appelsBrevo.length === avant);
+  const sortis = appelsBrevo.slice(avant);
+  check('un appel Brevo a bien eu lieu', sortis.length >= 1);
+  check('…avec la clé du PANEL', sortis.every((a) => a.apiKey === CLE_PANEL_TEST));
+  check('…et JAMAIS la clé locale du projet',
+    sortis.every((a) => a.apiKey !== CLE_PROJET_LEGACY));
+  check('…ni celle de l’autre monde',
+    sortis.every((a) => a.apiKey !== CLE_PANEL_PROD));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    4. AVEC OCTROI — la clé DU PANEL part, celle du projet ne bouge pas.
    ══════════════════════════════════════════════════════════════════════════ */
-section('4. Avec octroi : c’est la clé du Panel qui atteint Brevo');
+section('4. Le monde et la route sont ceux du PANEL, pas ceux du projet');
 {
-  await grantsModule.setCapabilityGrants(projectId, [VERIFY], ACTEUR);
-
+  /**
+   * Les octrois n'existent plus, le monde ne se demande plus : ce qui reste à
+   * établir est que l'appel sortant est bien celui du Panel — sa clé, son
+   * monde, sa route de lecture de compte — et qu'il est UNIQUE. Un second
+   * appel signifierait un repli quelque part, et c'est exactement ce qu'on
+   * traque depuis le début de cette suite.
+   */
   const avant = appelsBrevo.length;
-  const { status, json } = await testerBrevo();
-  const data = json?.data;
+  const resultat = await verifierExpediteur();
 
-  check('la route répond', status === 200);
-  check('le diagnostic est un SUCCÈS', data?.status === 'SUCCESS');
-  check('le message dit « Connexion plateforme Brevo »',
-    /connexion plateforme brevo/i.test(data?.message ?? ''));
-  check('le compte lu chez le fournisseur est rendu',
-    data?.details?.account === 'L.Y Solution');
-  check('l’autorité est la PLATEFORME', data?.authority === 'PANEL');
+  check('la capacité répond', Boolean(resultat));
+  check('UN SEUL appel Brevo a eu lieu', appelsBrevo.length === avant + 1);
 
-  check('UN appel Brevo a eu lieu', appelsBrevo.length === avant + 1);
   const appel = appelsBrevo.at(-1);
   check('…c’est la clé du PANEL, monde TEST', appel.apiKey === CLE_PANEL_TEST);
   check('…JAMAIS la clé locale du projet', appel.apiKey !== CLE_PROJET_LEGACY);
   check('…ni celle de l’autre monde', appel.apiKey !== CLE_PANEL_PROD);
   check('…sur la route de lecture de compte', appel.url === '/v3/account');
 
-  check('la réponse rendue à l’écran est PROPRE', propre(json));
+  check('le résultat rendu au projet est PROPRE', propre(resultat));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    5. LE PROJET NE CHOISIT PAS LE MONDE.
    ══════════════════════════════════════════════════════════════════════════ */
-section('5. Demander PROD depuis une instance TEST ne change rien');
+section('5. Le monde ne se demande plus — il n’y a plus de paramètre pour cela');
 {
-  const avant = appelsBrevo.length;
-  const { json } = await testerBrevo('PROD');
-  const data = json?.data;
-
-  check('l’appel aboutit quand même', data?.status === 'SUCCESS');
-  check('le monde SERVI est celui de l’instance', data?.details?.environment === 'TEST');
-  check('…et le rapport le dit, plutôt que de répéter la demande',
-    data?.mode === 'TEST' && data?.details?.requestedMode === 'PROD');
-  check('UN appel Brevo, et un seul', appelsBrevo.length === avant + 1);
-  check('LA CLÉ PROD N’A JAMAIS ÉTÉ ATTEINTE',
-    appelsBrevo.at(-1).apiKey === CLE_PANEL_TEST);
-  check('aucun appel du parcours n’a jamais porté la clé PROD',
+  /**
+   * La section précédente envoyait `mode=PROD` sur la route du projet, et
+   * vérifiait que le Panel l'ignorait. Cette route n'existe plus, et avec elle
+   * le paramètre : le monde est désormais celui du RUNTIME du Panel, sans
+   * qu'aucun appelant puisse le nommer. La garde devient donc structurelle.
+   */
+  check('aucune clé PROD n’a jamais atteint le fournisseur',
     appelsBrevo.every((a) => a.apiKey !== CLE_PANEL_PROD));
+  check('toutes les clés sorties sont celle du monde TEST',
+    appelsBrevo.every((a) => a.apiKey === null || a.apiKey === CLE_PANEL_TEST));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    6. L'ÉTAT LOCAL N'EST PAS ESTAMPILLÉ PAR UN TEST QUI NE L'A PAS ÉPROUVÉ.
    ══════════════════════════════════════════════════════════════════════════ */
-section('6. Le credential local n’est ni « vérifié », ni infirmé');
+section('6. Il n’y a plus d’état local de credential à estampiller');
 {
-  const { json } = await appelProjet('GET', '/api/integrated-apis/BREVO');
-  const modeTest = json?.data?.modes?.TEST;
-
-  check('le credential local est toujours configuré', modeTest?.configured === true);
   /**
-   * LE MENSONGE QU'ON REFUSE D'ÉCRIRE : un « vérifié » daté sur une clé que
-   * personne n'a essayée. Un opérateur la croirait bonne, et la garderait.
+   * On refusait d'écrire « vérifié » sur une clé que personne n'avait essayée.
+   * Le mensonge est devenu impossible à formuler : l'état local n'existe plus.
+   * On vérifie donc que la surface qui le portait a bien disparu, plutôt que
+   * de vérifier la valeur d'un champ qui n'a plus de support.
    */
-  check('il n’est PAS marqué vérifié par un test qu’il n’a pas subi',
-    modeTest?.verified !== true);
-  check('la vue du projet ne contient aucune clé', propre(json));
+  const { status, json } = await appelProjet('GET', '/api/integrated-apis/BREVO');
+  check('la surface d’état des credentials n’existe plus', status === 404);
+  check('sa réponse ne contient aucune sentinelle', propre(json));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
    7. PANEL INJOIGNABLE — le diagnostic devient indisponible, PAS faux.
    ══════════════════════════════════════════════════════════════════════════ */
-section('7. Panel éteint : le bouton dit qu’il ne peut pas savoir');
+section('7. Panel éteint : AUCUN repli, et le refus le dit');
 {
+  /**
+   * ══ LA SECTION LA PLUS IMPORTANTE DE TOUTE LA SUITE ══════════════════════
+   *
+   * C'est ici que se jouait le vrai risque du lot d'origine : un Panel
+   * injoignable, et un projet qui « se débrouille » avec sa clé locale. L'écran
+   * aurait affiché un vert obtenu par le chemin qu'on venait de fermer.
+   *
+   * La clé locale n'existe plus, mais la garde reste indispensable : elle
+   * vérifie qu'AUCUN appel ne part quand le Panel est éteint. Un repli qui
+   * réapparaîtrait — clé d'environnement, valeur codée en dur, cache — se
+   * verrait ici, et nulle part ailleurs.
+   */
   await closePanel();
 
   const avant = appelsBrevo.length;
-  const { json } = await testerBrevo();
-  const data = json?.data;
+  const resultat = await verifierExpediteur().catch((err) => ({ erreur: err?.code ?? String(err) }));
 
-  check('le diagnostic est en ÉCHEC', data?.status === 'FAILED');
-  check('l’autorité reste la PLATEFORME', data?.authority === 'PANEL');
-  check('AUCUN appel Brevo — pas de repli sur la clé locale',
+  check('AUCUN appel Brevo — aucun repli, d’aucune sorte',
     appelsBrevo.length === avant);
-  check('le message ne prétend PAS que Brevo est en panne',
-    !/brevo (est )?(en panne|indisponible)/i.test(data?.message ?? ''));
-  check('la réponse reste propre', propre(json));
+  check('le projet n’obtient pas un succès fabriqué',
+    !resultat || resultat.outcome !== 'SUCCEEDED');
+  check('la réponse reste propre', propre(resultat));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -282,11 +335,14 @@ section('8. Ni le Panel ni le projet ne laissent fuir une clé');
   const dump = await instance.dbDump();
   const texte = JSON.stringify(dump);
 
-  // La clé LEGACY est encore là, chiffrée : ce lot ne la supprime pas (phase 2).
   check('aucune clé du PANEL n’a atterri chez le projet',
     !texte.includes(CLE_PANEL_TEST) && !texte.includes(CLE_PANEL_PROD));
-  check('la clé legacy du projet reste CHIFFRÉE, jamais en clair',
-    !texte.includes(CLE_PROJET_LEGACY));
+  /**
+   * La sentinelle legacy ne peut plus être posée — la surface a disparu (L6.4).
+   * On la cherche quand même : sa réapparition signifierait qu'une surface
+   * locale a été rouverte quelque part.
+   */
+  check('aucune clé de projet, en clair ou non', !texte.includes(CLE_PROJET_LEGACY));
 
   const coffre = await CredentialSet.collection.find({}).toArray();
   check('le coffre du Panel ne contient aucune valeur lisible', propre(coffre));

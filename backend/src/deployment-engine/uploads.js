@@ -21,6 +21,7 @@
  *    manquant est une erreur, pas un avertissement.
  */
 import { DeploymentError } from './errors.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, strictShell } from './remoteCommand.js';
 
 /** Une empreinte SHA-256 en hexadécimal minuscule. */
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -66,9 +67,34 @@ export function assertUploadsPath(value, { remoteRoot = '/var/www', field = 'pat
  * destination neuve, pas une erreur.
  */
 export async function inventoryUploads(transport, dir) {
-  const res = await transport.exec(
-    `if [ -d ${q(dir)} ]; then cd ${q(dir)} && find . -type f -exec sha256sum {} + ; fi`,
-  );
+  /**
+   * ══ CRITIQUE, ET C'EST LE DÉFAUT LE PLUS GRAVE DE CE MODULE ═══════════════
+   *
+   * Cette commande était lancée sans que son code de sortie soit lu. Un
+   * inventaire qui ÉCHOUE — droits refusés sur l'ancien emplacement, disque en
+   * erreur, `find` interrompu — rendait alors une sortie vide, donc un
+   * inventaire VIDE.
+   *
+   * Sur la SOURCE, cela se traduisait par « aucun média à migrer » : la
+   * migration se déclarait réussie avec zéro fichier, la nouvelle vitrine
+   * répondait 404 sur toutes ses images, et rien dans le rapport ne permettait
+   * de comprendre pourquoi. Le contrôle d'empreinte qui suit la copie ne
+   * pouvait pas le rattraper : il ne vérifie que ce qu'on a décidé de copier.
+   *
+   * ── LE CONTRAT DU `if [ -d … ]` ────────────────────────────────────────────
+   *
+   * Un dossier ABSENT est le cas normal d'une destination neuve : le `if` rend
+   * alors 0 avec une sortie vide, et l'inventaire vide est la bonne réponse. Ce
+   * qui est désormais refusé, c'est un dossier PRÉSENT dont on n'a pas su lire
+   * le contenu — deux situations que le silence confondait.
+   */
+  const res = await runRemoteCommand(transport, {
+    commandId: 'uploads.inventory',
+    command: strictShell(`if [ -d ${q(dir)} ]; then cd ${q(dir)}; find . -type f -exec sha256sum {} + ; fi`),
+    commandClass: COMMAND_CLASS.CRITICAL,
+    timeoutMs: TIMEOUTS.INSTALL,
+    step: 'uploads_migrate',
+  });
   const inventaire = new Map();
   for (const ligne of String(res.stdout || '').split('\n')) {
     if (!ligne.trim()) continue;
@@ -185,12 +211,31 @@ export async function migrateUploads(transport, { destination, identityId, sourc
   for (const [rel, { from }] of aCopier) {
     const source = `${from}/${rel}`;
     const cible = `${dst}/${rel}`;
-    const r = await transport.exec(
-      `mkdir -p ${q(dirname(cible))} && cp -n --preserve=timestamps -- ${q(source)} ${q(cible)}`,
-    );
-    if (r.code !== 0) {
+    /**
+     * SONDE, PARCE QUE L'ERREUR MÉTIER EST PLUS RICHE QUE L'ERREUR TECHNIQUE.
+     *
+     * Le code de sortie était déjà lu ici — c'était la seule commande du module
+     * à l'être. La laisser CRITIQUE la ferait lever une erreur générique
+     * « commande distante échouée » ; ce qu'il faut lire, c'est QUEL média n'a
+     * pas pu être copié et d'où il venait. On observe donc le résultat et l'on
+     * lève l'erreur du domaine, deux lignes plus bas.
+     *
+     * La sonde ne rend PAS l'échec inoffensif : `r.ok` est faux pour un code
+     * non nul comme pour une connexion perdue, et les deux mènent au même
+     * `throw`. Ce que le contrat apporte ici : un délai borné (une copie sur
+     * disque lent pouvait bloquer sans fin), le caviardage des sorties, et un
+     * identifiant stable dans le rapport à la place d'un chemin de média.
+     */
+    const r = await runRemoteCommand(transport, {
+      commandId: 'uploads.copy_file',
+      command: strictShell(`mkdir -p ${q(dirname(cible))}; cp -n --preserve=timestamps -- ${q(source)} ${q(cible)}`),
+      commandClass: COMMAND_CLASS.PROBE,
+      timeoutMs: TIMEOUTS.FILESYSTEM,
+      step: 'uploads_migrate',
+    });
+    if (!r.ok) {
       throw new DeploymentError('UPLOADS_MIGRATION_COPY_FAILED', `Échec de copie du média « ${rel} ».`, {
-        step: 'uploads_migrate', details: { file: rel, from, to: dst, stderr: String(r.stderr || '').slice(0, 300) },
+        step: 'uploads_migrate', details: { file: rel, from, to: dst, exitCode: r.exitCode, stderr: r.stderrTail },
       });
     }
   }

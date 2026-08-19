@@ -25,6 +25,19 @@ export function bridgeContractVersionGuard(req, res, next) {
       ),
     );
   }
+  /**
+   * ══ LA VERSION NÉGOCIÉE EST RETENUE, PAS SEULEMENT VÉRIFIÉE ═══════════════
+   *
+   * Cette garde lisait l'en-tête, jugeait la compatibilité, puis l'oubliait.
+   * La conséquence se voyait ailleurs : la fiche d'un projet portait la version
+   * relevée AU MOMENT DE L'APPAIRAGE, et rien ne la rafraîchissait ensuite. Un
+   * projet monté de 1.4.0 à 1.8.0 continuait donc d'être affiché en 1.4.0 —
+   * pendant qu'il parlait 1.8.0 à chaque requête, sous les yeux de cette garde.
+   *
+   * On la pose sur la requête. Ce qui la persiste décide plus loin ; ici, on se
+   * contente de ne plus jeter ce qu'on vient de lire.
+   */
+  req.bridgeContractVersion = requested;
   return next();
 }
 

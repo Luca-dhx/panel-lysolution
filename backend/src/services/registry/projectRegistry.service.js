@@ -7,6 +7,10 @@ import { buildProjectHealth } from '../supervision/health.service.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
 import registryStore from './registryStore.js';
+import {
+  NETWORK_DECLARATION_SOURCES,
+  applyDeclaredNetwork,
+} from './projectNetworkDeclaration.js';
 import { issuePairingCode } from '../pairing/pairing.service.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
@@ -399,9 +403,21 @@ export async function removeProject(projectId) {
 }
 
 // Enregistre un heartbeat (fiche déjà authentifiée par le middleware de pont).
-export async function recordHeartbeat(record, heartbeat) {
+export async function recordHeartbeat(record, heartbeat, contractVersion = null) {
   record.runtime.environment = heartbeat.environment;
   record.runtime.softwareVersion = heartbeat.softwareVersion;
+  /**
+   * LA VERSION DE CONTRAT SUIT LE PROJET, elle ne fige pas à l'appairage.
+   *
+   * Elle n'est pas dans le corps du heartbeat, et elle n'a pas à y être : elle
+   * voyage sur CHAQUE requête, dans l'en-tête, où la garde de compatibilité la
+   * lit déjà. La prendre là évite d'inventer un champ — donc une seconde source
+   * de vérité, qui divergerait le jour où l'un des deux serait oublié.
+   *
+   * `null` ne remplace jamais une valeur connue : un appelant qui ne la
+   * transmet pas (test, façade) ne doit pas effacer ce que le pont savait.
+   */
+  if (contractVersion) record.runtime.contractVersion = contractVersion;
   record.runtime.lastHeartbeatAt = nowIso();
   record.runtime.lastHealth = {
     status: heartbeat.health.status,
@@ -421,6 +437,23 @@ export async function recordHeartbeat(record, heartbeat) {
     record.runtime.components = heartbeat.runtime.components;
   }
   if (heartbeat.engines !== undefined) record.runtime.engines = heartbeat.engines;
+
+  /**
+   * >= 1.9.0 — LE RÉSEAU DÉCLARÉ AU BATTEMENT.
+   *
+   * C'est le canal qui RÉPÈTE : il confirme à chaque tour que l'adresse que le
+   * Panel détient est bien celle que le projet sert. Un projet en 1.8 n'en
+   * envoie pas, et sa fiche continue de converger par la projection de
+   * présentation — voir `applyDeclaredNetwork`.
+   */
+  if (heartbeat.runtime?.network) {
+    applyDeclaredNetwork(record, {
+      backendUrl: heartbeat.runtime.network.publicBackendUrl,
+      source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
+      declaredAt: heartbeat.runtime.network.declaredAt ?? null,
+    });
+  }
+
   await registryStore.save(record);
 }
 

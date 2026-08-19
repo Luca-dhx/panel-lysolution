@@ -308,6 +308,36 @@ export interface PanelSelfInfo {
   defaultRemoteRoot: string;
 }
 
+/**
+ * L'ÉTAT DES PRÉREQUIS — ce qui doit être vrai pour qu'un déploiement puisse
+ * seulement commencer.
+ *
+ * `destination.ok` ne dit PAS que le serveur distant répond : le vérifier
+ * exigerait une session SSH, donc un mot de passe, que cette lecture ne
+ * transporte pas. Il dit que la destination existe et que son cycle de vie
+ * autorise un déploiement. La joignabilité réelle reste établie par le
+ * préflight, qui, lui, se connecte.
+ */
+export interface DeploymentReadiness {
+  ready: boolean;
+  checks: {
+    backend: boolean;
+    database: boolean;
+    deploymentEngine: boolean;
+    destination: boolean;
+  };
+  destination: {
+    ok: boolean;
+    /** Code métier STABLE — jamais une phrase à relire. */
+    reason: string | null;
+    targetId?: string;
+    name?: string;
+    environment?: string;
+    activeRunId?: string | null;
+  } | null;
+  phase: 'STARTING' | 'READY' | 'DRAINING';
+}
+
 export interface StartedOperation {
   runId: string;
   /** Même valeur que runId — nom attendu par le contrat 202. */

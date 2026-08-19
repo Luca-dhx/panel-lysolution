@@ -70,6 +70,18 @@ code {
 
 /* ---------- Sidebar ---------- */
 
+/*
+ * TROIS ZONES, DONT UNE SEULE DÉFILE.
+ *
+ * L'en-tête (le logo) et le pied (l'identité et la déconnexion) sont figés :
+ * ce sont les deux repères qu'on doit retrouver sans chercher. Entre les deux,
+ * la navigation prend la place restante et défile pour elle seule — c'est le
+ * seul bloc dont la hauteur est imprévisible, puisqu'un compte DEV y ajoute
+ * une section entière.
+ *
+ * `overflow: hidden` sur le conteneur est ce qui rend cela vrai : sans lui, la
+ * barre s'allonge et emporte son pied hors du champ.
+ */
 .sidebar {
   position: fixed;
   top: 0;
@@ -82,6 +94,12 @@ code {
   border-right: 1px solid var(--border);
   padding: 1.5rem 1rem;
   gap: 1.5rem;
+  overflow: hidden;
+}
+
+.sidebar-header,
+.sidebar-footer {
+  flex: 0 0 auto;
 }
 
 .sidebar-title {
@@ -100,6 +118,11 @@ code {
   flex-direction: column;
   gap: 0.25rem;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.25rem;
+  scrollbar-gutter: stable;
 }
 
 /* Deux espaces séparés : Gestion, puis Développeur. */
@@ -165,6 +188,45 @@ code {
 .sidebar-version-number {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+/*
+ * QUI EST CONNECTÉ — le nom d'abord, l'adresse ensuite.
+ *
+ * Le pied n'affichait que l'adresse e-mail, le nom relégué dans un `title`
+ * qu'un doigt n'ouvre jamais. On lit désormais son nom, son rôle à côté, et
+ * l'adresse en dessous en tant que précision — c'est elle qui départage deux
+ * comptes homonymes, pas l'inverse.
+ */
+.sidebar-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.sidebar-identity-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.sidebar-user-name {
+  margin: 0;
+  min-width: 0;
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Le rôle ne se comprime pas : c'est un mot court, et le tronquer le rend
+   faux (« ADM… » n'est pas un rôle). C'est le nom qui cède la place. */
+.sidebar-user-role {
+  flex: 0 0 auto;
 }
 
 .sidebar-user {
@@ -714,25 +776,85 @@ textarea:focus {
   font-size: 0.9rem;
 }
 
-/* ---------- Responsive minimal ---------- */
-
-@media (max-width: 900px) {
-  .sidebar {
-    position: static;
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .app-shell {
-    flex-direction: column;
-  }
-
-  .main-content {
-    margin-left: 0;
-    padding: 1.5rem 1rem;
-  }
+.auth-helper-row,
+.auth-actions {
+  display: flex;
+  justify-content: center;
 }
+
+.auth-link {
+  color: var(--accent-hover);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.auth-footnote {
+  margin: -0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.auth-success {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  text-align: center;
+}
+
+.auth-success-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.toast-viewport {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  pointer-events: none;
+}
+
+.toast {
+  min-width: 260px;
+  max-width: min(420px, calc(100vw - 2rem));
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  padding: 0.85rem 1rem;
+  color: var(--text);
+  background: var(--bg-elevated);
+  box-shadow: 0 1rem 2rem color-mix(in srgb, var(--bg) 55%, #000000);
+}
+
+.toast-success {
+  background: var(--ok-bg);
+  border-color: rgba(46, 163, 107, 0.45);
+  color: #8fe0b6;
+}
+
+.toast-error {
+  background: var(--danger-bg);
+  border-color: rgba(217, 83, 79, 0.45);
+  color: #f4a9a7;
+}
+
+/*
+ * Le responsive vit ENTIÈREMENT dans `components.css` (chargé après celui-ci).
+ *
+ * Il y avait ici un bloc `@media (max-width: 900px)` d'avant le tiroir, qui
+ * aplatissait la barre en bandeau : `position: static` et surtout
+ * `overflow: visible` sur `.sidebar` et `.sidebar-nav`. Les deux fichiers se
+ * contredisaient — et comme `overflow` n'était redéclaré nulle part ensuite,
+ * c'est l'ancienne valeur qui gagnait : sur téléphone la navigation ne
+ * défilait plus dans son cadre, elle poussait le pied hors de l'écran et
+ * « Déconnexion » devenait inatteignable. Une seule source, donc.
+ */
 
 /* ==========================================================================
    SUPERVISION (Phase 3A) — divulgation progressive
@@ -1443,6 +1565,233 @@ textarea:focus {
   margin-top: 0.5rem;
 }
 
+/* PORTÉE DES MODÈLES (L11.1) — le sélecteur, et le badge qui le rappelle.
+   Le badge est répété sur l'écran d'édition : la question « chez qui suis-je
+   en train d'écrire ? » ne doit jamais exiger de remonter à la liste. */
+.template-scope-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.template-scope-picker select {
+  min-width: 240px;
+}
+
+.template-scope-badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  vertical-align: middle;
+}
+
+/* Deux teintes NETTEMENT distinctes : confondre « Panel » et « client » d'un
+   coup d'œil est précisément l'erreur qui coûte cher. */
+.template-scope-badge.is-panel {
+  background: color-mix(in srgb, var(--p-primary) 16%, var(--p-background));
+  border-color: color-mix(in srgb, var(--p-primary) 40%, transparent);
+}
+
+.template-scope-badge.is-project {
+  background: color-mix(in srgb, var(--p-accent) 26%, var(--p-background));
+  border-color: color-mix(in srgb, var(--p-accent) 55%, transparent);
+}
+
+.template-list {
+  display: grid;
+  gap: 12px;
+}
+
+.template-list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--p-background) 92%, white 8%);
+}
+
+.template-list-item:hover {
+  border-color: color-mix(in srgb, var(--p-primary) 35%, var(--border, rgba(128, 128, 128, 0.2)));
+  background: color-mix(in srgb, var(--p-accent) 16%, var(--p-background));
+}
+
+.template-list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+}
+
+.template-code {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.template-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.template-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.template-tab {
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+
+.template-tab-active {
+  color: var(--p-primary);
+  border-color: color-mix(in srgb, var(--p-primary) 45%, var(--border, rgba(128, 128, 128, 0.2)));
+  background: color-mix(in srgb, var(--p-accent) 18%, var(--p-background));
+}
+
+.template-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+}
+
+.template-main,
+.template-side,
+.template-preview-panel,
+.template-variable-list,
+.template-version-list,
+.template-readiness,
+.template-validation-list {
+  display: grid;
+  gap: 16px;
+}
+
+.template-html-input {
+  min-height: 28rem;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.template-validation-group {
+  border: 1px solid #f4b4b4;
+  border-radius: 12px;
+  background: #fff4f4;
+  padding: 10px 12px;
+}
+
+.template-validation-group ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.template-validation-title,
+.template-ok {
+  margin: 0;
+  font-weight: 600;
+}
+
+.template-ok {
+  color: #1d6b46;
+}
+
+.template-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.template-preview-shell {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  padding: 18px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--p-foreground) 4%, var(--p-background));
+}
+
+.template-preview-frame {
+  height: 70vh;
+  max-width: 100%;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: 12px;
+  background: white;
+}
+
+.template-variable-card,
+.template-version-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--p-background) 92%, white 8%);
+}
+
+.template-variable-card p,
+.template-version-card p {
+  margin: 0 0 6px;
+}
+
+.template-sample-list,
+.template-guide-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.template-sample-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  gap: 10px;
+  padding: 4px 0;
+}
+
+@media (max-width: 980px) {
+  .template-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .template-list-item,
+  .template-variable-card,
+  .template-version-card,
+  .template-topbar,
+  .template-preview-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .template-list-meta {
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .template-sample-list li {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Équipe du projet : une ligne par membre, lisible d'un coup d'œil. */
 .team-list { list-style: none; margin: 0; padding: 0; }
 
@@ -1698,4 +2047,112 @@ textarea:focus {
   overflow-x: auto;
   white-space: pre;
   user-select: text;
+}
+
+/* COMPTES L.Y SOLUTION (L12.B-F) — deux réglages distincts par compte.
+   `enabled` et `projectAccess` ne se ressemblent pas visuellement : les
+   confondre à l'écran ferait croire qu'activer un compte l'autorise quelque
+   part, alors qu'un compte actif n'a par défaut AUCUN accès projet. */
+.panel-users {
+  display: grid;
+  gap: 14px;
+}
+
+.panel-user {
+  border: 1px solid var(--border, rgba(128, 128, 128, 0.2));
+  border-radius: 14px;
+  padding: 16px;
+  background: color-mix(in srgb, var(--p-background) 92%, white 8%);
+}
+
+.panel-user-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel-user-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Séparation NETTE d'avec l'état du compte : c'est un autre sujet. */
+.panel-user-access {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border, rgba(128, 128, 128, 0.2));
+}
+
+.panel-user-access-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-user-trace {
+  margin-top: 6px;
+  font-size: 0.8rem;
+}
+
+.panel-user-editor {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.panel-user-mode,
+.panel-user-project {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.panel-user-projects {
+  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--p-accent) 10%, var(--p-background));
+}
+
+/* Un projet non appairé est MONTRÉ, jamais cochable : le masquer ferait croire
+   qu'il n'existe pas, le rendre cochable ferait accorder un accès refusé. */
+.panel-user-project-off {
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+
+.panel-user-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* MON PROFIL (L12.C) — le lien du pied doit ressembler EXACTEMENT au bouton de
+   déconnexion qu'il surmonte : ce sont deux actions du même registre, et une
+   différence de forme suggérerait une différence de nature. `.btn` étant conçu
+   pour un `<button>`, on rétablit ce qu'un `<a>` perd. */
+.sidebar-profile-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
+/* La page « Mon profil » : des cartes empilées, comme les autres écrans. */
+.profile-editor {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.profile-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
 }

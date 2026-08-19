@@ -14,7 +14,7 @@
 //   SUCCEEDED  l'action a eu lieu, on en a la preuve
 //   FAILED     l'action n'a PAS eu lieu, on en a la preuve
 //   UNKNOWN    on ne sait pas — et c'est un résultat, pas une panne du code
-//   BLOCKED    on a refusé d'essayer (droit, ouverture commerciale)
+//   BLOCKED    on a refusé d'essayer (appartenance, périmètre, concurrence)
 //
 // `UNKNOWN` existe parce qu'un délai dépassé n'est pas un échec constaté : la
 // requête a pu aboutir chez le fournisseur et seule la réponse se perdre. Le
@@ -37,12 +37,17 @@ export const CAPABILITY_OUTCOMES = Object.freeze({
 export const CAPABILITY_ERROR_CODES = Object.freeze({
   /** Le code demandé n'existe dans aucun registre. Fail closed. */
   UNKNOWN: 'CAPABILITY_UNKNOWN',
-  /** Connue, mais pas encore branchée sur un adaptateur. */
+  /**
+   * DÉFAILLANCE INTERNE, ET PLUS UN ÉTAT DE DÉPLOIEMENT.
+   *
+   * Ce code signifiait « déclarée mais pas encore servie » — l'état
+   * intermédiaire supprimé par la simplification. Il ne subsiste que pour deux
+   * incidents qui ne devraient jamais se produire : un adaptateur manquant
+   * malgré le contrôle d'alignement, et une sortie qui viole son propre
+   * contrat. Aucun n'est réparable depuis le projet ; les deux sont des bogues
+   * du Panel.
+   */
   NOT_AVAILABLE: 'CAPABILITY_NOT_AVAILABLE',
-  /** Ce projet n'a pas reçu le droit d'invoquer cette capacité. */
-  NOT_GRANTED: 'CAPABILITY_NOT_GRANTED',
-  /** Écriture réelle refusée tant que l'instance n'est pas ouverte (L1.75). */
-  BLOCKED_PREOPENING: 'CAPABILITY_BLOCKED_PREOPENING',
   /** Le fournisseur n'a pas répondu, ou a répondu qu'il ne pouvait pas. */
   PROVIDER_UNAVAILABLE: 'CAPABILITY_PROVIDER_UNAVAILABLE',
   /** Aucune réponse dans le délai. L'action a PEUT-ÊTRE eu lieu. */
@@ -70,9 +75,11 @@ export const CAPABILITY_ERROR_CODES = Object.freeze({
    * distinguer donnerait un oracle d'existence — on présenterait des
    * identifiants au hasard et la nuance du refus dirait lesquels existent.
    *
-   * Distinct de `NOT_GRANTED` à dessein : celui-ci parle du DROIT d'invoquer un
-   * verbe, celui-là de l'APPARTENANCE d'un objet. Les confondre ferait chercher
-   * un octroi manquant là où il n'en manque aucun.
+   * C'est désormais LE refus d'autorisation de la passerelle. Il coexistait
+   * avec `NOT_GRANTED`, qui parlait du droit d'invoquer un VERBE quand
+   * celui-ci parle de l'APPARTENANCE d'un OBJET ; la distinction a disparu avec
+   * les octrois, et c'est la bonne moitié qui reste — un verbe accordé n'a
+   * jamais empêché personne de désigner la ressource d'autrui.
    */
   RESOURCE_NOT_OWNED: 'CAPABILITY_RESOURCE_NOT_OWNED',
   OPERATION_IN_FLIGHT: 'CAPABILITY_OPERATION_IN_FLIGHT',
@@ -88,8 +95,6 @@ export const CAPABILITY_ERROR_CODES = Object.freeze({
 const HTTP_STATUS = Object.freeze({
   [CAPABILITY_ERROR_CODES.UNKNOWN]: 404,
   [CAPABILITY_ERROR_CODES.NOT_AVAILABLE]: 409,
-  [CAPABILITY_ERROR_CODES.NOT_GRANTED]: 403,
-  [CAPABILITY_ERROR_CODES.BLOCKED_PREOPENING]: 409,
   [CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE]: 502,
   // 504 et non 502 : le projet doit pouvoir distinguer « il a dit non » de
   // « il n'a rien dit », parce que la seconde interdit un rejeu aveugle.
@@ -109,8 +114,6 @@ const HTTP_STATUS = Object.freeze({
 const OUTCOME_BY_CODE = Object.freeze({
   [CAPABILITY_ERROR_CODES.UNKNOWN]: CAPABILITY_OUTCOMES.FAILED,
   [CAPABILITY_ERROR_CODES.NOT_AVAILABLE]: CAPABILITY_OUTCOMES.FAILED,
-  [CAPABILITY_ERROR_CODES.NOT_GRANTED]: CAPABILITY_OUTCOMES.BLOCKED,
-  [CAPABILITY_ERROR_CODES.BLOCKED_PREOPENING]: CAPABILITY_OUTCOMES.BLOCKED,
   [CAPABILITY_ERROR_CODES.PROVIDER_UNAVAILABLE]: CAPABILITY_OUTCOMES.FAILED,
   // Le seul refus qui n'affirme RIEN sur ce qui s'est passé chez le fournisseur.
   [CAPABILITY_ERROR_CODES.TIMEOUT]: CAPABILITY_OUTCOMES.UNKNOWN,
@@ -155,19 +158,8 @@ export const capabilityUnknown = (code) => new CapabilityError(
 
 export const capabilityNotAvailable = (code, reason) => new CapabilityError(
   CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
-  `La capacité « ${code} » est déclarée mais pas encore servie par le Panel.`,
+  `La capacité « ${code} » n’a pas pu être exécutée : défaillance interne du Panel.`,
   reason ? { reason } : null,
-);
-
-export const capabilityNotGranted = (code, projectId) => new CapabilityError(
-  CAPABILITY_ERROR_CODES.NOT_GRANTED,
-  `Le projet « ${projectId} » n’a pas reçu le droit d’invoquer « ${code} ».`,
-);
-
-export const capabilityBlockedPreopening = (code, effect) => new CapabilityError(
-  CAPABILITY_ERROR_CODES.BLOCKED_PREOPENING,
-  `Refusé : « ${code} » engage une action réelle (${effect}) et cette instance n’est pas encore ouverte commercialement.`,
-  { effect },
 );
 
 export const capabilityInputInvalid = (code, issues) => new CapabilityError(
@@ -219,8 +211,6 @@ export default {
   CapabilityError,
   capabilityUnknown,
   capabilityNotAvailable,
-  capabilityNotGranted,
-  capabilityBlockedPreopening,
   capabilityInputInvalid,
   capabilityCredentialsMissing,
   capabilityProjectScopeMismatch,

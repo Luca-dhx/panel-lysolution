@@ -10,25 +10,53 @@
  * lui, et lui seul, qui rend un nouveau domaine déployable sans configuration.
  */
 import { certPaths, legacyDedicatedCertPaths } from './nginx.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand } from './remoteCommand.js';
 
 /** Réutilise un certificat s'il existe, sinon l'émet via webroot (HTTP-01). */
 async function ensureHostCert(transport, host, { email, webroot }) {
   const fullchain = `/etc/letsencrypt/live/${host}/fullchain.pem`;
-  const existing = await transport.exec(`test -f ${fullchain} && echo OK || echo NO`);
+  /** SONDE : « ce certificat existe-t-il ? » — la réponse est utile, pas fatale. */
+  const existing = await runRemoteCommand(transport, {
+    commandId: 'tls.probe_existing_cert',
+    command: `test -f ${fullchain} && echo OK || echo NO`,
+    commandClass: COMMAND_CLASS.PROBE,
+    timeoutMs: TIMEOUTS.QUICK,
+    step: 'certbot',
+  });
   if (existing.stdout.trim().endsWith('OK')) {
     return { host, obtained: false, reused: true };
   }
-  await transport.exec(`sudo mkdir -p ${webroot}`);
+  /** CRITIQUE : sans ce dossier, la validation HTTP-01 n'a nulle part où écrire. */
+  await runRemoteCommand(transport, {
+    commandId: 'tls.prepare_webroot',
+    command: `sudo mkdir -p ${webroot}`,
+    commandClass: COMMAND_CLASS.CRITICAL,
+    timeoutMs: TIMEOUTS.FILESYSTEM,
+    step: 'certbot',
+  });
   const emailArg = email ? `--email ${email}` : '--register-unsafely-without-email';
-  const res = await transport.exec(
-    `sudo certbot certonly --webroot -w ${webroot} -d ${host} ${emailArg} --agree-tos --non-interactive --keep-until-expiring`,
-    { timeoutMs: 180_000 }
-  );
-  if (res.code !== 0) {
+  /**
+   * SONDE, ET NON CRITIQUE — délibérément.
+   *
+   * Un code non nul de certbot est un échec, mais son message EST le
+   * diagnostic (limite de débit, validation HTTP-01 refusée, DNS non
+   * propagé). Le laisser lever une erreur générique perdrait cette
+   * information ; on la lit et on lève l'erreur MÉTIER juste en dessous.
+   * La post-condition (fullchain, privkey, SAN, expiration) reste vérifiée
+   * plus loin, comme avant ce lot.
+   */
+  const res = await runRemoteCommand(transport, {
+    commandId: 'tls.certbot_certonly',
+    command: `sudo certbot certonly --webroot -w ${webroot} -d ${host} ${emailArg} --agree-tos --non-interactive --keep-until-expiring`,
+    commandClass: COMMAND_CLASS.PROBE,
+    timeoutMs: TIMEOUTS.CERTBOT,
+    step: 'certbot',
+  });
+  if (res.exitCode !== 0) {
     const { DeploymentError } = await import('./errors.js');
     throw new DeploymentError('CERT_ISSUANCE_FAILED', `Échec d'obtention du certificat pour ${host}.`, {
       step: 'certbot',
-      details: { host, output: (res.stderr || res.stdout).slice(0, 500) },
+      details: { host, commandId: res.commandId, exitCode: res.exitCode, output: res.stderrTail || res.stdoutTail },
     });
   }
   return { host, obtained: true, reused: false };

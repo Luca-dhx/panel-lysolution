@@ -122,8 +122,17 @@ export class FakeTransport extends Transport {
       if (pm2) return pm2;
     }
     if (rule) {
+      /**
+       * `code: null` DOIT POUVOIR ÊTRE SIMULÉ.
+       *
+       * C'est l'état d'une connexion coupée ou d'un process tué par signal —
+       * celui que le vrai transport SSH traduisait en « 0 », donc en succès.
+       * Un double incapable de le reproduire ne permettrait pas d'éprouver la
+       * correction.
+       */
       return {
-        code: rule.code ?? 0,
+        code: Object.prototype.hasOwnProperty.call(rule, 'code') ? rule.code : 0,
+        signal: rule.signal ?? null,
         stdout: rule.stdout ?? '',
         stderr: rule.stderr ?? '',
       };

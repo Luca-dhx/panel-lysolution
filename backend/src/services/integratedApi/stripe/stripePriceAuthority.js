@@ -50,6 +50,7 @@
 // se modifie pas. On ne la contourne jamais — il n'existe aucune primitive de
 // mise à jour de Price dans le transport.
 import { PanelProjectContract } from '../../../models/PanelProjectProjection.model.js';
+import { readRecurrence } from '../../contract/contractRecurrence.js';
 
 /* -------------------------------------------------------------------------- */
 /*  REFUS                                                                     */
@@ -90,9 +91,35 @@ export function productOperationId({ environment, contractId }) {
  * Le Price de TERMES donnés. Le montant est en centimes et la devise en
  * minuscules : deux graphies du même tarif produiraient deux clés, donc deux
  * Price identiques.
+ *
+ * ══ L'INTERVALLE FAIT PARTIE DES TERMES ═════════════════════════════════════
+ *
+ * `intervalCount` entre dans la clé au même titre que le montant, et l'oubli
+ * aurait été silencieux : « 900 € tous les mois » et « 900 € tous les 3 mois »
+ * partagent montant, devise, unité et contrat. Sans le compte, ils auraient
+ * partagé la CLÉ — donc le Price. Passer d'une périodicité à l'autre aurait
+ * réutilisé le tarif de l'ancienne, et le client aurait été débité à une
+ * fréquence que son contrat ne dit plus. Rien ne l'aurait signalé : un Price
+ * réutilisé est le cas NORMAL de cette fonction.
+ *
+ * ══ POURQUOI « x1 » NE S'ÉCRIT PAS ══════════════════════════════════════════
+ *
+ * Le réflexe serait de toujours suffixer — une forme unique se relit plus
+ * facilement. Mais TOUT le parc déjà lié porte des clés de l'ancienne forme, et
+ * il est intégralement en `intervalCount = 1` : suffixer sans condition les
+ * aurait toutes renommées d'un coup. Aucune ne se serait plus retrouvée dans le
+ * registre, et le Panel aurait recréé, pour chaque contrat, un Price
+ * rigoureusement identique à celui qui existait déjà — exactement la pollution
+ * de catalogue que la clé par TERMES avait été conçue pour supprimer.
+ *
+ * Le suffixe n'apparaît donc qu'à partir de 2. Et il ne peut pas collisionner :
+ * `month` ne sera jamais égal à `monthx<n>` pour un `n` supérieur à 1. La forme
+ * varie, l'identité non — c'est la seule variation qui ne coûte rien.
  */
-export function priceOperationId({ environment, contractId, interval, amount, currency }) {
-  return `stripe-price:${environment}:${contractId}:${interval}:${amount}:${String(currency).toLowerCase()}`;
+export function priceOperationId({ environment, contractId, interval, intervalCount = 1, amount, currency }) {
+  const n = Number(intervalCount) >= 1 ? Number(intervalCount) : 1;
+  const periodicite = n > 1 ? `${interval}x${n}` : interval;
+  return `stripe-price:${environment}:${contractId}:${periodicite}:${amount}:${String(currency).toLowerCase()}`;
 }
 
 /** `MONTH`/`YEAR` du contrat → `month`/`year` de Stripe. Normalisé une seule fois. */
@@ -135,14 +162,26 @@ export async function resolvePriceIntent({
   const sub = projection.pricing?.subscription ?? null;
   const amount = Number(sub?.amountIncludingTax ?? 0);
   const currency = String(sub?.currency ?? '').trim().toLowerCase();
-  const interval = normalizeInterval(sub?.interval);
+
+  /**
+   * LA PÉRIODICITÉ VIENT DE LA PROJECTION, ENTIÈRE.
+   *
+   * `readRecurrence` rend `null` quand rien d'exploitable n'a été projeté, et
+   * ce `null` n'est PAS comblé ici : on préfère refuser la création du tarif
+   * plutôt que de facturer à une fréquence que personne n'a décidée. C'est la
+   * même règle que pour un montant absent, quelques lignes plus bas — la
+   * fréquence engage autant que la somme.
+   */
+  const recurrence = readRecurrence(sub);
+  const interval = recurrence ? normalizeInterval(recurrence.unit) : null;
+  const intervalCount = recurrence?.interval ?? null;
 
   /**
    * Un montant nul ou absent n'est pas « gratuit » : c'est une projection
    * incomplète. Créer un tarif à zéro produirait un abonnement qui ne prélève
    * rien tout en se déclarant actif.
    */
-  if (!Number.isInteger(amount) || amount <= 0 || !currency) {
+  if (!Number.isInteger(amount) || amount <= 0 || !currency || !recurrence) {
     throw new PriceAuthorityError(
       PRICE_REFUSALS.SUBSCRIPTION_PRICE_ABSENT,
       'La projection de contrat ne porte pas d’abonnement exploitable.',
@@ -173,11 +212,14 @@ export async function resolvePriceIntent({
     contractId,
     reference,
     interval,
+    intervalCount,
     amount,
     currency,
     contractVersion,
     productOperationId: productOperationId({ environment, contractId }),
-    priceOperationId: priceOperationId({ environment, contractId, interval, amount, currency }),
+    priceOperationId: priceOperationId({
+      environment, contractId, interval, intervalCount, amount, currency,
+    }),
     productParams: {
       name: `Abonnement — ${reference || contractId}`,
       metadata,
@@ -187,7 +229,15 @@ export async function resolvePriceIntent({
       product: productId,
       unit_amount: amount,
       currency,
-      recurring: { interval },
+      /**
+       * `interval_count` est TOUJOURS transmis, même à 1.
+       *
+       * Stripe le suppose à 1 quand il manque, et s'en remettre à cette
+       * supposition ferait dépendre la période facturée d'un défaut du
+       * fournisseur plutôt que du contrat. Ce qui est écrit dans le contrat
+       * doit être écrit dans l'appel.
+       */
+      recurring: { interval, interval_count: intervalCount },
       metadata,
     }),
   };

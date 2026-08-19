@@ -13,13 +13,21 @@
 //                           produirait un template que personne n'appelle, ou
 //                           un trou à l'exécution.
 //
-//   contenu (sujet, HTML) → PAR PROJET, avec un DÉFAUT DE PLATEFORME.
-//                           Chaque projet écrit à ses destinataires sous son
-//                           propre ton ; imposer un contenu unique au parc
-//                           serait techniquement plus simple et
-//                           commercialement absurde. `projectId: null` porte
-//                           le défaut, dont chaque projet hérite tant qu'il
-//                           n'a rien réécrit.
+//   contenu (sujet, HTML) → PAR PORTÉE. Depuis L11.1, la portée est EXPLICITE
+//                           (`scopeType`) et il n'y a plus d'héritage : une
+//                           instance PANEL porte le contenu de L.Y Solution,
+//                           une instance PROJECT porte celui d'un projet, et
+//                           l'absence d'une instance PROJECT est une ERREUR
+//                           d'envoi — jamais un repli sur le contenu du Panel.
+//
+//                           Ce qui a changé, et pourquoi : `projectId: null`
+//                           portait auparavant un « défaut de plateforme dont
+//                           chaque projet hérite ». L'audit d'ownership a
+//                           montré que l'héritage avait été livré sans jamais
+//                           livrer la surface permettant de le rompre — donc
+//                           que tout le parc partageait un document unique.
+//                           Un héritage qu'aucune interface ne peut surcharger
+//                           n'est pas un héritage : c'est une valeur unique.
 //
 //   environnement         → AUCUNE portée. C'est délibéré, et c'est la
 //                           décision la plus discutable des trois, donc celle
@@ -56,8 +64,34 @@ const panelEmailTemplateSchema = new mongoose.Schema(
     templateCode: { type: String, required: true, trim: true },
 
     /**
-     * `null` = le DÉFAUT DE PLATEFORME, celui dont hérite tout projet qui n'a
-     * rien réécrit. Une valeur = la version propre à ce projet.
+     * LA PORTÉE, DÉCLARÉE (L11.1).
+     *
+     * Elle était déductible — `projectId === null` ⇒ plateforme — et c'était
+     * précisément le problème : une déduction ne se lit pas dans un `find()`,
+     * ne s'indexe pas comme une intention, et ne distingue pas un contenu
+     * VOULU plateforme d'un contenu plateforme FAUTE DE MIEUX. Les deux
+     * étaient rigoureusement indiscernables en base (audit §OWNERSHIP).
+     *
+     * `default: 'PANEL'` sert au seul backfill : les documents antérieurs
+     * portent tous `projectId: null`, donc tous la portée PANEL. La
+     * correspondance est totale et déterministe, et `assertScopeCoherent()`
+     * la revérifie à chaque lecture comme à chaque écriture.
+     */
+    scopeType: {
+      type: String,
+      enum: ['PANEL', 'PROJECT'],
+      required: true,
+      default: 'PANEL',
+    },
+
+    /**
+     * L'IDENTIFIANT DE PORTÉE — `null` pour PANEL, le projet pour PROJECT.
+     *
+     * Le nom n'a pas changé (il aurait pu devenir `scopeId`) : la seule portée
+     * non-PANEL est un projet, et une migration de deux collections et de deux
+     * index uniques pour gagner un mot aurait été un risque pour rien. La
+     * traduction portée → colonnes vit dans `panelEmailTemplateScope.js`, en un
+     * seul endroit, prête pour ce renommage le jour où il paiera.
      */
     projectId: { type: String, default: null },
 
@@ -86,16 +120,36 @@ const panelEmailTemplateSchema = new mongoose.Schema(
 );
 
 /**
- * UNICITÉ — un seul contenu par (code, projet).
+ * UNICITÉ — un seul contenu par (portée, code).
  *
  * Mongo traite deux `null` comme égaux dans un index unique : il ne peut donc
- * exister qu'UN défaut de plateforme par code, ce qui est exactement la
- * garantie voulue. Sans cet index, deux défauts concurrents coexisteraient et
- * le rendu dépendrait de l'ordre de lecture.
+ * exister qu'UNE instance PANEL par code, ce qui est exactement la garantie
+ * voulue. Sans cet index, deux instances concurrentes coexisteraient et le
+ * rendu dépendrait de l'ordre de lecture.
+ *
+ * ── POURQUOI `scopeType` N'EST PAS DANS L'INDEX ─────────────────────────────
+ *
+ * Il serait redondant : `scopeType` est une FONCTION de `projectId`
+ * (null ⇔ PANEL), invariant tenu par `assertScopeCoherent()`. L'index actuel
+ * est donc déjà, terme pour terme, l'index cible `unique(scopeType, scopeId,
+ * templateCode)` du lot. L'y ajouter n'ajouterait aucune garantie et
+ * imposerait une reconstruction d'index en production pour rien.
  */
 panelEmailTemplateSchema.index(
   { templateCode: 1, projectId: 1 },
   { unique: true, name: 'uniq_template_project' },
+);
+
+/**
+ * PARCOURIR UNE PORTÉE — le catalogue scopé de l'éditeur.
+ *
+ * Non unique : c'est un index de LISTE. « Tous les modèles de SB Auto » est la
+ * requête de l'écran d'édition scopé, et sans lui elle balaierait la collection
+ * entière du parc à chaque ouverture.
+ */
+panelEmailTemplateSchema.index(
+  { scopeType: 1, projectId: 1 },
+  { name: 'scope_catalogue' },
 );
 
 export const PanelEmailTemplate = mongoose.model('PanelEmailTemplate', panelEmailTemplateSchema);

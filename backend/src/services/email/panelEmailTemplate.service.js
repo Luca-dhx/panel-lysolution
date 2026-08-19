@@ -1,37 +1,107 @@
-// L'AUTORITÉ DE CONTENU DU PANEL — lire, écrire, rendre (L8.3).
+// L'AUTORITÉ DE CONTENU DU PANEL — lire, écrire, rendre, PAR PORTÉE (L11.1).
 //
-// docs/architecture/BREVO_CONTROL_PLANE.md §« Templates ».
+// docs/email/EMAIL_TEMPLATE_MULTI_PROJECT_IMPLEMENTATION_REPORT.md.
 //
-// ── LA RÈGLE D'HÉRITAGE, ET POURQUOI ELLE EST DANS UNE SEULE FONCTION ───────
+// ── CE QUI A CHANGÉ, ET POURQUOI C'EST LE CŒUR DU LOT ───────────────────────
 //
-//   contenu du projet   →  s'il existe
-//   défaut de plateforme →  sinon
-//   défaut du registre   →  si la base est vide (premier démarrage)
+// L'ancienne règle était un HÉRITAGE :
 //
-// Trois sources, une seule résolution : `resolveTemplate()`. Deux endroits qui
-// choisiraient « quel contenu » finiraient par ne pas choisir le même, et
-// l'aperçu montrerait autre chose que ce qui part.
+//     const stored = own ?? platform;      // ← supprimé
 //
-// ── CE QUE LE MANAGER PEUT, ET CE QU'IL NE PEUT PAS ─────────────────────────
+// Elle décrivait une intention défendable — « chaque projet hérite du défaut
+// tant qu'il n'a rien réécrit » — et elle a produit l'inverse : comme aucune
+// surface ne permettait de le rompre, l'héritage est devenu la valeur unique du
+// parc. Tous les clients recevaient le même HTML, et éditer un modèle dans le
+// Panel réécrivait l'e-mail de tout le monde.
 //
-// Il peut réécrire ENTIÈREMENT un sujet et un HTML. Il ne peut NI inventer un
-// code de template, NI inventer une variable : les deux produiraient une erreur
-// silencieuse — un template que personne n'appelle, ou un trou à l'exécution.
-// Le registre code-first tranche, la base ne fait que porter le texte.
+// La règle est désormais une RÉSOLUTION STRICTE, une par portée :
+//
+//     PANEL   : (PANEL,  null,    code)   sinon défaut du registre, source dite
+//     PROJECT : (PROJECT, projet, code)   sinon ÉCHEC — EMAIL_TEMPLATE_NOT_CONFIGURED
+//
+// Il n'existe AUCUN chemin par lequel une portée PROJECT lise un document
+// PANEL. C'est le seul repli que ce module refuse absolument : envoyer sous le
+// nom d'un client un texte écrit pour un autre est pire que ne pas envoyer.
+//
+// ── POURQUOI LE DÉFAUT DU REGISTRE SURVIT, MAIS SEULEMENT EN PORTÉE PANEL ───
+//
+// Une base vide au premier démarrage n'est pas une erreur de configuration :
+// c'est un amorçage qui n'a pas encore tourné, et le contenu qu'il poserait est
+// EXACTEMENT celui du registre. Le servir ne ment donc à personne, et évite de
+// perdre un e-mail du Panel pour une migration en retard.
+//
+// En portée PROJECT le même geste mentirait : le défaut du registre est le
+// contenu de L.Y Solution. Le servir à un projet reproduirait le repli qu'on
+// vient de supprimer, sous un autre nom.
+//
+// ── LA PORTÉE EST UN ARGUMENT, JAMAIS UN CHAMP DU PATCH ─────────────────────
+//
+// `saveTemplate(code, scope, patch, actor)`. L'audit avait trouvé que
+// `saveTemplate(code, { projectId, ...patch })` permettait à un corps de requête
+// de choisir sa portée. Ce n'est plus une question de validation : la signature
+// rend l'injection STRUCTURELLEMENT impossible — il n'y a pas de champ de portée
+// dans le patch à déstructurer.
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import PanelEmailTemplate from '../../models/PanelEmailTemplate.model.js';
 import PanelEmailTemplateVersion from '../../models/PanelEmailTemplateVersion.model.js';
+import PanelProject from '../../models/PanelProject.model.js';
+import { PanelProjectEmailTemplateUsage } from '../../models/PanelProjectProjection.model.js';
 import {
   EMAIL_TEMPLATE_IDS,
   getTemplateDefinition,
   isKnownTemplateId,
   variablesFor,
 } from './panelEmailTemplateRegistry.js';
+import {
+  assertScopeAllowedForCode,
+  codesToProvisionForProjects,
+  templateDefinition,
+} from './panelEmailTemplateDefinitions.js';
+import {
+  SCOPE_TYPES,
+  assertScopeCoherent,
+  describeScope,
+  panelScope,
+  projectScope,
+  scopeColumns,
+  scopeFilter,
+} from './panelEmailTemplateScope.js';
 import { validateTemplate } from './panelEmailTemplateValidator.js';
 import { renderTemplate, EmailRenderError } from './panelEmailTemplateRenderer.js';
 import { EMAIL_TEMPLATE_ERROR_CODES as E, MAX_TEMPLATE_VERSION_HISTORY } from '../../utils/panelEmailTemplateConstants.js';
+
+/** D'où vient le contenu résolu. Un exploitant doit pouvoir le lire. */
+export const TEMPLATE_SOURCES = Object.freeze({
+  /** Le document PANEL, écrit en base. */
+  PANEL: 'PANEL',
+  /** Le document du projet, écrit en base. */
+  PROJECT: 'PROJECT',
+  /** Le défaut du registre — base vide, portée PANEL uniquement. */
+  REGISTRY_DEFAULT: 'REGISTRY_DEFAULT',
+});
+
+/**
+ * LE REFUS QUI REMPLACE LE REPLI.
+ *
+ * Code STABLE : les écrans, le pont et les projets s'appuient dessus. Il dit
+ * exactement ce qui s'est passé — « ce projet n'a pas d'instance pour ce
+ * code » — et non « erreur d'envoi », qui enverrait chercher du côté de Brevo.
+ */
+export const EMAIL_TEMPLATE_NOT_CONFIGURED = 'EMAIL_TEMPLATE_NOT_CONFIGURED';
+
+/**
+ * LE PROJET N'A PAS DÉCLARÉ CE MODÈLE — refus distinct, et la distinction compte.
+ *
+ * `NOT_CONFIGURED` dit « rien n'a été posé » : la réparation est un
+ * provisionnement. Celui-ci dit « ce projet affirme ne plus utiliser ce
+ * message » : la réparation est dans le CODE DU PROJET, qui appelle encore un
+ * chemin qu'il a cessé de déclarer. Les confondre enverrait chercher la panne du
+ * mauvais côté — exactement ce que la doctrine des codes stables évite partout
+ * ailleurs dans ce module.
+ */
+export const EMAIL_TEMPLATE_NOT_DECLARED = 'EMAIL_TEMPLATE_NOT_DECLARED_BY_PROJECT';
 
 /* -------------------------------------------------------------------------- */
 /*  CATALOGUE                                                                 */
@@ -52,59 +122,462 @@ export function listTemplateCodes() {
   return [...EMAIL_TEMPLATE_IDS];
 }
 
-/** Les définitions, dans l'ordre STABLE du registre — celui des écrans. */
-function listTemplateDefinitions() {
+/** Les codes dont une instance a le droit d'exister dans cette portée. */
+export function listTemplateCodesForScope(scope) {
+  assertScopeCoherent(scope);
+  return EMAIL_TEMPLATE_IDS
+    .filter((code) => templateDefinition(code).scopes.includes(scope.scopeType));
+}
+
+/** Les définitions du registre, dans l'ordre STABLE — celui des écrans. */
+function registryDefinitions() {
   return EMAIL_TEMPLATE_IDS.map((code) => getTemplateDefinition(code));
 }
 
+/** Le contenu d'amorçage d'un code, tel que le registre le déclare. */
+function registryContent(definition) {
+  return {
+    name: definition.defaultName,
+    description: definition.defaultDescription,
+    subject: definition.defaultSubject,
+    html: definition.defaultHtml,
+    enabled: true,
+  };
+}
+
 /* -------------------------------------------------------------------------- */
-/*  AMORÇAGE                                                                  */
+/*  AMORÇAGE ET PROVISIONNEMENT                                               */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Pose les défauts de plateforme manquants. IDEMPOTENT, et NON destructif :
- * un contenu déjà écrit n'est jamais réécrit — il a été rédigé par un humain,
- * et un déploiement ne doit pas l'effacer.
+ * Pose les instances PANEL manquantes. IDEMPOTENT, et NON destructif : un
+ * contenu déjà écrit n'est jamais réécrit — il a été rédigé par un humain, et
+ * un déploiement ne doit pas l'effacer.
+ *
+ * ── POURQUOI TOUS LES CODES, Y COMPRIS LES CODES PROJECT ────────────────────
+ *
+ * Non : depuis L11.1, seuls les codes dont la définition déclare la portée
+ * PANEL sont amorcés. Poser une instance PANEL de `CONTACT_ADMIN_NOTIFICATION`
+ * créerait un document que le runtime ne consulterait jamais — la notification
+ * de contact part en portée PROJECT — mais qu'un exploitant éditerait en
+ * croyant changer quelque chose.
  */
-export async function seedPlatformTemplates() {
+export async function seedPanelTemplates() {
+  const scope = panelScope();
   let created = 0;
   let existing = 0;
 
-  for (const definition of listTemplateDefinitions()) {
-    const present = await PanelEmailTemplate
-      .findOne({ templateCode: definition.templateId, projectId: null }).lean();
-    if (present) { existing += 1; continue; }
+  for (const definition of registryDefinitions()) {
+    if (!templateDefinition(definition.templateId).scopes.includes(SCOPE_TYPES.PANEL)) continue;
 
-    const at = nowIso();
-    await PanelEmailTemplate.create({
+    const posed = await ensureInstance({
       templateCode: definition.templateId,
-      projectId: null,
-      name: definition.defaultName,
-      description: definition.defaultDescription,
-      subject: definition.defaultSubject,
-      html: definition.defaultHtml,
-      enabled: true,
-      version: 1,
-      createdAt: at,
-      updatedAt: at,
-    });
-    await PanelEmailTemplateVersion.create({
-      templateCode: definition.templateId,
-      projectId: null,
-      version: 1,
-      name: definition.defaultName,
-      description: definition.defaultDescription,
-      subject: definition.defaultSubject,
-      html: definition.defaultHtml,
-      enabled: true,
+      scope,
+      content: registryContent(definition),
       origin: 'BOOTSTRAP',
-      createdAt: at,
+      actor: {},
     });
-    created += 1;
+    if (posed.created) created += 1; else existing += 1;
   }
 
-  if (created) logger.info(`[email] ${created} modèle(s) de plateforme amorcé(s).`);
+  if (created) logger.info(`[email] ${created} modèle(s) PANEL amorcé(s).`);
   return { created, existing };
+}
+
+/**
+ * COMPATIBILITÉ — l'ancien nom, conservé pour `server.js` et les suites.
+ *
+ * Il ne dit plus tout à fait la vérité (« plateforme » est devenu « PANEL »),
+ * mais le renommer partout dans le même lot aurait mêlé un changement cosmétique
+ * à un changement de comportement. L'alias part au prochain passage.
+ */
+export const seedPlatformTemplates = seedPanelTemplates;
+
+/**
+ * POSE LES INSTANCES D'UN PROJET — la migration de la Phase 4/5 du lot.
+ *
+ * ── POURQUOI UNE POSE EXPLICITE, ET PAS UNE CRÉATION À LA VOLÉE ─────────────
+ *
+ * Créer l'instance au premier envoi ferait disparaître le refus qui donne tout
+ * son sens au lot : un projet dont le contenu n'a jamais été décidé enverrait un
+ * texte que personne n'a relu. La pose est donc un ACTE — d'ouverture de projet,
+ * de duplication, ou de migration — journalisé, et daté.
+ *
+ * `content` permet de POSER UN CONTENU EXISTANT plutôt que le défaut du
+ * registre : c'est par là que le HTML rédigé dans SB Auto entre dans le Panel
+ * sans être perdu (Phase 5.1).
+ *
+ * IDEMPOTENT : une instance déjà posée n'est jamais réécrite. Rejouer une
+ * migration ne détruit donc pas le travail fait entre-temps.
+ */
+export async function provisionProjectTemplates(projectId, {
+  codes = null,
+  contents = {},
+  actor = {},
+} = {}) {
+  const scope = projectScope(projectId);
+  const wanted = codes ?? codesToProvisionForProjects();
+
+  const created = [];
+  const existing = [];
+  const refused = [];
+
+  for (const templateCode of wanted) {
+    try {
+      assertScopeAllowedForCode(templateCode, scope);
+    } catch (error) {
+      refused.push({ templateCode, code: error?.code ?? 'REFUSED', message: error?.message ?? '' });
+      continue;
+    }
+
+    const definition = getTemplateDefinition(templateCode);
+    const provided = contents[templateCode] ?? null;
+    const content = provided
+      ? {
+        name: provided.name ?? definition.defaultName,
+        description: provided.description ?? definition.defaultDescription,
+        subject: provided.subject ?? definition.defaultSubject,
+        html: provided.html ?? definition.defaultHtml,
+        enabled: provided.enabled === undefined ? true : Boolean(provided.enabled),
+      }
+      : registryContent(definition);
+
+    // Un contenu importé peut être invalide au regard du contrat de CE code :
+    // on refuse la ligne, on ne refuse pas la migration entière.
+    const verdict = validateTemplate({ templateId: templateCode, subject: content.subject, html: content.html });
+    if (!verdict.valid) {
+      refused.push({
+        templateCode,
+        code: 'PANEL_EMAIL_TEMPLATE_INVALID',
+        message: `Contenu refusé : ${verdict.errors.length} erreur(s) de validation.`,
+        errors: verdict.errors,
+      });
+      continue;
+    }
+
+    const posed = await ensureInstance({
+      templateCode,
+      scope,
+      content,
+      origin: 'BOOTSTRAP',
+      actor,
+    });
+    (posed.created ? created : existing).push(templateCode);
+  }
+
+  if (created.length) {
+    logger.info(
+      `[email] ${created.length} modèle(s) posé(s) en portée ${describeScope(scope)} : ${created.join(', ')}.`,
+    );
+  }
+  return { scope: describeScope(scope), created, existing, refused };
+}
+
+/**
+ * Pose UNE instance si elle manque. Rend `{ created }`.
+ *
+ * L'écriture est conditionnelle (`findOne` puis `create`) plutôt qu'un
+ * `upsert` : un upsert écraserait le contenu existant, ce qui est exactement
+ * ce que l'amorçage ne doit jamais faire.
+ */
+async function ensureInstance({ templateCode, scope, content, origin, actor }) {
+  const filter = { templateCode, ...scopeFilter(scope) };
+  const present = await PanelEmailTemplate.findOne(filter).lean();
+  if (present) return { created: false };
+
+  const at = nowIso();
+
+  /**
+   * ── UNE INSTANCE ABSENTE N'EST PAS FORCÉMENT UNE INSTANCE NEUVE ───────────
+   *
+   * Elle peut avoir EXISTÉ : suppression manuelle, restauration de base
+   * partielle, incident. Son HISTORIQUE, lui, est resté — il n'est jamais
+   * effacé. Repartir de zéro dans ce cas produirait deux dégâts, l'un visible
+   * et l'autre non :
+   *
+   *   · une collision d'index sur (code, portée, version 1), qui fait échouer
+   *     la réconciliation entière — c'est ainsi que ce cas s'est révélé ;
+   *   · une RÉGRESSION SILENCIEUSE : le contenu reviendrait au défaut du
+   *     registre, effaçant le texte que quelqu'un avait écrit, alors qu'il est
+   *     encore là, à côté, dans l'historique.
+   *
+   * On RESTAURE donc depuis la dernière version connue, et l'on n'ajoute aucune
+   * entrée d'historique : cette version-là a déjà été écrite, elle n'est pas
+   * réécrite. Une restauration n'est pas une modification.
+   */
+  const derniere = await PanelEmailTemplateVersion
+    .findOne(filter).sort({ version: -1 }).lean();
+
+  if (derniere) {
+    await PanelEmailTemplate.create({
+      templateCode,
+      ...scopeColumns(scope),
+      name: derniere.name,
+      description: derniere.description ?? '',
+      subject: derniere.subject,
+      html: derniere.html,
+      enabled: derniere.enabled !== false,
+      version: derniere.version,
+      updatedBy: derniere.changedBy ?? null,
+      createdAt: derniere.createdAt ?? at,
+      updatedAt: at,
+    });
+    logger.warn(
+      `[email] instance ${templateCode} en portée ${describeScope(scope)} RESTAURÉE `
+      + `depuis son historique (v${derniere.version}) — elle avait disparu.`,
+    );
+    return { created: true, restored: true };
+  }
+
+  await PanelEmailTemplate.create({
+    templateCode,
+    ...scopeColumns(scope),
+    ...content,
+    version: 1,
+    updatedBy: actor.userId ?? null,
+    createdAt: at,
+    updatedAt: at,
+  });
+  await PanelEmailTemplateVersion.create({
+    templateCode,
+    ...scopeColumns(scope),
+    version: 1,
+    ...content,
+    changedBy: actor.userId ?? null,
+    changedByLabel: actor.userEmail ?? '',
+    origin,
+    createdAt: at,
+  });
+  return { created: true, restored: false };
+}
+
+/**
+ * BACKFILL — pose `scopeType` sur les documents antérieurs à L11.1.
+ *
+ * Déterministe, et c'est ce qui autorise à le jouer sans supervision :
+ * `projectId: null ⇒ PANEL`, sinon `PROJECT`. Aucune heuristique, aucun motif
+ * de nom, aucune décision. Idempotent — les documents déjà porteurs d'une
+ * portée ne sont pas touchés.
+ */
+export async function backfillScopeTypes() {
+  const collections = [
+    ['templates', PanelEmailTemplate],
+    ['versions', PanelEmailTemplateVersion],
+  ];
+  const report = {};
+
+  for (const [label, Model] of collections) {
+    const toPanel = await Model.updateMany(
+      { scopeType: { $exists: false }, projectId: null },
+      { $set: { scopeType: SCOPE_TYPES.PANEL } },
+    );
+    const toProject = await Model.updateMany(
+      { scopeType: { $exists: false }, projectId: { $ne: null } },
+      { $set: { scopeType: SCOPE_TYPES.PROJECT } },
+    );
+    report[label] = {
+      panel: toPanel.modifiedCount ?? 0,
+      project: toProject.modifiedCount ?? 0,
+    };
+  }
+
+  const total = Object.values(report).reduce((sum, r) => sum + r.panel + r.project, 0);
+  if (total) logger.info(`[email] portée posée sur ${total} document(s) antérieur(s) à L11.1.`);
+  return report;
+}
+
+/**
+ * RÉCONCILIER UN PROJET AVEC CE QU'IL DÉCLARE UTILISER.
+ *
+ * ══ LE RENVERSEMENT QUE CE LOT OPÈRE ═══════════════════════════════════════
+ *
+ * La version précédente posait, sur CHAQUE projet, TOUS les codes marqués
+ * `provisionForProjects`. Elle réparait le vrai défaut — plus aucun projet
+ * n'avait d'instance — mais au prix d'une décision que la plateforme n'a pas à
+ * prendre : elle décidait de ce qu'un projet utilise.
+ *
+ * Les conséquences se voyaient : un projet qui n'envoie que deux e-mails s'en
+ * voyait attribuer dix, l'écran d'administration montrait huit modèles que
+ * personne n'enverrait jamais, et rien ne pouvait dire lesquels comptaient.
+ *
+ * Désormais : le projet DÉCLARE, le Panel se CONFORME. L'autorité de l'usage
+ * appartient à celui qui écrit le code qui envoie.
+ *
+ * ══ CE QU'ELLE NE FAIT PAS, ET C'EST ESSENTIEL ═════════════════════════════
+ *
+ * Elle ne SUPPRIME rien. Un code retiré de la déclaration cesse d'être ACTIF —
+ * il disparaît des vues du projet — mais son instance et tout son historique
+ * restent en base. Un client qui a écrit son texte, puis cesse temporairement
+ * d'utiliser ce message, doit le retrouver INTACT s'il y revient. Supprimer
+ * serait irréversible pour économiser quelques documents.
+ *
+ * L'état « actif » n'est donc pas un champ à tenir : c'est l'APPARTENANCE à la
+ * déclaration courante. Une seule vérité, impossible à désynchroniser.
+ *
+ * ══ UN CODE INCONNU NE FAIT PAS ÉCHOUER LES NEUF AUTRES ════════════════════
+ *
+ * Un projet déployé AVANT le Panel qui connaît son nouveau code déclarera un
+ * code inconnu. C'est un état transitoire NORMAL de l'ordre de déploiement, pas
+ * une anomalie de données : les codes valides sont provisionnés, l'inconnu est
+ * rapporté, et il se résoudra au déploiement du Panel — sans que personne
+ * n'ait à rejouer quoi que ce soit.
+ *
+ * @param {string} projectId
+ * @param {string[]} templateCodes  ce que le projet déclare utiliser
+ * @returns {Promise<{accepted, provisioned, existing, unknown, forbidden, removed}>}
+ */
+export async function reconcileDeclaredProjectEmailTemplates(projectId, templateCodes = [], {
+  actor = {},
+} = {}) {
+  const scope = projectScope(projectId);
+  const declares = [...new Set(
+    (templateCodes ?? []).map((c) => String(c ?? '').trim()).filter(Boolean),
+  )].sort();
+
+  const accepted = [];
+  const unknown = [];
+  const forbidden = [];
+
+  for (const code of declares) {
+    if (!isKnownTemplateId(code)) { unknown.push(code); continue; }
+    try {
+      assertScopeAllowedForCode(code, scope);
+      accepted.push(code);
+    } catch {
+      // Le projet déclare un code de la PLATEFORME : refus nommé, pas silence.
+      forbidden.push(code);
+    }
+  }
+
+  const pose = accepted.length
+    ? await provisionProjectTemplates(projectId, { codes: accepted, actor })
+    : { created: [], existing: [], refused: [] };
+
+  /**
+   * CE QUI N'EST PLUS DÉCLARÉ — constaté, jamais supprimé.
+   *
+   * On lit les instances existantes pour dire lesquelles sortent de la vue
+   * active. C'est une INFORMATION rendue à l'appelant et aux écrans ; aucune
+   * écriture n'en découle.
+   */
+  const instances = await PanelEmailTemplate
+    .find(scopeFilter(scope)).select('templateCode').lean();
+  const removed = instances
+    .map((d) => d.templateCode)
+    .filter((code) => !accepted.includes(code))
+    .sort();
+
+  const rapport = {
+    scope: describeScope(scope),
+    accepted,
+    provisioned: pose.created,
+    existing: pose.existing,
+    unknown,
+    forbidden,
+    removed,
+  };
+
+  if (pose.created.length || unknown.length || forbidden.length) {
+    logger.info(
+      `[email] ${describeScope(scope)} — ${pose.created.length} posé(s), `
+      + `${pose.existing.length} déjà là, ${unknown.length} inconnu(s), `
+      + `${forbidden.length} interdit(s), ${removed.length} hors déclaration.`,
+    );
+  }
+  return rapport;
+}
+
+/**
+ * RÉCONCILIATION DE SÉCURITÉ AU DÉMARRAGE — proportionnelle à l'USAGE RÉEL.
+ *
+ * ══ CE QU'ELLE NE FAIT PLUS ════════════════════════════════════════════════
+ *
+ * Elle ne parcourt plus « tous les projets × tous les modèles globaux ». Elle
+ * lit les DÉCLARATIONS persistées et s'assure que ce qui est demandé existe.
+ * Un projet sans déclaration — relique de fixture, projet jamais démarré depuis
+ * ce lot — n'est donc pas touché : il ne demande rien.
+ *
+ * ══ POURQUOI LA GARDER, PUISQUE LA DÉCLARATION RÉCONCILIE DÉJÀ ═════════════
+ *
+ * Parce qu'une réconciliation peut échouer à mi-chemin : la base devient
+ * indisponible après trois instances posées sur neuf. La déclaration, elle, est
+ * persistée et ne sera pas rejouée tant que le projet ne redémarre pas — sa
+ * révision n'a pas changé. Ce passage est le filet qui rattrape ce cas, et il
+ * ne coûte rien quand il n'y a rien à faire.
+ */
+export async function reconcileProjectTemplates({ actor = {} } = {}) {
+  const declarations = await PanelProjectEmailTemplateUsage
+    .find({}).select('projectId templateCodes').lean();
+
+  const rapport = {
+    projects: 0, created: 0, existing: 0, unknown: 0, forbidden: 0, byProject: [],
+  };
+
+  for (const declaration of declarations) {
+    if (!declaration?.projectId) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const r = await reconcileDeclaredProjectEmailTemplates(
+      declaration.projectId, declaration.templateCodes ?? [], { actor },
+    );
+    rapport.projects += 1;
+    rapport.created += r.provisioned.length;
+    rapport.existing += r.existing.length;
+    rapport.unknown += r.unknown.length;
+    rapport.forbidden += r.forbidden.length;
+    if (r.provisioned.length || r.unknown.length || r.forbidden.length) {
+      rapport.byProject.push({ projectId: declaration.projectId, ...r });
+    }
+  }
+
+  if (rapport.created) {
+    logger.info(
+      `[email] réconciliation au démarrage : ${rapport.created} instance(s) posée(s) `
+      + `sur ${rapport.byProject.length} projet(s) déclarant `
+      + `(${rapport.projects} déclaration(s) lue(s)).`,
+    );
+  }
+  return rapport;
+}
+
+/**
+ * CE QUI MANQUE À CE QUI EST DÉCLARÉ — sans rien écrire.
+ *
+ * Lit les déclarations, jamais le drapeau global : la question « que manque-t-il
+ * à ce projet ? » n'a de sens que par rapport à ce QU'IL demande.
+ */
+export async function findMissingProjectTemplates() {
+  const declarations = await PanelProjectEmailTemplateUsage
+    .find({}).select('projectId templateCodes').lean();
+  const manques = [];
+
+  for (const d of declarations) {
+    if (!d?.projectId) continue;
+    const scope = projectScope(d.projectId);
+    const demandes = (d.templateCodes ?? []).filter((c) => isKnownTemplateId(c));
+    // eslint-disable-next-line no-await-in-loop
+    const presents = await PanelEmailTemplate
+      .find({ templateCode: { $in: demandes }, ...scopeFilter(scope) })
+      .select('templateCode').lean();
+    const connus = new Set(presents.map((x) => x.templateCode));
+    const absents = demandes.filter((c) => !connus.has(c));
+    if (absents.length) manques.push({ projectId: d.projectId, missing: absents });
+  }
+  return { declarations: declarations.length, missing: manques };
+}
+
+/**
+ * LES CODES ACTIVEMENT DÉCLARÉS PAR UN PROJET — la question que tout le reste
+ * pose : les écrans, la résolution d'envoi, la recette.
+ *
+ * Rend `null` — et non `[]` — quand AUCUNE déclaration n'existe. « Ce projet
+ * n'a jamais parlé » et « ce projet déclare zéro modèle » n'appellent pas la
+ * même réponse, et les confondre ferait refuser les envois d'un projet
+ * simplement plus ancien que ce lot.
+ */
+export async function declaredCodesForProject(projectId) {
+  const d = await PanelProjectEmailTemplateUsage
+    .findOne({ projectId }).select('templateCodes').lean();
+  return d ? (d.templateCodes ?? []) : null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -112,26 +585,28 @@ export async function seedPlatformTemplates() {
 /* -------------------------------------------------------------------------- */
 
 /**
- * LE CONTENU QUI PART RÉELLEMENT, pour ce projet.
+ * LE CONTENU QUI PART RÉELLEMENT, pour CETTE portée. FAIL-CLOSED.
  *
- * `projectId` peut être `null` — on lit alors le défaut de plateforme. C'est
- * la même fonction dans les deux cas, ce qui garantit que l'aperçu d'un DEV et
- * l'envoi d'un projet passent par le même chemin.
+ * Une seule fonction pour l'aperçu, l'envoi, l'écriture et le catalogue : deux
+ * endroits qui choisiraient « quel contenu » finiraient par ne pas choisir le
+ * même, et l'aperçu montrerait autre chose que ce qui part.
+ *
+ * @throws {ApiError} `EMAIL_TEMPLATE_NOT_CONFIGURED` — portée PROJECT sans instance.
  */
-export async function resolveTemplate(templateCode, { projectId = null } = {}) {
+export async function resolveTemplate(templateCode, scope) {
   const definition = assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
 
-  const own = projectId
-    ? await PanelEmailTemplate.findOne({ templateCode, projectId }).lean()
-    : null;
-  const platform = await PanelEmailTemplate.findOne({ templateCode, projectId: null }).lean();
-  const stored = own ?? platform;
+  const stored = await PanelEmailTemplate
+    .findOne({ templateCode, ...scopeFilter(scope) }).lean();
 
   if (stored) {
     return {
       templateCode,
-      /** D'où vient le texte — un exploitant doit pouvoir le lire. */
-      source: own ? 'PROJECT' : 'PLATFORM',
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      source: scope.scopeType === SCOPE_TYPES.PANEL ? TEMPLATE_SOURCES.PANEL : TEMPLATE_SOURCES.PROJECT,
+      configured: true,
       name: stored.name,
       description: stored.description,
       subject: stored.subject,
@@ -143,19 +618,69 @@ export async function resolveTemplate(templateCode, { projectId = null } = {}) {
   }
 
   /**
-   * Base vide — premier démarrage, ou amorçage jamais joué. On rend le défaut
-   * du REGISTRE plutôt que d'échouer : un e-mail attendu ne doit pas être
-   * perdu parce qu'une migration n'a pas tourné. Le rendu reste identique,
-   * puisque c'est ce même défaut que le seed aurait écrit.
+   * PORTÉE PROJECT SANS INSTANCE — LE REFUS QUI FAIT TOUT LE LOT.
+   *
+   * Ni repli PANEL, ni défaut du registre : les deux enverraient sous le nom
+   * d'un client un texte écrit pour quelqu'un d'autre. Un e-mail non envoyé se
+   * répare ; un e-mail envoyé avec le mauvais branding ne se rattrape pas.
+   */
+  if (scope.scopeType === SCOPE_TYPES.PROJECT) {
+    throw ApiError.conflict(
+      EMAIL_TEMPLATE_NOT_CONFIGURED,
+      `Aucun modèle « ${templateCode} » configuré en portée ${describeScope(scope)}. `
+      + 'Aucun envoi n’est effectué : le contenu d’un projet n’est jamais remplacé par celui du Panel.',
+      { templateCode, scopeType: scope.scopeType, scopeId: scope.scopeId },
+    );
+  }
+
+  /**
+   * PORTÉE PANEL, BASE VIDE — le seul repli conservé, et il ne ment pas.
+   *
+   * C'est le contenu que l'amorçage POSERAIT : le servir donne exactement le
+   * même e-mail, et évite de perdre une notification du Panel parce qu'une
+   * migration n'a pas encore tourné. La `source` le dit, et l'écran l'affiche.
    */
   return {
     templateCode,
-    source: 'REGISTRY_DEFAULT',
-    name: definition.defaultName,
-    description: definition.defaultDescription,
-    subject: definition.defaultSubject,
-    html: definition.defaultHtml,
-    enabled: true,
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+    source: TEMPLATE_SOURCES.REGISTRY_DEFAULT,
+    configured: false,
+    ...registryContent(definition),
+    version: 0,
+    updatedAt: null,
+  };
+}
+
+/**
+ * LA MÊME RÉSOLUTION, POUR UN ÉCRAN D'ÉDITION — un refus devient un BROUILLON.
+ *
+ * ── POURQUOI DEUX FONCTIONS, ET PAS UN DRAPEAU ─────────────────────────────
+ *
+ * Un drapeau `{ allowMissing: true }` finirait par être passé depuis le chemin
+ * d'envoi « pour que ça marche ». Deux fonctions au nom distinct rendent
+ * l'intention lisible à l'appel : `resolveTemplate` sert un ENVOI et refuse,
+ * `draftTemplate` sert un ÉDITEUR et propose un point de départ.
+ *
+ * `configured: false` est rendu tel quel : l'écran doit dire « ce projet n'a pas
+ * encore ce modèle » plutôt que d'afficher un contenu qui semble en production.
+ */
+export async function draftTemplate(templateCode, scope) {
+  const definition = assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
+
+  const stored = await PanelEmailTemplate
+    .findOne({ templateCode, ...scopeFilter(scope) }).lean();
+
+  if (stored) return resolveTemplate(templateCode, scope);
+
+  return {
+    templateCode,
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+    source: TEMPLATE_SOURCES.REGISTRY_DEFAULT,
+    configured: false,
+    ...registryContent(definition),
     version: 0,
     updatedAt: null,
   };
@@ -171,14 +696,53 @@ export async function resolveTemplate(templateCode, { projectId = null } = {}) {
  * Un template désactivé fait ÉCHOUER l'appel : le refus est explicite, jamais
  * un envoi silencieusement sauté. Couper un e-mail est une décision — la
  * découvrir dans l'absence de message n'en est pas une.
+ *
+ * La sortie porte la PORTÉE et la VERSION réellement rendues : c'est ce que
+ * l'observabilité du lot (Phase 13) journalise, et ce que le projet persiste
+ * sur sa livraison (Phase 14) au lieu d'un numéro local qui n'est jamais parti.
  */
-export async function renderForSend({ templateCode, projectId, variables = {} }) {
-  const template = await resolveTemplate(templateCode, { projectId });
+export async function renderForSend({ templateCode, scope, variables = {} }) {
+  /**
+   * ── LE PROJET DÉCLARE-T-IL ENCORE CE MODÈLE ? ──────────────────────────────
+   *
+   * Vérifié À L'ENVOI, et seulement à l'envoi : ni l'aperçu ni l'édition n'en
+   * dépendent — un exploitant doit pouvoir relire et corriger le texte d'un
+   * message que le projet n'envoie plus.
+   *
+   * ══ POURQUOI CE CONTRÔLE EXISTE ═════════════════════════════════════════
+   *
+   * Sans lui, un vieux chemin métier resté branché continuerait d'envoyer un
+   * message que le projet affirme ne plus utiliser — avec le contenu figé au
+   * jour où il a cessé d'être maintenu. L'écran d'administration ne le montre
+   * plus, personne ne le relit, et il part quand même. C'est exactement le type
+   * de divergence silencieuse que la portée explicite a supprimé ailleurs.
+   *
+   * ══ `null` N'EST PAS `[]` ═══════════════════════════════════════════════
+   *
+   * Un projet qui n'a JAMAIS déclaré — antérieur à ce lot, ou dont la première
+   * synchronisation n'est pas encore arrivée — obtient `null`, et on n'oppose
+   * rien. Le refus ne vaut que contre une déclaration EXISTANTE qui ne contient
+   * pas ce code : là, le projet a parlé, et il a dit non.
+   */
+  if (scope.scopeType === SCOPE_TYPES.PROJECT) {
+    const declares = await declaredCodesForProject(scope.scopeId);
+    if (declares !== null && !declares.includes(templateCode)) {
+      throw ApiError.conflict(
+        EMAIL_TEMPLATE_NOT_DECLARED,
+        `Le projet ${describeScope(scope)} ne déclare pas utiliser « ${templateCode} » : `
+        + 'aucun envoi n’est effectué. Un chemin métier appelle un modèle que le projet '
+        + 'a cessé de déclarer — la correction est dans le projet, pas dans le Panel.',
+        { templateCode, scopeType: scope.scopeType, scopeId: scope.scopeId },
+      );
+    }
+  }
+
+  const template = await resolveTemplate(templateCode, scope);
 
   if (!template.enabled) {
     throw ApiError.conflict(
       'PANEL_EMAIL_TEMPLATE_DISABLED',
-      `Le modèle « ${templateCode} » est désactivé : aucun envoi n’est effectué.`,
+      `Le modèle « ${templateCode} » est désactivé en portée ${describeScope(scope)} : aucun envoi n’est effectué.`,
     );
   }
 
@@ -188,33 +752,49 @@ export async function renderForSend({ templateCode, projectId, variables = {} })
       template: { subject: template.subject, html: template.html },
       variables,
     });
-    return { ...rendered, version: template.version, source: template.source };
+    return {
+      ...rendered,
+      templateCode,
+      scopeType: template.scopeType,
+      scopeId: template.scopeId,
+      version: template.version,
+      source: template.source,
+    };
   } catch (error) {
     const details = error instanceof EmailRenderError ? error.details : [];
     throw ApiError.badRequest(
       error?.code ?? E.RENDER_FAILED,
-      `Rendu impossible pour « ${templateCode} ».`,
+      `Rendu impossible pour « ${templateCode} » en portée ${describeScope(scope)}.`,
       details,
     );
   }
 }
 
 /**
- * APERÇU — même moteur, données d'exemple.
+ * APERÇU — même moteur, même portée, même version, données d'exemple.
  *
  * Il passe par `renderTemplate` et non par une simulation : un aperçu qui
  * emprunterait un chemin plus permissif montrerait un rendu que l'envoi
- * refuserait, et l'on croirait le template bon.
+ * refuserait, et l'on croirait le template bon. C'est l'invariant de la Phase 10
+ * du lot — le bug « aperçu correct, e-mail différent » doit être structurellement
+ * impossible, et il l'est parce qu'il n'y a qu'un résolveur et qu'un renderer.
  */
-export async function previewTemplate(templateCode, { projectId = null, variables = null } = {}) {
+export async function previewTemplate(templateCode, scope, { variables = null } = {}) {
   const definition = assertKnownTemplate(templateCode);
-  const template = await resolveTemplate(templateCode, { projectId });
+  const template = await draftTemplate(templateCode, scope);
   const rendered = renderTemplate({
     templateId: templateCode,
     template: { subject: template.subject, html: template.html },
     variables: variables ?? definition.sampleVariables,
   });
-  return { ...rendered, source: template.source, version: template.version };
+  return {
+    ...rendered,
+    scopeType: template.scopeType,
+    scopeId: template.scopeId,
+    source: template.source,
+    configured: template.configured,
+    version: template.version,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -222,17 +802,28 @@ export async function previewTemplate(templateCode, { projectId = null, variable
 /* -------------------------------------------------------------------------- */
 
 /**
- * Enregistre un contenu — pour la plateforme, ou pour UN projet.
+ * Enregistre un contenu DANS UNE PORTÉE.
+ *
+ * ── LA PORTÉE EST LE 2e ARGUMENT, ET C'EST LA CORRECTION DE LA PHASE 0.1 ────
+ *
+ * Elle n'est plus lue dans le patch. Un corps de requête ne peut donc plus la
+ * choisir, quelle que soit la vigilance du contrôleur : il n'y a rien à
+ * déstructurer. Les seuls champs retenus du patch sont nommés un par un,
+ * ci-dessous — tout le reste est ignoré parce qu'il n'est jamais lu.
  *
  * ── LE JETON D'ÉDITION ──────────────────────────────────────────────────────
+ *
  * `expectedVersion` refuse une écriture bâtie sur un contenu périmé. Deux DEV
  * qui éditent le même modèle en même temps ne doivent pas silencieusement
  * s'écraser : le second est refusé et relit.
  */
-export async function saveTemplate(templateCode, { projectId = null, subject, html, name, description, enabled, expectedVersion }, actor = {}) {
+export async function saveTemplate(templateCode, scope, patch = {}, actor = {}) {
   assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
 
-  const current = await resolveTemplate(templateCode, { projectId });
+  const { subject, html, name, description, enabled, expectedVersion } = patch;
+
+  const current = await draftTemplate(templateCode, scope);
   const next = {
     name: name ?? current.name,
     description: description ?? current.description,
@@ -262,89 +853,95 @@ export async function saveTemplate(templateCode, { projectId = null, subject, ht
   const at = nowIso();
   const version = current.version + 1;
   const actorId = actor.userId ?? null;
+  const columns = scopeColumns(scope);
 
   await PanelEmailTemplate.updateOne(
-    { templateCode, projectId },
+    { templateCode, ...scopeFilter(scope) },
     {
       $set: { ...next, version, updatedAt: at, updatedBy: actorId },
-      $setOnInsert: { createdAt: at },
+      $setOnInsert: { createdAt: at, ...columns },
     },
     { upsert: true },
   );
 
   await PanelEmailTemplateVersion.create({
-    templateCode, projectId, version, ...next,
+    templateCode, ...columns, version, ...next,
     changedBy: actorId,
     changedByLabel: actor.userEmail ?? '',
     origin: 'EDIT',
     createdAt: at,
   });
 
-  await pruneHistory(templateCode, projectId);
+  await pruneHistory(templateCode, scope);
 
   // On NOMME ce qui a été touché, jamais son contenu : un sujet rendu porterait
   // le nom d'un destinataire.
-  logger.info(
-    `[email] modèle ${templateCode}${projectId ? ` (projet ${projectId})` : ' (plateforme)'} `
-    + `enregistré en version ${version}.`,
-  );
+  logger.info(`[email] modèle ${templateCode} (${describeScope(scope)}) enregistré en version ${version}.`);
 
-  return resolveTemplate(templateCode, { projectId });
+  return resolveTemplate(templateCode, scope);
 }
 
 /**
- * RESTAURE une version — en en créant une NOUVELLE.
+ * RESTAURE une version — en en créant une NOUVELLE, DANS SA SEULE PORTÉE.
  *
  * On ne remonte pas le temps : l'historique est un fait daté. Une restauration
  * malheureuse doit pouvoir être annulée à son tour, ce qu'un écrasement
  * interdirait.
+ *
+ * La version source est cherchée AVEC la portée : restaurer la v3 de
+ * `PROJECT/A/X` ne peut pas lire, ni écrire, la v3 de `PANEL/X` — même code,
+ * même numéro, documents étrangers l'un à l'autre.
  */
-export async function restoreVersion(templateCode, version, { projectId = null } = {}, actor = {}) {
+export async function restoreVersion(templateCode, scope, version, actor = {}) {
   assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
+
   const source = await PanelEmailTemplateVersion
-    .findOne({ templateCode, projectId, version: Number(version) }).lean();
+    .findOne({ templateCode, ...scopeFilter(scope), version: Number(version) }).lean();
   if (!source) {
     throw ApiError.notFound(
       'PANEL_EMAIL_TEMPLATE_VERSION_UNKNOWN',
-      `Version ${version} introuvable pour « ${templateCode} ».`,
+      `Version ${version} introuvable pour « ${templateCode} » en portée ${describeScope(scope)}.`,
     );
   }
 
-  const current = await resolveTemplate(templateCode, { projectId });
+  const current = await draftTemplate(templateCode, scope);
   const at = nowIso();
   const nextVersion = current.version + 1;
+  const columns = scopeColumns(scope);
 
   await PanelEmailTemplate.updateOne(
-    { templateCode, projectId },
+    { templateCode, ...scopeFilter(scope) },
     {
       $set: {
         name: source.name, description: source.description,
         subject: source.subject, html: source.html, enabled: source.enabled,
         version: nextVersion, updatedAt: at, updatedBy: actor.userId ?? null,
       },
-      $setOnInsert: { createdAt: at },
+      $setOnInsert: { createdAt: at, ...columns },
     },
     { upsert: true },
   );
   await PanelEmailTemplateVersion.create({
-    templateCode, projectId, version: nextVersion,
+    templateCode, ...columns, version: nextVersion,
     name: source.name, description: source.description,
     subject: source.subject, html: source.html, enabled: source.enabled,
     changedBy: actor.userId ?? null, changedByLabel: actor.userEmail ?? '',
     origin: 'RESTORE', restoredFromVersion: source.version,
     createdAt: at,
   });
-  await pruneHistory(templateCode, projectId);
+  await pruneHistory(templateCode, scope);
 
-  return resolveTemplate(templateCode, { projectId });
+  return resolveTemplate(templateCode, scope);
 }
 
 /** L'historique ne grossit pas sans fin : au-delà du plafond, le plus ancien part. */
-async function pruneHistory(templateCode, projectId) {
-  const total = await PanelEmailTemplateVersion.countDocuments({ templateCode, projectId });
+async function pruneHistory(templateCode, scope) {
+  const filter = { templateCode, ...scopeFilter(scope) };
+  const total = await PanelEmailTemplateVersion.countDocuments(filter);
   if (total <= MAX_TEMPLATE_VERSION_HISTORY) return;
   const surplus = await PanelEmailTemplateVersion
-    .find({ templateCode, projectId })
+    .find(filter)
     .sort({ version: 1 })
     .limit(total - MAX_TEMPLATE_VERSION_HISTORY)
     .select('_id')
@@ -352,12 +949,22 @@ async function pruneHistory(templateCode, projectId) {
   await PanelEmailTemplateVersion.deleteMany({ _id: { $in: surplus.map((v) => v._id) } });
 }
 
-export async function listVersions(templateCode, { projectId = null, limit = 20 } = {}) {
+export async function listVersions(templateCode, scope, { limit = 20 } = {}) {
   assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
   return PanelEmailTemplateVersion
-    .find({ templateCode, projectId })
+    .find({ templateCode, ...scopeFilter(scope) })
     .sort({ version: -1 })
     .limit(Math.min(Number(limit) || 20, MAX_TEMPLATE_VERSION_HISTORY))
+    .lean();
+}
+
+/** UNE version, dans SA portée. `null` si elle n'y existe pas. */
+export async function getVersion(templateCode, scope, version) {
+  assertKnownTemplate(templateCode);
+  assertScopeAllowedForCode(templateCode, scope);
+  return PanelEmailTemplateVersion
+    .findOne({ templateCode, ...scopeFilter(scope), version: Number(version) })
     .lean();
 }
 
@@ -365,40 +972,122 @@ export async function listVersions(templateCode, { projectId = null, limit = 20 
 /*  VUE                                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** Le catalogue tel qu'un écran d'édition le consomme. */
-export async function describeTemplates({ projectId = null } = {}) {
+/**
+ * Le catalogue D'UNE PORTÉE, tel qu'un écran d'édition le consomme.
+ *
+ * Ne liste que les codes dont une instance a le droit d'exister ici : l'écran de
+ * SB Auto ne doit pas proposer d'éditer `PAYMENT_REQUEST_CREATED`, qui part du
+ * Panel et ne le concerne pas.
+ */
+export async function describeTemplates(scope) {
+  assertScopeCoherent(scope);
   const items = [];
-  for (const definition of listTemplateDefinitions()) {
-    const resolved = await resolveTemplate(definition.templateId, { projectId });
+
+  /**
+   * ── EN PORTÉE PROJET, LE CATALOGUE SUIT LA DÉCLARATION ────────────────────
+   *
+   * L'écran montrait tous les codes que la portée AUTORISE — c'est-à-dire ce
+   * que le projet POURRAIT utiliser, pas ce qu'il utilise. Un exploitant y
+   * voyait dix modèles pour un projet qui en envoie deux, dont huit marqués
+   * « non configuré » : huit faux problèmes, et aucun moyen de distinguer un
+   * modèle réellement manquant d'un modèle simplement non utilisé.
+   *
+   * On affiche donc ce que le projet DÉCLARE. `declared` porte l'information
+   * jusqu'à l'écran, qui range à part ce qui ne l'est plus — sans le cacher :
+   * un contenu écrit reste consultable, il n'est simplement plus présenté comme
+   * actif.
+   *
+   * `null` (aucune déclaration reçue) laisse le catalogue complet : un projet
+   * antérieur à ce lot, ou dont la première synchronisation n'est pas arrivée,
+   * ne doit pas voir son écran se vider.
+   */
+  const declares = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? await declaredCodesForProject(scope.scopeId)
+    : null;
+
+  for (const templateCode of listTemplateCodesForScope(scope)) {
+    const definition = getTemplateDefinition(templateCode);
+    const resolved = await draftTemplate(templateCode, scope);
+    const contract = templateDefinition(templateCode);
+
     items.push({
-      templateCode: definition.templateId,
+      templateCode,
       label: definition.defaultName,
       description: resolved.description,
       subject: resolved.subject,
       enabled: resolved.enabled,
+      /** `false` = aucune instance dans cette portée. L'écran doit le DIRE. */
+      configured: resolved.configured,
       version: resolved.version,
       source: resolved.source,
+      scopeType: resolved.scopeType,
+      scopeId: resolved.scopeId,
       updatedAt: resolved.updatedAt,
+      category: contract.category,
+      scopes: contract.scopes,
+      /**
+       * CE PROJET LE DÉCLARE-T-IL ? `null` = aucune déclaration reçue, donc
+       * aucune opinion — l'écran n'a alors rien à ranger à part.
+       */
+      declared: declares === null ? null : declares.includes(templateCode),
       retentionClass: definition.retentionClass ?? null,
       /** Les variables AUTORISÉES — l'écran les rend, il ne les devine pas. */
-      variables: variablesFor(definition.templateId).map((v) => ({
+      variables: variablesFor(templateCode).map((v) => ({
         key: v.key, label: v.label, description: v.description,
         type: v.type, required: v.required,
       })),
     });
   }
+
   return items;
 }
 
+/**
+ * TOUTES LES PORTÉES OÙ UN CODE EST RÉELLEMENT CONFIGURÉ.
+ *
+ * Sert au diagnostic (« qui a réécrit ce modèle ? ») et à la recette du §25 :
+ * prouver que trois portées portent trois contenus distincts suppose de pouvoir
+ * les énumérer.
+ */
+export async function describeScopesForCode(templateCode) {
+  assertKnownTemplate(templateCode);
+  const documents = await PanelEmailTemplate
+    .find({ templateCode })
+    .select('scopeType projectId version updatedAt enabled')
+    .lean();
+
+  return documents.map((document) => ({
+    scopeType: document.scopeType ?? (document.projectId ? SCOPE_TYPES.PROJECT : SCOPE_TYPES.PANEL),
+    scopeId: document.projectId ?? null,
+    version: document.version,
+    enabled: document.enabled,
+    updatedAt: document.updatedAt,
+  }));
+}
+
 export default {
-  listTemplateCodes,
+  EMAIL_TEMPLATE_NOT_CONFIGURED,
+  EMAIL_TEMPLATE_NOT_DECLARED,
+  TEMPLATE_SOURCES,
   assertKnownTemplate,
-  seedPlatformTemplates,
-  resolveTemplate,
-  renderForSend,
-  previewTemplate,
-  saveTemplate,
-  restoreVersion,
-  listVersions,
+  backfillScopeTypes,
+  describeScopesForCode,
   describeTemplates,
+  findMissingProjectTemplates,
+  draftTemplate,
+  getVersion,
+  listTemplateCodes,
+  listTemplateCodesForScope,
+  listVersions,
+  previewTemplate,
+  declaredCodesForProject,
+  provisionProjectTemplates,
+  reconcileDeclaredProjectEmailTemplates,
+  reconcileProjectTemplates,
+  renderForSend,
+  resolveTemplate,
+  restoreVersion,
+  saveTemplate,
+  seedPanelTemplates,
+  seedPlatformTemplates,
 };

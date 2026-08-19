@@ -7,8 +7,6 @@
 // aux appels sortants.
 import mongoose from 'mongoose';
 
-import { COMMERCIAL_STATE_VALUES } from '../services/integratedApi/commercialReadiness.js';
-
 const pairingSchema = new mongoose.Schema(
   {
     status: { type: String, enum: ['DECLARED', 'PAIRED', 'REVOKED'], required: true },
@@ -27,7 +25,42 @@ const runtimeSchema = new mongoose.Schema(
     environment: { type: String, enum: ['TEST', 'PROD', null], default: null },
     softwareVersion: { type: String, default: null },
     contractVersion: { type: String, default: null },
+    /**
+     * L'ADRESSE PUBLIQUE DE L'API — VIVANTE depuis le contrat 1.9.0.
+     *
+     * ══ CE QU'ELLE ÉTAIT, ET POURQUOI C'ÉTAIT FAUX ═══════════════════════════
+     *
+     * Elle était écrite au BOOTSTRAP et plus jamais relue. Un projet redéployé
+     * ailleurs gardait donc ici l'adresse du jour de son appairage — un ancien
+     * domaine que plus rien ne servait, présenté comme courant. La seule façon
+     * de la corriger était de réappairer : détruire une relation de confiance
+     * pour rafraîchir une donnée d'exploitation.
+     *
+     * ══ L'INVARIANT QUI LA GOUVERNE DÉSORMAIS ═══════════════════════════════
+     *
+     *     l'appairage est une relation d'IDENTITÉ et de CONFIANCE
+     *     l'URL publique est un ÉTAT COURANT du projet
+     *
+     * Les deux n'ont pas le même cycle de vie, et rien ne justifie que le
+     * second soit figé par le premier. Une adresse n'est jamais immuable parce
+     * qu'elle existait au moment de l'appairage.
+     *
+     * Elle est donc RAFRAÎCHIE par tout ce que le projet déclare — battement
+     * (>= 1.9.0) et projection de présentation (>= 1.4.x) — et le bootstrap
+     * n'est plus qu'un premier contact. Voir `applyDeclaredNetwork()`.
+     */
     publicBackendUrl: { type: String, default: null },
+    /**
+     * QUAND CETTE ADRESSE A ÉTÉ DÉCLARÉE, et PAR QUEL CANAL.
+     *
+     * Sans eux, un écran ne peut pas distinguer « confirmée il y a trente
+     * secondes » de « jamais revue depuis l'appairage » — et c'est exactement
+     * la différence que ce lot existe pour rendre visible. Une adresse dont on
+     * ignore l'âge est une adresse qu'on ne peut pas mettre en doute.
+     */
+    publicBackendUrlUpdatedAt: { type: String, default: null },
+    /** `BOOTSTRAP` | `HEARTBEAT` | `PRESENTATION` — jamais deviné. */
+    publicBackendUrlSource: { type: String, default: null },
     lastHeartbeatAt: { type: String, default: null },
     /**
      * QUAND LE PANEL A RÉELLEMENT REÇU ET APPLIQUÉ UN ÉTAT MÉTIER.
@@ -152,70 +185,35 @@ const panelProjectSchema = new mongoose.Schema(
     note: { type: String, default: null },
 
     /**
-     * OUVERTURE COMMERCIALE — « cette instance a-t-elle le droit d'agir pour de
-     * vrai ? ». Vocabulaire et politique : `integratedApi/commercialReadiness.js`.
+     * ── CINQ CHAMPS ONT ÉTÉ RETIRÉS DE CE SCHÉMA ──────────────────────────────
      *
-     * ══ POURQUOI ICI, ET NON SUR LE CONTRAT ═════════════════════════════════
+     *   commercialState             l'ouverture commerciale (PREOPENING | LIVE)
+     *   commercialStateUpdatedAt    qui l'a décidée, quand, et pourquoi
+     *   commercialStateUpdatedBy
+     *   commercialStateReason
+     *   capabilityGrants            les capacités cochées projet par projet
      *
-     * L1.75 a livré la primitive sans persistance, en désignant la passerelle
-     * de capacités comme son seul lecteur prévu. C'est L3 qui la lit, donc L3
-     * qui devait choisir où elle vit. La fiche de projet est le bon endroit :
-     * l'ouverture qualifie une INSTANCE — celle qui invoque — et non un contrat,
-     * qui peut manquer, être multiple, ou être précisément ce qu'on cherche à
-     * signer.
+     * Ils ne sont pas seulement devenus inertes : ils ont été SUPPRIMÉS du
+     * schéma, et une migration les efface des fiches existantes
+     * (`scripts/migrations/2026-08-15-drop-capability-grants-and-commercial-state.js`).
      *
-     * ══ POURQUOI NULLABLE, ET NON `PREOPENING` PAR DÉFAUT ═══════════════════
+     * ══ POURQUOI SUPPRIMER PLUTÔT QUE CONSERVER « POUR COMPATIBILITÉ » ═══════
      *
-     * `null` se lit « jamais renseigné », et la passerelle le résout vers
-     * `DEFAULT_COMMERCIAL_STATE` (= PREOPENING), donc vers le refus. Écrire la
-     * valeur par défaut en base ferait croire à une décision prise ; le nul dit
-     * la vérité, et le comportement reste fermé.
+     * Un champ d'autorisation laissé en base est un champ qu'on relira. Il n'a
+     * pas besoin d'être branché pour nuire : il suffit qu'il apparaisse dans un
+     * document pour qu'un lecteur suppose qu'il gouverne quelque chose, et
+     * qu'une garde soit réécrite « pour le respecter ». C'est exactement
+     * l'histoire de `PanelIntegratedApi.grants[]`, conservé pour ne pas
+     * détruire une saisie manuelle, et qu'il a fallu documenter pendant des
+     * lots entiers comme « présent mais sans lecteur ».
      *
-     * JAMAIS transmis au projet : c'est une décision du Panel sur le projet, pas
-     * une donnée du projet.
+     * ══ CE QUI AUTORISE UNE INVOCATION DÉSORMAIS ════════════════════════════
+     *
+     * Le jeton de pont établit QUI parle ; le runtime établit QUEL MONDE ; le
+     * schéma d'entrée établit CE QUI est demandé ; et l'adaptateur établit À QUI
+     * appartient la ressource visée. Aucune de ces quatre réponses ne se coche
+     * à la main, et c'est ce qui les rend fiables.
      */
-    commercialState: {
-      type: String,
-      // Vocabulaire IMPORTÉ, jamais recopié : une liste écrite à la main ici
-      // accepterait un jour une valeur que la politique ne reconnaît pas, et
-      // le projet retomberait silencieusement sur le défaut fermé — un refus
-      // parfaitement inexplicable depuis l'écran qui vient de saisir « ouvert ».
-      enum: [...COMMERCIAL_STATE_VALUES, null],
-      default: null,
-    },
-
-    /**
-     * QUI A OUVERT, QUAND, ET POURQUOI (lot L3.1).
-     *
-     * Une ouverture commerciale autorise des opérations financières réelles.
-     * L'état seul ne dit pas qui en répond : ces trois champs rendent la
-     * décision imputable, et la chronologie du projet en porte l'écho.
-     *
-     * Nuls tant que personne n'a tranché — comme `commercialState` lui-même.
-     */
-    commercialStateUpdatedAt: { type: String, default: null },
-    commercialStateUpdatedBy: { type: String, default: null },
-    commercialStateReason: { type: String, default: null },
-
-    /**
-     * CAPACITÉS ACCORDÉES À CE PROJET — l'unique autorité d'autorisation (L3).
-     *
-     * ══ CE QUI REMPLACE QUOI ════════════════════════════════════════════════
-     *
-     * `PanelIntegratedApi.grants[]` (modèle legacy) disait « ce projet reçoit
-     * ces CLÉS ». L4 a supprimé la diffusion, donc l'octroi ne gouvernait plus
-     * rien. Ici, l'octroi porte sur une INTENTION MÉTIER : le projet ne reçoit
-     * jamais de clé, il obtient le droit de demander une action.
-     *
-     * L'ancien tableau n'est PAS lu par la passerelle — pas même en repli. Deux
-     * systèmes d'autorisation dont l'un est plus permissif finissent toujours
-     * par être interrogés dans le mauvais ordre.
-     *
-     * Vide par défaut : un projet appairé ne peut RIEN tant qu'on ne lui a rien
-     * accordé. Chaque valeur est validée contre le registre code-first à
-     * l'écriture — un code inconnu ne peut pas être stocké.
-     */
-    capabilityGrants: { type: [String], default: [] },
   },
   { minimize: false, versionKey: false },
 );

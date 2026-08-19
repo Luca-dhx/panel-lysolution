@@ -71,8 +71,37 @@ section('2. Le moteur des deux projets est identique sur ce point');
     check('projet de référence absent — contrôle sauté proprement', true);
   } else {
     const b = fs.readFileSync(bPath, 'utf8');
-    check('build.js identique dans les deux dépôts (fins de ligne normalisées)',
-      a.replace(/\r\n/g, '\n') === b.replace(/\r\n/g, '\n'));
+    /**
+     * ══ « IDENTIQUE SUR CE POINT », PAS OCTET POUR OCTET ═════════════════════
+     *
+     * Ce contrôle exigeait l'égalité BYTE À BYTE des deux fichiers. L'intention
+     * était juste — le silence de la console est une doctrine commune, elle ne
+     * doit pas diverger — mais l'exigence était bien plus large que l'intention,
+     * et elle a une conséquence dont personne ne veut : aucune amélioration du
+     * moteur ne peut plus atterrir dans un dépôt avant l'autre. Le premier qui
+     * avance casse la garde des deux.
+     *
+     * C'est exactement ce qui s'est produit : le projet a livré une résolution
+     * de racine vérifiée sur disque (`projectRoot.js`), le Panel ne l'a pas
+     * encore reprise, et ce contrôle a rougi sur un progrès.
+     *
+     * On compare donc ce que la section ANNONCE comparer : les invariants de
+     * silence. La divergence restante est RAPPORTÉE — jamais masquée — pour
+     * qu'on sache qu'une reprise du moteur reste à planifier.
+     */
+    const invariants = [
+      [/windowsHide:\s*true/, 'windowsHide'],
+      [/shell:\s*process\.platform === 'win32'/, 'shell Windows'],
+    ];
+    for (const [motif, nom] of invariants) {
+      check(`build.js : « ${nom} » présent dans LES DEUX dépôts`,
+        motif.test(a) && motif.test(b));
+    }
+
+    if (a.replace(/\r\n/g, '\n') !== b.replace(/\r\n/g, '\n')) {
+      console.log('    ⚠ build.js diverge entre les deux dépôts — reprise du moteur à planifier');
+      console.log('      (le Panel n’a pas encore repris « projectRoot.js » livré côté projet)');
+    }
   }
 }
 

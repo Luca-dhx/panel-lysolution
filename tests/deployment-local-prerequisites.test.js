@@ -11,6 +11,7 @@
 //
 // Le contrôle est local et instantané : il n'a aucune raison d'attendre. Il
 // est désormais évalué avant tout effet de bord.
+import path from 'node:path';
 import { check, finish, section } from './helpers/harness.js';
 
 const { runLocalPreflight, listDirtyFiles, requiresCleanSource } =
@@ -31,6 +32,38 @@ const gitExec = ({ isGit = true, dirty = [] } = {}) => async (cmd, args) => {
 
 const DIRTY = [' M backend/src/server.js', '?? backend/src/nouveau.js', ' M frontend/src/App.tsx'];
 
+/**
+ * ══ UN DISQUE SIMULÉ — parce que cette suite parle de GIT, pas de fichiers ══
+ *
+ * Le préflight local contrôle désormais DEUX choses : que la source est
+ * commitée, et que les sources du projet sont bien là. Le second contrôle est
+ * un vrai progrès — il évite qu'une machine sans les sources traverse le DNS
+ * avant d'échouer au build — mais il n'est pas le sujet ici : les sections
+ * ci-dessous éprouvent la règle TEST/PROD sur une racine fictive `/x`.
+ *
+ * On leur donne donc un disque où `/x` contient les applications déclarées par
+ * le profil. Ce n'est pas contourner le nouveau contrôle : il est éprouvé pour
+ * lui-même, avec un disque VIDE, dans sa propre section.
+ */
+const { APPS } = await import('../backend/src/deployment-engine/config/project.profile.js');
+const fsPresent = {
+  /**
+   * On compare la FIN du chemin, pas son début : `path.resolve('/x')` donne
+   * `C:\x` sous Windows et `/x` ailleurs. Faire dépendre la recette du
+   * séparateur de la machine la rendrait verte ici et rouge sur le poste
+   * d'à côté — pour une raison qui n'a rien à voir avec ce qu'elle éprouve.
+   */
+  access: async (chemin) => {
+    const normalise = String(chemin).split(path.sep).join('/');
+    const attendus = APPS.flatMap((app) => [
+      `/${app.dir}/package.json`, `/${app.dir}/package-lock.json`,
+    ]);
+    if (attendus.some((fin) => normalise.endsWith(fin))) return undefined;
+    throw new Error(`ENOENT: ${chemin}`);
+  },
+};
+const fsVide = { access: async (chemin) => { throw new Error(`ENOENT: ${chemin}`); } };
+
 /* ────────────────────────────────────────────────────────────────────────── */
 section('1. Règle TEST / PROD — inchangée');
 {
@@ -43,7 +76,7 @@ section('1. Règle TEST / PROD — inchangée');
 /* ────────────────────────────────────────────────────────────────────────── */
 section('2. Dépôt propre → déploiement autorisé');
 {
-  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: [] }) });
+  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: [] }), fsMod: fsPresent });
   check('prérequis locaux satisfaits', r.ok === true);
   check('aucun contrôle en échec', r.failedChecks.length === 0);
   check('le commit est identifié', r.git.shortCommit === COMMIT.slice(0, 7));
@@ -53,9 +86,35 @@ section('2. Dépôt propre → déploiement autorisé');
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
+section('2 bis. Sources absentes du disque → refus AVANT tout effet de bord');
+{
+  /**
+   * Le défaut que ce contrôle ferme : une machine qui ne détient pas les
+   * sources passait tout le préflight local, puis créait un run, ouvrait SSH,
+   * POSAIT DES ENREGISTREMENTS DNS, et échouait enfin au build. Le fait était
+   * pourtant connaissable ici, instantanément et sans rien toucher.
+   */
+  const r = await runLocalPreflight({
+    env: 'PROD', root: '/x', exec: gitExec({ dirty: [] }), fsMod: fsVide,
+  });
+  check('prérequis locaux NON satisfaits', r.ok === false);
+  const layout = r.checks.find((c) => c.id === 'source.layout');
+  check('le contrôle des sources existe et échoue', layout && layout.ok === false);
+  check('…il est bloquant', layout.required === true);
+  check('…et il nomme le problème, pas seulement le contrôle',
+    /introuvable/i.test(layout.summary ?? ''));
+  check('…en désignant CHAQUE application manquante',
+    APPS.every((app) => String(layout.detail).includes(app.dir)));
+  check('la règle TEST/PROD ne le concerne pas : il vaut aussi en TEST',
+    (await runLocalPreflight({
+      env: 'TEST', root: '/x', exec: gitExec({ dirty: [] }), fsMod: fsVide,
+    })).ok === false);
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
 section('3. Dépôt non commité en PROD → refus, avec la liste des fichiers');
 {
-  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: DIRTY }) });
+  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: DIRTY }), fsMod: fsPresent });
   check('prérequis locaux NON satisfaits', r.ok === false);
   check('le contrôle fautif est identifié', r.failedChecks[0].id === 'source.clean');
   check('il est requis en PROD', r.failedChecks[0].required === true);
@@ -74,7 +133,7 @@ section('3. Dépôt non commité en PROD → refus, avec la liste des fichiers')
 /* ────────────────────────────────────────────────────────────────────────── */
 section('4. Dépôt non commité en TEST → informatif, jamais bloquant');
 {
-  const r = await runLocalPreflight({ env: 'TEST', root: '/x', exec: gitExec({ dirty: DIRTY }) });
+  const r = await runLocalPreflight({ env: 'TEST', root: '/x', exec: gitExec({ dirty: DIRTY }), fsMod: fsPresent });
   check('le déploiement reste autorisé', r.ok === true);
   check('aucun contrôle bloquant', r.failedChecks.length === 0);
   const src = r.checks.find((c) => c.id === 'source.clean');
@@ -86,7 +145,7 @@ section('4. Dépôt non commité en TEST → informatif, jamais bloquant');
 /* ────────────────────────────────────────────────────────────────────────── */
 section('5. Hors dépôt Git — on le dit, on ne prétend pas avoir contrôlé');
 {
-  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ isGit: false }) });
+  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ isGit: false }), fsMod: fsPresent });
   check('le déploiement n’est pas bloqué', r.ok === true);
   const src = r.checks.find((c) => c.id === 'source.git');
   check('le contrôle annonce « non applicable »', /non applicable/i.test(src.detail));
@@ -111,7 +170,19 @@ section('6. AUCUN effet de bord — la porte est bien en amont');
 
   // Le transport piégé n'est jamais passé au moteur : on prouve surtout que la
   // vérification n'a besoin d'AUCUN transport pour rendre son verdict.
-  check('le verdict ne dépend d’aucun transport', r.failedChecks.length === 1);
+  /**
+   * « SANS TRANSPORT » se mesure au transport, pas au NOMBRE d'échecs.
+   *
+   * Cette ligne comptait exactement un contrôle en échec. Le compte a changé —
+   * le préflight local en porte un second depuis qu'il vérifie aussi la
+   * présence des sources, et sur une racine fictive `/x` les deux échouent, à
+   * raison. Compter les échecs n'a jamais été le sujet : ce que la section
+   * établit est qu'un verdict est rendu SANS toucher au transport, et que
+   * l'échec attendu est bien nommé.
+   */
+  check('le verdict ne dépend d’aucun transport', touched === 0 && r.failedChecks.length > 0);
+  check('…et il nomme la source non commitée',
+    r.failedChecks.some((c) => c.id === 'source.clean'));
   void piege;
 }
 
@@ -123,12 +194,21 @@ section('7. Le point d’entrée refuse AVANT de créer quoi que ce soit');
     new URL('../backend/src/controllers/deployment.controller.js', import.meta.url), 'utf8',
   );
   const garde = src.indexOf('checkLocalPrerequisites');
-  const createRun = src.indexOf('await createRun(');
+  /**
+   * L'OUVERTURE DU RUN PASSE PAR `openRun` — et ce n'est pas cosmétique.
+   *
+   * `createRun` lève désormais une erreur TYPÉE quand le journal durable est
+   * inaccessible ; `openRun` la traduit en refus HTTP stable, sans laisser
+   * fuiter la cause d'origine (un message de pilote Mongo cite l'URI de
+   * connexion, donc des identifiants). C'est CET appel qui marque l'instant où
+   * le déploiement devient réel, et c'est donc lui que l'ordre doit suivre.
+   */
+  const createRun = src.indexOf('await openRun(');
   const worker = src.indexOf('startDeploymentWorker(');
   const marquage = src.indexOf('markDeploying(');
 
   check('le contrôle local existe au point d’entrée', garde !== -1);
-  check('…il précède la création du run', garde < createRun);
+  check('…il précède la création du run', createRun !== -1 && garde < createRun);
   check('…il précède le marquage de la destination', garde < marquage);
   check('…il précède le lancement du worker', garde < worker);
   check('le refus dit que le pipeline n’a pas tourné', /pipelineExecuted:\s*false/.test(src));
@@ -141,7 +221,7 @@ section('7. Le point d’entrée refuse AVANT de créer quoi que ce soit');
 /* ────────────────────────────────────────────────────────────────────────── */
 section('8. Prérequis LOCAUX et DISTANTS sont distingués');
 {
-  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: [] }) });
+  const r = await runLocalPreflight({ env: 'PROD', root: '/x', exec: gitExec({ dirty: [] }), fsMod: fsPresent });
   check('tout contrôle local porte scope=local', r.checks.every((c) => c.scope === 'local'));
 
   const fs = await import('node:fs');

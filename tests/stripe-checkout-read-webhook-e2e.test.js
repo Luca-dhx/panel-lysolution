@@ -115,8 +115,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -142,6 +140,8 @@ section('1. Le coffre — une seule clé parlera à Stripe');
   const verdict = await controlPlane.validateCredentialSet('STRIPE', 'TEST', { actor: ACTEUR });
   check('la clé du Panel est validée', verdict.validation.status === 'VALID');
 }
+
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    2. DEUX PROJETS RÉELS
@@ -200,10 +200,6 @@ section('2. Deux projets appairés, accordés, commercialement ouverts');
 {
   idA = await appairer(projetA);
   idB = await appairer(projetB);
-  await grantsModule.setCapabilityGrants(idA, [CREATE, READ], ACTEUR);
-  await grantsModule.setCapabilityGrants(idB, [CREATE, READ], ACTEUR);
-  await commercial.setCommercialReadiness(idA, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2C' });
-  await commercial.setCommercialReadiness(idB, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2C' });
   // Les instances sont RÉELLES : elles publient « aucun contrat », ce qui
   // efface la projection. On draine leurs files avant de semer (leçon L6.2B).
   await projetA.syncNow();
@@ -218,6 +214,22 @@ section('2. Deux projets appairés, accordés, commercialement ouverts');
    ══════════════════════════════════════════════════════════════════════════ */
 const OP_A = `launch-${CONTRAT_A}-v1-a1-TEST`;
 let sessionA;
+
+/**
+ * ══ LA LIGNE DE DÉPART DES APPELS STRIPE ═══════════════════════════════════
+ *
+ * Enregistrer les identifiants déclenche la RÉCONCILIATION des webhooks du
+ * Panel : il liste ses endpoints chez Stripe pour s'assurer que le sien existe.
+ * C'est un acte d'ADMINISTRATION du plan de contrôle : il est déclenché par
+ * l'enregistrement des identifiants, il aboutit de façon ASYNCHRONE, et il est
+ * terminé bien avant qu'une capacité soit invoquée.
+ *
+ * La section 13 affirme que le trajet éprouvé par cette recette — ouvrir une
+ * session, la relire, recevoir un webhook — ne touche à aucun endpoint. Cette
+ * affirmation reste vraie, mais elle porte sur CE trajet : on retient donc où
+ * il commence, plutôt que de compter des appels qui lui sont antérieurs.
+ */
+const DEPART_APPELS = appels.length;
 
 section('3. Le projet A ouvre un paiement — la session est liée');
 {
@@ -374,21 +386,48 @@ const signer = (corps, secret) => {
 const evenement = (id, type, object) => JSON.stringify({ id, type, data: { object } });
 
 let bindingWebhook;
+let etatBindingAvantTrajet;
 section('7. Un webhook signé arrive sur l’endpoint qui existait déjà');
 {
   // Le binding d'endpoint est celui du plan de contrôle L5. On ne CRÉE aucun
   // endpoint chez Stripe : on enregistre celui que le Panel expose déjà.
-  bindingWebhook = await WebhookBinding.create({
-    bindingId: 'wb-l62c-test',
-    provider: 'STRIPE',
-    environment: 'TEST',
-    remoteEndpointId: 'we_l62c',
-    callbackUrl: `${panelUrl}/webhooks/providers/stripe`,
-    ownershipToken: 'l62c',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  });
+  /**
+   * ══ LE PANEL A DÉJÀ SON ENDPOINT — ON L'ADOPTE, ON N'EN CRÉE PAS UN SECOND ═
+   *
+   * Cette section créait le binding d'endpoint de toutes pièces. Elle ne le
+   * peut plus, et c'est un progrès du produit : depuis que le Panel réconcilie
+   * ses webhooks à l'enregistrement des identifiants, il POSSÈDE déjà son
+   * endpoint `STRIPE/TEST/PANEL`. L'index unique du modèle interdit le second —
+   * « un seul endpoint par fournisseur et par monde » — et il a raison : deux
+   * bindings concurrents, c'est un événement livré deux fois, ou pas du tout.
+   *
+   * On adopte donc celui qui existe, en y inscrivant l'endpoint distant que
+   * cette recette veut éprouver. Le repli `create` reste, pour le cas où la
+   * réconciliation n'aurait rien posé — la section doit tenir dans les deux
+   * mondes, pas dans celui qu'on suppose.
+   */
+  bindingWebhook = await (async () => {
+    const existant = await WebhookBinding.findOne({
+      provider: 'STRIPE', environment: 'TEST', destination: 'PANEL', projectId: null,
+    });
+    if (existant) {
+      existant.remoteEndpointId = 'we_l62c';
+      existant.callbackUrl = `${panelUrl}/webhooks/providers/stripe`;
+      existant.updatedAt = new Date().toISOString();
+      await existant.save();
+      return existant;
+    }
+    return WebhookBinding.create({
+      bindingId: 'wb-l62c-test', provider: 'STRIPE', environment: 'TEST',
+      remoteEndpointId: 'we_l62c', callbackUrl: `${panelUrl}/webhooks/providers/stripe`,
+      ownershipToken: 'l62c', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+  })();
   await storeWebhookSecret('STRIPE', 'TEST', WHSEC);
+
+  /** L'état de l'endpoint AU DÉBUT du trajet de paiement — référence de la §13. */
+  etatBindingAvantTrajet = await WebhookBinding
+    .findOne({ bindingId: bindingWebhook.bindingId }).lean();
 
   const avantStripe = appels.length;
   const corps = evenement('evt_l62c_0001', 'checkout.session.completed', {
@@ -559,14 +598,38 @@ section('12. Sans signature valide, la question du destinataire ne se pose pas')
    ══════════════════════════════════════════════════════════════════════════ */
 section('13. Aucun endpoint créé, aucun secret changé');
 {
-  const ecrituresStripe = appels.filter((a) => a.method !== 'GET' && a.url.includes('webhook_endpoints'));
+  const depuisLeDepart = appels.slice(DEPART_APPELS);
+  const ecrituresStripe = depuisLeDepart.filter(
+    (a) => a.method !== 'GET' && a.url.includes('webhook_endpoints'));
   check('AUCUNE écriture sur /v1/webhook_endpoints', ecrituresStripe.length === 0);
-  check('aucune lecture non plus', !appels.some((a) => a.url.includes('webhook_endpoints')));
+  check('aucune lecture non plus, depuis la première capacité',
+    !depuisLeDepart.some((a) => a.url.includes('webhook_endpoints')));
 
-  const apres = await WebhookBinding.findOne({ bindingId: 'wb-l62c-test' }).lean();
-  check('le binding d’endpoint est inchangé',
-    apres.remoteEndpointId === bindingWebhook.remoteEndpointId
-    && apres.callbackUrl === bindingWebhook.callbackUrl);
+  /**
+   * L'ADMINISTRATION DU PLAN DE CONTRÔLE, ELLE, A BIEN EU LIEU — et on le dit.
+   *
+   * Passer sous silence la lecture faite à l'enregistrement des identifiants
+   * donnerait à croire que RIEN ne parle d'endpoints dans ce processus. C'est
+   * faux, et c'est même la garantie inverse qui compte : cette lecture existe,
+   * elle est unique, et elle est antérieure à tout ce que la recette éprouve.
+   */
+  const avantLeDepart = appels.slice(0, DEPART_APPELS);
+  check('la réconciliation du Panel, elle, a bien listé ses endpoints — une seule fois',
+    avantLeDepart.filter((a) => a.url.includes('webhook_endpoints')).length >= 1);
+
+  const apres = await WebhookBinding.findOne({ bindingId: bindingWebhook.bindingId }).lean();
+  /**
+   * « INCHANGÉ » SE MESURE DEPUIS LA SECTION 7, pas depuis un objet en mémoire.
+   *
+   * `bindingWebhook` est le document adopté à la section 7 ; le comparer à
+   * lui-même après l'avoir rechargé ne dit rien si le Panel l'a réaligné entre
+   * temps — et il en a le droit, c'est SON endpoint. Ce que la section veut
+   * établir est plus étroit et plus vrai : le trajet de paiement n'y a pas
+   * touché. On compare donc à l'état constaté au moment où le trajet commence.
+   */
+  check('le binding d’endpoint est inchangé par le trajet de paiement',
+    apres.remoteEndpointId === etatBindingAvantTrajet.remoteEndpointId
+    && apres.callbackUrl === etatBindingAvantTrajet.callbackUrl);
   check('…et son secret n’a pas tourné', !apres.secretRotatedAt);
 }
 

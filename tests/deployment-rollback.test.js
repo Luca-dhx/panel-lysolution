@@ -205,8 +205,18 @@ function makeTransport(disque, { healthyVersions = null, failSwapFor = null } = 
       }
 
       // Le reste : chaînes `A && B && C`, exécutées dans l'ordre, arrêt au 1er échec.
+      /**
+       * UNE CHAÎNE, exécutée dans l'ordre, arrêt au premier échec.
+       *
+       * Le double ne découpait que sur `&&`. Depuis que l'échange de rollback
+       * passe sous shell strict (`set -euo pipefail`, séparateurs `;`), il doit
+       * modéliser ce qu'un vrai shell fait de ces deux séparateurs sous
+       * `set -e` : la même chose.
+       */
+      const sansPreambule = cmd.replace(/^\s*set -euo pipefail;\s*/, '');
       let dernier = { code: 0, stdout: '', stderr: '' };
-      for (const part of cmd.split('&&')) {
+      for (const part of sansPreambule.split(/&&|;/)) {
+        if (!part.trim()) continue;
         dernier = runOne(part);
         if (dernier.code !== 0) return dernier;
       }

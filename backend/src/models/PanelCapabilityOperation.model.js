@@ -89,6 +89,29 @@ const panelCapabilityOperationSchema = new mongoose.Schema(
     /** Code du template exécuté. Un code métier, jamais un identifiant Brevo. */
     templateCode: { type: String, default: null },
 
+    /**
+     * QUEL DOCUMENT EXACT EST PARTI (L11.1).
+     *
+     * ── POURQUOI CES TROIS CHAMPS, ET POURQUOI ICI ────────────────────────────
+     *
+     * Le code seul ne suffisait plus le jour où trois documents ont pu le
+     * porter. « Un PASSWORD_RESET_REQUEST est parti » ne dit pas LEQUEL : celui
+     * du Panel, celui de SB Auto, ou celui d'un autre client — ni dans quelle
+     * version. C'est précisément la question qu'un exploitant pose quand un
+     * client signale un e-mail au mauvais nom, et elle n'avait pas de réponse.
+     *
+     * Ils sont écrits À L'ABOUTISSEMENT, pas à la réservation : la réservation
+     * précède le rendu, et à ce moment-là personne ne sait encore quelle version
+     * partira. Écrire une valeur devinée serait pire que de ne rien écrire.
+     *
+     * `null` sur une opération non aboutie, et sur toute capacité qui n'est pas
+     * un envoi de modèle. Ce ne sont pas des données personnelles : ce sont des
+     * coordonnées de document.
+     */
+    templateScope: { type: String, enum: ['PANEL', 'PROJECT', null], default: null },
+    templateScopeId: { type: String, default: null },
+    templateVersion: { type: Number, default: null },
+
     errorCode: { type: String, default: null },
     errorMessage: { type: String, default: '' },
     httpStatus: { type: Number, default: null },

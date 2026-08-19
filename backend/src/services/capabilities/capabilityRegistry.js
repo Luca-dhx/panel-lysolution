@@ -5,34 +5,37 @@
 // ── CODE-FIRST, ET C'EST UN INVARIANT ───────────────────────────────────────
 //
 // Rien en base ne peut ajouter, retirer ni modifier une capacité. Une capacité
-// enregistrable depuis Mongo serait une porte ouverte sans adaptateur, sans
-// politique commerciale et sans test — et un projet finirait par l'invoquer.
+// enregistrable depuis Mongo serait une porte ouverte sans adaptateur et sans
+// test — et un projet finirait par l'invoquer.
 //
 // ── CE REGISTRE NE RÉINVENTE RIEN ───────────────────────────────────────────
 //
-// Il AGRÈGE trois autorités déjà écrites, et ne les redéfinit jamais :
+// Il AGRÈGE des autorités déjà écrites, et ne les redéfinit jamais :
 //
 //   providerRegistry.js       → quel fournisseur, quelle portée
-//   commercialReadiness.js    → quel EFFET réel (donc quelle politique L1.75)
 //   brevo/brevoCapabilities.js → le contrat métier Brevo, écrit par L8
 //
 // `assertRegistryAlignment()` échoue si l'une diverge. C'est ce contrôle, et
 // non la discipline, qui garantit qu'on ne se retrouvera pas avec une capacité
-// dont l'écran promet une chose et dont la politique en décide une autre.
+// dont l'écran promet une chose et dont l'exécution en décide une autre.
 //
-// ── DÉCLARÉE ≠ SERVIE ───────────────────────────────────────────────────────
+// ── DÉCLARÉE = SERVIE, ET IL N'Y A PAS D'ÉTAT INTERMÉDIAIRE ─────────────────
 //
-// Une capacité `migrated: false` est CONNUE : sa politique, son effet et son
-// fournisseur sont établis, et l'écran peut l'annoncer comme « pas encore
-// migrée ». Elle n'est simplement branchée sur aucun adaptateur, et son
-// invocation est refusée par `CAPABILITY_NOT_AVAILABLE`. Les taire produirait
-// un `CAPABILITY_UNKNOWN` mensonger : la capacité existe, elle n'est pas prête.
+// Ce registre portait un booléen `migrated` : une capacité pouvait être
+// déclarée, affichée, accordable — et refuser à l'invocation avec « pas encore
+// servie ». C'était un état que rien n'obligeait à quitter, et il a duré :
+// `billing.subscription.reconcile` l'occupait encore, annoncée à l'écran et
+// servie par personne.
+//
+// Le booléen a été supprimé, pas seulement mis à `true` partout. Tant que le
+// champ existe, l'état est REPRÉSENTABLE, donc il revient. Une capacité est
+// désormais dans ce fichier ou elle n'y est pas ; `assertAdapterAlignment()`
+// exige de chacune un exécutant, et le contrôle échoue si l'un manque.
 import { z } from 'zod';
 
 import { MAX_DOCUMENT_BASE64_LENGTH } from '../integratedApi/yousign/signatureDocumentLimits.js';
 
 import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
-import { CAPABILITY_EFFECTS, EFFECT } from '../integratedApi/commercialReadiness.js';
 import { BREVO_CAPABILITY_CODES } from '../integratedApi/brevo/brevoCapabilities.js';
 import {
   HOSTINGER_CAPABILITIES,
@@ -73,9 +76,13 @@ export const IDEMPOTENCY = Object.freeze({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Permissions portées par une capacité. Elles ne remplacent PAS l'octroi
- * (`capabilityGrants`) : l'octroi dit QUI, la permission dit QUOI — et permet
- * de raisonner par famille sans réénumérer les codes un à un.
+ * Permissions portées par une capacité — une FAMILLE, pour raisonner sans
+ * réénumérer les codes un à un.
+ *
+ * Elles complétaient autrefois les octrois (`capabilityGrants`), qui disaient
+ * QUI quand celles-ci disent QUOI. Les octrois ayant disparu, elles ne
+ * gouvernent plus aucune décision d'accès : elles restent une classification
+ * descriptive, utile aux écrans et à la lecture du registre.
  */
 export const PERMISSIONS = Object.freeze({
   EMAIL_SEND: 'email:send',
@@ -141,10 +148,44 @@ const emailSenderVerifyInput = z.object({
   operationId: z.string().trim().min(8).max(64),
 }).strict();
 
+/**
+ * ══ UN MONTANT PORTE SA DEVISE — et le contrat d'entrée doit l'admettre ═════
+ *
+ * ── LE DÉFAUT FERMÉ ICI ────────────────────────────────────────────────────
+ *
+ * Les variables n'acceptaient que des scalaires. Or le RENDU, lui, accepte
+ * depuis toujours deux formes pour un montant : un entier de centimes, ou
+ * `{ amount, currency }` — et il documente pourquoi la seconde existe, « sans
+ * quoi un montant en USD s'afficherait avec € ».
+ *
+ * Deux contrats du même Panel disaient donc le contraire l'un de l'autre, et
+ * c'est l'entrée qui gagnait : tout envoi portant un montant sous sa forme
+ * complète était refusé à la passerelle, avant d'atteindre le rendu qui
+ * l'attendait. Le message rendu — « Entrée non conforme au contrat » — ne
+ * nommait pas la variable fautive, et le refus ressemblait à une erreur
+ * d'appel alors que l'appelant suivait la forme documentée.
+ *
+ * Ce que cela cassait, concrètement : les e-mails de facturation d'un projet
+ * (paiement reçu, impayé, régularisation) et le bouton « envoi de test » de
+ * tout modèle portant un montant — donc, pour ces modèles, l'écran entier.
+ *
+ * ── POURQUOI PAS `z.any()` ─────────────────────────────────────────────────
+ *
+ * Parce que le point du schéma est de refuser ce qui n'a pas de sens. On admet
+ * EXACTEMENT la forme que le rendu sait lire, et rien d'autre : un objet
+ * inconnu reste refusé, et il le reste au bon endroit.
+ */
+const moneyVariable = z.object({
+  /** Des CENTIMES, entiers : la même unité que partout ailleurs dans le parc. */
+  amount: z.number().int(),
+  /** ISO 4217. Absente, le rendu retient l'euro — c'est son défaut documenté. */
+  currency: z.string().trim().length(3).optional(),
+}).strict();
+
 const emailSendTemplateInput = z.object({
   templateRef: z.string().trim().min(1).max(120),
   recipient: recipientSchema,
-  variables: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  variables: z.record(z.union([z.string(), z.number(), z.boolean(), moneyVariable])).optional(),
   replyTo: recipientSchema.optional(),
   operationId: z.string().trim().min(8).max(64),
 }).strict();
@@ -322,6 +363,32 @@ const emailSendTemplateOutput = z.object({
     email: z.string(),
     name: z.string(),
   }).strict().optional(),
+
+  /**
+   * QUEL DOCUMENT EXACT EST PARTI — l'observabilité du lot L11.1.
+   *
+   * ── POURQUOI LE PROJET DOIT LE RECEVOIR, ET PAS SEULEMENT LE JOURNAL ──────
+   *
+   * Le projet tient son propre suivi de livraison, et il y écrivait jusqu'ici
+   * une `templateVersion` LUE DANS SA BASE LOCALE — c'est-à-dire la version
+   * d'un document qui n'a jamais été expédié. Un exploitant qui enquêtait sur
+   * un e-mail lisait donc un numéro sans rapport avec ce qui était parti.
+   *
+   * Le seul composant qui SAIT est celui qui vient de rendre. Il le dit ici.
+   *
+   * ── POURQUOI TOUS FACULTATIFS ─────────────────────────────────────────────
+   *
+   * Pour la même raison que `sender` : le REJEU (`ALREADY_SENT`) est rendu
+   * depuis le registre d'opérations, sans réexécuter l'adaptateur, donc sans
+   * re-résoudre le modèle. Les rendre obligatoires forcerait à inventer des
+   * valeurs pour la seule branche qui n'en a pas besoin — un rejeu signifie que
+   * le premier appel a réussi, et que le projet a déjà enregistré la vérité.
+   */
+  templateCode: z.string().optional(),
+  templateScope: z.enum(['PANEL', 'PROJECT']).optional(),
+  templateScopeId: z.string().nullable().optional(),
+  templateVersion: z.number().int().min(0).optional(),
+  templateSource: z.enum(['PANEL', 'PROJECT', 'REGISTRY_DEFAULT']).optional(),
 }).strict();
 
 /* -------------------------------------------------------------------------- */
@@ -329,9 +396,11 @@ const emailSendTemplateOutput = z.object({
 /* -------------------------------------------------------------------------- */
 
 /**
- * Construit une définition. `effect` n'est PAS un paramètre : il est lu dans
- * `commercialReadiness.CAPABILITY_EFFECTS`, seule autorité. Le dupliquer ici
- * créerait deux vérités dont l'une déciderait si de l'argent réel bouge.
+ * Construit une définition.
+ *
+ * Il n'y a plus ni `migrated` ni `migrationNote` : figurer ici, c'est être
+ * servie. Une capacité qu'on voudrait « préparer sans la brancher » ne
+ * s'ajoute pas à ce fichier — elle s'ajoute le jour où son adaptateur existe.
  */
 function capability(code, options) {
   const provider = options.provider;
@@ -341,18 +410,12 @@ function capability(code, options) {
     provider,
     /** Portée du fournisseur (ENVIRONMENT | PANEL_GLOBAL) — registre L1. */
     scope: definition?.scope ?? null,
-    /** Nature de l'effet réel — table L1.75, jamais recopiée. */
-    effectNature: CAPABILITY_EFFECTS[code] ?? null,
     label: options.label,
-    /** Branchée sur un adaptateur ? `false` = déclarée, pas encore servie. */
-    migrated: options.migrated === true,
     inputSchema: options.inputSchema ?? null,
     outputSchema: options.outputSchema ?? null,
     timeoutMs: options.timeoutMs,
     idempotency: options.idempotency,
     requiredPermissions: Object.freeze([...(options.requiredPermissions ?? [])]),
-    /** Note d'audit pour les capacités non migrées : ce qui les retient. */
-    migrationNote: options.migrationNote ?? null,
     /**
      * Champ de la SORTIE qui identifie l'objet produit chez le fournisseur.
      *
@@ -391,7 +454,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
      * produire de doublon. C'est la seule capacité dont on peut se permettre
      * qu'elle se trompe pendant qu'on éprouve le chemin complet.
      */
-    migrated: true,
     inputSchema: emailSenderVerifyInput,
     outputSchema: emailSenderVerifyOutput,
     timeoutMs: 10_000,
@@ -411,7 +473,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
      * `emailDeliveryDispatch` aurait figé chaque suivi de livraison sur
      * « envoyé », en silence. Les deux moitiés ont été livrées ensemble.
      */
-    migrated: true,
     inputSchema: emailSendTemplateInput,
     outputSchema: emailSendTemplateOutput,
     timeoutMs: 15_000,
@@ -426,17 +487,8 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
      */
   }),
 
-  /* ── Stripe — audité, pas migré (L6) ────────────────────────────────────── */
+  /* ── Stripe ─────────────────────────────────────────────────────────────── */
 
-  'billing.invoice.list': capability('billing.invoice.list', {
-    provider: 'STRIPE',
-    label: 'Lister les factures',
-    migrated: false,
-    timeoutMs: 15_000,
-    idempotency: IDEMPOTENCY.SAFE_RETRY,
-    requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: 'L6. Lecture pure — la plus simple à basculer en premier.',
-  }),
   /**
    * LA LECTURE D'UNE SESSION — servie depuis L6.2C.
    *
@@ -451,13 +503,11 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.checkout.retrieve': capability('billing.checkout.retrieve', {
     provider: 'STRIPE',
     label: 'Lire l’état d’une session de paiement',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.checkout.retrieve'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.checkout.retrieve'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: null,
   }),
   /**
    * LA LECTURE D'UN ABONNEMENT — servie depuis L6.2F.
@@ -470,13 +520,11 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.subscription.retrieve': capability('billing.subscription.retrieve', {
     provider: 'STRIPE',
     label: 'Lire l’état d’un abonnement',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.subscription.retrieve'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.subscription.retrieve'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: null,
   }),
 
   /**
@@ -508,25 +556,21 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.invoice.list': capability('billing.invoice.list', {
     provider: 'STRIPE',
     label: 'Lister les factures d’un contrat',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.invoice.list'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.invoice.list'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: null,
   }),
 
   'billing.invoice.retrieve': capability('billing.invoice.retrieve', {
     provider: 'STRIPE',
     label: 'Lire une facture du contrat',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.invoice.retrieve'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.invoice.retrieve'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: null,
   }),
 
   /**
@@ -537,36 +581,38 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.portal.create': capability('billing.portal.create', {
     provider: 'STRIPE',
     label: 'Ouvrir le portail client d’un contrat',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.portal.create'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.portal.create'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
-    migrationNote: null,
   }),
 
   'webhook.endpoint.ensure': capability('webhook.endpoint.ensure', {
     provider: 'STRIPE',
     label: 'Garantir l’endpoint webhook du projet',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['webhook.endpoint.ensure'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['webhook.endpoint.ensure'].outputSchema,
     timeoutMs: 30_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.WEBHOOKS_MANAGE],
-    migrationNote: null,
   }),
 
-  'billing.subscription.reconcile': capability('billing.subscription.reconcile', {
-    provider: 'STRIPE',
-    label: 'Réconcilier un abonnement',
-    migrated: false,
-    timeoutMs: 20_000,
-    idempotency: IDEMPOTENCY.SAFE_RETRY,
-    requiredPermissions: [PERMISSIONS.BILLING_READ],
-    migrationNote: 'L6. Réparation d’un webhook perdu : doit rester rejouable.',
-  }),
+  /**
+   * `billing.subscription.reconcile` A ÉTÉ RETIRÉE, ET NON IMPLÉMENTÉE.
+   *
+   * Elle était LA capacité fantôme du registre : déclarée, affichée, accordable,
+   * et servie par personne — sa note « L6. Réparation d’un webhook perdu : doit
+   * rester rejouable » s'affichait à l'écran sous un libellé « accordée, mais
+   * pas encore servie », ce qui laissait croire à un chemin ouvert.
+   *
+   * Elle n'est pas revenue sous forme d'adaptateur parce qu'elle n'aurait rien
+   * ajouté : `billing.subscription.retrieve` relit déjà l'état d'un abonnement
+   * chez Stripe, avec preuve d'appartenance, et c'est exactement ce dont la
+   * réparation d'un webhook perdu a besoin. Aucun appelant du parc ne la
+   * demandait — le catalogue L6.1 avait d'ailleurs refusé de la
+   * contractualiser.
+   */
   /**
    * LE CLIENT D'UN CONTRAT — servi depuis L6.2D.
    *
@@ -577,7 +623,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.customer.ensure': capability('billing.customer.ensure', {
     provider: 'STRIPE',
     label: 'Garantir le client Stripe d’un contrat',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.customer.ensure'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.customer.ensure'].outputSchema,
     timeoutMs: 20_000,
@@ -588,7 +633,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
       environment: context.environment,
       contractId: input.contractRef,
     }),
-    migrationNote: null,
   }),
   /**
    * LA PREMIÈRE CAPACITÉ FINANCIÈRE RÉELLEMENT SERVIE (L6.2B).
@@ -617,7 +661,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.price.ensure': capability('billing.price.ensure', {
     provider: 'STRIPE',
     label: 'Garantir le tarif Stripe d’un contrat',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.price.ensure'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.price.ensure'].outputSchema,
     timeoutMs: 25_000,
@@ -628,20 +671,17 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
       environment: context.environment,
       contractId: input.contractRef,
     }),
-    migrationNote: null,
   }),
 
   'billing.checkout.create': capability('billing.checkout.create', {
     provider: 'STRIPE',
     label: 'Ouvrir une session de paiement',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.checkout.create'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.checkout.create'].outputSchema,
     timeoutMs: 25_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
     correlationField: 'checkoutSessionId',
-    migrationNote: null,
   }),
   /**
    * LES DEUX RÉSILIATIONS — servies depuis L6.2G.
@@ -657,7 +697,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     provider: 'STRIPE',
     label: 'Résilier en fin de période',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_at_period_end'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_at_period_end'].outputSchema,
     timeoutMs: 25_000,
@@ -668,12 +707,10 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
       environment: context.environment,
       subscriptionId: input.subscriptionId,
     }),
-    migrationNote: null,
   }),
   'billing.subscription.cancel_now': capability('billing.subscription.cancel_now', {
     provider: 'STRIPE',
     label: 'Résilier immédiatement',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_now'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.subscription.cancel_now'].outputSchema,
     timeoutMs: 25_000,
@@ -684,7 +721,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
       environment: context.environment,
       subscriptionId: input.subscriptionId,
     }),
-    migrationNote: null,
   }),
   /**
    * LE PREMIER USAGE NEUF DU PLAN DE CONTRÔLE (L10.4).
@@ -709,14 +745,12 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'billing.refund': capability('billing.refund', {
     provider: 'STRIPE',
     label: 'Rembourser',
-    migrated: true,
     inputSchema: STRIPE_CAPABILITIES['billing.refund'].inputSchema,
     outputSchema: STRIPE_CAPABILITIES['billing.refund'].outputSchema,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
     correlationField: 'refundId',
-    migrationNote: null,
   }),
 
   /* ── Yousign — SERVIES (R10.5C) ─────────────────────────────────────────── */
@@ -732,7 +766,6 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
   'signature.request.open': capability('signature.request.open', {
     provider: 'YOUSIGN',
     label: 'Ouvrir une demande de signature',
-    migrated: true,
     inputSchema: signatureRequestOpenInput,
     outputSchema: signatureRequestOpenOutput,
     /** Généreux : un upload de PDF n'est pas une lecture. */
@@ -746,51 +779,42 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     idempotency: IDEMPOTENCY.UNKNOWN_ON_TIMEOUT,
     requiredPermissions: [PERMISSIONS.SIGNATURE_WRITE],
     correlationField: 'signatureRequestId',
-    migrationNote: null,
   }),
   'signature.request.retrieve': capability('signature.request.retrieve', {
     provider: 'YOUSIGN',
     label: 'Lire l’état d’une demande de signature',
-    migrated: true,
     inputSchema: signatureRequestRefInput,
     outputSchema: signatureRequestRetrieveOutput,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
-    migrationNote: null,
   }),
   'signature.signer.retrieve': capability('signature.signer.retrieve', {
     provider: 'YOUSIGN',
     label: 'Lire le lien de signature d’un signataire',
-    migrated: true,
     inputSchema: signatureSignerRetrieveInput,
     outputSchema: signatureSignerRetrieveOutput,
     timeoutMs: 20_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
-    migrationNote: null,
   }),
   'signature.document.download': capability('signature.document.download', {
     provider: 'YOUSIGN',
     label: 'Télécharger un document signé',
-    migrated: true,
     inputSchema: signatureRequestRefInput,
     outputSchema: signatureDocumentDownloadOutput,
     timeoutMs: 60_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
-    migrationNote: null,
   }),
   'signature.request.cancel': capability('signature.request.cancel', {
     provider: 'YOUSIGN',
     label: 'Annuler une demande de signature',
-    migrated: true,
     inputSchema: signatureRequestCancelInput,
     outputSchema: signatureRequestCancelOutput,
     timeoutMs: 30_000,
     idempotency: IDEMPOTENCY.UNKNOWN_ON_TIMEOUT,
     requiredPermissions: [PERMISSIONS.SIGNATURE_WRITE],
-    migrationNote: null,
   }),
 
   /* ── Hostinger — les trois verbes du DNS, servis (L9.1) ─────────────────── */
@@ -833,11 +857,6 @@ export function listCapabilityDefinitions() {
   return CAPABILITY_CODES.map((code) => CAPABILITY_DEFINITIONS[code]);
 }
 
-/** Celles réellement servies aujourd'hui. */
-export function listMigratedCapabilities() {
-  return listCapabilityDefinitions().filter((c) => c.migrated);
-}
-
 export function capabilitiesForProvider(provider) {
   const code = String(provider ?? '').toUpperCase();
   return listCapabilityDefinitions().filter((c) => c.provider === code);
@@ -858,13 +877,9 @@ export function describeCapability(code) {
     label: capability.label,
     provider: capability.provider,
     scope: capability.scope,
-    effectNature: capability.effectNature,
-    migrated: capability.migrated,
-    invocable: capability.migrated,
     idempotency: capability.idempotency,
     timeoutMs: capability.timeoutMs,
     requiredPermissions: [...capability.requiredPermissions],
-    migrationNote: capability.migrationNote,
   };
 }
 
@@ -879,12 +894,11 @@ export function describeCapabilities() {
 /**
  * Les registres racontent-ils la même histoire ?
  *
- * Quatre divergences possibles, et chacune est un incident réel en puissance :
+ * Trois divergences possibles, et chacune est un incident réel en puissance :
  *
- *  · une capacité sans effet déclaré  → la politique commerciale ne la voit
- *    pas, et une écriture financière passerait en pré-ouverture ;
- *  · un effet déclaré sans capacité   → une politique orpheline, donc morte ;
  *  · un fournisseur inconnu du registre L1 → aucun credential ne sera trouvé ;
+ *  · une capacité sans contrat d'entrée ou de sortie → elle accepterait
+ *    n'importe quoi, et rendrait n'importe quoi ;
  *  · une capacité annoncée par un fournisseur mais absente d'ici → l'écran
  *    promet ce que la passerelle ne sait pas faire.
  *
@@ -894,16 +908,15 @@ export function assertRegistryAlignment() {
   const problems = [];
 
   for (const capability of listCapabilityDefinitions()) {
-    if (!capability.effectNature) {
-      problems.push(`« ${capability.code} » n’a aucun effet déclaré dans commercialReadiness.`);
-    } else if (!Object.values(EFFECT).includes(capability.effectNature)) {
-      problems.push(`« ${capability.code} » porte un effet inconnu : ${capability.effectNature}.`);
-    }
     if (!getProviderDefinition(capability.provider)) {
       problems.push(`« ${capability.code} » désigne un fournisseur absent du registre L1 : ${capability.provider}.`);
     }
-    // Une capacité servie sans contrat d'entrée accepterait n'importe quoi.
-    if (capability.migrated && (!capability.inputSchema || !capability.outputSchema)) {
+    /**
+     * Toute capacité déclarée est SERVIE : la condition `migrated` qui gardait
+     * autrefois ce contrôle laissait passer les capacités fantômes, puisqu'elle
+     * les dispensait précisément de tenir un contrat.
+     */
+    if (!capability.inputSchema || !capability.outputSchema) {
       problems.push(`« ${capability.code} » est servie sans schéma d’entrée ou de sortie.`);
     }
     if (!Object.values(IDEMPOTENCY).includes(capability.idempotency)) {
@@ -914,12 +927,6 @@ export function assertRegistryAlignment() {
     }
     if (capability.requiredPermissions.length === 0) {
       problems.push(`« ${capability.code} » n’exige aucune permission.`);
-    }
-  }
-
-  for (const code of Object.keys(CAPABILITY_EFFECTS)) {
-    if (!isKnownCapability(code)) {
-      problems.push(`commercialReadiness déclare « ${code} » — absent du registre des capacités.`);
     }
   }
 
@@ -957,18 +964,17 @@ export function assertRegistryAlignment() {
   /**
    * Le catalogue Stripe de L6.1 est la source du contrat financier.
    *
-   * On n'y impose PAS la symétrie complète des deux autres : le registre porte
-   * des codes Stripe (`billing.subscription.reconcile` et la réconciliation)
-   * que L6.1 a délibérément refusé de contractualiser — aucun code du parc ne
-   * les appelle. `billing.refund` en faisait partie jusqu'à ce que L10.4 lui
-   * donne un appelant réel : elle tient désormais son contrat. Ce qu'on
-   * exige, c'est que toute capacité Stripe déclarée SERVIE tienne son contrat
-   * du catalogue, et le MÊME objet : deux schémas qui se ressemblent
-   * divergeraient au premier ajout de champ, et la divergence porterait sur
-   * ce qu'on accepte de facturer.
+   * La symétrie est désormais COMPLÈTE dans ce sens-là : toute capacité Stripe
+   * du registre tient son contrat du catalogue, et le MÊME objet — deux schémas
+   * qui se ressemblent divergeraient au premier ajout de champ, et la
+   * divergence porterait sur ce qu'on accepte de facturer.
+   *
+   * La dispense `if (!capability.migrated) continue;` a disparu avec le booléen
+   * qu'elle lisait. Elle exemptait exactement les capacités que L6.1 avait
+   * refusé de contractualiser — c'est-à-dire celles qu'on affichait sans
+   * pouvoir les servir. Il n'en reste aucune.
    */
   for (const capability of capabilitiesForProvider('STRIPE')) {
-    if (!capability.migrated) continue;
     const catalogue = STRIPE_CAPABILITIES[capability.code];
     if (!catalogue) {
       problems.push(`« ${capability.code} » est servie sans figurer au catalogue Stripe (L6.1).`);
@@ -1032,7 +1038,6 @@ export default {
   isKnownCapability,
   getCapabilityDefinition,
   listCapabilityDefinitions,
-  listMigratedCapabilities,
   capabilitiesForProvider,
   describeCapability,
   describeCapabilities,

@@ -1,17 +1,11 @@
 /**
- * NAVIGATION — deux espaces, une seule règle d'accès.
+ * NAVIGATION - deux espaces, une seule regle d'acces.
  *
- * Le Panel s'adresse à toute l'équipe, pas aux seuls développeurs. La barre
- * latérale était plate : « Projets » y côtoyait « Bridges », « Versions » et
- * « Appairages », et rien n'était masqué — un commercial voyait la totalité de
- * l'infrastructure. Les entrées portent désormais leur section, et `devOnly`
- * dit qui peut les voir.
- *
- * `devOnly` NE PROTÈGE RIEN À LUI SEUL : masquer un lien n'interdit pas d'en
- * taper l'URL. La garde de route (`RequireDev`) est la seule barrière ; cette
- * liste ne fait que refléter la même règle dans le menu.
+ * `devOnly` ne protege rien a lui seul: masquer un lien n'interdit pas d'en
+ * taper l'URL. La garde de route (`RequireDev`) reste la seule barriere.
  */
 import type { Role } from '@/types';
+import { isPanelDeveloper } from '@/auth/roles';
 
 export type NavSection = 'GESTION' | 'DEVELOPPEUR';
 
@@ -19,47 +13,44 @@ export interface NavItem {
   to: string;
   label: string;
   section: NavSection;
-  /** Réservé aux comptes DEV du Panel. */
   devOnly?: boolean;
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  // ── GESTION — le quotidien de l'équipe ────────────────────────────────────
   { to: '/', label: 'Tableau de bord', section: 'GESTION' },
   { to: '/projects', label: 'Projets clients', section: 'GESTION' },
-  // Agenda ET événements : une seule page, les filtres suffisent à passer de
-  // l'un à l'autre. Deux écrans auraient montré les mêmes objets deux fois.
   { to: '/agenda', label: 'Agenda et événements', section: 'GESTION' },
-  // L10.1 — le registre financier. Dans GESTION et non DÉVELOPPEUR : savoir si
-  // un client rapporte est le travail de l'équipe, pas du développeur.
   { to: '/finances', label: 'Finances', section: 'GESTION' },
-  // « Mon entreprise » et non « Entreprise » : cette page porte l'identité de
-  // L.Y Solution publiée vers les sites, pas la fiche d'un client.
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },
 
-  // ── DÉVELOPPEUR — l'infrastructure ────────────────────────────────────────
   { to: '/supervision', label: 'Supervision', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/bridges', label: 'Connexions techniques', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/pairings', label: 'Appairages', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/versions', label: 'Versions', section: 'DEVELOPPEUR', devOnly: true },
-  { to: '/integrated-apis', label: 'Intégrations API', section: 'DEVELOPPEUR', devOnly: true },
-  // R10.4 — l'expéditeur de TOUT le parc, Panel compris. Une seule entrée,
-  // parce qu'il n'y a qu'une adresse : un écran par projet suggérerait le
-  // contraire, et la première question serait « lequel gagne ? ».
-  { to: '/email-sender', label: 'Expéditeur e-mail', section: 'DEVELOPPEUR', devOnly: true },
-  { to: '/deployment', label: 'Déploiement', section: 'DEVELOPPEUR', devOnly: true },
-  { to: '/theme', label: 'Thème du Panel', section: 'DEVELOPPEUR', devOnly: true },
-  { to: '/actions', label: 'Exécutions', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/integrated-apis', label: 'Integrations API', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/email-sender', label: 'Expediteur e-mail', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/email-templates', label: 'Templates e-mail', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/deployment', label: 'Deploiement', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/panel-users', label: 'Comptes L.Y Solution', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/theme', label: 'Theme du Panel', section: 'DEVELOPPEUR', devOnly: true },
+  { to: '/actions', label: 'Executions', section: 'DEVELOPPEUR', devOnly: true },
 ];
 
 export const SECTION_ORDER: NavSection[] = ['GESTION', 'DEVELOPPEUR'];
 
 export const SECTION_LABELS: Record<NavSection, string> = {
   GESTION: 'Gestion',
-  DEVELOPPEUR: 'Développeur',
+  DEVELOPPEUR: 'Developpeur',
 };
 
-/** Entrées visibles pour un rôle donné — l'unique filtre du menu. */
+/**
+ * LE FILTRE DU MENU — `devOnly` s'ouvre aux CAPACITES developpeur.
+ *
+ * Il testait `role === 'DEV'`. Un SUPER_ADMIN n'aurait donc vu aucune entree
+ * technique, alors que toutes les routes correspondantes lui sont ouvertes:
+ * une application vide pour le role le plus eleve, sans le moindre message.
+ * Le predicat est celui de `@/auth/roles`, en miroir du serveur.
+ */
 export function navItemsFor(role: Role): NavItem[] {
-  return NAV_ITEMS.filter((item) => !item.devOnly || role === 'DEV');
+  return NAV_ITEMS.filter((item) => !item.devOnly || isPanelDeveloper(role));
 }

@@ -30,6 +30,7 @@ import { emitChange } from '../sync/syncCore.service.js';
 import { findByProviderMessageId } from '../capabilities/operationRegistry.js';
 import { PANEL_SELF_SCOPE } from '../capabilities/invocationContext.js';
 import { applyDeliveryEvent } from '../email/panelEmailSenderTest.service.js';
+import { applyPasswordResetDeliveryEvent } from '../auth/panelPasswordReset.service.js';
 import {
   normalizeBrevoEvent,
   parseEventDate,
@@ -130,7 +131,11 @@ export async function dispatchDeliveryEvent({ provider, environment, payload, ev
    * n'a rien à faire dans le journal durable d'un projet.
    */
   if (operation.projectId === PANEL_SELF_SCOPE) {
-    const applied = await applyDeliveryEvent({
+    const apply =
+      String(operation.templateCode ?? '') === 'PASSWORD_RESET_REQUEST'
+        ? applyPasswordResetDeliveryEvent
+        : applyDeliveryEvent;
+    const applied = await apply({
       operationId: operation.operationId,
       event: businessEvent,
       providerEvent: canonical,

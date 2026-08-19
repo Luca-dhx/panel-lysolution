@@ -49,6 +49,7 @@ import {
   newCredentialSetId,
 } from './credentialVault.js';
 import { validateCredentials, VALIDATION_STATUS, hasValidator } from './providerValidation.js';
+import { reconcileProviderWebhook } from '../webhooks/webhookReconciler.js';
 
 /* -------------------------------------------------------------------------- */
 /*  REGISTRE                                                                  */
@@ -202,6 +203,51 @@ function normalizeEnvironment(value) {
   return String(value).toUpperCase();
 }
 
+function touchesHumanManagedRole(definition, roles) {
+  return roles.some((code) => definition.credentialRoles.some(
+    (role) => role.code === code && role.autoManaged !== true,
+  ));
+}
+
+function shouldScheduleManagedWebhookReconciliation(definition, environment, touchedRoles) {
+  if (!definition.supportsWebhookReconciliation) return false;
+  if (!touchesHumanManagedRole(definition, touchedRoles)) return false;
+  if (definition.scope === SCOPES.ENVIRONMENT) return environment === runtimeEnvironment();
+  return true;
+}
+
+export function scheduleManagedWebhookReconciliation({
+  definition,
+  environment,
+  touchedRoles,
+  reconcileWebhook = reconcileProviderWebhook,
+}) {
+  if (!shouldScheduleManagedWebhookReconciliation(definition, environment, touchedRoles)) {
+    return false;
+  }
+
+  const args = { provider: definition.code };
+  if (environment) args.environment = environment;
+
+  void Promise.resolve()
+    .then(() => reconcileWebhook(args))
+    .then((report) => {
+      logger.info(
+        `[integrated-api] ${definition.code}${environment ? ` (${environment})` : ''} : `
+        + `réconciliation webhook déclenchée après mise à jour des identifiants`
+        + `${report?.status ? ` (${report.status})` : ''}.`,
+      );
+    })
+    .catch((err) => {
+      logger.warn(
+        `[integrated-api] ${definition.code}${environment ? ` (${environment})` : ''} : `
+        + `réconciliation webhook post-save impossible (${err.message}).`,
+      );
+    });
+
+  return true;
+}
+
 /* -------------------------------------------------------------------------- */
 /*  ÉCRITURE                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -221,7 +267,12 @@ function normalizeEnvironment(value) {
  * enregistrer une clé ici ne déclenche AUCUNE rediffusion vers les projets.
  * C'est la règle du plan de contrôle, et elle est vérifiée par test.
  */
-export async function saveCredentialSet(code, environmentInput, { values = {}, remove = [] } = {}, actor = {}) {
+export async function saveCredentialSet(
+  code,
+  environmentInput,
+  { values = {}, remove = [], reconcileWebhook = reconcileProviderWebhook } = {},
+  actor = {},
+) {
   const definition = getProviderDefinitionOrThrow(code);
   const environment = assertAdministrableEnvironment(normalizeEnvironment(environmentInput), definition);
   const at = nowIso();
@@ -288,6 +339,13 @@ export async function saveCredentialSet(code, environmentInput, { values = {}, r
       + ` — ${written.length} enregistré(s), ${removed.length} retiré(s).`,
     data: { provider: definition.code, environment, written, removed, scope: definition.scope },
   }).catch(() => {});
+
+  scheduleManagedWebhookReconciliation({
+    definition,
+    environment,
+    touchedRoles: [...written, ...removed],
+    reconcileWebhook,
+  });
 
   return getCredentialSet(definition.code, environment);
 }
@@ -473,6 +531,7 @@ export default {
   getProvider,
   getCredentialSet,
   saveCredentialSet,
+  scheduleManagedWebhookReconciliation,
   validateCredentialSet,
   describeAvailability,
   describeAllAvailability,

@@ -20,7 +20,7 @@ import { getProjectDataFreshness } from '@/lib/projectFreshness';
 import {
   contractState,
   formatAmount,
-  formatInterval,
+  formatRecurrence,
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 import { getContractDocumentPresentation } from '@/lib/contractDocument';
@@ -445,14 +445,36 @@ export function ContractCard({
         {contract.activatedAt ? (
           <div><dt>Activé le</dt><dd>{formatDateTime(contract.activatedAt)}</dd></div>
         ) : null}
+        {/*
+          LA RÉCURRENCE ET LE MONTANT, SUR DEUX LIGNES DISTINCTES.
+
+          Ils tenaient sur une seule — « 900,00 € par mois » — et cette phrase
+          confondait deux faits que le contrat sépare : à quelle FRÉQUENCE le
+          client est débité, et COMBIEN à chaque fois. Tant que la fréquence ne
+          pouvait valoir que « mensuel » ou « annuel », la contraction était
+          sans danger. Elle est devenue fausse dès qu'un contrat a pu dire
+          « tous les 3 mois » : la même phrase aurait annoncé un prix mensuel
+          pour un montant trimestriel.
+
+          « / récurrence » dit ce que le montant EST, sans jamais le rapporter
+          à un mois qu'aucune facture ne porte. Le repère mensuel, lui, a sa
+          place dans le Manager, où l'offre se configure — pas ici, où l'on
+          constate un engagement.
+        */}
+        {formatRecurrence(contract.pricing.subscription) ? (
+          <div>
+            <dt>Récurrence</dt>
+            <dd>{formatRecurrence(contract.pricing.subscription)}</dd>
+          </div>
+        ) : null}
         {formatAmount(contract.pricing.subscription) ? (
           <div>
-            <dt>Abonnement</dt>
+            <dt>Montant</dt>
             <dd>
               {formatAmount(contract.pricing.subscription)}
-              {formatInterval(contract.pricing.subscription?.interval)
-                ? ` ${formatInterval(contract.pricing.subscription?.interval)}`
-                : ''}
+              {formatRecurrence(contract.pricing.subscription) ? (
+                <span className="muted"> / récurrence</span>
+              ) : null}
             </dd>
           </div>
         ) : null}
@@ -669,14 +691,23 @@ function ContractHistory({
                     {c.cancellationReason ? (
                       <div><dt>Motif</dt><dd>{c.cancellationReason}</dd></div>
                     ) : null}
+                    {/* Un contrat passé se lit avec la même grammaire que le
+                        contrat courant : sa périodicité est un fait daté, pas
+                        une donnée à réinterpréter. */}
+                    {formatRecurrence(c.pricing?.subscription) ? (
+                      <div>
+                        <dt>Récurrence</dt>
+                        <dd>{formatRecurrence(c.pricing?.subscription)}</dd>
+                      </div>
+                    ) : null}
                     {formatAmount(c.pricing?.subscription) ? (
                       <div>
-                        <dt>Abonnement</dt>
+                        <dt>Montant</dt>
                         <dd>
                           {formatAmount(c.pricing.subscription)}
-                          {formatInterval(c.pricing.subscription?.interval)
-                            ? ` ${formatInterval(c.pricing.subscription?.interval)}`
-                            : ''}
+                          {formatRecurrence(c.pricing?.subscription) ? (
+                            <span className="muted"> / récurrence</span>
+                          ) : null}
                         </dd>
                       </div>
                     ) : null}

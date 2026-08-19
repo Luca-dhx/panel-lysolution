@@ -10,11 +10,8 @@
 // Il fait trois choses : lire le code dans l'URL, passer la fiche AUTHENTIFIÉE
 // (jamais le corps) à la passerelle, et rendre l'enveloppe.
 import { ok } from '../utils/apiResponse.js';
-import { describeCommercialReadiness, setCommercialReadiness } from '../services/capabilities/commercialReadiness.service.js';
-import { getProjectOrThrow } from '../services/registry/projectRegistry.service.js';
 import { assertNoProviderSecrets } from '../bridge/providerSecretGuard.js';
 import { invokeCapability } from '../services/capabilities/capabilityGateway.service.js';
-import { getCapabilityGrants, setCapabilityGrants } from '../services/capabilities/capabilityGrants.js';
 import { describeCapabilities } from '../services/capabilities/capabilityRegistry.js';
 
 /* -------------------------------------------------------------------------- */
@@ -60,57 +57,28 @@ export async function invoke(req, res) {
 /*  SURFACE D'ADMINISTRATION — /api                                           */
 /* -------------------------------------------------------------------------- */
 
-/** Le catalogue complet — ce que l'écran du plan de contrôle affiche. */
+/**
+ * Le catalogue complet — ce que l'écran du plan de contrôle affiche.
+ *
+ * ── CE QU'IL N'EST PLUS ─────────────────────────────────────────────────────
+ *
+ * Une liste à COCHER. Cet écran servait à accorder des capacités projet par
+ * projet, et rendait pour chacune un couple `granted` / `effective` ; ce
+ * second champ existait uniquement pour avouer qu'une capacité accordée
+ * pouvait quand même refuser.
+ *
+ * Il est désormais purement INFORMATIF : voici les actions que cette instance
+ * sert. Aucun état par projet, donc aucun projet en paramètre.
+ *
+ * ── LES QUATRE ROUTES SUPPRIMÉES ────────────────────────────────────────────
+ *
+ *   GET  /api/projects/:projectId/capability-grants
+ *   PUT  /api/projects/:projectId/capability-grants
+ *   GET  /api/projects/:projectId/commercial-readiness
+ *   PUT  /api/projects/:projectId/commercial-readiness
+ */
 export function catalogue(_req, res) {
   return ok(res, { capabilities: describeCapabilities() });
 }
 
-/** Les octrois d'un projet, et tout ce qu'on POURRAIT lui accorder. */
-export async function grants(req, res) {
-  return ok(res, await getCapabilityGrants(req.params.projectId));
-}
-
-/**
- * Remplace les octrois d'un projet. DEV uniquement (monté ainsi) : accorder une
- * capacité, c'est ouvrir un chemin vers un fournisseur réel.
- */
-export async function putGrants(req, res) {
-  return ok(res, await setCapabilityGrants(
-    req.params.projectId,
-    req.body?.capabilities,
-    { userId: req.panelUser?.userId ?? null },
-  ));
-}
-
-/* -------------------------------------------------------------------------- */
-/*  OUVERTURE COMMERCIALE (L3.1)                                              */
-/* -------------------------------------------------------------------------- */
-
-/** GET — l'état, les contrôles, et ce que la pré-ouverture interdit. */
-export async function commercialReadiness(req, res) {
-  const record = await getProjectOrThrow(req.params.projectId);
-  return ok(res, describeCommercialReadiness(record));
-}
-
-/**
- * PUT — OUVRIR ou REFERMER. DEV uniquement (monté ainsi).
- *
- * Le corps porte l'ÉTAT VISÉ, pas un verbe : « ouvre » et « ferme » se
- * ressemblent trop dans un journal, et un client qui rejoue une requête doit
- * arriver au même endroit — pas à l'état inverse.
- */
-export async function putCommercialReadiness(req, res) {
-  const state = String(req.body?.state ?? '').toUpperCase();
-  return ok(res, await setCommercialReadiness(req.params.projectId, state, {
-    actor: {
-      userId: req.panelUser?.userId ?? null,
-      userEmail: req.panelUser?.email ?? null,
-    },
-    reason: req.body?.reason ?? null,
-  }));
-}
-
-export default {
-  invoke, catalogue, grants, putGrants,
-  commercialReadiness, putCommercialReadiness,
-};
+export default { invoke, catalogue };

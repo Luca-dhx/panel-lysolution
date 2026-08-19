@@ -80,6 +80,24 @@ const { CONTRACT_VERSION } = await import('../backend/src/bridge/bridgeContract.
 const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
 await seedFromEnv();
 
+/**
+ * ══ DÉCLARER LE SERVICE PRÊT — la garde de disponibilité l'exige ═══════════
+ *
+ * Le Panel refuse désormais le trafic tant que son amorçage n'a pas abouti :
+ * une requête reçue trop tôt repart en `PANEL_SERVICE_STARTING`, avec la
+ * promesse que la session reste valide. C'est la bonne conduite en
+ * exploitation — mieux vaut « réessayez » qu'une réponse fondée sur un état à
+ * moitié chargé.
+ *
+ * Cette recette compose son propre amorçage (base, comptes, application) au
+ * lieu d'exécuter `server.js` ; c'est donc à elle de dire quand il est fini.
+ * On le déclare ICI, après la base et les comptes, jamais avant : déclarer
+ * prêt un service qui ne l'est pas ferait mentir la garde plutôt que la
+ * satisfaire.
+ */
+const { markReady } = await import('../backend/src/services/health/readiness.service.js');
+markReady();
+
 let panelServer = await listen(createApp());
 const PANEL_URL = `http://127.0.0.1:${panelServer.port}`;
 check(`Panel démarré sur ${PANEL_URL}`, panelServer.port > 0);
@@ -808,8 +826,15 @@ async function startProject({ projectRoot: root, mongoUri, panelUrl, env: envOve
       JWT_SECRET: 'projet-e2e-jwt-secret-0123456789abcdef0123456789',
       INTEGRATED_API_ENCRYPTION_KEY: 'b'.repeat(64),
       PROJECT_NAME: 'SB Auto 06',
-      SEED_DEV_EMAIL: 'dev@projet.test',
-      SEED_DEV_PASSWORD: 'motdepasse-e2e',
+      /**
+       * L'IDENTITÉ du premier développeur — son secret n'est plus une variable
+       * d'environnement (lot 2C). Le harnais d'amorçage active le compte par le
+       * vrai chemin, avec le mot de passe ci-dessous, et c'est lui seul qui
+       * permet ensuite de se connecter.
+       */
+      FIRST_DEV_EMAIL: 'dev@projet.test',
+      FIRST_DEV_NAME: 'Developpeur E2E',
+      E2E_DEV_PASSWORD: 'motdepasse-e2e',
       PANEL_URL: panelUrl,
       // Pas de code : l'appairage est déclenché explicitement par le test,
       // pour qu'on voie l'appel HTTP réel se produire.

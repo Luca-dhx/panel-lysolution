@@ -497,8 +497,28 @@ section('LE PANEL NE DÉPLOIE PAS — aucune surface ne le laisse croire');
   check('…elle lit le résolveur commun',
     /projectTechnicalUrls\(project\)\.backend/.test(bridges));
   const fiche = sansCommentaires(lire('../frontend/src/pages/ProjectDetailPage.tsx'));
-  check('la fiche technique n’a plus de repli sur runtime.publicBackendUrl',
-    !/runtime\.publicBackendUrl/.test(fiche));
+  /**
+   * ══ CE QUE CETTE GARDE INTERDIT, ET CE QU'ELLE AUTORISE DEPUIS 1.9.0 ═══════
+   *
+   * Elle bannissait TOUTE mention de `runtime.publicBackendUrl` dans la fiche.
+   * C'était la bonne interdiction tant que ce champ était figé à l'appairage :
+   * l'afficher, sous quelque forme que ce soit, faisait passer une adresse
+   * morte pour une adresse constatée.
+   *
+   * Le contrat 1.9.0 change la nature du champ — il est désormais DÉCLARÉ par
+   * le projet, horodaté et sourcé. Une interdiction textuelle empêcherait donc
+   * précisément le diagnostic qui rend une URL périmée VISIBLE, ce que rien ne
+   * montrait auparavant.
+   *
+   * Ce qui reste interdit est l'intention d'origine, et elle est plus étroite :
+   * la ligne de DESTINATION ne doit jamais se replier en silence sur cette
+   * adresse. Un repli mélange deux sources dans une même case, et le lecteur
+   * n'a aucun moyen de savoir laquelle il regarde.
+   */
+  check('la ligne de destination ne se REPLIE jamais sur runtime.publicBackendUrl',
+    !/tech\.backend[^;{}]{0,60}\?\?[^;{}]{0,60}publicBackendUrl/.test(fiche));
+  check('…et l’adresse DÉCLARÉE est présentée à part, avec sa source et sa date',
+    /publicBackendUrlSource/.test(fiche) && /publicBackendUrlUpdatedAt/.test(fiche));
 }
 
 await stopMemoryMongo();

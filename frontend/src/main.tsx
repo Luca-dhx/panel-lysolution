@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from '@/App';
 import { applyCachedBranding } from '@/lib/publicBranding';
 import { AuthProvider } from '@/auth/AuthContext';
+import { ToastProvider } from '@/components/ToastProvider';
 // Jeu d'icônes officiel : les références publiées portent des noms `bi-*`,
 // et sans cette feuille elles ne rendaient rien du tout.
 import 'bootstrap-icons/font/bootstrap-icons.css';
@@ -37,7 +38,9 @@ createRoot(rootElement).render(
   <StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </AuthProvider>
     </BrowserRouter>
   </StrictMode>,

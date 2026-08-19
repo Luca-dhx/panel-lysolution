@@ -206,8 +206,6 @@ async function declarer(projectId, projectName) {
     pairing: { status: 'PAIRED' },
     runtime: { environment: 'TEST' },
     /** LIVE : un remboursement est un FINANCIAL_WRITE, refusé en pré-ouverture. */
-    commercialState: 'LIVE',
-    capabilityGrants: [],
   });
 }
 await declarer(PROJET_A, 'Atelier du Nord');
@@ -865,7 +863,13 @@ section('17. Le plan de contrôle — la capacité est servie, et alignée');
   check('le registre des capacités reste aligné', problemes.length === 0);
 
   const definition = registreCapacites.getCapabilityDefinition('billing.refund');
-  check('« billing.refund » est SERVIE', definition.migrated === true);
+  /**
+   * ÊTRE AU REGISTRE ET AVOIR UN EXÉCUTANT — c'est ce que « servie » signifie
+   * désormais. Le booléen `migrated` a été supprimé : il permettait de déclarer
+   * une capacité sans l'exécuter.
+   */
+  check('« billing.refund » est SERVIE',
+    Boolean(definition) && adaptateurs.STRIPE_ADAPTERS['billing.refund'] !== undefined);
   check('…avec idempotence fournisseur',
     definition.idempotency === registreCapacites.IDEMPOTENCY.PROVIDER_IDEMPOTENT);
   check('…et une poignée de corrélation qui est le `re_…`',

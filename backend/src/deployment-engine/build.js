@@ -29,12 +29,25 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import { DeploymentError } from './errors.js';
+import { describeMissing, inspectProjectRoot, projectRootCandidate } from './projectRoot.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-/** Racine du monorepo (…/backend/src/deployment -> remonte de 3). */
-export const PROJECT_ROOT = path.resolve(__dirname, '../../..');
+/**
+ * Racine des sources du projet.
+ *
+ * ── POURQUOI CE N'EST PLUS UN `path.resolve(__dirname, '../../..')` ─────────
+ * Cette constante déduisait la racine de l'emplacement du moteur. La déduction
+ * est juste dans un checkout de développement et FAUSSE partout ailleurs — au
+ * premier chef sur le serveur, où le backend déployé a pour voisins des `dist`
+ * publiés et non des sources. Elle s'y résolvait silencieusement en une racine
+ * de la bonne FORME, et le déploiement n'échouait qu'à `artifact.build`.
+ *
+ * L'autorité vit désormais dans `projectRoot.js`, qui ordonne les provenances
+ * et VÉRIFIE le disque. Ce que cette constante expose est le candidat par
+ * défaut — utile comme valeur de repli documentée (racine du contrôle Git,
+ * `cwd` par défaut d'une commande locale), jamais comme une preuve.
+ */
+export const PROJECT_ROOT = projectRootCandidate().root;
 
 /** Liste d'applications d'un profil (objet complet, tableau, ou défaut du dépôt). */
 function profileApps(profile) {
@@ -226,13 +239,7 @@ async function pathExists(p, fsMod = fs) {
  * une erreur DÉMONTRÉE (pas une supposition) : package.json manquant, ou
  * lockfile absent (npm ci est alors impossible).
  */
-async function resolveLayout(root, fsMod = fs, appList = APPS) {
-  // La composition du projet vient du PROFIL, jamais d'une liste codée en dur :
-  // c'est ce qui permet au même moteur de construire deux fronts ici, un seul
-  // ailleurs, ou cinq applications sur un projet atypique.
-  const apps = {};
-  for (const app of appList) apps[app.id] = path.join(root, app.dir);
-
+async function resolveLayout(root, fsMod = fs, appList = APPS, env = process.env) {
   // COHÉRENCE DU PROFIL, contrôlée AVANT tout build : la topologie expose des
   // chemins dérivés des rôles (`web` → hôte principal, `server` → backend). Un
   // profil qui n'en déclare pas produirait des chemins vides très en aval ; on
@@ -246,27 +253,47 @@ async function resolveLayout(root, fsMod = fs, appList = APPS) {
     }
   }
 
-  for (const app of appList) {
-    const dir = apps[app.id];
-    if (!(await pathExists(path.join(dir, 'package.json'), fsMod))) {
-      throw new DeploymentError('ARTIFACT_PATH_INVALID', `Projet introuvable ou invalide : ${app.dir}/package.json manquant.`, {
-        step: 'build',
-        details: { phase: 'stage', path: dir },
-      });
-    }
+  /**
+   * LA RACINE EST RÉSOLUE PUIS CONFRONTÉE AU DISQUE — une seule autorité.
+   *
+   * `inspectProjectRoot` ordonne les provenances (appelant > variable
+   * d'exploitation > emplacement du moteur) et rend l'inventaire EXHAUSTIF de
+   * ce qui manque. La composition du projet vient du PROFIL, jamais d'une liste
+   * codée en dur : c'est ce qui permet au même moteur de construire deux fronts
+   * ici, un seul ailleurs, ou cinq applications sur un projet atypique.
+   */
+  const inspection = await inspectProjectRoot({ root, profile: appList, env, fsMod });
+
+  if (!inspection.ok) {
+    /**
+     * L'ERREUR DÉSIGNE LA RACINE, PAS SEULEMENT LE PREMIER FICHIER ABSENT.
+     *
+     * Le message historique — « vitrine/package.json manquant » — était exact
+     * et trompeur : il nommait un chemin RELATIF, ce qui laissait croire à un
+     * dépôt amputé de son premier dossier. Le fait réel était que la racine
+     * elle-même n'était pas la bonne, et rien ne le disait. Les détails portent
+     * désormais la racine ABSOLUE retenue, sa PROVENANCE, et la liste complète
+     * des absents : trois applications manquantes d'un coup ne décrivent pas
+     * trois défauts, elles en décrivent un seul.
+     */
+    const premier = inspection.missing[0];
+    const message = premier.requires === 'package-lock.json'
+      ? `Lockfile manquant : ${premier.dir}/package-lock.json (npm ci impossible).`
+      : `Projet introuvable ou invalide : ${premier.dir}/package.json manquant.`;
+
+    throw new DeploymentError('ARTIFACT_PATH_INVALID', `${message} ${describeMissing(inspection)}`, {
+      step: 'build',
+      details: {
+        phase: 'stage',
+        path: premier.path,
+        projectRoot: inspection.root,
+        projectRootSource: inspection.source,
+        missing: inspection.missing.map((m) => ({ app: m.appId, requires: `${m.dir}/${m.requires}`, path: m.path })),
+      },
+    });
   }
-  // npm ci EXIGE un lockfile cohérent : son absence est bloquante et explicite.
-  // Seules les applications réellement CONSTRUITES sont concernées — le rôle le
-  // dit, pas le nom.
-  for (const app of buildableApps(appList)) {
-    if (!(await pathExists(path.join(apps[app.id], 'package-lock.json'), fsMod))) {
-      throw new DeploymentError('ARTIFACT_PATH_INVALID', `Lockfile manquant : ${app.dir}/package-lock.json (npm ci impossible).`, {
-        step: 'build',
-        details: { phase: 'stage', path: apps[app.id] },
-      });
-    }
-  }
-  return apps;
+
+  return { apps: inspection.apps, root: inspection.root, rootSource: inspection.source };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -333,7 +360,9 @@ function spawnReason(err) {
 export async function buildArtifact({
   onLog = () => {},
   onPhase = () => {},
-  root = PROJECT_ROOT,
+  // `null` — et NON `PROJECT_ROOT`. Un défaut figé à l'import court-circuiterait
+  // l'ordre d'autorité : la racine est résolue à l'APPEL, par `resolveLayout`.
+  root = null,
   exec = localExec,
   stagingBase = os.tmpdir(),
   fsMod = fs,
@@ -350,10 +379,16 @@ export async function buildArtifact({
 } = {}) {
   const appList = profileApps(profile);
   const PHASE_META = phaseMetaOf(appList);
-  const apps = await resolveLayout(root, fsMod, appList);
+  /**
+   * `projectRoot` est la racine RETENUE ET VÉRIFIÉE — la seule utilisée ensuite.
+   * Tout ce qui suit (état Git, médias runtime) porte sur ELLE, jamais sur le
+   * paramètre `root` d'origine : un appelant qui ne passe rien ne doit pas voir
+   * le contrôle Git s'exécuter dans un dossier différent de celui construit.
+   */
+  const { apps, root: projectRoot } = await resolveLayout(root, fsMod, appList, process.env);
 
   // Source Git EXACTE (avant tout build) — sert au garde-fou + au manifeste.
-  const git = await getGitSourceInfo(root, exec);
+  const git = await getGitSourceInfo(projectRoot, exec);
   if (requireCleanSource && git.isGit && git.isDirty) {
     throw new DeploymentError('DEPLOY_SOURCE_DIRTY', 'Source Git non commitée (dirty) : refus de déployer des modifications non commitées. Committez d’abord.', {
       step: 'build', details: { branch: git.branch, commit: git.shortCommit },
@@ -447,8 +482,43 @@ export async function buildArtifact({
     // plus haute chez Vite (mode=production). On y force VITE_API_URL (vide =
     // relatif) pour que le bundle déployé n'appelle JAMAIS une URL de dev
     // (localhost/ngrok). Les overrides DEV (.env.local…) ont déjà été exclus.
-    const frontEnvContent = `${Object.entries(frontendEnv).map(([k, v]) => `${k}=${v}`).join('\n')}\n`;
-    onLog(`[build] config front production : ${Object.entries(frontendEnv).map(([k, v]) => `${k}=${v || '(relatif)'}`).join(', ')}`);
+    /**
+     * L'IDENTITÉ DE RELEASE, INJECTÉE DANS LE BUNDLE.
+     *
+     * ══ LE DÉFAUT QU'ELLE FERME ══════════════════════════════════════════════
+     *
+     * Les assets empreintés par Vite portent le hachage de leur CONTENU. C'est
+     * juste tant que le contenu seul détermine ce que le navigateur reçoit — et
+     * faux dès qu'un asset est servi `immutable`.
+     *
+     * Le worker de PDF.js l'a démontré : servi un temps en
+     * `application/octet-stream`, puis corrigé côté nginx. Les octets n'ayant
+     * pas bougé, l'URL non plus. Un navigateur ayant mémorisé la MAUVAISE
+     * réponse sous `immutable, max-age=1an` ne la redemande jamais : il continue
+     * d'échouer sur une adresse que le serveur sert pourtant correctement.
+     * Corriger un en-tête ne réhabilite pas une URL déjà mise en cache comme
+     * immuable.
+     *
+     * L'invariant qui manquait :
+     *
+     *     un asset `immutable` doit changer d'URL quand sa REPRÉSENTATION HTTP
+     *     de release change — pas seulement quand ses octets changent.
+     *
+     * ══ POURQUOI `builtAt` ET NON LE COMMIT ══════════════════════════════════
+     *
+     * Ce projet se déploie couramment avec des modifications non commitées
+     * (`isDirty: true` au manifeste) : deux artefacts différents partageraient
+     * alors le même hachage de commit, et l'URL ne changerait pas. `builtAt`
+     * identifie l'ARTEFACT RÉELLEMENT CONSTRUIT.
+     *
+     * Stable pendant toute une release, différent à la suivante : le cache reste
+     * utile, et une entrée empoisonnée ne peut pas contaminer la release d'après.
+     */
+    const buildRevision = String(builtAt).replace(/[^0-9A-Za-z]/g, '').slice(0, 14);
+    const frontendEnvFinal = { ...frontendEnv, VITE_BUILD_REVISION: buildRevision };
+
+    const frontEnvContent = `${Object.entries(frontendEnvFinal).map(([k, v]) => `${k}=${v}`).join('\n')}\n`;
+    onLog(`[build] config front production : ${Object.entries(frontendEnvFinal).map(([k, v]) => `${k}=${v || '(relatif)'}`).join(', ')}`);
     for (const app of webApps) {
       await fsMod.writeFile(path.join(staged[app.id], '.env.production.local'), frontEnvContent);
     }
@@ -475,7 +545,7 @@ export async function buildArtifact({
     // Médias RUNTIME : le dossier uploads VIVANT (hors staging) est la source à
     // synchroniser vers le répertoire PARTAGÉ persistant du VPS. Non versionné,
     // non buildé : simple copie de fichiers.
-    const liveUploads = path.join(root, serverApp.dir, 'uploads');
+    const liveUploads = path.join(projectRoot, serverApp.dir, 'uploads');
     const uploadsDir = (await pathExists(liveUploads, fsMod)) ? liveUploads : null;
 
     // MANIFESTE DE VERSION (LOT 5) — généré depuis la VRAIE source construite.
@@ -513,7 +583,7 @@ export async function buildArtifact({
     // `appDirs` expose le staging de CHAQUE application (y compris `worker`),
     // ce qui permet à l'upload de publier les rôles non-front sans les nommer.
     const appDirs = Object.fromEntries(appList.map((app) => [app.id, staged[app.id]]));
-    return { dists, appDirs, backendDir: stBackend, uploadsDir, stagingRoot, cleanup, frontendEnv, manifest, git, web };
+    return { dists, appDirs, backendDir: stBackend, uploadsDir, stagingRoot, cleanup, frontendEnv: frontendEnvFinal, manifest, git, web };
   } catch (err) {
     // Échec : on nettoie IMMÉDIATEMENT le staging (atomicité : rien n'est uploadé).
     await cleanup();

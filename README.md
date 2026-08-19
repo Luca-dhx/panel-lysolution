@@ -95,6 +95,11 @@ PROD). C'est délibéré : voir
 [24_ENVIRONMENT_AND_DOMAINS.md](docs/architecture/24_ENVIRONMENT_AND_DOMAINS.md).
 
 ## Documentation
+**Runbook d'exploitation : [docs/PROTOCOL.md](docs/PROTOCOL.md)** — autorités,
+démarrage, appairage d'un projet, duplication, protocole du NOUVEAU MODÈLE
+d'e-mail (et pourquoi il exige un redéploiement du Panel), incidents, migrations,
+déploiement, recettes TEST et cleanup.
+
 
 | Document | Sujet |
 |---|---|

@@ -363,7 +363,20 @@ section('9. Les écrans obéissent à cette règle, et à elle seule');
     bandeau.includes('Donnée potentiellement obsolète'));
   check('le contrat annonce l’attente de synchronisation',
     contrat.includes('Statut actuel : en attente de synchronisation'));
-  check('l’équipe aussi', fiche.includes('Équipe actuelle : en attente de synchronisation'));
+  /**
+   * ══ L'ÉQUIPE A CHANGÉ DE DOCTRINE, ET EN MIEUX ═══════════════════════════
+   *
+   * Ce contrôle attendait « Équipe actuelle : en attente de synchronisation » —
+   * la mention d'obsolescence posée sur une projection conservée. La fiche ne
+   * conserve plus rien : elle LIT l'équipe en direct dans le projet, et
+   * n'affiche donc jamais de valeur périmée à signaler.
+   *
+   * On garde la même exigence — ne jamais présenter du périmé pour du courant —
+   * en la vérifiant à l'endroit où elle vit désormais.
+   */
+  check('l’équipe n’est jamais servie depuis une projection périmée',
+    fiche.includes('lue en direct dans le projet')
+    && fiche.includes('rien de périmé n’est affiché à la place'));
 
   // Génération/environnement divergents : ni téléchargement, ni action
   // distante. La règle est portée par la présentation centrale, et non plus

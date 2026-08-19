@@ -112,19 +112,63 @@ function sshCredentials(deployConfig) {
   };
 }
 
+/**
+ * ══ QUELLE URL LE MOTEUR ATTEND — celle du SITE, jamais celle de l'API ══════
+ *
+ * Le moteur reçoit l'adresse de la DESTINATION et dérive lui-même le sous-
+ * domaine d'API (`api.<hôte>`), les racines Nginx et les hôtes à certifier.
+ * Lui passer l'adresse du backend le faisait donc dériver une seconde fois :
+ * `api.api.panel.ly-solution.com`. Certbot demandait un certificat pour un nom
+ * qui n'existe pas, échouait — et le déploiement s'arrêtait avant PM2, après
+ * avoir uploadé l'artefact et réécrit Nginx.
+ *
+ * Le produit, lui, a toujours passé l'adresse du site (`target.url`, voir
+ * `deploymentExecutor.service.js`). Ce CLI était le seul à faire autrement, et
+ * seule l'exécution réelle pouvait le révéler : la simulation ne certifie rien.
+ *
+ * `backendUrl` reste utilisé pour ce à quoi il sert : dire où aller vérifier.
+ */
 /** Exécution réelle : délègue intégralement au moteur standard. */
 async function execute(deployConfig, { mode, targetReleaseId }) {
   const engineDir = path.join(panelRoot, 'backend', 'src', 'deployment-engine');
   const { DeploymentEngine } = await import(`file://${path.join(engineDir, 'index.js')}`);
   const { SshTransport } = await import(`file://${path.join(engineDir, 'transport', 'SshTransport.js')}`);
   const { openSession, closeSession } = await import(`file://${path.join(engineDir, 'passwordVault.js')}`);
+  /**
+   * ══ LA CONFIGURATION RÉSEAU EST PUBLIÉE, PAS SUPPOSÉE ══════════════════════
+   *
+   * L'étape `runtime_config` du pipeline n'agit que si l'appelant lui fournit de
+   * quoi écrire : sans `runtimeConfigSync`, elle se déclare « non configuré
+   * (façade/test) » et rend `ok`. Ce CLI ne la fournissait pas — un déploiement
+   * par la ligne de commande ne publiait donc JAMAIS ses adresses, et le Panel
+   * continuait d'annoncer aux projets celles qu'il portait avant.
+   *
+   * Le produit, lui, la câble depuis toujours (`deploymentExecutor.service.js`).
+   * On emprunte exactement la même fonction : il n'y a qu'une manière d'écrire
+   * cette configuration, et ce n'est pas au CLI de l'inventer.
+   */
+  const { syncRuntimeNetworkConfiguration } = await import(`file://${path.join(engineDir, 'runtimeConfig.js')}`);
 
   const creds = sshCredentials(deployConfig);
   const localEnv = parseEnvFile(fs.readFileSync(path.join(panelRoot, 'backend', '.env'), 'utf8'));
   const remoteEnv = buildRemoteEnv(localEnv, deployConfig);
 
   // Le mot de passe n'existe qu'en RAM, le temps de la session.
-  const sessionId = openSession({ host: creds.host, username: creds.username, password: creds.password });
+  /**
+   * ══ `openSession` REND UN OBJET, PAS UN IDENTIFIANT ════════════════════════
+   *
+   * Cette ligne affectait le retour entier à `sessionId`, puis le passait au
+   * moteur. Le coffre cherchait alors une session à la clé `[object Object]`,
+   * n'en trouvait aucune, et le déploiement s'arrêtait sur `NO_VPS_SESSION` —
+   * « session absente ou expirée », alors qu'elle venait d'être ouverte.
+   *
+   * Le défaut ne se voyait qu'en EXÉCUTION RÉELLE : la simulation n'ouvre
+   * aucune session. Il coûtait donc toute la chaîne de qualité et le build
+   * avant de se manifester.
+   */
+  const { sessionId } = openSession({
+    host: creds.host, username: creds.username, password: creds.password,
+  });
   const engine = new DeploymentEngine({
     transportFactory: () => new SshTransport(creds),
     mongoUri: localEnv.MONGODB_URI,
@@ -143,7 +187,7 @@ async function execute(deployConfig, { mode, targetReleaseId }) {
       // atomique, relance du service, contrôle de santé, restauration en cas
       // d'échec) appartient au moteur — voir deployment-engine/rollback.js.
       const state = await engine.listReleases({
-        url: deployConfig.urls.backendUrl, sessionId, remoteRoot: deployConfig.remoteRoot,
+        url: deployConfig.urls.frontendUrl, sessionId, remoteRoot: deployConfig.remoteRoot,
       });
       console.log(`\n▸ version déployée  : ${state.current ?? 'inconnue'}`);
       console.log(`▸ version précédente: ${state.previous ?? 'aucune'}`);
@@ -170,7 +214,7 @@ async function execute(deployConfig, { mode, targetReleaseId }) {
       }
 
       const result = await engine.rollback({
-        url: deployConfig.urls.backendUrl,
+        url: deployConfig.urls.frontendUrl,
         sessionId,
         options: {
           remoteRoot: deployConfig.remoteRoot,
@@ -185,16 +229,56 @@ async function execute(deployConfig, { mode, targetReleaseId }) {
 
     console.log('\n▸ déploiement réel (préflight → build → pipeline)…');
     const result = await engine.deploy({
-      url: deployConfig.urls.backendUrl,
+      url: deployConfig.urls.frontendUrl,
       sessionId,
       options: {
         remoteRoot: deployConfig.remoteRoot,
         backendPort: deployConfig.backendPort,
         env: deployConfig.environment,
         remoteEnv,
+        runtimeConfigSync: syncRuntimeNetworkConfiguration,
       },
       onStep,
     });
+    /**
+     * ══ UN ÉCHEC NE S'ANNONCE PAS « TERMINÉ » ══════════════════════
+     *
+     * `engine.deploy()` ne LÈVE PAS quand une étape du pipeline échoue : il
+     * rend `{ ok: false, pipeline }`, parce que l'appelant a besoin du détail
+     * des étapes — celles qui ont abouti autant que celle qui a cédé. Ce CLI
+     * ignorait `ok` et imprimait « ✓ Déploiement terminé » dans tous les cas,
+     * puis sortait en 0.
+     *
+     * Ce que cela coûtait : un déploiement arrêté à `certbot` — donc sans
+     * rechargement Nginx, sans redémarrage PM2, sans contrôle de santé — était
+     * annoncé comme publié. Le service continuait de servir l'ANCIENNE version,
+     * et l'opérateur allait vérifier une URL qui répond 200 pour de mauvaises
+     * raisons. Une chaîne d'intégration, elle, voyait un succès.
+     *
+     * On lit donc le verdict du moteur, on nomme l'étape fautive et son code,
+     * et l'on sort en échec. Les étapes abouties sont rappelées : savoir que
+     * l'upload a réussi change ce qu'on fait ensuite.
+     */
+    if (result?.ok === false) {
+      const etapes = result.pipeline?.steps ?? [];
+      const fautive = etapes.find((e) => e.status === 'error');
+      const code = fautive?.error?.code ?? result.pipeline?.error?.code;
+      console.error(`
+✗ Déploiement INTERROMPU à l’étape « ${fautive?.step ?? result.pipeline?.failedStep ?? 'inconnue'} »`
+        + `${code ? ` [${code}]` : ''}`);
+      const message = fautive?.error?.message ?? result.pipeline?.error?.message;
+      if (message) console.error(`  ${message}`);
+      const abouties = etapes.filter((e) => e.status === 'ok').map((e) => e.step);
+      if (abouties.length) {
+        console.error('');
+        console.error(`  étapes abouties : ${abouties.join(', ')}`);
+      }
+      console.error('');
+      console.error('  Le service distant n’a PAS été rechargé : il sert toujours la version précédente.');
+      process.exitCode = 1;
+      return;
+    }
+
     console.log(`\n✓ Déploiement terminé — version ${result.version}, cible ${result.target?.host}.`);
     console.log(`  Vérifier : ${deployConfig.urls.backendUrl}/health et ${deployConfig.urls.backendUrl}/api/version\n`);
   } catch (err) {

@@ -287,7 +287,6 @@ function buildJournal(stored) {
    * que d'en montrer une seule qui dit vrai.
    */
   const refusAvantProvider = new Set([
-    CAPABILITY_ERROR_CODES.BLOCKED_PREOPENING,
     CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
     CAPABILITY_ERROR_CODES.INPUT_INVALID,
     CAPABILITY_ERROR_CODES.CREDENTIALS_MISSING,

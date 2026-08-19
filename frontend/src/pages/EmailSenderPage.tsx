@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { useAuth } from '@/auth/AuthContext';
+import { isPanelDeveloper } from '@/auth/roles';
 import type {
   EmailSenderScreen,
   EmailSenderTestReport,
@@ -47,7 +48,7 @@ const JOURNAL_BADGE: Record<string, string> = { PASS: 'ok', FAIL: 'error', PENDI
 
 export function EmailSenderPage() {
   const { user } = useAuth();
-  const canEdit = user?.role === 'DEV';
+  const canEdit = isPanelDeveloper(user?.role);
 
   const [screen, setScreen] = useState<EmailSenderScreen | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);

@@ -128,6 +128,13 @@ const fauxStripe = http.createServer(async (req, res) => {
 });
 
 const creations = () => appels.filter((a) => a.method === 'POST' && a.url === '/v1/webhook_endpoints');
+/**
+ * Les créations D'ENDPOINT DE PROJET — voir `endpointsProjet`. Le plan de
+ * contrôle enregistre aussi l'endpoint du PANEL, qui n'appartient à aucun
+ * projet et n'a donc rien à faire dans un compte de prolifération par projet.
+ */
+const creationsProjet = () => creations()
+  .filter((a) => !String(a.corps ?? '').includes('panel-l63a.test'));
 const suppressions = () => appels.filter((a) => a.method === 'DELETE');
 
 await new Promise((resolve) => fauxStripe.listen(0, '127.0.0.1', resolve));
@@ -137,8 +144,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -150,6 +155,24 @@ const { assertNoProviderSecrets } = await import('../backend/src/bridge/provider
 await resetSyncCore();
 await seedIntegratedApiCredentialSets();
 await updateNetworkConfiguration({ backendUrl: 'https://panel-l63a.test' }, { requirePublic: false });
+
+/**
+ * LES ENDPOINTS DE PROJET — le Panel a désormais LE SIEN, et il ne compte pas.
+ *
+ * ══ POURQUOI CE FILTRE EXISTE ═══════════════════════════════════════════════
+ *
+ * Cette suite comptait `endpoints.size` : à l'époque, tout endpoint chez le
+ * fournisseur appartenait forcément à un projet. Depuis, le plan de contrôle
+ * enregistre l'endpoint DU PANEL — celui qui reçoit les faits de facturation
+ * pour la plateforme elle-même. Le compte brut vaut donc un de plus, et la
+ * suite lisait « deux endpoints » là où il n'y a jamais eu qu'un projet.
+ *
+ * Compter les endpoints de PROJET dit exactement ce que la suite veut dire, et
+ * continue de le dire le jour où la plateforme en enregistrera un troisième
+ * pour son propre compte.
+ */
+const endpointsProjet = () => [...endpoints.values()]
+  .filter((e) => !String(e.url ?? '').includes('panel-l63a.test'));
 
 const { base: panelUrl } = await startServer(createApp());
 
@@ -201,8 +224,6 @@ section('2. Deux projets, ouverts et accordés');
   await projetA.seedIntegratedApis();
   await projetB.seedIntegratedApis();
   for (const id of [idA, idB]) {
-    await grantsModule.setCapabilityGrants(id, [ENSURE], ACTEUR);
-    await commercial.setCommercialReadiness(id, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.3A' });
   }
   check('deux projets distincts', typeof idA === 'string' && idA !== idB);
 }
@@ -266,7 +287,7 @@ section('B. Redémarrage : la même demande ne crée rien de plus');
   check('la demande aboutit', r.ok === true);
   check('…et ne crée RIEN', r.data.created === false);
   check('AUCUNE création supplémentaire', creations().length === avant);
-  check('un seul endpoint chez le fournisseur', endpoints.size === 1);
+  check('un seul endpoint de PROJET chez le fournisseur', endpointsProjet().length === 1);
 
   const apres = await secrets.readProjectVerificationSecret({
     projectId: idA, provider: 'STRIPE', environment: 'TEST',
@@ -286,7 +307,7 @@ section('C. Huit demandes simultanées : un seul endpoint logique');
   check('toutes aboutissent ou se refusent proprement',
     resultats.every((r) => r.ok || typeof r.code === 'string'));
   check('AUCUNE création supplémentaire', creations().length === avant);
-  check('toujours un seul endpoint', endpoints.size === 1);
+  check('toujours un seul endpoint de projet', endpointsProjet().length === 1);
   check('…et un seul lien en base',
     (await Binding.countDocuments({ provider: 'STRIPE', destination: 'PROJECT', projectId: idA })) === 1);
 }
@@ -301,8 +322,8 @@ section('D. L’adresse change : convergence, sans prolifération');
   const r = await projetA.ensureStripeWebhook({ mode: 'TEST', publicBackendUrl: URL_A2 });
 
   check('la demande aboutit', r.ok === true);
-  check('toujours UN SEUL endpoint', endpoints.size === 1);
-  const courant = [...endpoints.values()][0];
+  check('toujours UN SEUL endpoint de projet', endpointsProjet().length === 1);
+  const courant = endpointsProjet()[0];
   check('…dont l’adresse suit le nouveau tunnel',
     courant.url === `${URL_A2}/api/webhooks/stripe`);
   check('aucune création superflue', creations().length === avantC);
@@ -372,7 +393,7 @@ section('G. Le secret d’un projet n’est pas celui d’un autre');
     mode: 'TEST', publicBackendUrl: 'https://projet-b.test',
   });
   check('B obtient son propre endpoint', rB.ok === true);
-  check('…et il y en a maintenant deux', endpoints.size === 2);
+  check('…et il y en a maintenant deux (un par projet)', endpointsProjet().length === 2);
 
   const sB = await secrets.readProjectVerificationSecret({
     projectId: idB, provider: 'STRIPE', environment: 'TEST',
@@ -394,7 +415,7 @@ section('G. Le secret d’un projet n’est pas celui d’un autre');
     croise.secret === sB.secret && croise.secret !== secretA);
 
   /** Les endpoints pointent chacun vers leur projet. */
-  const urls = [...endpoints.values()].map((e) => e.url).sort();
+  const urls = endpointsProjet().map((e) => e.url).sort();
   check('chaque endpoint pointe vers SON projet',
     urls.some((u) => u.startsWith(URL_A2)) && urls.some((u) => u.startsWith('https://projet-b.test')));
 }
@@ -495,7 +516,7 @@ section('J. Un événement signé atteint toujours le métier du projet');
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('K. Bilan');
 {
-  check('deux endpoints, un par projet', endpoints.size === 2);
+  check('deux endpoints, un par projet', endpointsProjet().length === 2);
   check('…et autant de liens en base',
     (await Binding.countDocuments({ provider: 'STRIPE', destination: 'PROJECT' })) === 2);
 
@@ -505,8 +526,8 @@ section('K. Bilan');
    * d'adresse, une en panne, deux pour B) et le fournisseur ne compte que deux
    * créations. C'est l'invariant du lot.
    */
-  check('le fournisseur n’a jamais créé plus de deux endpoints',
-    creations().length === 2);
+  check('le fournisseur n’a jamais créé plus de deux endpoints de PROJET',
+    creationsProjet().length === 2);
 
   for (const [nom, instance] of [['A', projetA], ['B', projetB]]) {
     const dump = JSON.stringify(await instance.dbDump());

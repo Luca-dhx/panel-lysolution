@@ -91,7 +91,6 @@ const BREVO_BASE = `http://127.0.0.1:${fauxBrevo.address().port}/v3`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grants = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const senders = await import('../backend/src/services/email/panelSenderIdentity.service.js');
 const globalSender = await import('../backend/src/services/email/panelGlobalSender.service.js');
 const templates = await import('../backend/src/services/email/panelEmailTemplate.service.js');
@@ -150,7 +149,6 @@ section('2 · Appairage, octroi, identité expéditrice');
   await instance.heartbeat();
   check('le projet est appairé', typeof projectId === 'string');
 
-  await grants.setCapabilityGrants(projectId, [SEND], ACTEUR);
   /**
    * R10.4 — l'expéditeur est GLOBAL, l'adresse de réponse reste au projet.
    * L'envoi exige le premier ; le second est facultatif, et on le pose pour
@@ -163,6 +161,48 @@ section('2 · Appairage, octroi, identité expéditrice');
     replyToEmail: 'sav@projet-l84c.test',
   }, ACTEUR);
   check('l’octroi, l’expéditeur global et l’adresse de réponse sont posés', true);
+  /**
+   * ══ LE PROJET DÉCLARE CE QU'IL CONSOMME, ET C'EST CE QUI L'ÉQUIPE ═════════
+   *
+   * Cette section posait l'expéditeur et passait à l'envoi. Elle ne le peut
+   * plus, et le produit a raison : depuis L11.1, le Panel ne sert JAMAIS son
+   * propre contenu sous le nom d'un projet — il exige une instance écrite pour
+   * cette portée. Et depuis ce lot, il ne devine pas non plus lesquelles : le
+   * projet DÉCLARE en direct les `templateCode` qu'il consomme.
+   *
+   * Cette déclaration part avec la photographie complète du (ré)appairage —
+   * `reconcileAll()` — donc elle est déjà EN FILE ici. Ce qui manque est le
+   * cycle qui la pousse : `syncNow()` est ce cycle, celui de l'ordonnanceur
+   * réel. On l'appelle, puis on vérifie que le Panel a bien reçu la déclaration
+   * et provisionné ce qu'elle demande — sans qu'aucun écran ni aucun script
+   * n'ait eu à nommer un modèle.
+   */
+  /**
+   * ON ATTEND QUE LA FILE SE VIDE — un cycle peut déjà être en vol.
+   *
+   * L'appairage déclenche lui-même une poussée ; un `syncNow()` immédiat
+   * répond `ALREADY_RUNNING` et ne pousse rien. Attendre l'ÉTAT (file vide)
+   * plutôt que l'appel est la seule condition qui ait un sens ici : c'est
+   * celle que le produit atteint tout seul, en exploitation.
+   */
+  for (let essai = 0; essai < 40; essai += 1) {
+    if ((await instance.outboxPending()) === 0) break;
+    await instance.syncNow().catch(() => {});
+    await new Promise((r) => { setTimeout(r, 100); });
+  }
+  check('la file de projections du projet s’est vidée', (await instance.outboxPending()) === 0);
+  {
+    const { PanelProjectEmailTemplateUsage } = await import('../backend/src/models/PanelProjectProjection.model.js');
+    const { default: PanelEmailTemplate } = await import('../backend/src/models/PanelEmailTemplate.model.js');
+    const declaration = await PanelProjectEmailTemplateUsage.findOne({ projectId }).lean();
+    check('le projet a DÉCLARÉ les modèles qu’il consomme',
+      (declaration?.templateCodes ?? []).length > 0);
+    check(`…dont « ${TEMPLATE} », celui que cette recette envoie`,
+      (declaration?.templateCodes ?? []).includes(TEMPLATE));
+    const instances = await PanelEmailTemplate.find({ projectId }).select('templateCode').lean();
+    check('…et le Panel a provisionné une instance pour chacun',
+      instances.length === declaration.templateCodes.length);
+  }
 }
 
 /** Poste un webhook Brevo sur la VRAIE route publique du Panel. */

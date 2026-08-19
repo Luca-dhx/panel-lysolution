@@ -59,6 +59,16 @@ export async function executeOperation({
   operationType, target, sshPassword, releaseId = null, user = null, runId = null,
   options = {}, apiPid = null,
   onStep = () => {}, onLog = () => {}, engine: injectedEngine = null,
+  /**
+   * LA RÉPONSE À LA BARRIÈRE DE PUBLICATION — fournie par qui écrit.
+   *
+   * L'exécuteur ne persiste pas lui-même les étapes : il les émet vers
+   * `onStep`. C'est donc son appelant (le worker) qui sait si elles ont été
+   * durablement écrites, et lui qui répond au moteur. Absente, la question
+   * n'est pas posée : un moteur sans journal durable reste un moteur qui
+   * déploie.
+   */
+  assertDurable = null,
 }) {
   const engine = injectedEngine ?? new DeploymentEngine({ mongoUri: config.mongoUri });
   const steps = [];
@@ -116,7 +126,7 @@ export async function executeOperation({
       case OPERATIONS.SIMULATION:
         return await simulation({ engine, target, sessionId, step, log });
       case OPERATIONS.DEPLOYMENT:
-        return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId, apiPid });
+        return await deployWithFullReport({ engine, target, sessionId, step, log, user, runId, apiPid, assertDurable });
       case OPERATIONS.ROLLBACK:
         return await rollback({ engine, target, sessionId, releaseId, step, log });
       case OPERATIONS.DEPROVISION:
@@ -264,7 +274,9 @@ async function simulation({ engine, target, sessionId, step, log }) {
  * les prérequis ne sont plus des actions de l'opérateur, ce sont des étapes
  * de CETTE opération.
  */
-async function deployWithFullReport({ engine, target, sessionId, step, log, user, runId = null, apiPid = null }) {
+async function deployWithFullReport({
+  engine, target, sessionId, step, log, user, runId = null, apiPid = null, assertDurable = null,
+}) {
   const parsedTarget = engine.parseUrl(target.url);
   const ports = await import('./portRegistry.service.js');
 
@@ -347,6 +359,7 @@ async function deployWithFullReport({ engine, target, sessionId, step, log, user
     sessionId,
     user,
     options: {
+      ...(assertDurable ? { assertDurable } : {}),
       remoteRoot: target.remoteRoot,
       backendPort,
       env: target.environment,

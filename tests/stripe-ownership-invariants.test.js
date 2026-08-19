@@ -363,14 +363,44 @@ section('12. LA CLÉ DU TARIF PORTE LES TERMES, PAS LA VERSION (L6.2E)');
    * passerait inaperçu. La devise en particulier : la garde locale historique
    * l'oubliait, et réutilisait un Price pour une autre devise.
    */
-  for (const terme of ['interval', 'amount', 'currency']) {
-    check(`la clé du Price porte « ${terme} »`,
-      new RegExp(`priceOperationId[\s\S]{0,300}\$\{${terme}`).test(autoriteTarif)
-      || new RegExp(`\{ environment, contractId, interval, amount, currency \}`).test(autoriteTarif));
+  /**
+   * ══ ÉPROUVÉ PAR LE COMPORTEMENT, PLUS PAR LE TEXTE DU FICHIER ════════════
+   *
+   * Cette vérification lisait la SOURCE au moyen d'expressions régulières. Elle
+   * a rougi le jour où la fonction a gagné `intervalCount` — sans que la
+   * propriété gardée ait bougé d'un iota : la clé porte toujours tous les
+   * termes. Un test qui casse sur un refactor qu'il devrait ignorer finit par
+   * être « corrigé » en relâchant son motif, et ne garde alors plus rien.
+   *
+   * On interroge donc la fonction : faire varier un terme DOIT changer la clé.
+   * C'est ce que la doctrine dit, c'est indépendant de l'écriture, et cela
+   * couvrira `intervalCount` et tout terme ajouté demain.
+   */
+  const { priceOperationId } = await import(
+    '../backend/src/services/integratedApi/stripe/stripePriceAuthority.js'
+  );
+  const base = {
+    environment: 'TEST', contractId: 'c-1', interval: 'month',
+    intervalCount: 1, amount: 4900, currency: 'eur',
+  };
+  const cleBase = priceOperationId(base);
+
+  const variations = {
+    interval: { ...base, interval: 'year' },
+    amount: { ...base, amount: 5900 },
+    currency: { ...base, currency: 'usd' },
+    intervalCount: { ...base, intervalCount: 3 },
+    environment: { ...base, environment: 'PROD' },
+    contractId: { ...base, contractId: 'c-2' },
+  };
+  for (const [terme, args] of Object.entries(variations)) {
+    check(`la clé du Price distingue « ${terme} »`, priceOperationId(args) !== cleBase);
   }
-  check('…et le monde', /stripe-price:\$\{environment\}/.test(autoriteTarif));
+
+  check('la même commande rend la MÊME clé', priceOperationId({ ...base }) === cleBase);
+  check('…et le monde y figure', cleBase.startsWith('stripe-price:TEST:'));
   check('…mais PAS la version du contrat',
-    !/stripe-price:[^`]*version/i.test(autoriteTarif));
+    !/version/i.test(cleBase) && !/stripe-price:[^`]*version/i.test(autoriteTarif));
 
   /**
    * Le Product, lui, ne porte PAS les termes : c'est un contenant, et les

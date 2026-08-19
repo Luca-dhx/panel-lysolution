@@ -35,6 +35,7 @@
  * lot — revenir au code d'hier ne défait pas un schéma d'aujourd'hui.
  */
 import { DeploymentError } from './errors.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, sonde, strictShell } from './remoteCommand.js';
 import { restartBackend } from './pm2.js';
 import { checkLocalHealth } from './health.js';
 import { planTopology } from './topology.js';
@@ -87,7 +88,7 @@ export function rollbackSlots({ host, remoteRoot = DEFAULT_REMOTE_ROOT, profile 
 
 /** Le dossier existe-t-il, et est-ce bien un dossier ? */
 async function isDir(transport, path) {
-  const res = await transport.exec(`test -d ${path} && echo OK || echo KO`);
+  const res = await sonde(transport, 'rollback.probe_release', `test -d ${path} && echo OK || echo KO`, { step: 'rollback' });
   return /OK/.test(String(res.stdout || ''));
 }
 
@@ -98,7 +99,7 @@ async function isDir(transport, path) {
  * n'en porte pas, et c'est une réponse, pas une erreur. On ne devine jamais.
  */
 export async function readSlotVersion(transport, dir, versionFile) {
-  const res = await transport.exec(`cat ${dir}/${versionFile} 2>/dev/null || true`);
+  const res = await sonde(transport, 'rollback.read_version', `cat ${dir}/${versionFile} 2>/dev/null || true`, { step: 'rollback' });
   const raw = String(res.stdout || '').trim();
   if (!raw) return null;
   try {
@@ -180,7 +181,7 @@ export async function verifyPreviousIntegrity(transport, { host, remoteRoot, pro
     }
     for (const rule of slot.integrity) {
       // eslint-disable-next-line no-await-in-loop
-      const res = await transport.exec(`test -${rule.test} ${slot.prev}/${rule.path} && echo OK || echo KO`);
+      const res = await sonde(transport, 'rollback.probe_integrity', `test -${rule.test} ${slot.prev}/${rule.path} && echo OK || echo KO`, { step: 'rollback' });
       if (!/OK/.test(String(res.stdout || ''))) {
         failed.push({ id: slot.id, check: rule.id, message: rule.message });
       }
@@ -198,14 +199,30 @@ export async function verifyPreviousIntegrity(transport, { host, remoteRoot, pro
  */
 async function swapSlot(transport, slot) {
   const tmp = `${slot.target}${SWAP_SUFFIX}`;
-  const res = await transport.exec(
-    `rm -rf ${tmp} && mv ${slot.target} ${tmp} && mv ${slot.prev} ${slot.target} && mv ${tmp} ${slot.prev}`,
-  );
-  if (res.code !== 0) {
+  /**
+   * CLASSE ROLLBACK — son échec ne remplace JAMAIS l'erreur primaire.
+   *
+   * Le contrat rend le résultat au lieu de lever : c'est ce module qui décide
+   * quoi en faire, et il lève sa propre erreur métier nommant LE SLOT qui n'a
+   * pas pu être échangé. Un `REMOTE_COMMAND_FAILED` générique aurait remplacé
+   * cette information par celle du transport.
+   *
+   * `strictShell` en plus des `&&` : la chaîne enchaîne quatre déplacements, et
+   * un échec au troisième laisse l'emplacement dans un état intermédiaire qu'il
+   * faut voir immédiatement.
+   */
+  const res = await runRemoteCommand(transport, {
+    commandId: 'rollback.swap_slot',
+    command: strictShell(`rm -rf ${tmp}; mv ${slot.target} ${tmp}; mv ${slot.prev} ${slot.target}; mv ${tmp} ${slot.prev}`),
+    commandClass: COMMAND_CLASS.ROLLBACK,
+    timeoutMs: TIMEOUTS.FILESYSTEM,
+    step: 'rollback',
+  });
+  if (!res.ok) {
     throw new DeploymentError('ROLLBACK_SWAP_FAILED',
       `Échange impossible pour « ${slot.id} ».`, {
         step: 'rollback',
-        details: { slot: slot.id, output: (res.stderr || res.stdout || '').slice(0, 400) },
+        details: { slot: slot.id, exitCode: res.exitCode, output: res.stderrTail || res.stdoutTail },
       });
   }
 }

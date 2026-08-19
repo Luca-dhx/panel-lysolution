@@ -8,7 +8,70 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 
 const TESTS = [
   'config.test.js',
+  // DISPONIBILITÉ DU SERVICE — « vivant » n'est pas « prêt ». Le port s'ouvre
+  // avant l'amorçage ; les sondes répondent tout de suite ; les routes métier
+  // refusent en 503 + code stable tant que les dépendances manquent. Placée
+  // tôt : si le socle de disponibilité est faux, tout le reste ment.
+  'readiness.test.js',
   'auth.test.js',
+  // RÉSILIENCE DE SESSION — qui a le droit de déconnecter, et qui ne l'a pas.
+  // Éprouve l'invariant du lot : seule une invalidité PROUVÉE efface un jeton.
+  // Un 500, un 502, un 503, une panne réseau ou un redémarrage backend ne le
+  // peuvent pas. Elle charge le VRAI client HTTP du frontend, pas une copie.
+  'auth-resilience.test.js',
+  'password-reset.test.js',
+  // L12.A — LE SOCLE DE CONFIANCE DE LA FÉDÉRATION D'IDENTITÉ. Le Panel sait
+  // affirmer, à UN projet précis et pour quelques minutes, qu'un porteur est
+  // un développeur autorisé — sans qu'aucun mot de passe ne quitte le Panel.
+  //
+  // Cette suite est majoritairement une suite d'ÉCHECS ATTENDUS : chaque
+  // contrôle vert est une falsification qui n'aboutit pas. Mauvaise audience,
+  // claim modifié, `alg: none`, HMAC signé avec la clé publique, assertion
+  // périmée, compte désactivé, rôle non autorisé, projet non appairé, clé
+  // inconnue. Elle éprouve aussi la rotation avec recouvrement — la seule qui
+  // ne coupe pas — et vérifie qu'aucune clé privée n'entre au dépôt.
+  'federation-assertion.test.js',
+  // L12.B-F — LE PARCOURS FÉDÉRÉ DE BOUT EN BOUT, sur DEUX serveurs réels :
+  // un Panel sur son port, une instance projet dans son processus, un vrai
+  // appairage, de vraies clés RSA et un vrai JWKS lu par HTTP.
+  //
+  // Elle prouve le critère majeur du lot : l'accès aux projets s'accorde par
+  // l'API DE L'ÉCRAN, jamais par un appel de service. Et elle éprouve ce qu'un
+  // navigateur ne saurait pas montrer — révocation d'une session ouverte,
+  // projet dépairé, Panel éteint, homonyme local jamais fusionné.
+  'federation-e2e.test.js',
+  // LOT 2B HOTFIX — L'AUTORISATION FÉDÉRÉE EST VIVANTE, DANS LES DEUX SENS.
+  //
+  // L'incident : un accès accordé n'était pas pris en compte tant qu'on
+  // n'avait pas rechargé — le SERVEUR répondait juste, l'ÉCRAN conservait le
+  // refus d'avant. Cette suite garde les deux moitiés de l'invariant :
+  //   · le Panel relit le compte à CHAQUE émission, sur une session Panel
+  //     jamais renouvelée, et `ALL_PAIRED` reste une question posée au parc
+  //     plutôt qu'une liste figée à l'octroi ;
+  //   · le hook de la page d'autorisation, EXÉCUTÉ et non relu, n'affiche
+  //     jamais un verdict rendu pour une tentative précédente.
+  'federation-live-refresh.test.js',
+  // LOT SUPER_ADMIN — LE RÔLE SOUVERAIN DU PANEL.
+  //
+  // Un troisième rôle ne s'ajoute pas à une énumération : il change la nature
+  // de chaque comparaison de rôle déjà écrite. Deux suites, parce qu'elles ne
+  // prouvent pas la même chose :
+  //   · le SERVEUR — l'échelle `SUPER_ADMIN ≥ DEV`, la souveraineté sans
+  //     exception de cible (autre souverain, soi-même, le dernier), la
+  //     création sans mot de passe, et la PROJECTION vers les projets, qui
+  //     n'envoie jamais autre chose que `DEV` ;
+  //   · l'ÉCRAN — l'accord entre ce qu'il montre et ce que l'API autorise, et
+  //     le balayage qui interdit toute comparaison de rôle hors de l'échelle.
+  'panel-super-admin.test.js',
+  'panel-super-admin-ui.test.js',
+  // LES COMPTES D'UN PROJET, LUS EN DIRECT. Le Panel affichait sa propre
+  // projection — une copie qui vieillissait, qui ne montrait que les comptes
+  // locaux, et qui décrivait les mêmes personnes autrement que le Manager.
+  // La suite éprouve la lecture vivante par le pont, la parité de
+  // représentation champ par champ, la projection du rôle (un SUPER_ADMIN du
+  // Panel entre en DEV), et le refus d'afficher un instantané périmé quand le
+  // projet ne répond plus.
+  'project-accounts-live.test.js',
   'version-compatibility.test.js',
   'manifest.test.js',
   'capabilities.test.js',
@@ -20,7 +83,25 @@ const TESTS = [
   'persistence.test.js',
   'bridge-http.test.js',
   'bridge-conformity.test.js',
+  /**
+   * BRIDGE 1.9.0 — L'ADRESSE PUBLIQUE EST UN ÉTAT, PAS UN SOUVENIR.
+   *
+   * `runtime.publicBackendUrl` était posée au bootstrap et jamais revue : le
+   * Panel TEST annonçait encore `api.demo-sbauto.lycarz.com` des semaines après
+   * la migration, et seule la destruction de l'appairage pouvait la corriger.
+   * Cette suite verrouille l'invariant qui remplace ce comportement — appairage
+   * = identité, URL = état courant — ainsi que la convergence d'un client 1.8,
+   * qui ne doit dépendre d'aucune montée de version chez lui.
+   */
+  'bridge-runtime-url-sync.test.js',
   'contract-actions.test.js',
+  // LA RÉCURRENCE CONTRACTUELLE — « tous les N mois », « tous les N ans ».
+  // Le Panel crée le tarif Stripe à partir de cette phrase : la suite garde
+  // que l'intervalle entre dans la CLÉ du Price (sans quoi un trimestriel
+  // réutiliserait le tarif mensuel de même montant), qu'il part réellement
+  // chez le fournisseur, et qu'une projection sans périodicité fait REFUSER
+  // plutôt que supposer une fréquence de prélèvement.
+  'contract-recurrence.test.js',
   'events.test.js',
   // L10.1 — LA FONDATION FINANCIÈRE, indépendante de tout fournisseur.
   // Deux suites, parce qu'elles ne prouvent pas la même chose :
@@ -49,6 +130,17 @@ const TESTS = [
   // le désordre de livraison (facture avant adoption), la suppression suivie
   // d'un rejeu, et le parcours réel depuis un webhook signé.
   'finance-stripe-revenue.test.js',
+  /**
+   * L10.7 — L'APPARTENANCE D'UN REVENU SE RÉSOUT SUR LE GRAPHE INTERNE.
+   *
+   * Un paiement TEST réellement encaissé restait `UNOWNED / NO_OWNERSHIP_RESOURCE`
+   * — donc absent du registre financier — parce que la résolution ne consultait
+   * qu'UNE ressource désignée sur la charge utile, et que Stripe a retiré
+   * `invoice.payment_intent` à plat. Cette suite prouve les quatre ordres
+   * d'arrivée, la réconciliation d'un `UNOWNED` tardif, et surtout le refus
+   * inverse : l'absence de preuve ne devient jamais une appartenance.
+   */
+  'stripe-revenue-ownership-graph.test.js',
   // L10.4 — LE SEUL CHEMIN DU PARC QUI REND DE L'ARGENT. Ce que cette suite
   // garde tient en une phrase : un clic, un remboursement, quoi qu'il arrive.
   // Elle éprouve le double clic, la réponse perdue, le webhook qui double la
@@ -92,7 +184,15 @@ const TESTS = [
   //     pendant leur délai de grâce.
   'finance-payment-default-projection.test.js',
   'finance-ui.test.js',
+  // L12.B-F — L'ÉCRAN QUI ACCORDE UN DROIT CHEZ UN CLIENT. Le serveur refuse
+  // ce qu'un écran pourrait envoyer (mode inconnu, projet inconnu ou non
+  // appairé, champ en trop), on ne s'accorde rien à soi-même, et « compte
+  // actif » ne se confond jamais avec « accès aux projets ».
+  'panel-users-ui.test.js',
   'panel-ui.test.js',
+  'password-reset-ui.test.js',
+  'template-editor.test.js',
+  'template-editor-ui.test.js',
   'panel-meetings-ui.test.js',
   'panel-timeline-ui.test.js',
   'generation-change.test.js',
@@ -108,16 +208,17 @@ const TESTS = [
   // L4 — la frontière : aucun identifiant fournisseur ne franchit le pont.
   // L'invariant est dérivé du registre, donc il survit au provider suivant.
   'bridge-provider-secret-boundary.test.js',
-  // L1.75 — l'ouverture commerciale : « cette action réelle est-elle
-  // autorisée ? », posée séparément de « quel monde fournisseur ? ».
-  'commercial-readiness.test.js',
-  // L3.1 — le geste qui manquait : ouvrir, refermer, et la jonction avec la
-  // passerelle. L'environnement est relevé avant/après : il ne bouge pas.
-  'commercial-readiness-runtime.test.js',
-  // R10.4 — le geste est RÉCLAMÉ, pas seulement écrit. Double clic ×8,
-  // concurrence, rejeu et course inverse : un seul événement d'ouverture,
-  // jamais deux, et aucune sortie fournisseur.
-  'commercial-opening-concurrency.test.js',
+  // ── QUATRE SUITES ONT ÉTÉ SUPPRIMÉES AVEC LES MÉCANISMES QU'ELLES GARDAIENT
+  //
+  //   commercial-readiness.test.js           la politique de pré-ouverture
+  //   commercial-readiness-runtime.test.js   ouvrir, refermer, et la passerelle
+  //   commercial-opening-concurrency.test.js le double clic sur « ouvrir »
+  //   capability-preopening.test.js          le refus des écritures réelles
+  //
+  // Elles éprouvaient l'ouverture commerciale et les octrois de capacités. Ce
+  // que ces suites protégeaient réellement — l'isolation entre projets — est
+  // désormais éprouvé par `capability-multi-project-isolation.test.js`, qui
+  // vise l'appartenance des ressources plutôt qu'une case cochée.
   // R10.5C — le verrou de signature : ce qu’il protège (double ouverture d’un
   // même contrat, ressource étrangère, identifiant inventé, isolation
   // TEST/PROD) et la sortie tracée quand une issue reste indéterminée.
@@ -147,6 +248,25 @@ const TESTS = [
   // Panel lui-même, aucun projet ne configure le From, et l'e-mail de test
   // emprunte la chaîne réelle jusqu'au webhook de livraison.
   'global-email-sender.test.js',
+  // L11.1 — LE PLAN DE CONTRÔLE MULTI-PROJETS DU CONTENU. C'est la suite qui
+  // retourne la doctrine : la portée du contenu était modélisée mais n'avait
+  // aucun écrivain, donc tout le parc partageait un document unique et éditer
+  // un modèle réécrivait l'e-mail de tous les clients à la fois.
+  //
+  // Elle prouve, sur le corps réellement posté au fournisseur, que trois
+  // portées portent trois contenus ; que l'absence d'un contenu projet est un
+  // REFUS et jamais un emprunt au Panel ; qu'aucune surface — corps de requête,
+  // pont d'un autre projet, restauration — ne franchit la frontière ; et que
+  // l'expéditeur, lui, reste global. Elle porte aussi la garde de PARITÉ des
+  // deux registres de variables, que l'audit réclamait immédiatement.
+  'email-template-multi-project.test.js',
+  // Le CYCLE DE VIE des instances : qui les pose, et quand. La suite
+  // ci-dessus prouve que la mécanique marche quand on l'actionne ;
+  // celle-ci prouve qu'on l'actionne.
+  'email-template-provisioning-lifecycle.test.js',
+  // La DECLARATION VIVANTE : le projet dit ce qu'il utilise, le Panel
+  // s'y conforme. C'est la suite qui garde la doctrine de ce lot.
+  'email-template-declaration-lifecycle.test.js',
   // L8.4C — la BOUCLE COMPLÈTE, de bout en bout : un projet demande un envoi,
   // le Panel le fait partir sous SON compte, le webhook du fournisseur revient
   // au Panel, et le verbe de livraison redescend jusqu'au projet — y compris
@@ -155,14 +275,20 @@ const TESTS = [
   // livraison, avec un vrai projet dans un vrai processus voisin.
   'brevo-send-delivery-convergence-e2e.test.js',
   // L3 — la passerelle de capacités : le projet demande un VERBE, le Panel
-  // résout le fournisseur, le monde, le droit et la clé. Trois suites, parce
-  // qu'elles ne peuvent pas vivre dans le même processus :
+  // résout le fournisseur, le monde et la clé. Deux suites, parce qu'elles ne
+  // peuvent pas vivre dans le même processus :
   //   · la mécanique, refus par refus, en TEST ;
-  //   · la PRÉ-OUVERTURE, qui exige une instance réellement en PROD ;
   //   · le bout en bout, par le pont réel, avec un fournisseur qui parle HTTP.
   'capability-gateway.test.js',
-  'capability-preopening.test.js',
   'capability-gateway-e2e.test.js',
+  // La garde ANTI-CAPACITÉ FANTÔME : toute action déclarée possède un
+  // exécutant, et réciproquement. C'est elle qui empêche le retour de l'état
+  // « déclarée, mais pas encore servie ».
+  'capability-registry-coherence.test.js',
+  // L'ISOLATION ENTRE PROJETS, sans octrois : un projet ne peut pas atteindre
+  // le contrat, la signature ni le domaine d'un autre, même en nommant
+  // directement un identifiant fournisseur valide.
+  'capability-multi-project-isolation.test.js',
   // L6.1/L6.2A — Stripe : la fondation financière, puis l'autorité
   // d'appartenance qui la débloque. Aucune capacité n'est encore servie ; ces
   // deux suites gardent les contrats et l'index qui rend le vol impossible.
@@ -258,6 +384,11 @@ const TESTS = [
   // « connexion projet » / « vitrine ».
   'protection-switch-ux.test.js',
   'vitrine-vs-connexion.test.js',
+  // LE PREMIER APPEL APRÈS UN REDÉMARRAGE, sur un VRAI processus : le port
+  // répond avant la fin de l'amorçage, les routes métier refusent en 503 +
+  // code stable (jamais 401), le service bascule seul, et le PREMIER appel
+  // métier aboutit — sans échauffement ni seconde tentative.
+  'first-deployment-after-restart.test.js',
   'deploy.test.js',
   'deployment-build.test.js',
   'deployment-remote-env.test.js',
@@ -265,6 +396,16 @@ const TESTS = [
   'deployment-report-truth.test.js',
   'deployment-silence.test.js',
   'deployment-stream.test.js',
+  // LA BARRIÈRE DE PUBLICATION — la suite qui met le journal durable en panne
+  // sur le chemin RÉEL (createRun → runDeploymentJob → deployWithReport →
+  // finalizeRun), avec Mongo en mémoire et le transport pour seul double.
+  //
+  // Ce qu'elle verrouille, et que rien d'autre ne verrouille : une perte de
+  // journal AVANT la bascule REFUSE la publication (la commande n'est jamais
+  // émise, et la preuve est un ORDRE de faits, pas un horodatage) ; APRÈS, elle
+  // ne dépublie rien, ne remplace jamais l'erreur métier primaire, et laisse un
+  // run que le démarrage suivant sait reprendre sans inventer.
+  'deployment-durable-recorder.test.js',
   'engine-genericity.test.js',
   'engine-genericity-e2e.test.js',
   'supervision.test.js',

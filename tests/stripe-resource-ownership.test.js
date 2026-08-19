@@ -24,7 +24,7 @@ await connectTestDatabase();
 const binding = await import('../backend/src/services/integratedApi/stripe/stripeResourceBinding.js');
 const ownership = await import('../backend/src/services/integratedApi/stripe/stripeResourceOwnership.js');
 const capabilities = await import('../backend/src/services/integratedApi/stripe/stripeCapabilities.js');
-const commercial = await import('../backend/src/services/integratedApi/commercialReadiness.js');
+const adaptersStripe = await import('../backend/src/services/integratedApi/stripe/stripeAdapters.js');
 const environment = await import('../backend/src/services/integratedApi/environment.js');
 const { default: PanelStripeResourceBinding } = await import(
   '../backend/src/models/PanelStripeResourceBinding.model.js'
@@ -358,35 +358,40 @@ section('9. DIAGNOSTIC — des nombres, jamais un annuaire');
 }
 
 /* ========================================================================== */
-section('10. INDÉPENDANCE DE L’OUVERTURE COMMERCIALE');
+section('10. L’APPARTENANCE EST LA SEULE AUTORITÉ D’ACCÈS');
 /* ========================================================================== */
 {
   /**
-   * L'appartenance et l'ouverture commerciale répondent à deux questions
-   * distinctes : « à qui est-ce ? » et « a-t-on le droit d'agir ? ». Les lier
-   * ferait perdre un lien à la fermeture d'un commerce.
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ─────────
+   *
+   * Elle vérifiait que l'appartenance et l'ouverture commerciale restaient
+   * INDÉPENDANTES : fermer un commerce ne devait pas faire perdre un lien.
+   *
+   * L'ouverture commerciale a été supprimée. L'indépendance n'a donc plus de
+   * second terme — et ce qui reste est plus fort : l'appartenance est
+   * désormais la SEULE autorité qui décide qu'un projet peut toucher une
+   * ressource Stripe. On vérifie donc qu'elle ne s'appuie sur rien d'autre.
    */
-  const avant = await binding.describeOwnership({
+  const verdict = await binding.describeOwnership({
     projectId: A, environment: 'TEST', resourceType: TYPES.CUSTOMER, resourceId: CUS_A,
   });
-  const bloque = commercial.canExecute({
-    capability: 'billing.checkout.create', commercialState: 'PREOPENING',
-  });
-  const apres = await binding.describeOwnership({
-    projectId: A, environment: 'TEST', resourceType: TYPES.CUSTOMER, resourceId: CUS_A,
-  });
-
-  check('l’écriture financière reste bloquée en pré-ouverture',
-    bloque.decision === commercial.DECISION.BLOCKED_PREOPENING);
-  check('…et le lien est INCHANGÉ', avant.allowed === true && apres.allowed === true);
-  check('…la source aussi', avant.source === apres.source);
+  check('le lien de A tient par lui-même', verdict.allowed === true);
 
   const source = await (await import('node:fs/promises')).readFile(
     new URL('../backend/src/services/integratedApi/stripe/stripeResourceBinding.js', import.meta.url), 'utf8',
   );
-  check('le registre ne consulte JAMAIS l’état commercial',
+  check('le registre ne consulte AUCUN état commercial',
     !/commercialState|commercialReadiness|PREOPENING/.test(source));
   check('…ni activeMode', !/activeMode/.test(source));
+  /**
+   * ET IL NE CONSULTE AUCUN OCTROI NON PLUS.
+   *
+   * C'est le contrôle qui remplace celui d'indépendance : si le registre
+   * d'appartenance avait un jour lu `capabilityGrants`, leur suppression aurait
+   * emporté l'isolation avec elle.
+   */
+  check('…ni la moindre liste de capacités accordées',
+    !/capabilityGrants|grantedCodes|isGranted/.test(source));
 }
 
 /* ========================================================================== */
@@ -475,7 +480,9 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * abonnement que le Panel n'a jamais créés : les servir reviendrait à croire
    * l'identifiant présenté, ce que ce fichier entier s'emploie à empêcher.
    */
-  const servies = exigeantes.filter((c) => capabilities.STRIPE_CAPABILITIES[c].migrated);
+  // Figurer au catalogue EST la déclaration de service : le filtre sur
+  // `migrated` a disparu avec le booléen.
+  const servies = [...exigeantes];
   check('toutes les huit sont servies', servies.length === 8);
   check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
   check('…celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
@@ -538,7 +545,7 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
    * qu'il a lui-même écrit en L6.2D. Elle a cessé d'exiger ce qu'on ne pouvait
    * pas lui accorder.
    */
-  const fermees = exigeantes.filter((c) => !capabilities.STRIPE_CAPABILITIES[c].migrated);
+  const fermees = exigeantes.filter((c) => !adaptersStripe.STRIPE_ADAPTERS[c]);
   check('aucune capacité exigeant une ressource ne reste fermée', fermees.length === 0);
   check('…et les trois nouvelles portent bien la famille CLIENT',
     ['billing.invoice.list', 'billing.invoice.retrieve', 'billing.portal.create']

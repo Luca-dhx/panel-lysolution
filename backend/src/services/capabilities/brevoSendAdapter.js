@@ -26,7 +26,10 @@ import {
   TRANSPORT_CODES,
   OUTCOMES as TRANSPORT_OUTCOMES,
 } from '../integratedApi/brevo/brevoTransport.js';
-import { renderForSend } from '../email/panelEmailTemplate.service.js';
+import {
+  renderForSend, EMAIL_TEMPLATE_NOT_CONFIGURED, EMAIL_TEMPLATE_NOT_DECLARED,
+} from '../email/panelEmailTemplate.service.js';
+import { describeScope, scopeOfInvocationContext } from '../email/panelEmailTemplateScope.js';
 import { resolveForProject, resolveForPanel } from '../email/panelSenderIdentity.service.js';
 import {
   CAPABILITY_ERROR_CODES,
@@ -97,7 +100,7 @@ function translate(error, capability) {
  * `PROJECT_SCOPE_MISMATCH` est une tentative d'usurpation, et se lit comme
  * telle dans le journal.
  */
-function translatePreparation(error, capability) {
+export function translatePreparation(error, capability) {
   if (error instanceof CapabilityError) return error;
   const code = error?.code ?? '';
 
@@ -119,6 +122,55 @@ function translatePreparation(error, capability) {
       CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
       `Le modèle demandé par « ${capability.code} » est désactivé : aucun envoi n’est effectué.`,
       { reason: 'TEMPLATE_DISABLED' },
+    );
+  }
+
+  /**
+   * AUCUN MODÈLE DANS CETTE PORTÉE — le refus qui remplace le repli (L11.1).
+   *
+   * ── POURQUOI `NOT_AVAILABLE` ET PAS `INPUT_INVALID` ───────────────────────
+   *
+   * L'appel du projet est PARFAITEMENT correct : le code existe, les variables
+   * sont bonnes, l'identité est prouvée. Ce qui manque est une CONFIGURATION —
+   * le contenu de ce projet n'a jamais été écrit. `INPUT_INVALID` enverrait le
+   * projet corriger son code, où il ne trouverait rien ; `NOT_AVAILABLE` dit la
+   * vérité : quelqu'un doit remplir un écran.
+   *
+   * Ce refus est la contrepartie ASSUMÉE du lot : des envois qui « marchaient »
+   * échouent désormais. C'est le but — ils partaient avec le texte du Panel sous
+   * le nom d'un client.
+   */
+  /**
+   * LE PROJET NE DÉCLARE PLUS CE MODÈLE — un refus qui doit se DIRE.
+   *
+   * ── POURQUOI PAS `INPUT_INVALID`, QUI ÉTAIT LA RÉPONSE PAR DÉFAUT ─────────
+   *
+   * Faute d'être nommé ici, ce refus retombait dans la traduction générique :
+   * « Entrée non conforme au contrat de "email.send_template" ». C'est faux sur
+   * les deux plans. L'entrée est parfaitement conforme — le code existe, les
+   * variables sont bonnes — et surtout ce message envoie corriger un appel qui
+   * n'a rien à corriger. Pendant ce temps, la vraie cause — ce projet a cessé
+   * de déclarer ce modèle — n'apparaissait nulle part.
+   *
+   * `NOT_AVAILABLE` dit ce qui est vrai : le refus ne vient pas de l'appel mais
+   * de la DÉCLARATION, et c'est elle qu'il faut changer — dans le projet, qui
+   * en est l'auteur, jamais dans le Panel, qui ne fait que s'y conformer.
+   */
+  if (code === EMAIL_TEMPLATE_NOT_DECLARED) {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `Ce projet ne déclare pas le modèle demandé par « ${capability.code} » : aucun envoi n’est effectué. `
+      + 'La liste des modèles consommés est déclarée par le projet lui-même — c’est là qu’elle se corrige.',
+      { reason: EMAIL_TEMPLATE_NOT_DECLARED },
+    );
+  }
+
+  if (code === EMAIL_TEMPLATE_NOT_CONFIGURED) {
+    return new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      `Aucun modèle n’est configuré pour cette portée : « ${capability.code} » ne peut pas s’exécuter. `
+      + 'Le contenu du Panel n’est jamais servi à la place de celui d’un projet.',
+      { reason: EMAIL_TEMPLATE_NOT_CONFIGURED },
     );
   }
 
@@ -203,12 +255,24 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
         environment: context.environment,
       });
 
-    // LE RENDU — par l'autorité Panel, avec le contenu de CE projet.
+    /**
+     * LA PORTÉE — DÉDUITE DU CONTEXTE, JAMAIS DE LA CHARGE UTILE (Phase 7).
+     *
+     * `context.projectId` est celui que le jeton de pont a PROUVÉ. Le contrat
+     * d'entrée de la capacité ne porte aucun champ de portée, et il est
+     * `strict()` : un projet qui en inventerait un serait refusé au schéma,
+     * avant d'arriver ici. Le fil transporte un CODE NU — et c'est plus sûr que
+     * de transporter une portée, puisqu'une portée transportée est une portée
+     * qu'on peut réécrire.
+     */
+    const scope = scopeOfInvocationContext(context);
+
+    // LE RENDU — par l'autorité Panel, avec le contenu de CETTE portée.
     rendered = await renderForSend({
       // `templateRef` sur le fil (contrat L8), `templateCode` dans l'autorité
       // Panel : le même objet, nommé selon le côté où l'on se trouve.
       templateCode: input.templateRef,
-      projectId: context.projectId,
+      scope,
       variables: input.variables ?? {},
     });
   } catch (error) {
@@ -247,6 +311,23 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
       // Le fait constaté, pas la configuration : c'est SOUS CETTE ADRESSE que
       // le message est parti, et c'est ce que le suivi du projet doit montrer.
       sender: { email: sender.fromEmail, name: sender.fromName },
+      /**
+       * QUEL DOCUMENT EXACT EST PARTI (Phases 13 et 14).
+       *
+       * L'audit avait relevé que le journal ne permettait pas de répondre
+       * après coup à « quel template, pour quel projet, quelle version ». Et
+       * que le projet persistait sur sa livraison une `templateVersion` LOCALE
+       * — un numéro qui n'était jamais parti. Les deux se corrigent au même
+       * endroit : le seul composant qui SAIT est celui qui vient de rendre.
+       *
+       * Ce sont des FAITS CONSTATÉS, pas des configurations. Ils ne révèlent
+       * rien : ni adresse, ni contenu, ni secret.
+       */
+      templateCode: rendered.templateCode,
+      templateScope: rendered.scopeType,
+      templateScopeId: rendered.scopeId,
+      templateVersion: rendered.version,
+      templateSource: rendered.source,
     };
   } catch (error) {
     if (error instanceof CapabilityError) throw error;
@@ -254,4 +335,4 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
   }
 }
 
-export default { brevoSendTemplate };
+export default { brevoSendTemplate, translatePreparation };

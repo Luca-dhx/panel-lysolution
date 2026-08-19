@@ -20,4 +20,9 @@ export {
   quoteEnvValue,
   sanitizeFolderName,
   COPY_DENYLIST,
+  NODE_PROJECT_DISCOVERY_DENYLIST,
+  discoverNodeProjects,
+  installNodeProjects,
+  validateDuplicatedNodeProjects,
+  NodeProjectInitializationError,
 } from './duplication.js';

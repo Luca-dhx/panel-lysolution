@@ -24,7 +24,12 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 
-export const CONTRACT_VERSION = '1.5.0';
+// 1.9.0 (ADDITIF, rétrocompatible) — LE PROJET DÉCLARE SON RÉSEAU COURANT.
+//   `Heartbeat.runtime.network` : les adresses publiques que le projet SERT
+//   RÉELLEMENT, à chaque battement. Voir `heartbeatSchema` pour la doctrine —
+//   en particulier pourquoi ce n'était pas une entité de synchronisation, et
+//   pourquoi l'appairage ne fige plus une URL.
+export const CONTRACT_VERSION = '1.9.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -57,6 +62,15 @@ export const PANEL_API_ROUTES = Object.freeze({
    * fait autorité vient du jeton de pont.
    */
   webhookVerificationSecret: '/bridge/v1/webhooks/{provider}/verification-secret',
+  /**
+   * L'INTROSPECTION D'IDENTITÉ FÉDÉRÉE (L12.B).
+   *
+   * Le seul moyen, pour un projet, d'apprendre qu'une session développeur
+   * fédérée doit être fermée — sans quoi couper l'accès exigerait d'éditer sa
+   * base à la main. Aucun identifiant de projet dans le chemin : celui qui
+   * fait autorité est celui du jeton de pont.
+   */
+  federationIntrospect: '/bridge/v1/federation/introspect',
 });
 
 // Chemins exposés par chaque projet (contrat ProjectBridge), consommés par
@@ -68,6 +82,16 @@ export const PROJECT_API_ROUTES = Object.freeze({
   manifest: '/api/project-bridge/v1/manifest',
   syncPush: '/api/project-bridge/v1/sync/push',
   syncPull: '/api/project-bridge/v1/sync/pull',
+  /**
+   * LES COMPTES DU PROJET — lecture VIVANTE, jamais un instantané.
+   *
+   * Le Panel affichait « l'équipe » depuis sa propre projection
+   * `PanelProjectMember`, alimentée par le flux de synchronisation. Une copie
+   * qui vieillit, qui ne portait que les comptes locaux, et qui décrivait les
+   * mêmes personnes avec d'autres champs que le Manager. Cette route remplace
+   * les trois défauts par une question posée à celui qui fait autorité.
+   */
+  accounts: '/api/project-bridge/v1/accounts',
   operations: '/api/project-bridge/v1/operations',
   operationInvoke: '/api/project-bridge/v1/operations/{operationId}/invoke',
   unpair: '/api/project-bridge/v1/unpair',
@@ -191,6 +215,29 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    */
   'PROJECT_SITE_STATUS',
   /**
+   * >= 1.8.0 — CE QUE LE PROJET UTILISE COMME MODÈLES D'E-MAIL.
+   *
+   * ══ UNE DECLARATION D'ETAT, PAS UNE DEMANDE DE MUTATION ═══════════════════
+   *
+   * Le projet ne demande pas « provisionne-moi ces dix modeles » : il ANNONCE
+   * les codes qu'il consomme. Le Panel en tire les consequences — poser une
+   * instance manquante, retirer de la vue active un code qui n'est plus
+   * annonce. C'est la difference entre un ordre, qu'il faudrait rejouer a
+   * l'identique apres une coupure, et un etat, qui converge tout seul.
+   *
+   * Elle passe donc par la synchronisation d'entites, avec tout ce qu'elle
+   * apporte gratuitement : LWW sur `modifiedAt`, anti-echo par `writeId`,
+   * idempotence, file durable, rattrapage au pull. Une capacite imperative
+   * n'aurait eu aucune de ces proprietes.
+   *
+   * UNE SEULE entite par projet — `entityId` stable — comme
+   * `PROJECT_PRESENTATION` : c'est un etat, pas une collection.
+   *
+   * Le projet reste l'autorite de l'USAGE ; le Panel garde l'autorite du
+   * CONTRAT (quels codes existent, leurs variables) et du CONTENU.
+   */
+  'PROJECT_EMAIL_TEMPLATE_USAGE',
+  /**
    * >= 1.6.x — RETOUR DE LIVRAISON D'UN E-MAIL, poussé par le Panel (L8.4C).
    *
    * Depuis que les envois partent du compte Brevo du Panel, les webhooks de
@@ -292,6 +339,14 @@ export const APPLIED_ENTITY_TYPES = Object.freeze([
   'CONTRACT',
   'TEAM_MEMBER',
   'PROJECT_SITE_STATUS',
+  /**
+   * >= 1.8.0 — la DECLARATION D'USAGE des modeles d'e-mail. Reellement
+   * appliquee : son projecteur provisionne les instances manquantes du projet
+   * a la reception, et retire de sa vue active celles qui ne sont plus
+   * declarees. Declarer sans appliquer ferait accepter une ecriture dont rien
+   * ne decoulerait — exactement le mensonge que ce couple de listes evite.
+   */
+  'PROJECT_EMAIL_TEMPLATE_USAGE',
 ]);
 
 export const EMITTERS = Object.freeze({ PANEL: 'PANEL', PROJECT: 'PROJECT' });
@@ -538,6 +593,66 @@ export const heartbeatSchema = z
           .strict()
           .optional(),
         components: z.record(z.string().min(1), z.enum(['OK', 'WARNING', 'ERROR', 'UNKNOWN'])).optional(),
+        /**
+         * ══ >= 1.9.0, ADDITIF — LE RÉSEAU QUE CE PROJET SERT MAINTENANT ═════
+         *
+         * ── LE DÉFAUT QUE CE CHAMP FERME ──────────────────────────────────
+         *
+         * `runtime.publicBackendUrl` était posée UNE FOIS, au bootstrap, et
+         * plus jamais revue. Un projet redéployé sur un autre domaine gardait
+         * donc, côté Panel, l'adresse qu'il avait le jour de l'appairage —
+         * observé en recette réelle : une fiche annonçait encore l'ancien
+         * domaine d'un projet des semaines après sa migration, alors que le
+         * projet déclarait correctement le nouveau.
+         *
+         * Le battement de cœur était le seul canal qui parle en permanence, et
+         * il ne transportait AUCUNE adresse (`.strict()`). Rien ne pouvait donc
+         * corriger la valeur sans un réappairage — c'est-à-dire en détruisant
+         * une relation de confiance pour rafraîchir une donnée d'exploitation.
+         *
+         * ── POURQUOI ICI, ET PAS DANS UNE ENTITÉ DE SYNCHRONISATION ────────
+         *
+         * `PROJECT_PRESENTATION.network` porte déjà ces adresses, et reste
+         * l'autorité ARBITRÉE : LWW sur `modifiedAt`, anti-écho, file durable.
+         * Elle n'est pas remplacée, et rien n'est dupliqué.
+         *
+         * Mais une projection ne part que lorsque l'état CHANGE. Un projet dont
+         * le réseau est stable n'émet plus rien — et si une projection a été
+         * perdue, refusée par un Panel antérieur, ou émise avant que le Panel
+         * ne sache la lire, plus RIEN ne la rejoue. L'état déclaré et l'état
+         * réel divergent alors en silence, sans que personne ne puisse le voir.
+         *
+         * Le battement, lui, répète. C'est exactement ce qu'on attend d'une
+         * donnée de LIVENESS : elle ne prouve pas ce qui a changé, elle prouve
+         * ce qui est vrai maintenant. Les deux canaux ne disent donc pas la
+         * même chose et se complètent :
+         *
+         *     PROJECT_PRESENTATION   « voici mon nouvel état »   (arbitré)
+         *     Heartbeat.runtime.network « voici mon état actuel » (répété)
+         *
+         * ── ADDITIF, DONC SANS RUPTURE ────────────────────────────────────
+         *
+         * Entièrement optionnel. Un projet en 1.8 n'émet rien et reste
+         * pleinement conforme : sa fiche continue de converger par la
+         * projection de présentation, exactement comme avant.
+         */
+        network: z
+          .object({
+            /** L'API publique — celle que le Panel doit appeler. */
+            publicBackendUrl: z.string().url().nullable().optional(),
+            /** Le site public — celui que le client consulte. */
+            publicSiteUrl: z.string().url().nullable().optional(),
+            /** L'espace de gestion du client. */
+            managerUrl: z.string().url().nullable().optional(),
+            /**
+             * QUAND LE PROJET A CONSTATÉ CET ÉTAT — son horloge, informative.
+             * L'arbitrage reste au Panel, sur l'instant de RÉCEPTION : une
+             * horloge de projet en dérive ne doit pas pouvoir figer une adresse.
+             */
+            declaredAt: isoDate.nullable().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .optional(),
@@ -676,6 +791,28 @@ export const projectPresentationPayloadSchema = z
  * vrai même quand il ne produit aucun effet (site protégé, contrat honoré).
  * C'est lui que la carte du Panel donne à basculer.
  */
+/**
+ * CE QU'UN PROJET DECLARE UTILISER COMME MODELES D'E-MAIL (>= 1.8.0).
+ *
+ * Des CODES, et rien d'autre. Ni sujet, ni HTML, ni version : le contenu
+ * appartient au Panel, et un projet qui pourrait le pousser par cette porte
+ * contournerait l'editeur, le versionnement et la validation.
+ *
+ * `templateCodes` est borne : une declaration n'est pas un catalogue, et une
+ * liste sans limite est une porte ouverte a un payload de plusieurs mega-octets
+ * ecrit par erreur.
+ */
+export const emailTemplateUsagePayloadSchema = z
+  .object({
+    templateCodes: z.array(z.string().min(1).max(80)).max(200),
+    /** Empreinte de la liste, calculee par le projet. Decide du non-evenement. */
+    revision: z.string().min(1).max(128),
+    /** Horloge du projet — informatif ; `modifiedAt` arbitre le LWW. */
+    declaredAt: isoDate.optional(),
+    softwareVersion: z.string().max(64).nullable().optional(),
+  })
+  .strict();
+
 export const siteStatusPayloadSchema = z
   .object({
     accessible: z.boolean(),
@@ -745,6 +882,30 @@ const contractDocumentSchema = z
     })
     .strict();
 
+/**
+ * LA RÉCURRENCE D'UN ABONNEMENT — « tous les <interval> <unit> ».
+ *
+ * ══ POURQUOI ELLE EST OPTIONNELLE, ET LE RESTE ══════════════════════════════
+ *
+ * Un projet non encore redéployé ne l'émet pas. La rendre obligatoire ferait
+ * REJETER sa projection entière — le Panel perdrait le contrat, son document et
+ * son montant pour un champ absent. Absent se lit « projet antérieur au lot »,
+ * et le Panel retombe alors sur `interval` seul, lu comme « tous les 1 ».
+ *
+ * ══ LA VALIDATION EST STRICTE MALGRÉ TOUT ═══════════════════════════════════
+ *
+ * Quand elle est là, elle doit être JUSTE : c'est cette valeur qui décide de la
+ * période d'un Price Stripe. `int().min(1)` n'est pas une politesse — un `0`
+ * accepté ici produirait un tarif que le fournisseur refuse, au clic sur
+ * « souscrire », des semaines après la signature.
+ */
+const subscriptionRecurrenceSchema = z
+  .object({
+    unit: z.enum(['MONTH', 'YEAR']),
+    interval: z.number().int().min(1),
+  })
+  .strict();
+
 /** Montants d'un contrat — mêmes règles pour le courant et pour l'histoire. */
 const contractPricingSchema = z
   .object({
@@ -752,6 +913,10 @@ const contractPricingSchema = z
       .object({
         amountIncludingTax: z.number().nullable().optional(),
         currency: z.string().nullable().optional(),
+        recurrence: subscriptionRecurrenceSchema.nullable().optional(),
+        /** Le libellé français, calculé par le projet — jamais ce qui fait foi. */
+        recurrenceLabel: z.string().nullable().optional(),
+        /** HÉRITAGE : l'UNITÉ seule, sous son ancien nom. */
         interval: z.string().nullable().optional(),
       })
       .strict()

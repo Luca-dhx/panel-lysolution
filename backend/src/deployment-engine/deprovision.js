@@ -42,6 +42,7 @@
  * avec un FakeTransport, sans VPS.
  */
 import { DeploymentError } from './errors.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, sonde } from './remoteCommand.js';
 import { planTopology } from './topology.js';
 import { nginxConfigPath, nginxEnabledPath } from './nginx.js';
 import { serviceName } from './config/project.profile.js';
@@ -232,13 +233,13 @@ export function quarantineEnabledPath(host) {
 
 /** Nginx accepte-t-il la configuration en place ? */
 async function nginxTestOk(transport) {
-  const test = await transport.exec('sudo nginx -t 2>&1');
+  const test = await sonde(transport, 'deprovision.probe_nginx_config', 'sudo nginx -t 2>&1');
   const sortie = `${test.stdout ?? ''}${test.stderr ?? ''}`;
   return /syntax is ok/i.test(sortie) && /test is successful/i.test(sortie);
 }
 
 async function reloadNginx(transport) {
-  await transport.exec('sudo systemctl reload nginx || sudo nginx -s reload');
+  await runRemoteCommand(transport, { commandId: 'deprovision.reload_nginx', command: 'sudo systemctl reload nginx || sudo nginx -s reload', commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.SERVICE });
 }
 
 /**
@@ -257,15 +258,15 @@ export async function applyQuarantine(transport, { host, hosts }) {
   const lien = quarantineEnabledPath(host);
 
   await transport.writeFile(tmp, contenu);
-  await transport.exec(`sudo mv ${tmp} ${conf}`);
+  await runRemoteCommand(transport, { commandId: 'deprovision.install_quarantine_conf', command: `sudo mv ${tmp} ${conf}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
   // La configuration APPLICATIVE part au même moment : deux blocs `server`
   // portant le même `server_name` feraient gagner le premier chargé — donc,
   // possiblement, l'ancien site.
-  await transport.exec(`sudo rm -f ${nginxEnabledPath(host)}`);
-  await transport.exec(`sudo ln -sf ${conf} ${lien}`);
+  await runRemoteCommand(transport, { commandId: 'deprovision.disable_site', command: `sudo rm -f ${nginxEnabledPath(host)}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
+  await runRemoteCommand(transport, { commandId: 'deprovision.enable_quarantine', command: `sudo ln -sf ${conf} ${lien}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
 
   if (!(await nginxTestOk(transport))) {
-    await transport.exec(`sudo rm -f ${lien}`).catch(() => {});
+    await runRemoteCommand(transport, { commandId: 'deprovision.rollback_quarantine_link', command: `sudo rm -f ${lien}`, commandClass: COMMAND_CLASS.ROLLBACK, timeoutMs: TIMEOUTS.FILESYSTEM }).catch(() => {});
     throw new DeploymentError('QUARANTINE_CONFIG_INVALID',
       'La configuration de quarantaine est refusée par Nginx.', {
         step: 'deprovision.quarantine', details: { conf },
@@ -282,8 +283,8 @@ export async function applyQuarantine(transport, { host, hosts }) {
 export async function removeQuarantine(transport, { host }) {
   const lien = quarantineEnabledPath(host);
   const conf = quarantineConfigPath(host);
-  await transport.exec(`sudo rm -f ${lien}`);
-  await transport.exec(`sudo rm -f ${conf}`);
+  await runRemoteCommand(transport, { commandId: 'deprovision.remove_site_link', command: `sudo rm -f ${lien}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
+  await runRemoteCommand(transport, { commandId: 'deprovision.remove_site_conf', command: `sudo rm -f ${conf}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
   if (!(await nginxTestOk(transport))) {
     throw new DeploymentError('NGINX_CONFIG_INVALID',
       'Nginx refuse sa configuration après le retrait de la quarantaine.', {
@@ -298,14 +299,14 @@ export async function removeQuarantine(transport, { host }) {
 export async function removeApplicationSite(transport, { host }) {
   const lien = nginxEnabledPath(host);
   const conf = nginxConfigPath(host);
-  await transport.exec(`sudo rm -f ${lien}`);
-  await transport.exec(`sudo rm -f ${conf}`);
+  await runRemoteCommand(transport, { commandId: 'deprovision.remove_site_link', command: `sudo rm -f ${lien}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
+  await runRemoteCommand(transport, { commandId: 'deprovision.remove_site_conf', command: `sudo rm -f ${conf}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
   return { removed: [lien, conf] };
 }
 
 /** Liste PM2 lue et analysée, ou `[]` si illisible. */
 async function pm2List(transport) {
-  const res = await transport.exec('pm2 jlist 2>/dev/null || echo "[]"');
+  const res = await sonde(transport, 'deprovision.probe_pm2', 'pm2 jlist 2>/dev/null || echo "[]"');
   try {
     const liste = JSON.parse(res.stdout || '[]');
     return Array.isArray(liste) ? liste : [];
@@ -326,7 +327,7 @@ export async function inspectDestination(transport, { host, remoteRoot = '/var/w
   const name = serviceName(host);
 
   const lire = async (commande, defaut = '') => {
-    const res = await transport.exec(commande).catch(() => null);
+    const res = await sonde(transport, 'deprovision.probe_state', commande).catch(() => null);
     return (res?.stdout ?? defaut).trim();
   };
 
@@ -469,9 +470,9 @@ export async function runDeprovision({
     //    sans arrêter laisserait, sur certaines versions de PM2, un processus
     //    orphelin détenant toujours le port.
     await step('deprovision.services.stop', async () => {
-      await transport.exec(`pm2 stop ${pm2Name} >/dev/null 2>&1 || true`);
-      await transport.exec(`pm2 delete ${pm2Name} >/dev/null 2>&1 || true`);
-      await transport.exec('pm2 save >/dev/null 2>&1 || true');
+      await runRemoteCommand(transport, { commandId: 'deprovision.stop_service', command: `pm2 stop ${pm2Name} >/dev/null 2>&1 || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.SERVICE });
+      await runRemoteCommand(transport, { commandId: 'deprovision.remove_service', command: `pm2 delete ${pm2Name} >/dev/null 2>&1 || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.SERVICE });
+      await runRemoteCommand(transport, { commandId: 'deprovision.save_services', command: 'pm2 save >/dev/null 2>&1 || true', commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.SERVICE });
       return { pm2Name, stopped: true };
     });
 
@@ -495,7 +496,7 @@ export async function runDeprovision({
     //    s'arrête plutôt que de laisser croire qu'il est libre.
     await step('deprovision.port.release', async () => {
       if (!port) return { skipped: true, reason: 'aucun port applicatif déclaré' };
-      const res = await transport.exec(`ss -ltnp 2>/dev/null | grep ':${port} ' || echo LIBRE`);
+      const res = await sonde(transport, 'deprovision.probe_port', `ss -ltnp 2>/dev/null | grep ':${port} ' || echo LIBRE`);
       const ligne = (res.stdout ?? '').trim();
       if (ligne !== 'LIBRE' && ligne !== '') {
         throw new DeploymentError('PORT_STILL_HELD',
@@ -521,11 +522,11 @@ export async function runDeprovision({
       const verrou = assertSafeSiteRoot(siteRoot, { remoteRoot, host, protectedPaths });
       // `test -d` avant `rm -rf` : une destination déjà vidée doit produire un
       // retrait « déjà fait », pas une commande destructive de plus.
-      const present = await transport.exec(`test -d ${verrou} && echo OUI || echo NON`);
+      const present = await sonde(transport, 'deprovision.probe_lock', `test -d ${verrou} && echo OUI || echo NON`);
       if ((present.stdout ?? '').trim() !== 'OUI') {
         return { siteRoot: verrou, alreadyAbsent: true };
       }
-      await transport.exec(`rm -rf ${verrou}`);
+      await runRemoteCommand(transport, { commandId: 'deprovision.remove_lock', command: `rm -rf ${verrou}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM });
       return { siteRoot: verrou, removed: true, files: inventory?.files ?? null, size: inventory?.size ?? null };
     });
 
@@ -533,11 +534,11 @@ export async function runDeprovision({
     //    routage applicatif. C'est cette étape, et elle seule, qui autorise
     //    l'état EMPTY.
     const verification = await step('deprovision.verify', async () => {
-      const reste = await transport.exec(`test -d ${siteRoot} && echo OUI || echo NON`);
+      const reste = await sonde(transport, 'deprovision.probe_site_dir', `test -d ${siteRoot} && echo OUI || echo NON`);
       const dossierPresent = (reste.stdout ?? '').trim() === 'OUI';
       const restants = await pm2List(transport);
       const processPresent = restants.some((p) => p?.name === pm2Name);
-      const conf = await transport.exec(`test -e ${nginxEnabledPath(host)} && echo OUI || echo NON`);
+      const conf = await sonde(transport, 'deprovision.probe_vhost', `test -e ${nginxEnabledPath(host)} && echo OUI || echo NON`);
       const routagePresent = (conf.stdout ?? '').trim() === 'OUI';
 
       const anomalies = [
@@ -639,15 +640,15 @@ export async function runDestinationDelete({
     await step('delete.runtime.verify', async () => {
       const processus = await pm2List(transport);
       const pm2Present = processus.some((p) => p?.name === pm2Name);
-      const vhost = await transport.exec(`test -e ${nginxEnabledPath(host)} && echo OUI || echo NON`);
+      const vhost = await sonde(transport, 'deprovision.probe_vhost', `test -e ${nginxEnabledPath(host)} && echo OUI || echo NON`);
       const routagePresent = (vhost.stdout ?? '').trim() === 'OUI';
       let portTenu = null;
       if (port) {
-        const res = await transport.exec(`ss -ltnp 2>/dev/null | grep ':${port} ' || echo LIBRE`);
+        const res = await sonde(transport, 'deprovision.probe_port', `ss -ltnp 2>/dev/null | grep ':${port} ' || echo LIBRE`);
         const ligne = (res.stdout ?? '').trim();
         if (ligne !== 'LIBRE' && ligne !== '') portTenu = ligne.replace(/\s+/g, ' ').slice(0, 200);
       }
-      const dossier = await transport.exec(`test -d ${siteRoot} && echo OUI || echo NON`);
+      const dossier = await sonde(transport, 'deprovision.probe_site_dir', `test -d ${siteRoot} && echo OUI || echo NON`);
       const fichiersPresents = (dossier.stdout ?? '').trim() === 'OUI';
 
       const restants = [
@@ -669,8 +670,7 @@ export async function runDestinationDelete({
     await step('delete.quarantine.release', async () => {
       const lien = quarantineEnabledPath(host);
       const conf = quarantineConfigPath(host);
-      const present = await transport.exec(
-        `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
+      const present = await sonde(transport, 'deprovision.probe_quarantine', `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
       if ((present.stdout ?? '').trim() !== 'OUI') {
         return { alreadyDone: true, reason: 'already_absent', host };
       }
@@ -683,8 +683,7 @@ export async function runDestinationDelete({
     await step('delete.verify', async () => {
       const lien = quarantineEnabledPath(host);
       const conf = quarantineConfigPath(host);
-      const reste = await transport.exec(
-        `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
+      const reste = await sonde(transport, 'deprovision.verify_quarantine_removed', `{ test -e ${lien} || test -e ${conf}; } && echo OUI || echo NON`);
       if ((reste.stdout ?? '').trim() === 'OUI') {
         throw new DeploymentError('QUARANTINE_STILL_PRESENT',
           `La quarantaine de « ${host} » est encore en place après sa levée.`, {

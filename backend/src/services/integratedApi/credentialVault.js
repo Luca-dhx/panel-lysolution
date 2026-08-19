@@ -27,6 +27,7 @@ import { encryptSecret, decryptSecret } from '../../utils/panelCrypto.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import {
   administrableRoles,
+  checkHostForEnvironment,
   credentialRole,
   credentialRoles,
   requiredRoleCodes,
@@ -101,6 +102,7 @@ export function encryptCredentialValues({
 
     const value = String(raw).trim();
     assertExpectedPrefix({ provider, definition, value, environment });
+    assertExpectedHost({ provider, definition, value, environment });
 
     stored[roleCode] = {
       encrypted: encryptSecret(value),
@@ -159,6 +161,56 @@ function assertExpectedPrefix({ provider, definition, value, environment }) {
   throw ApiError.badRequest(
     'PANEL_INTEGRATED_API_PREFIX_UNEXPECTED',
     `Enregistrement refusé : « ${definition.label} » en ${environment} commence normalement par « ${expected} ».`,
+  );
+}
+
+/**
+ * GARDE-FOU D'HÔTE — détecte un monde saisi à l'envers dans une URL de base.
+ *
+ * ══ L'INCIDENT QUI A RENDU CE GARDE-FOU NÉCESSAIRE ══════════════════════════
+ *
+ * Le jeu YOUSIGN/TEST a été enregistré avec `https://api.yousign.app/v3`,
+ * l'hôte de PRODUCTION. La clé de bac à sable était parfaitement valide ;
+ * envoyée à l'hôte de production, elle recevait `403 You cannot consume this
+ * service` sur CHAQUE route — y compris celles dont elle avait le droit. Le
+ * Panel a conclu « clé invalide », et l'opérateur a passé son temps à vérifier
+ * une clé qui n'avait rien.
+ *
+ * Le registre proposait pourtant le bon défaut. Un défaut est une SUGGESTION :
+ * il ne survit pas à une saisie. Ce qui manquait était une CONTRAINTE, et elle
+ * est de la même nature que celle des préfixes juste au-dessus — d'où sa place
+ * ici, dans le même passage d'écriture, refusée AVANT le chiffrement.
+ *
+ * ── POURQUOI L'HÔTE, ET NON L'URL ENTIÈRE ───────────────────────────────────
+ *
+ * Un chemin peut légitimement varier (`/v3`, un préfixe de proxy inverse). Ce
+ * qui ne peut pas varier, c'est le MONDE interrogé, et le monde est porté par
+ * l'hôte.
+ */
+function assertExpectedHost({ provider, definition, value, environment }) {
+  const verdict = checkHostForEnvironment(provider, definition.code, environment, value);
+  if (!verdict) return;
+
+  if (verdict.reason === 'MALFORMED') {
+    throw ApiError.badRequest(
+      'PANEL_INTEGRATED_API_BASE_URL_MALFORMED',
+      `Enregistrement refusé : « ${definition.label} » doit être une URL absolue `
+      + `(attendu : https://${verdict.expected}/…).`,
+    );
+  }
+  if (verdict.reason === 'OTHER_ENVIRONMENT') {
+    throw ApiError.badRequest(
+      'PANEL_INTEGRATED_API_BASE_URL_WRONG_ENVIRONMENT',
+      `Enregistrement refusé : « ${verdict.actual} » est l’hôte ${provider} de `
+      + `${verdict.otherEnvironment}, et vous configurez le jeu ${environment}. `
+      + `Une clé ${environment} envoyée à cet hôte est refusée par le fournisseur `
+      + `avec un 403 qui ressemble à une clé invalide — attendu : ${verdict.expected}.`,
+    );
+  }
+  throw ApiError.badRequest(
+    'PANEL_INTEGRATED_API_BASE_URL_UNEXPECTED_HOST',
+    `Enregistrement refusé : « ${definition.label} » en ${environment} doit viser `
+    + `« ${verdict.expected} », et non « ${verdict.actual} ».`,
   );
 }
 

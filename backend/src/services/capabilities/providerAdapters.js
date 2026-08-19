@@ -148,8 +148,8 @@ async function brevoSenderVerify({ credentials, definition, fetchImpl }) {
  * Capacité → exécutant. FERMÉE, et volontairement courte.
  *
  * Une capacité absente d'ici n'est pas servie, quoi qu'en dise son registre :
- * c'est la table qui décide de ce qui s'exécute réellement, et le contrôle
- * d'alignement vérifie que `migrated: true` et présence ici coïncident.
+ * c'est la table qui décide de ce qui s'exécute réellement, et
+ * `assertAdapterAlignment()` exige que les deux listes soient IDENTIQUES.
  */
 const ADAPTERS = Object.freeze({
   'email.sender.verify': brevoSenderVerify,
@@ -218,9 +218,10 @@ export function listAdaptedCapabilities() {
 export async function executeCapability({ definition, context, credentials, input, fetchImpl }) {
   const adapter = ADAPTERS[definition.code];
   if (!adapter) {
-    // Cas impossible si l'alignement tient : la passerelle a déjà refusé une
-    // capacité non migrée. On refuse quand même — une garde qui ne sert jamais
-    // coûte une ligne, une garde manquante coûte un appel non prévu.
+    // Cas impossible si l'alignement tient — et c'est désormais la SEULE
+    // défense contre une capacité fantôme au moment de l'exécution, puisque la
+    // passerelle ne teste plus aucun booléen de migration en amont. Une garde
+    // qui ne sert jamais coûte une ligne ; son absence coûte une exception nue.
     throw capabilityNotAvailable(definition.code, 'NO_ADAPTER');
   }
 
@@ -233,24 +234,43 @@ export async function executeCapability({ definition, context, credentials, inpu
 }
 
 /**
- * Les adaptateurs et le registre disent-ils la même chose ?
+ * LA GARDE ANTI-CAPACITÉ FANTÔME — bijection stricte registre ↔ adaptateurs.
  *
- * Deux dérives possibles : une capacité annoncée servie sans exécutant (l'appel
- * échouerait tard, avec un message obscur), et un exécutant pour une capacité
- * annoncée non migrée (un chemin d'exécution qu'aucun écran ne mentionne).
+ * ── CE QU'ELLE EXIGE, ET POURQUOI DANS LES DEUX SENS ────────────────────────
+ *
+ *   registre sans adaptateur  →  une capacité que l'écran annonce, que l'API
+ *                                accepte, et qui refuse à l'exécution. C'est
+ *                                exactement l'état « accordée, mais pas encore
+ *                                servie » que la simplification a supprimé.
+ *
+ *   adaptateur sans registre  →  un chemin d'exécution qu'aucun écran ne
+ *                                mentionne, donc que personne n'audite.
+ *
+ * Ce contrôle existait déjà, mais il s'appuyait sur le booléen `migrated` : une
+ * capacité déclarée non migrée SATISFAISAIT la garde en n'ayant pas
+ * d'adaptateur. Le booléen offrait donc une dispense permanente, et
+ * `billing.subscription.reconcile` l'a utilisée pendant toute sa vie. Sans lui,
+ * la seule façon de satisfaire cette fonction est d'écrire l'exécutant.
  *
  * @returns {string[]} problèmes, vide si tout s'accorde.
  */
 export function assertAdapterAlignment(definitions) {
   const problems = [];
+  const declared = new Set();
+
   for (const definition of definitions) {
-    if (definition.migrated && !hasAdapter(definition.code)) {
-      problems.push(`« ${definition.code} » est déclarée migrée mais n’a aucun adaptateur.`);
-    }
-    if (!definition.migrated && hasAdapter(definition.code)) {
-      problems.push(`« ${definition.code} » a un adaptateur mais n’est pas déclarée migrée.`);
+    declared.add(definition.code);
+    if (!hasAdapter(definition.code)) {
+      problems.push(`« ${definition.code} » est déclarée au registre mais n’a aucun adaptateur.`);
     }
   }
+
+  for (const code of listAdaptedCapabilities()) {
+    if (!declared.has(code)) {
+      problems.push(`« ${code} » a un adaptateur mais n’est déclarée dans aucun registre.`);
+    }
+  }
+
   return problems;
 }
 

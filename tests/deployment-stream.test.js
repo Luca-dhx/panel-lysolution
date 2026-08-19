@@ -250,23 +250,172 @@ section('9. Étapes émises coup sur coup : l’ordre d’écriture suit l’ord
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
-section('10. Le worker sérialise réellement ses écritures d’étapes');
+section('10. Le câblage réel sérialise les écritures et pose la barrière');
 {
-  // Garde STRUCTURELLE sur le seul point de câblage réel : le comportement
-  // ci-dessus ne vaut que si le worker enfile ses écritures au lieu de les
-  // lancer en parallèle, et attend la file avant de conclure.
+  /**
+   * ══ CE QUI RESTE D'UNE GARDE STRUCTURELLE, ET CE QUI L'A REMPLACÉE ════════
+   *
+   * Cette section relisait le TEXTE de `deploy-worker.js` — un point d'entrée
+   * qui lit son environnement et sort par `process.exit()`, donc inéprouvable
+   * autrement. Une expression régulière ne dit pourtant rien de ce que le
+   * texte FAIT : elle aurait continué de passer sur un `drain()` appelé au
+   * mauvais moment.
+   *
+   * L'orchestration vit désormais dans `deploymentJob.service.js`, et
+   * `deployment-durable-recorder.test.js` la met RÉELLEMENT en panne sur le
+   * chemin de production : journal perdu avant la bascule, après, à la
+   * conclusion. Ce qui subsiste ici est le seul invariant qu'un comportement
+   * ne montre pas — que le point d'entrée ne se soit pas remis à orchestrer
+   * dans son coin.
+   */
   const fs = await import('node:fs');
   const path = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const worker = fs.readFileSync(path.join(root, 'backend/src/scripts/deploy-worker.js'), 'utf8');
+  const job = fs.readFileSync(path.join(root, 'backend/src/services/deployment/deploymentJob.service.js'), 'utf8');
 
-  check('onStep n’appelle plus recordStep en parallèle',
-    !/onStep:\s*\(step\)\s*=>\s*runs\.recordStep/.test(worker));
-  check('les écritures d’étapes passent par une file chaînée',
-    /stepQueue\s*=\s*stepQueue\.then\(/.test(worker));
-  check('la file est vidée AVANT finalizeRun',
-    /await stepQueue;[\s\S]{0,400}?await runs\.finalizeRun/.test(worker));
+  check('le worker n’écrit plus aucune étape lui-même',
+    !/recordStep/.test(worker) && !/finalizeRun/.test(worker));
+  check('…il délègue l’orchestration au service éprouvable',
+    /runDeploymentJob\(/.test(worker));
+
+  check('les écritures d’étapes passent par le journal durable',
+    /createDurableRecorder\(runId/.test(job) && /recorder\.recordStep\(step\)/.test(job));
+  check('la file est vidée AVANT la conclusion',
+    /await recorder\.drain\(\);[\s\S]{0,2000}?await recorder\.finalize\(/.test(job));
+  check('…et la barrière de publication est fournie au moteur',
+    /assertDurable: \(\) => recorder\.assertDurable\(\)/.test(job));
+  check('…aucune écriture d’étape n’est plus avalée en silence',
+    !/recordStep[\s\S]{0,80}catch\(\(\) => \{\}\)/.test(job));
+  check('la conclusion n’est plus enveloppée dans un catch muet',
+    !/catch\s*\{\s*\/\/[^\n]*\n\s*\}/.test(job.replace(/\/\*[\s\S]*?\*\//g, '')));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('11. LE FLUX HTTP RÉEL — coupé en plein vol, repris sans trou');
+{
+  /**
+   * ══ L'INCIDENT QUE CETTE SECTION FERME ═════════════════════════════════════
+   *
+   *     [vite] http proxy error:
+   *     /api/deployment/runs/<uuid>/stream?since=0 — read ECONNRESET
+   *
+   * Un déploiement en cours, le backend qui redémarre (c'est le PROPRE de
+   * l'auto-déploiement du Panel), et la connexion du navigateur qui tombe.
+   *
+   * Les sections précédentes éprouvaient la reprise sur la PRIMITIVE
+   * (`readEventsSince`). Elles ne disaient rien de la ROUTE — celle qui a
+   * réellement cassé. Or c'est là que se joue le contrat : le curseur `since`
+   * voyage en query string, la réponse est un flux NDJSON tenu ouvert, et une
+   * coupure y ressemble à une fin de réponse normale.
+   *
+   * On coupe donc pour de vrai — au milieu du flux, côté client — et on
+   * rouvre avec le dernier `seq` REÇU, comme le fait l'écran.
+   */
+  const { seedFromEnv } = await import('../backend/src/services/auth/panelUsers.service.js');
+  await seedFromEnv();
+  const { createApp } = await import('../backend/src/app.js');
+  const { startServer } = await import('./helpers/harness.js');
+  const { base, call, close } = await startServer(createApp());
+
+  const login = await call('POST', '/api/auth/login', {
+    body: { email: 'dev@panel.test', password: 'motdepasse-test' },
+  });
+  const jeton = login.json?.data?.token;
+  check('une session DEV est ouverte pour lire le flux', typeof jeton === 'string');
+
+  const runId = await newRun();
+  await runs.recordStep(runId, { id: 'deployment.initialize', status: 'running' });
+  await runs.recordStep(runId, { id: 'deployment.initialize', status: 'ok' });
+  await runs.recordStep(runId, { id: 'ssh.connect', status: 'running' });
+
+  /**
+   * Lit le flux NDJSON et rend la main après `stopApres` évènements PORTEURS.
+   *
+   * Les `ping` sont écartés à dessein : ce sont des battements de maintien de
+   * connexion, qui REPÈTENT le curseur courant sans rien apporter. Le client
+   * réel ne fait pas autre chose (`Math.max(curseur, evt.seq)`), et les compter
+   * comme des évènements ferait lire un doublon là où il n'y a qu'un souffle.
+   */
+  const lireFlux = async (since, stopApres) => {
+    const controleur = new AbortController();
+    const res = await fetch(`${base}/api/deployment/runs/${runId}/stream?since=${since}`, {
+      headers: { authorization: `Bearer ${jeton}` },
+      signal: controleur.signal,
+    });
+    const recus = [];
+    const lecteur = res.body.getReader();
+    const decodeur = new TextDecoder();
+    let tampon = '';
+    try {
+      while (recus.length < stopApres) {
+        const { done, value } = await lecteur.read();
+        if (done) break;
+        tampon += decodeur.decode(value, { stream: true });
+        let nl = tampon.indexOf('\n');
+        while (nl !== -1 && recus.length < stopApres) {
+          const ligne = tampon.slice(0, nl).trim();
+          tampon = tampon.slice(nl + 1);
+          if (ligne) {
+            const evt = JSON.parse(ligne);
+            if (evt.kind !== 'ping') recus.push(evt);
+          }
+          nl = tampon.indexOf('\n');
+        }
+      }
+    } finally {
+      // LA COUPURE : le client s'en va sans prévenir — exactement ce que fait
+      // un onglet fermé, un proxy qui tombe, ou un backend qui redémarre.
+      controleur.abort();
+    }
+    return { status: res.status, recus };
+  };
+
+  const premier = await lireFlux(0, 3);
+  check(`le flux répond et diffuse (${premier.status})`, premier.status === 200 && premier.recus.length === 3);
+  const dernierRecu = premier.recus[premier.recus.length - 1].seq;
+  check('chaque ligne porte son numéro de séquence',
+    premier.recus.every((e) => typeof e.seq === 'number'));
+
+  /**
+   * PENDANT LA COUPURE, LE WORKER CONTINUE — c'est tout l'intérêt d'un journal
+   * durable. Personne ne lit, et le déploiement avance quand même.
+   */
+  await runs.recordStep(runId, { id: 'ssh.connect', status: 'ok' });
+  await runs.recordStep(runId, { id: 'server.preflight', status: 'running' });
+  await runs.recordStep(runId, { id: 'server.preflight', status: 'ok' });
+
+  const reprise = await lireFlux(dernierRecu, 3);
+  check('la reprise rend exactement ce qui a été manqué', reprise.recus.length === 3);
+  check('…aucun évènement déjà reçu n’est renvoyé',
+    reprise.recus.every((e) => e.seq > dernierRecu));
+  check('…et la suite est CONTIGUË — aucun trou',
+    reprise.recus[0].seq === dernierRecu + 1);
+
+  const union = [...premier.recus, ...reprise.recus].map((e) => e.seq);
+  check('coupure + reprise reconstituent le journal, sans doublon',
+    new Set(union).size === union.length
+    && union.join(',') === union.slice().sort((a, b) => a - b).join(','));
+
+  /**
+   * ET LE RUN SURVIT À LA COUPURE — c'est ce que l'écran relit au rafraîchis-
+   * sement : il ne relance rien, il retrouve.
+   */
+  const relu = await call('GET', `/api/deployment/runs/${runId}`, {
+    headers: { authorization: `Bearer ${jeton}` },
+  });
+  check('un rafraîchissement retrouve le run existant', relu.status === 200 && relu.json.data.runId === runId);
+  check('…toujours en cours, jamais recommencé', relu.json.data.status === 'running');
+  check('…avec l’avancement déjà acquis',
+    relu.json.data.steps.find((s) => s.id === 'server.preflight')?.status === 'ok');
+
+  /** Et sans session, le flux n'est pas une porte ouverte. */
+  const anonyme = await fetch(`${base}/api/deployment/runs/${runId}/stream?since=0`);
+  check(`le flux reste fermé sans jeton (${anonyme.status})`, anonyme.status === 401);
+  await anonyme.body?.cancel();
+
+  await close();
 }
 
 await stopMemoryMongo();

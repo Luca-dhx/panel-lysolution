@@ -19,6 +19,7 @@ import {
   inspect,
   overview,
   preflight,
+  readiness,
   releases,
   remove,
   rollback,
@@ -46,6 +47,18 @@ router.use(requirePanelDev);
 router.use(traceDeploymentRequests());
 
 // — Lecture ----------------------------------------------------------------
+/**
+ * PRÉREQUIS — à interroger AVANT de proposer le moindre bouton.
+ *
+ * En GET, sans corps et sans secret : c'est une lecture, et une lecture ne
+ * transporte pas de mot de passe SSH. Un `503` ici ne vient jamais de cette
+ * route — il vient de la garde de disponibilité montée dans `app.js`, qui
+ * refuse toute la surface `/api` tant que le service n'est pas prêt. C'est
+ * délibéré : « le service démarre » est une réponse du SERVICE, pas du
+ * déploiement, et les confondre ferait chercher une panne de déploiement là où
+ * il n'y a qu'un backend qui s'amorce.
+ */
+router.get('/readiness', asyncHandler(readiness));
 router.get('/', asyncHandler(overview));
 router.get('/self', asyncHandler(self));
 router.get('/runs', asyncHandler(runs));

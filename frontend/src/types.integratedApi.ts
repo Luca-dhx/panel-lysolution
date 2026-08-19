@@ -196,67 +196,38 @@ export interface CapabilityView {
   label: string;
   provider: string;
   scope: string | null;
-  /** Nature de l'effet réel — c'est elle que la politique d'ouverture lit. */
-  effectNature: string | null;
-  /** Branchée sur un adaptateur ? `false` = déclarée, pas encore servie. */
-  migrated: boolean;
-  invocable: boolean;
   idempotency: 'NONE' | 'SAFE_RETRY' | 'UNKNOWN_ON_TIMEOUT' | 'PROVIDER_IDEMPOTENT';
   timeoutMs: number;
   requiredPermissions: string[];
-  /** Ce qui retient encore la migration. `null` si elle est faite. */
-  migrationNote: string | null;
-}
-
-/** Une capacité, vue depuis un PROJET : accordée, et réellement effective ? */
-export interface GrantedCapabilityView extends CapabilityView {
-  granted: boolean;
-  /**
-   * Accordée ET servie. La distinction est nécessaire : accorder une capacité
-   * non migrée ne casse rien, mais l'écran doit dire qu'elle refusera quand
-   * même — sinon l'opérateur croit avoir ouvert un chemin qui reste fermé.
-   */
-  effective: boolean;
-}
-
-export interface CapabilityGrantsView {
-  projectId: string;
-  granted: string[];
-  capabilities: GrantedCapabilityView[];
 }
 
 /* -------------------------------------------------------------------------- */
-/*  OUVERTURE COMMERCIALE (L3.1)                                              */
+/*  CE QUI A DISPARU DE CE FICHIER                                            */
 /* -------------------------------------------------------------------------- */
-
-export type CommercialState = 'PREOPENING' | 'LIVE';
-
-export interface CommercialReadinessCheck {
-  code: string;
-  label: string;
-  passed: boolean;
-  detail: string | null;
-}
 
 /**
- * L'ouverture commerciale d'une instance — à côté de son environnement, jamais
- * fusionnée avec lui.
+ * ── QUATRE TYPES SUPPRIMÉS, ET TROIS CHAMPS DE `CapabilityView` ─────────────
  *
- * `neverDecided` distingue « personne n'a tranché » de « quelqu'un a choisi la
- * pré-ouverture » : les deux se lisent PREOPENING, mais ne se réparent pas de
- * la même façon.
+ *   GrantedCapabilityView       une capacité vue depuis un projet : `granted`
+ *                               et `effective`
+ *   CapabilityGrantsView        la liste éditable des octrois
+ *   CommercialState             'PREOPENING' | 'LIVE'
+ *   CommercialReadinessCheck    les prérequis avant ouverture
+ *   CommercialReadinessView     l'état d'ouverture d'une instance
+ *
+ * Les champs `effectNature`, `migrated`, `invocable` et `migrationNote` ont
+ * quitté `CapabilityView` en même temps. Les trois derniers décrivaient le même
+ * fait — « déclarée mais pas servie » — un état qui n'existe plus : toute
+ * capacité rendue par l'API est servie.
+ *
+ * `effectNature` classait l'effet réel d'une action (READ_ONLY,
+ * FINANCIAL_WRITE, LEGAL_WRITE…). Son unique lecteur était la politique
+ * d'ouverture commerciale, qui décidait quels effets refuser avant bascule en
+ * LIVE. La politique supprimée, la classification n'avait plus de lecteur.
+ *
+ * ── CE QUE CELA IMPLIQUE POUR LES ÉCRANS ────────────────────────────────────
+ *
+ * Le catalogue est celui de l'INSTANCE, pas d'un projet : il ne porte plus
+ * d'état par projet, donc plus rien à cocher, et aucune capacité ne peut plus
+ * être affichée comme « accordée, mais pas encore servie ».
  */
-export interface CommercialReadinessView {
-  projectId: string | null;
-  projectName: string | null;
-  /** L'environnement TECHNIQUE. Affiché à côté, jamais confondu. */
-  environment: IntegratedApiEnvironment | null;
-  state: CommercialState;
-  neverDecided: boolean;
-  decidedAt: string | null;
-  decidedBy: string | null;
-  decisionReason: string | null;
-  checks: CommercialReadinessCheck[];
-  readyToGoLive: boolean;
-  blockedInPreopening: Array<{ capability: string; effect: string }>;
-}

@@ -32,7 +32,6 @@
 import { z } from 'zod';
 
 import { getProviderDefinition } from '../providerRegistry.js';
-import { CAPABILITY_EFFECTS } from '../commercialReadiness.js';
 import { STRIPE_RESOURCE_KINDS } from './stripeResourceOwnership.js';
 
 /* -------------------------------------------------------------------------- */
@@ -438,6 +437,15 @@ const priceEnsureOutput = z.object({
   productId: z.string(),
   status: z.enum(['CREATED', 'EXISTING']),
   interval: z.enum(['month', 'year']),
+  /**
+   * LE NOMBRE DE PAS — rendu, comme le reste des termes.
+   *
+   * Sans lui, un projet ayant publié « tous les 3 mois » ne pouvait pas
+   * vérifier que le Panel avait retenu autre chose que du mensuel : il lisait
+   * `month` et n'en apprenait rien. La reddition de comptes n'a de valeur que
+   * si elle porte sur TOUS les termes du tarif.
+   */
+  intervalCount: z.number().int().positive(),
   amount: z.number().int().positive(),
   currency: z.string(),
 }).strict();
@@ -713,43 +721,28 @@ const DERIVED_OPERATION_IDENTITY = Object.freeze([
   'webhook.endpoint.ensure',
 ]);
 
-const PROPOSED_EFFECTS = Object.freeze({
-  'billing.checkout.retrieve': 'READ_ONLY',
-  'billing.subscription.retrieve': 'READ_ONLY',
-});
-
 function capability(code, options) {
   const definition = getProviderDefinition('STRIPE');
   return Object.freeze({
     code,
     provider: 'STRIPE',
     scope: definition?.scope ?? null,
-    effectNature: CAPABILITY_EFFECTS[code] ?? PROPOSED_EFFECTS[code] ?? null,
     label: options.label,
-    /**
-     * AUCUNE n'était servie en L6.1, et ce n'était pas un oubli : le lien
-     * d'appartenance manquait. L6.2A l'a livré, L6.2B en sert la première —
-     * celle, et la seule, qui ne dépend d'aucun objet Stripe préexistant.
-     *
-     * Les autres restent fermées : elles exigent un lien vers un client ou un
-     * abonnement que le Panel n'a encore jamais créé, et
-     * `validateStripeCapabilities()` refuse qu'on l'oublie.
-     */
-    migrated: options.migrated === true,
     inputSchema: options.inputSchema,
     outputSchema: options.outputSchema,
     timeoutMs: options.timeoutMs,
     idempotency: options.idempotency,
     requiredPermissions: Object.freeze([...options.requiredPermissions]),
-    migrationNote: options.migrationNote,
     /** Famille de ressource dont l'appartenance doit être prouvée. */
     resourceKind: options.resourceKind ?? null,
     requiresResourceOwnership: Boolean(options.resourceKind),
     /**
-     * L'acte est-il financier ? Distinct de `effectNature`, qui décrit l'effet
-     * sur le monde : `cancel_at_period_end` est FINANCIAL_WRITE et pourtant
-     * réversible, tandis qu'une lecture de facture ne l'est pas du tout. Ce
-     * drapeau pilote la doctrine de rejeu, pas la politique commerciale.
+     * L'acte est-il financier ?
+     *
+     * Ce drapeau pilote la DOCTRINE DE REJEU — quelles écritures exigent une
+     * idempotence fournisseur et une poignée de corrélation. Il ne pilote
+     * aucune politique d'accès : il en existait une, l'ouverture commerciale,
+     * qui lisait une taxinomie d'effets désormais supprimée.
      */
     financial: options.financial === true,
   });
@@ -779,8 +772,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:read'],
     resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
     requiresResourceOwnership: true,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -804,8 +795,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:read'],
     resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
     requiresResourceOwnership: true,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -836,8 +825,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     resourceKind: STRIPE_RESOURCE_KINDS.CUSTOMER,
     requiresResourceOwnership: true,
-    migrated: true,
-    migrationNote: null,
   }),
 
   'billing.subscription.retrieve': capability('billing.subscription.retrieve', {
@@ -854,8 +841,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * parce qu'il peut les ADOPTER depuis la session qui les a produits, dont
      * l'appartenance était déjà prouvée.
      */
-    migrated: true,
-    migrationNote: null,
   }),
 
   'billing.checkout.retrieve': capability('billing.checkout.retrieve', {
@@ -880,8 +865,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * La cadence d'interrogation du parcours de retour n'a pas été touchée :
      * les mêmes appels, aux mêmes moments, par une autre porte.
      */
-    migrated: true,
-    migrationNote: null,
   }),
 
   /* ── ÉCRITURES FINANCIÈRES ────────────────────────────────────────────── */
@@ -912,8 +895,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * préexistant, elle en CRÉE un. Sa contrepartie est qu'elle doit lier ce
      * qu'elle crée, immédiatement, sans quoi la ressource serait orpheline.
      */
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -944,8 +925,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * suivant en créerait un second.
      */
     resourceKind: null,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -964,8 +943,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: false,
     resourceKind: null,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -989,8 +966,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: true,
     resourceKind: STRIPE_RESOURCE_KINDS.SUBSCRIPTION,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -1019,8 +994,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     idempotency: 'SAFE_RETRY',
     requiredPermissions: ['webhooks:manage'],
     financial: false,
-    migrated: true,
-    migrationNote: null,
   }),
 
   /**
@@ -1056,8 +1029,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     requiredPermissions: ['billing:write'],
     financial: true,
     resourceKind: STRIPE_RESOURCE_KINDS.PAYMENT_INTENT,
-    migrated: true,
-    migrationNote: null,
   }),
 
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
@@ -1075,8 +1046,6 @@ export const STRIPE_CAPABILITIES = Object.freeze({
      * drapeau donne le même état — mais elle décide de ne plus prélever :
      * c'est un engagement, donc FINANCIAL_WRITE.
      */
-    migrated: true,
-    migrationNote: null,
   }),
 });
 
@@ -1099,12 +1068,6 @@ export function validateStripeCapabilities() {
   for (const [code, definition] of Object.entries(STRIPE_CAPABILITIES)) {
     if (definition.code !== code) problems.push(`code incohérent : « ${code} ».`);
     if (definition.provider !== 'STRIPE') problems.push(`${code} : fournisseur inattendu.`);
-    if (!definition.effectNature) problems.push(`${code} : aucun effet déclaré.`);
-
-    const officiel = CAPABILITY_EFFECTS[code];
-    if (officiel && officiel !== definition.effectNature) {
-      problems.push(`${code} : effet proposé « ${definition.effectNature} » ≠ table L1.75 « ${officiel} ».`);
-    }
 
     // Stripe est à portée ENVIRONMENT : deux comptes, deux mondes.
     if (definition.scope !== 'ENVIRONMENT') {
@@ -1114,26 +1077,20 @@ export function validateStripeCapabilities() {
       problems.push(`${code} : contrat d’entrée ou de sortie manquant.`);
     }
     /**
-     * LA RÈGLE A CHANGÉ DE FORME, PAS DE FOND (L6.2B).
+     * TOUTE CAPACITÉ DE CE CATALOGUE EST SERVIE — les conditions `migrated` qui
+     * gardaient les deux règles suivantes ont disparu avec le booléen.
      *
-     * En L6.1 elle disait « aucune n'est servie », faute d'ancrage
-     * d'appartenance. L'ancrage existe désormais, mais il ne contient encore
-     * AUCUN client ni abonnement : une capacité qui exige de posséder un objet
-     * préexistant serait donc servie pour être toujours refusée — ou, bien
-     * pire, servie en faisant confiance à l'identifiant fourni.
-     *
-     * La règle devient donc : on ne sert que ce qui n'exige aucune possession
-     * préalable. Elle se lèvera d'elle-même, capacité par capacité, quand le
-     * Panel créera lui-même les clients et les abonnements.
+     * Une capacité qui manipule une ressource doit pouvoir en prouver
+     * l'appartenance : sans lien, elle serait servie en faisant confiance à
+     * l'identifiant fourni par le projet.
      */
-    if (definition.migrated
-      && definition.requiresResourceOwnership
+    if (definition.requiresResourceOwnership
       && !BINDABLE_KINDS.includes(definition.resourceKind)) {
       problems.push(`${code} : servie alors qu’aucun lien vers ${definition.resourceKind} n’existe encore.`);
     }
     // Une écriture financière servie doit lier ce qu'elle crée : sans preuve
     // d'appartenance, la ressource produite n'appartiendrait à personne.
-    if (definition.migrated && definition.financial && definition.idempotency !== 'PROVIDER_IDEMPOTENT') {
+    if (definition.financial && definition.idempotency !== 'PROVIDER_IDEMPOTENT') {
       problems.push(`${code} : écriture financière servie sans idempotence fournisseur.`);
     }
 

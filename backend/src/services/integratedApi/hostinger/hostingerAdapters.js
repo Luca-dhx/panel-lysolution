@@ -48,6 +48,17 @@ import {
  * Le message NOMME l'hôte demandé — que le demandeur connaît déjà — et jamais
  * ceux qu'il ne possède pas. Lui répondre « vous possédez a.example.com » lui
  * apprendrait le parc d'un autre.
+ *
+ * ── LE CODE A ÉTÉ CORRIGÉ EN MÊME TEMPS QUE LES OCTROIS ONT DISPARU ─────────
+ *
+ * Ce refus rendait `CAPABILITY_NOT_GRANTED`, ce qui était déjà faux avant la
+ * simplification : il ne parlait pas du droit d'invoquer `dns.record.ensure` —
+ * le projet l'avait — mais de l'appartenance du NOM D'HÔTE visé. Un opérateur
+ * lisant ce code partait chercher une case à cocher qui ne manquait pas.
+ *
+ * `RESOURCE_NOT_OWNED` dit ce qui se passe réellement. Même statut HTTP (403)
+ * et même issue journalisée (`BLOCKED`) : la correction porte sur le
+ * diagnostic, pas sur la décision.
  */
 function ownershipRefusal(verdict, capability) {
   const message = verdict.code === OWNERSHIP_CODES.NO_DESTINATION
@@ -55,7 +66,7 @@ function ownershipRefusal(verdict, capability) {
     : verdict.code === OWNERSHIP_CODES.INVALID_HOSTNAME
       ? 'Refusé : nom d’hôte inexploitable.'
       : `Refusé : « ${verdict.hostname} » ne relève pas de ce projet.`;
-  return new CapabilityError(CAPABILITY_ERROR_CODES.NOT_GRANTED, message, {
+  return new CapabilityError(CAPABILITY_ERROR_CODES.RESOURCE_NOT_OWNED, message, {
     capability: capability.code,
     reason: verdict.code,
   });

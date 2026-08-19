@@ -102,7 +102,14 @@ const uiLiveRoutes = (await import(SB('src/routes/uiLive.routes.js'))).default;
  * lieu d'appeler le service derrière — ce qui laisserait la garde d'accès et
  * le contrôleur hors de la preuve.
  */
-const integratedApiRoutes = (await import(SB('src/routes/integratedApi.routes.js'))).default;
+/*
+ * R11 — LE PROJET N'A PLUS DE ROUTES D'ADMINISTRATION DES INTEGRATED API.
+ *
+ * Les quatre fournisseurs (Stripe, Brevo, Yousign, Hostinger) sont administres
+ * par le Panel : SB Auto ne detient plus aucun credential et n'expose plus
+ * aucune surface d'ecriture. Cette instance de test ne peut donc plus monter
+ * ce routeur — il n'existe plus.
+ */
 /**
  * LES WEBHOOKS ENTRANTS (L6.3A) — le vrai routeur du projet.
  *
@@ -111,6 +118,16 @@ const integratedApiRoutes = (await import(SB('src/routes/integratedApi.routes.js
  * question qui compte quand on déplace le provisionnement.
  */
 const webhookRoutes = (await import(SB('src/routes/webhook.routes.js'))).default;
+/**
+ * L'AUTHENTIFICATION DU PROJET — montée depuis L12.B-F.
+ *
+ * La fédération d'identité se joue ENTIÈREMENT sur cette surface : `/start`,
+ * `/callback`, `/me`, et les routes DEV qu'une session fédérée doit ouvrir.
+ * Sans elle, une recette de fédération ne pourrait éprouver que la moitié du
+ * parcours — celle du Panel — et devrait faire confiance au projet sur l'autre.
+ */
+const authRoutes = (await import(SB('src/routes/auth.routes.js'))).default;
+const accountRoutes = (await import(SB('src/routes/account.routes.js'))).default;
 const { errorHandler } = await import(SB('src/middlewares/error.middleware.js'));
 const { PanelCompanyConfiguration } = await import(
   SB('src/models/PanelConfiguration.model.js')
@@ -263,9 +280,10 @@ function serve(portVoulu = 0) {
    */
   app.use('/api/webhooks', webhookRoutes);
   app.use(express.json());
+  app.use('/api/auth', authRoutes);
+  app.use('/api/accounts', accountRoutes);
   app.use('/api/project-bridge/v1', projectBridgeRoutes);
   app.use('/api/live', uiLiveRoutes);
-  app.use('/api/integrated-apis', integratedApiRoutes);
   app.use(errorHandler);
   return new Promise((resolve) => {
     server = app.listen(portVoulu, '127.0.0.1', () => resolve(server.address().port));
@@ -483,6 +501,32 @@ const COMMANDS = {
   async emailDeliveryCount() {
     const { EmailDelivery } = await import(SB('src/models/EmailDelivery.model.js'));
     return EmailDelivery.countDocuments({});
+  },
+
+  /**
+   * FORCE LA REVALIDATION D'UNE SESSION FÉDÉRÉE (L12.B-F).
+   *
+   * ══ CE QUE CETTE COMMANDE CONTOURNE, ET CE QU'ELLE N'ÉVITE PAS ═══════════
+   *
+   * Le middleware ne réinterroge le Panel qu'au plus toutes les cinq minutes —
+   * un compromis délibéré, pour ne pas faire dépendre chaque page d'un
+   * aller-retour. Une recette ne peut pas attendre cinq minutes, et une horloge
+   * simulée n'a pas de sens ici puisqu'on parle à un vrai Panel.
+   *
+   * Cette commande appelle donc EXACTEMENT la fonction que le middleware
+   * appelle — `revalidateFederatedSession` — avec le contenu réel du jeton, et
+   * un `revalidatedAt` vieilli. Elle ne saute AUCUN contrôle : ni
+   * l'introspection du Panel, ni la décision. Elle ne saute que l'horloge.
+   *
+   * Rend le verdict tel quel : c'est lui qui décidera, en production, si la
+   * session vit ou meurt.
+   */
+  async revalidateFederatedSession({ token }) {
+    const jwt = (await import(SB('node_modules/jsonwebtoken/index.js'))).default;
+    const federe = await import(SB('src/services/federation/federatedAuth.service.js'));
+    const charge = jwt.decode(token);
+    if (!charge) return { active: false, reason: 'JETON_ILLISIBLE' };
+    return federe.revalidateFederatedSession({ ...charge, revalidatedAt: 0 });
   },
 
   async goOffline() {

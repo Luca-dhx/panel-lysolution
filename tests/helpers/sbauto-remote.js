@@ -129,6 +129,8 @@ export async function startSbAutoInstance({
     /** L’état de santé publié au Panel : en attente, refusées, plus ancien refus. */
     outboxHealth() { return send('outboxHealth'); },
     /** Coupe / rétablit la surface HTTP — une panne réseau RÉELLE. */
+    /** Force la revalidation d'une session fédérée — voir le harnais. */
+    revalidateFederatedSession(args) { return send('revalidateFederatedSession', args); },
     goOffline() { return send('goOffline'); },
     goOnline() { return send('goOnline'); },
     /** Bascule la protection / la suspension technique depuis le Manager. */

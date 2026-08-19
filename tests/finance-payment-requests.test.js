@@ -70,7 +70,7 @@ async function declarer(projectId, projectName) {
     projectId, projectKey: projectId, projectName,
     createdAt: now, updatedAt: now,
     pairing: { status: 'PAIRED' }, runtime: { environment: 'TEST' },
-    commercialState: 'LIVE', capabilityGrants: [],
+
   });
 }
 /** Le contrat porte le taux — c'est lui l'autorité fiscale, pas le Panel. */

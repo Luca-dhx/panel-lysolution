@@ -27,7 +27,6 @@ const adapters = await import('../backend/src/services/integratedApi/hostinger/h
 const ownership = await import('../backend/src/services/capabilities/resourceOwnership.js');
 const providerRegistry = await import('../backend/src/services/integratedApi/providerRegistry.js');
 const environment = await import('../backend/src/services/integratedApi/environment.js');
-const commercial = await import('../backend/src/services/integratedApi/commercialReadiness.js');
 const errors = await import('../backend/src/services/capabilities/capabilityErrors.js');
 const { default: PanelProjectDestination, DESTINATION_STATUS } = await import(
   '../backend/src/models/PanelProjectDestination.model.js'
@@ -196,7 +195,7 @@ section('4. PROJECT_A_CANNOT_TOUCH_RESOURCE_B — l’appartenance fait foi');
     fetchImpl: f,
   });
   check('A écrivant chez B → refusé', vol.ok === false);
-  check('…code CAPABILITY_NOT_GRANTED', vol.code === CODES.NOT_GRANTED);
+  check('…code CAPABILITY_RESOURCE_NOT_OWNED', vol.code === CODES.RESOURCE_NOT_OWNED);
   check('…AVANT tout appel fournisseur', f.appels.length === 0);
   check('…et le refus ne révèle PAS ce que A possède',
     !vol.error.message.includes('garage-a.fr'));
@@ -224,7 +223,7 @@ section('4. PROJECT_A_CANNOT_TOUCH_RESOURCE_B — l’appartenance fait foi');
     input: { hostname: 'ancien.fr', type: 'A', content: '1.2.3.4', operationId: 'op-000012' },
     fetchImpl: fournisseur(routes),
   });
-  check('une destination RETIRÉE ne fonde plus de droit', perime.code === CODES.NOT_GRANTED);
+  check('une destination RETIRÉE ne fonde plus de droit', perime.code === CODES.RESOURCE_NOT_OWNED);
 
   // Un projet sans destination ne possède rien.
   const sans = await invoquer('dns.zone.resolve', {
@@ -232,7 +231,7 @@ section('4. PROJECT_A_CANNOT_TOUCH_RESOURCE_B — l’appartenance fait foi');
     input: { hostname: 'garage-a.fr', operationId: 'op-000013' },
     fetchImpl: fournisseur(routes),
   });
-  check('un projet sans destination ne possède rien', sans.code === CODES.NOT_GRANTED);
+  check('un projet sans destination ne possède rien', sans.code === CODES.RESOURCE_NOT_OWNED);
 }
 
 /* ========================================================================== */
@@ -428,51 +427,50 @@ section('9. DEPLOYMENT_ENGINE_REMAINS_AUTHORITY — l’adaptateur ne planifie p
 }
 
 /* ========================================================================== */
-section('10. PREOPENING_ALLOWS_INFRASTRUCTURE_PREPARATION — câblé, et dérivé');
+section('10. LE DÉPLOIEMENT NE DÉPEND PLUS D’AUCUNE POLITIQUE D’OUVERTURE');
 /* ========================================================================== */
 {
   /**
-   * ── L'INVARIANT N'EST PAS UNE EXCEPTION HOSTINGER ───────────────────────────
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ─────────
    *
-   * Rien n'a été ajouté à la politique pour laisser passer le DNS. La table de
-   * L1.75 n'interdit en pré-ouverture que deux effets — `FINANCIAL_WRITE` et
-   * `LEGAL_WRITE` — ceux qui engagent quelqu'un d'AUTRE que nous. Une écriture
-   * d'infrastructure n'engage personne : elle prépare l'instance.
+   * Elle vérifiait que les trois verbes DNS étaient AUTORISÉS en pré-ouverture,
+   * par dérivation : leur effet n'était pas dans la liste des deux effets
+   * interdits (`FINANCIAL_WRITE`, `LEGAL_WRITE`). C'était la garantie qu'une
+   * instance non encore ouverte pouvait quand même être déployée.
    *
-   * C'est la doctrine énoncée en L1.75 : « la pré-ouverture n'est pas une
-   * coupure réseau ». Une instance qu'on ne pourrait pas déployer serait
-   * contournée, et la pré-ouverture deviendrait décorative.
+   * La politique d'ouverture a été supprimée. Le résultat visé — déployer sans
+   * geste commercial préalable — est désormais obtenu par construction, et il
+   * n'y a plus de table d'effets à interroger.
    *
-   * On le vérifie donc PAR DÉRIVATION — l'effet n'est pas dans la liste
-   * interdite — et pas par une ligne d'exception qu'on aurait écrite pour
-   * obtenir le résultat voulu.
+   * On vérifie donc que la dépendance a bien DISPARU, plutôt que de vérifier
+   * qu'elle rendait le bon verdict : c'est le seul contrôle qui empêche qu'une
+   * politique d'ouverture se réintroduise un jour sur le chemin du déploiement.
    */
-  for (const code of capabilities.HOSTINGER_CAPABILITY_CODES) {
-    const verdict = commercial.canExecute({ capability: code, commercialState: 'PREOPENING' });
-    check(`${code} : la politique le connaît`,
-      verdict.decision !== commercial.DECISION.UNKNOWN_CAPABILITY);
-    check(`${code} : autorisé en pré-ouverture`, verdict.decision === commercial.DECISION.ALLOWED);
-  }
-
-  check('les deux lectures sont READ_ONLY dans la table officielle',
-    commercial.CAPABILITY_EFFECTS['dns.zone.resolve'] === commercial.EFFECT.READ_ONLY
-    && commercial.CAPABILITY_EFFECTS['dns.records.read'] === commercial.EFFECT.READ_ONLY);
-  check('…et l’écriture reste INFRASTRUCTURE_WRITE',
-    commercial.CAPABILITY_EFFECTS['dns.record.ensure'] === commercial.EFFECT.INFRASTRUCTURE_WRITE);
-
-  const interdits = commercial.capabilitiesBlockedInPreopening().map((b) => b.capability);
-  check('aucun verbe DNS ne figure parmi les capacités bloquées',
-    capabilities.HOSTINGER_CAPABILITY_CODES.every((c) => !interdits.includes(c)));
-
-  // La table `PROPOSED_EFFECTS` de L9 devait disparaître au câblage. Elle a
-  // disparu : une seconde table d'effets pourrait un jour masquer un oubli de
-  // la table officielle, c'est-à-dire la dérive que l'alignement doit voir.
   const fs = await import('node:fs');
   const source = fs.readFileSync(
     new URL('../backend/src/services/integratedApi/hostinger/hostingerCapabilities.js', import.meta.url),
     'utf8',
   ).replace(/\/\*[\s\S]*?\*\//g, '');
+
   check('aucune table d’effets locale ne subsiste', !/PROPOSED_EFFECTS\s*=/.test(source));
+  check('le catalogue DNS n’importe plus la politique d’ouverture',
+    !/commercialReadiness/.test(source));
+  check('…et ne déclare plus aucune nature d’effet',
+    !/effectNature/.test(source) && !/CAPABILITY_EFFECTS/.test(source));
+
+  for (const code of capabilities.HOSTINGER_CAPABILITY_CODES) {
+    const definition = capabilities.HOSTINGER_CAPABILITIES[code];
+    check(`${code} : ne porte aucune nature d’effet`, !('effectNature' in definition));
+    check(`${code} : ne porte aucun drapeau de migration`, !('migrated' in definition));
+  }
+
+  /**
+   * CE QUI GARDE RÉELLEMENT LE DNS N'A PAS BOUGÉ : l'appartenance du nom
+   * d'hôte, éprouvée aux sections 5 et 6 de cette même suite.
+   */
+  check('les trois verbes exigent toujours la preuve d’appartenance',
+    capabilities.HOSTINGER_CAPABILITY_CODES
+      .every((c) => capabilities.HOSTINGER_CAPABILITIES[c].requiresResourceOwnership === true));
 }
 
 /* ========================================================================== */
@@ -485,7 +483,10 @@ section('11. CÂBLAGE L9.1 — les trois verbes sont réellement servis');
   for (const code of capabilities.HOSTINGER_CAPABILITY_CODES) {
     const definition = registre.getCapabilityDefinition(code);
     check(`${code} : au registre de la passerelle`, Boolean(definition));
-    check(`${code} : déclaré MIGRÉ`, definition?.migrated === true);
+    // Figurer au registre EST la déclaration de service : le booléen `migrated`
+    // a disparu, et l'adaptateur vérifié à la ligne suivante est la seule preuve.
+    check(`${code} : ne porte plus de drapeau de migration`,
+      definition !== null && !('migrated' in definition));
     check(`${code} : un adaptateur l’exécute`, providerAdapters.hasAdapter(code));
     check(`${code} : exige la preuve d’appartenance`, definition?.requiresResourceOwnership === true);
     check(`${code} : reste PANEL_GLOBAL`, definition?.scope === 'PANEL_GLOBAL');

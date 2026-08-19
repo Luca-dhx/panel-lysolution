@@ -13,6 +13,7 @@
 import { parseTargetUrl } from './url.js';
 import { certPaths } from './nginx.js';
 import { checkDomainPointsToVps, resolveVpsIp } from './dns.js';
+import { sonde } from './remoteCommand.js';
 
 /**
  * Petite fabrique de résultat de contrôle.
@@ -47,7 +48,7 @@ export function describeSshError(err) {
 
 /** `command -v X` : l'outil X est-il présent sur le VPS ? */
 async function hasCommand(transport, bin) {
-  const res = await transport.exec(`command -v ${bin} >/dev/null 2>&1 && echo OK || echo NO`);
+  const res = await sonde(transport, 'preflight.probe_binary', `command -v ${bin} >/dev/null 2>&1 && echo OK || echo NO`);
   return res.stdout.trim().endsWith('OK');
 }
 
@@ -79,14 +80,16 @@ export async function runPreflight({
   // rapport permette d'identifier précisément la cause.
   let sshOk = false;
   try {
-    const who = await transport.exec('id -un');
-    sshOk = who.code === 0 && who.stdout.trim().length > 0;
+    const who = await sonde(transport, 'preflight.probe_user', 'id -un');
+    sshOk = who.exitCode === 0 && who.stdout.trim().length > 0;
     const detail = sshOk
       ? who.stdout.trim()
-      : (who.stderr || '').trim().slice(0, 300) || `commande terminée avec le code ${who.code}`;
+      : (who.stderrTail || '').slice(0, 300) || `commande terminée avec le code ${who.exitCode}`;
     checks.push(check('ssh', 'Connexion & authentification VPS', sshOk, { detail }));
   } catch (err) {
-    const detail = describeSshError(err);
+    // L'erreur du contrat ENVELOPPE celle du transport : c'est la cause d'origine
+    // qui nomme la panne (authentification refusée, port fermé, hôte injoignable).
+    const detail = describeSshError(err?.cause ?? err);
     checks.push(check('ssh', 'Connexion & authentification VPS', false, { detail }));
   }
 
@@ -114,9 +117,9 @@ export async function runPreflight({
   checks.push(check('mongo', 'MongoDB accessible (mongod/mongosh)', hasMongo, { required: false }));
 
   // 3. Build nginx : la configuration existante est-elle valide ? (`nginx -t`)
-  const nginxTest = await transport.exec('nginx -t 2>&1 || sudo nginx -t 2>&1');
+  const nginxTest = await sonde(transport, 'preflight.probe_nginx_config', 'nginx -t 2>&1 || sudo nginx -t 2>&1');
   const nginxOut = `${nginxTest.stdout}${nginxTest.stderr}`;
-  const nginxSyntaxOk = /syntax is ok/i.test(nginxOut) || nginxTest.code === 0;
+  const nginxSyntaxOk = /syntax is ok/i.test(nginxOut) || nginxTest.exitCode === 0;
   // Tolérance : si `nginx -t` échoue UNIQUEMENT à cause de la configuration de
   // CETTE cible (laissée invalide par un déploiement précédent interrompu, avant
   // le nettoyage atomique), ce n'est PAS bloquant — le déploiement la régénère et
@@ -139,12 +142,12 @@ export async function runPreflight({
 
   // 4. Permissions d'écriture sur la racine de déploiement.
   const permProbe = `test -w ${remoteRoot} && echo WRITABLE || (sudo -n test -w ${remoteRoot} 2>/dev/null && echo SUDO || echo NO)`;
-  const perm = await transport.exec(permProbe);
+  const perm = await sonde(transport, 'preflight.probe_permissions', permProbe);
   const permOk = /WRITABLE|SUDO/.test(perm.stdout);
   checks.push(check('permissions', `Écriture possible sur ${remoteRoot}`, permOk, { detail: perm.stdout.trim() }));
 
   // 5. Disponibilité disque : au moins ~500 Mo libres sur la racine.
-  const disk = await transport.exec(`df -Pk ${remoteRoot} | tail -1 | awk '{print $4}'`);
+  const disk = await sonde(transport, 'preflight.probe_disk', `df -Pk ${remoteRoot} | tail -1 | awk '{print $4}'`);
   const freeKb = Number(disk.stdout.trim()) || 0;
   const diskOk = freeKb >= 500 * 1024;
   checks.push(
@@ -158,7 +161,7 @@ export async function runPreflight({
   //    étrangère = refus (on ne veut jamais écraser un site tiers). Un
   //    redéploiement de NOTRE site (marqueur présent) reste autorisé.
   const confPath = `/etc/nginx/sites-available/${target.host}.conf`;
-  const confRes = await transport.exec(`test -f ${confPath} && cat ${confPath} || echo __NONE__`);
+  const confRes = await sonde(transport, 'preflight.probe_nginx_site', `test -f ${confPath} && cat ${confPath} || echo __NONE__`);
   const confBody = confRes.stdout || '';
   const confPresent = /server_name|listen\s/.test(confBody);
   const foreign = confPresent && !/Généré par DeploymentEngine/.test(confBody);
@@ -185,7 +188,7 @@ export async function runPreflight({
    * déploiement émettra ou réutilisera.
    */
   const certFile = certPaths(target).fullchain;
-  const certRes = await transport.exec(`test -f ${certFile} && echo OK || echo NO`);
+  const certRes = await sonde(transport, 'preflight.probe_certificate', `test -f ${certFile} && echo OK || echo NO`);
   const certPresent = certRes.stdout.trim().endsWith('OK');
   checks.push(
     check('host-cert', `Certificat de ${target.host}`, certPresent, {

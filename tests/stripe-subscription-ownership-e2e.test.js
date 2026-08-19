@@ -145,8 +145,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -229,8 +227,6 @@ section('2. Deux projets appairés, ouverts');
   idA = await appairer(projetA);
   idB = await appairer(projetB);
   for (const id of [idA, idB]) {
-    await grantsModule.setCapabilityGrants(id, [CHECKOUT, READ_SESSION, READ_SUB, PRICE, CUSTOMER], ACTEUR);
-    await commercial.setCommercialReadiness(id, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2F' });
   }
   await projetA.syncNow();
   await projetB.syncNow();
@@ -463,11 +459,38 @@ const recevoir = async (id, type, object) => {
 
 section('8. Le pipeline webhook adopte, puis route');
 {
-  await WebhookBinding.create({
-    bindingId: 'wb-l62f-test', provider: 'STRIPE', environment: 'TEST',
-    remoteEndpointId: 'we_l62f', callbackUrl: `${panelUrl}/webhooks/providers/stripe`,
-    ownershipToken: 'l62f', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  });
+  /**
+   * ══ LE PANEL A DÉJÀ SON ENDPOINT — ON L'ADOPTE, ON N'EN CRÉE PAS UN SECOND ═
+   *
+   * Cette section créait le binding d'endpoint de toutes pièces. Elle ne le
+   * peut plus, et c'est un progrès du produit : depuis que le Panel réconcilie
+   * ses webhooks à l'enregistrement des identifiants, il POSSÈDE déjà son
+   * endpoint `STRIPE/TEST/PANEL`. L'index unique du modèle interdit le second —
+   * « un seul endpoint par fournisseur et par monde » — et il a raison : deux
+   * bindings concurrents, c'est un événement livré deux fois, ou pas du tout.
+   *
+   * On adopte donc celui qui existe, en y inscrivant l'endpoint distant que
+   * cette recette veut éprouver. Le repli `create` reste, pour le cas où la
+   * réconciliation n'aurait rien posé — la section doit tenir dans les deux
+   * mondes, pas dans celui qu'on suppose.
+   */
+  await (async () => {
+    const existant = await WebhookBinding.findOne({
+      provider: 'STRIPE', environment: 'TEST', destination: 'PANEL', projectId: null,
+    });
+    if (existant) {
+      existant.remoteEndpointId = 'we_l62f';
+      existant.callbackUrl = `${panelUrl}/webhooks/providers/stripe`;
+      existant.updatedAt = new Date().toISOString();
+      await existant.save();
+      return existant;
+    }
+    return WebhookBinding.create({
+      bindingId: 'wb-l62f-test', provider: 'STRIPE', environment: 'TEST',
+      remoteEndpointId: 'we_l62f', callbackUrl: `${panelUrl}/webhooks/providers/stripe`,
+      ownershipToken: 'l62f', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+  })();
   await storeWebhookSecret('STRIPE', 'TEST', WHSEC);
 
   /* ── CAS B : l'abonnement arrive AVANT que sa session ait été vue ──────── */

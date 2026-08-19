@@ -37,9 +37,43 @@ await PanelEmailTemplateVersion.syncIndexes();
 await PanelProjectSenderIdentity.syncIndexes();
 await PanelCapabilityOperation.syncIndexes();
 
+const scopes = await import('../backend/src/services/email/panelEmailTemplateScope.js');
+const { default: PanelProject } = await import('../backend/src/models/PanelProject.model.js');
+
 const ACTEUR = { userId: 'u-dev', userEmail: 'dev@panel.test' };
 const PROJET_A = 'projet-a';
 const PROJET_B = 'projet-b';
+
+const PANEL = scopes.panelScope();
+const SCOPE_A = scopes.projectScope(PROJET_A);
+const SCOPE_B = scopes.projectScope(PROJET_B);
+
+/**
+ * DEUX FICHES DE PROJET RÉELLES — parce que la portée est désormais VALIDÉE.
+ *
+ * `assertScopeUsable()` refuse une portée dont le projet n'existe pas au
+ * registre : c'est ce qui empêche de créer la ligne fantôme que l'audit avait
+ * trouvée. Une recette qui inventerait un identifiant de projet éprouverait
+ * donc un chemin que la production n'a pas.
+ */
+async function declareProjet(projectId, projectName) {
+  const at = new Date().toISOString();
+  await PanelProject.updateOne(
+    { projectId },
+    {
+      $set: { projectName, updatedAt: at },
+      $setOnInsert: {
+        projectKey: projectId,
+        createdAt: at,
+        pairing: { status: 'PAIRED' },
+        runtime: {},
+      },
+    },
+    { upsert: true },
+  );
+}
+await declareProjet(PROJET_A, 'Projet A');
+await declareProjet(PROJET_B, 'Projet B');
 
 /* ══════════════════════════════════════════════════════════════════════════
    1. TEMPLATE_CODE_IS_CANONICAL — des codes métier, jamais un id Brevo.
@@ -87,6 +121,22 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     // diagnostic qui contournerait la résolution, le rendu, la validation des
     // variables et le versionnement réussirait là où un envoi réel échoue.
     'PANEL_EMAIL_SENDER_TEST',
+    // LOT 2C — l'activation du PREMIER accès d'administration d'un projet
+    // dupliqué. Il manquait à cette liste : le contrôle était rouge avant le
+    // présent lot, et le rougissement était juste — c'est bien un modèle du
+    // parc, déclaré côté `TEMPLATE_OWNERSHIP` mais jamais inscrit ici.
+    'DEV_ACCOUNT_ACTIVATION',
+    // Recette métier — le cycle de vie d'un paiement, vu par le client d'un
+    // projet. Quatre instants, quatre messages, et aucun ne recouvre ceux du
+    // Panel : ces derniers ne parlent qu'une fois le site déjà fermé.
+    'CONTRACT_PAYMENT_RECEIVED_ADMIN',
+    'CONTRACT_PAYMENT_OVERDUE_ADMIN',
+    'CONTRACT_PAYMENT_OVERDUE_CRITICAL_ADMIN',
+    'CONTRACT_PAYMENT_RECOVERED_ADMIN',
+    // Recette métier — l'alerte technique aux développeurs responsables d'un
+    // projet, natifs ET fédérés. Portée PANEL : elle nomme des composants
+    // internes et ne porte jamais l'apparence du client.
+    'PLATFORM_INCIDENT_DEV_ALERT',
   ];
 
   const codes = templates.listTemplateCodes();
@@ -122,23 +172,42 @@ section('1 · Les codes de modèle sont canoniques et code-first');
 /* ══════════════════════════════════════════════════════════════════════════
    2. AMORÇAGE — idempotent, et jamais destructif.
    ══════════════════════════════════════════════════════════════════════════ */
-section('2 · L’amorçage pose les défauts de plateforme, une seule fois');
+section('2 · L’amorçage pose les instances PANEL, une seule fois');
 {
-  // Le registre fait foi : l'amorçage doit poser TOUT ce qu'il déclare, ni
-  // plus ni moins. Le nombre attendu vient de la liste nominative ci-dessus,
-  // qui est elle-même verrouillée dans les deux sens.
-  const N = templates.listTemplateCodes().length;
+  /**
+   * ══ CE QUE L11.1 A CHANGÉ ICI ═════════════════════════════════════════════
+   *
+   * L'amorçage posait les 11 codes en `projectId: null`. Il n'en pose plus que
+   * ceux dont la DÉFINITION déclare la portée PANEL. Poser une instance PANEL
+   * de `CONTACT_ADMIN_NOTIFICATION` créerait un document que le runtime ne
+   * consulterait jamais — la notification de contact part en portée PROJECT —
+   * mais qu'un exploitant éditerait en croyant changer quelque chose. C'est la
+   * « surface fantôme » de l'audit, et elle ne doit pas renaître d'un seed.
+   *
+   * Le compte n'est donc plus `listTemplateCodes().length` : il est dérivé de
+   * la classification, elle-même verrouillée par sa propre recette.
+   */
+  const N = templates.listTemplateCodesForScope(PANEL).length;
+  check('la portée PANEL ne réclame pas les 11 codes', N < templates.listTemplateCodes().length);
 
   const premier = await templates.seedPlatformTemplates();
-  check(`${N} modèles amorcés au premier passage`, premier.created === N && premier.existing === 0);
+  check(`${N} modèles PANEL amorcés au premier passage`, premier.created === N && premier.existing === 0);
 
   const second = await templates.seedPlatformTemplates();
   check('rejoué : aucun nouveau modèle', second.created === 0 && second.existing === N);
 
-  check(`${N} documents en base, pas un de plus`,
-    (await PanelEmailTemplate.countDocuments({ projectId: null })) === N);
+  check(`${N} documents PANEL en base, pas un de plus`,
+    (await PanelEmailTemplate.countDocuments({ scopeType: 'PANEL' })) === N);
   check('chaque amorçage a laissé une version 1',
     (await PanelEmailTemplateVersion.countDocuments({ origin: 'BOOTSTRAP' })) === N);
+
+  /**
+   * AUCUNE INSTANCE PROJET N'EST NÉE TOUTE SEULE. Le lot exige que le contenu
+   * d'un projet soit un ACTE — pose de migration ou écriture d'un DEV — jamais
+   * un effet de bord du démarrage.
+   */
+  check('l’amorçage ne crée AUCUNE instance projet',
+    (await PanelEmailTemplate.countDocuments({ scopeType: 'PROJECT' })) === 0);
 
   /**
    * NOMINATIF — les modèles de L10.5 sont réellement AMORÇÉS, pas seulement
@@ -155,12 +224,12 @@ section('2 · L’amorçage pose les défauts de plateforme, une seule fois');
   }
 
   // NON DESTRUCTIF : un contenu réécrit survit à un rejeu du seed.
-  await templates.saveTemplate('PASSWORD_RESET_REQUEST', {
+  await templates.saveTemplate('PASSWORD_RESET_REQUEST', PANEL, {
     subject: 'Sujet réécrit à la main {{company.name}}',
     expectedVersion: 1,
   }, ACTEUR);
   await templates.seedPlatformTemplates();
-  const apres = await templates.resolveTemplate('PASSWORD_RESET_REQUEST');
+  const apres = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', PANEL);
   check('un contenu écrit par un humain n’est JAMAIS réécrit par le seed',
     apres.subject === 'Sujet réécrit à la main {{company.name}}');
 }
@@ -168,26 +237,91 @@ section('2 · L’amorçage pose les défauts de plateforme, une seule fois');
 /* ══════════════════════════════════════════════════════════════════════════
    3. PORTÉE — plateforme, projet, et surtout PAS environnement.
    ══════════════════════════════════════════════════════════════════════════ */
-section('3 · Le contenu est par projet, avec un défaut de plateforme');
+section('3 · Le contenu est PAR PORTÉE, et il n’y a AUCUN repli PROJECT → PANEL');
 {
-  const defaut = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', { projectId: PROJET_A });
-  check('sans contenu propre, le projet hérite de la plateforme', defaut.source === 'PLATFORM');
+  /**
+   * ══ LE TEST QUI RETOURNE LA DOCTRINE ══════════════════════════════════════
+   *
+   * Cette section vérifiait exactement l'inverse jusqu'à L11.1 : « sans contenu
+   * propre, le projet hérite de la plateforme ». C'était le comportement, il
+   * était documenté, et il était le défaut central du système — parce qu'aucune
+   * surface ne permettait jamais de rompre cet héritage. Tous les clients du
+   * parc recevaient donc le même HTML, sous le nom de L.Y Solution.
+   *
+   * Le repli est supprimé. Un projet sans instance n'envoie PAS.
+   */
+  let sansInstance = null;
+  try {
+    await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_A);
+  } catch (err) { sansInstance = err; }
+  check('un projet SANS instance ne reçoit AUCUN contenu — il ÉCHOUE',
+    sansInstance?.code === templates.EMAIL_TEMPLATE_NOT_CONFIGURED);
+  check('…et le refus nomme la portée, pas Brevo',
+    sansInstance?.details?.scopeId === PROJET_A && sansInstance?.statusCode === 409);
 
-  await templates.saveTemplate('CONTACT_ADMIN_NOTIFICATION', {
-    projectId: PROJET_A,
+  await templates.saveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_A, {
     subject: 'Contact chez A — {{contact.name}}',
-    expectedVersion: defaut.version,
   }, ACTEUR);
 
-  const propre = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', { projectId: PROJET_A });
-  check('le projet A lit désormais SON contenu', propre.source === 'PROJECT'
-    && propre.subject === 'Contact chez A — {{contact.name}}');
+  const propre = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_A);
+  check('le projet A lit désormais SON contenu',
+    propre.source === 'PROJECT' && propre.subject === 'Contact chez A — {{contact.name}}');
 
-  const b = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', { projectId: PROJET_B });
-  check('le projet B n’est pas affecté', b.source === 'PLATFORM');
-  const plateforme = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION');
-  check('le défaut de plateforme est intact', plateforme.source === 'PLATFORM'
-    && plateforme.subject !== propre.subject);
+  /**
+   * L'ISOLATION EST UN FAIT DE BASE, PAS UNE POLITESSE. Écrire chez A ne crée
+   * rien chez B, et B reste en échec tant que personne n'a décidé de son texte.
+   */
+  let bTouche = null;
+  try {
+    await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_B);
+  } catch (err) { bTouche = err; }
+  check('le projet B n’a rien reçu de l’écriture faite chez A',
+    bTouche?.code === templates.EMAIL_TEMPLATE_NOT_CONFIGURED);
+
+  await templates.saveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_B, {
+    subject: 'Contact chez B — {{contact.name}}',
+  }, ACTEUR);
+  const bPropre = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_B);
+  check('MÊME CODE, DEUX PROJETS, DEUX CONTENUS DISTINCTS',
+    bPropre.subject === 'Contact chez B — {{contact.name}}' && bPropre.subject !== propre.subject);
+
+  const documents = await PanelEmailTemplate.find({ templateCode: 'CONTACT_ADMIN_NOTIFICATION' }).lean();
+  check('…et DEUX DOCUMENTS Mongo, jamais un seul partagé',
+    documents.length === 2 && new Set(documents.map((d) => String(d._id))).size === 2);
+
+  /**
+   * UN CODE PANEL N'A PAS D'INSTANCE PROJET — et le refus est explicite.
+   *
+   * Sans cette garde, un DEV pourrait créer `PROJECT/A/PAYMENT_REQUEST_CREATED` :
+   * un document que le runtime ne lirait jamais (la facturation part du Panel)
+   * mais qu'un exploitant éditerait en croyant agir.
+   */
+  let interdit = null;
+  try {
+    await templates.saveTemplate('PAYMENT_REQUEST_CREATED', SCOPE_A, { subject: 'Chez A' }, ACTEUR);
+  } catch (err) { interdit = err; }
+  check('un code PANEL est REFUSÉ en portée projet',
+    interdit?.code === 'PANEL_EMAIL_TEMPLATE_SCOPE_FORBIDDEN_FOR_CODE');
+
+  let interditInverse = null;
+  try {
+    await templates.saveTemplate('CONTACT_ADMIN_NOTIFICATION', PANEL, { subject: 'Chez le Panel' }, ACTEUR);
+  } catch (err) { interditInverse = err; }
+  check('…et un code PROJECT est refusé en portée PANEL',
+    interditInverse?.code === 'PANEL_EMAIL_TEMPLATE_SCOPE_FORBIDDEN_FOR_CODE');
+
+  /**
+   * LA PORTÉE NE SE DEVINE PAS DEPUIS UN IDENTIFIANT NU. L'ancienne forme
+   * `{ projectId }` est refusée BRUYAMMENT : la tolérer ferait retomber un
+   * appelant non migré sur le défaut PANEL, donc écrire chez L.Y Solution en
+   * croyant écrire chez un client — silencieusement.
+   */
+  let ancienneForme = null;
+  try {
+    await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', { projectId: PROJET_A });
+  } catch (err) { ancienneForme = err; }
+  check('la forme de portée obsolète `{ projectId }` est refusée',
+    ancienneForme?.code === 'PANEL_EMAIL_TEMPLATE_SCOPE_INVALID');
 
   /**
    * PAS DE PORTÉE PAR ENVIRONNEMENT — et c'est la décision la plus discutable
@@ -196,6 +330,7 @@ section('3 · Le contenu est par projet, avec un défaut de plateforme');
    */
   const champs = Object.keys(PanelEmailTemplate.schema.paths);
   check('le modèle ne porte AUCUN champ d’environnement', !champs.includes('environment'));
+  check('…mais il porte bien une portée DÉCLARÉE', champs.includes('scopeType'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -203,9 +338,12 @@ section('3 · Le contenu est par projet, avec un défaut de plateforme');
    ══════════════════════════════════════════════════════════════════════════ */
 section('4 · Le rendu est celui du projet, sans une règle assouplie');
 {
+  // L'instance projet doit exister — c'est le fail-closed de la section 3.
+  await templates.provisionProjectTemplates(PROJET_A, { actor: ACTEUR });
+
   const rendu = await templates.renderForSend({
     templateCode: 'PASSWORD_RESET_REQUEST',
-    projectId: PROJET_A,
+    scope: SCOPE_A,
     variables: {
       'company.name': 'Garage A',
       'user.name': 'Jean <script>',
@@ -216,32 +354,40 @@ section('4 · Le rendu est celui du projet, sans une règle assouplie');
   check('le sujet est rendu', rendu.subject.includes('Garage A'));
   check('LE HTML EST ÉCHAPPÉ PAR DÉFAUT — aucune balise injectée',
     !rendu.html.includes('<script>') && rendu.html.includes('&lt;script&gt;'));
+  /**
+   * LE RENDU DIT QUEL DOCUMENT IL A RENDU (Phases 13-14). Sans cela, ni le
+   * journal du Panel ni la livraison du projet ne peuvent répondre après coup
+   * à « quel template exact est parti ».
+   */
+  check('le rendu porte la portée et la version RÉELLEMENT servies',
+    rendu.scopeType === 'PROJECT' && rendu.scopeId === PROJET_A
+    && rendu.source === 'PROJECT' && rendu.version >= 1);
 
   // Une variable manquante fait ÉCHOUER — jamais un e-mail à trou.
   let manque = null;
   try {
     await templates.renderForSend({
-      templateCode: 'PASSWORD_RESET_REQUEST', projectId: PROJET_A,
+      templateCode: 'PASSWORD_RESET_REQUEST', scope: SCOPE_A,
       variables: { 'company.name': 'Garage A' },
     });
   } catch (err) { manque = err; }
   check('une variable requise absente fait échouer le rendu', manque !== null);
 
   // Un modèle désactivé REFUSE, il n'est pas silencieusement sauté.
-  await templates.saveTemplate('EMAIL_SENDER_VERIFICATION_TEST', { enabled: false }, ACTEUR);
+  await templates.saveTemplate('EMAIL_SENDER_VERIFICATION_TEST', SCOPE_A, { enabled: false }, ACTEUR);
   let coupe = null;
   try {
     await templates.renderForSend({
-      templateCode: 'EMAIL_SENDER_VERIFICATION_TEST', projectId: PROJET_A, variables: {},
+      templateCode: 'EMAIL_SENDER_VERIFICATION_TEST', scope: SCOPE_A, variables: {},
     });
   } catch (err) { coupe = err; }
   check('un modèle désactivé REFUSE l’envoi, explicitement',
     coupe?.code === 'PANEL_EMAIL_TEMPLATE_DISABLED');
-  await templates.saveTemplate('EMAIL_SENDER_VERIFICATION_TEST', { enabled: true }, ACTEUR);
+  await templates.saveTemplate('EMAIL_SENDER_VERIFICATION_TEST', SCOPE_A, { enabled: true }, ACTEUR);
 
   // L'aperçu emprunte le MÊME chemin : sinon il montrerait un rendu que
   // l'envoi refuserait, et l'on croirait le modèle bon.
-  const apercu = await templates.previewTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION');
+  const apercu = await templates.previewTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION', PANEL);
   check('l’aperçu se rend avec les données d’exemple', apercu.subject.length > 0);
 }
 
@@ -250,12 +396,13 @@ section('4 · Le rendu est celui du projet, sans une règle assouplie');
    ══════════════════════════════════════════════════════════════════════════ */
 section('5 · Éditer sans perdre : versions, restauration, conflits');
 {
-  const avant = await templates.resolveTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION');
+  const CODE = 'CONTRACT_CANCELLATION_DEV_NOTIFICATION';
+  const avant = await templates.resolveTemplate(CODE, PANEL);
 
   // Le contenu dangereux est refusé — la validation du projet a suivi le contenu.
   let dangereux = null;
   try {
-    await templates.saveTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION', {
+    await templates.saveTemplate(CODE, PANEL, {
       html: '<html><body><script>alert(1)</script></body></html>',
       expectedVersion: avant.version,
     }, ACTEUR);
@@ -265,14 +412,14 @@ section('5 · Éditer sans perdre : versions, restauration, conflits');
   // Une variable inconnue est refusée : le registre décide, pas l'éditeur.
   let inventee = null;
   try {
-    await templates.saveTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION', {
+    await templates.saveTemplate(CODE, PANEL, {
       subject: 'Bonjour {{variable.inventee}}',
       expectedVersion: avant.version,
     }, ACTEUR);
   } catch (err) { inventee = err; }
   check('une variable inventée est refusée', inventee !== null);
 
-  const v2 = await templates.saveTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION', {
+  const v2 = await templates.saveTemplate(CODE, PANEL, {
     subject: 'Résiliation v2 — {{contract.reference}}',
     expectedVersion: avant.version,
   }, ACTEUR);
@@ -281,7 +428,7 @@ section('5 · Éditer sans perdre : versions, restauration, conflits');
   // JETON D'ÉDITION : deux DEV ne s'écrasent pas en silence.
   let conflit = null;
   try {
-    await templates.saveTemplate('CONTRACT_CANCELLATION_DEV_NOTIFICATION', {
+    await templates.saveTemplate(CODE, PANEL, {
       subject: 'Écriture bâtie sur une lecture périmée',
       expectedVersion: avant.version,
     }, ACTEUR);
@@ -290,13 +437,34 @@ section('5 · Éditer sans perdre : versions, restauration, conflits');
     conflit?.code === 'PANEL_EMAIL_TEMPLATE_VERSION_CONFLICT');
 
   // RESTAURATION : elle crée une version DE PLUS, elle ne remonte pas le temps.
-  const restaure = await templates.restoreVersion('CONTRACT_CANCELLATION_DEV_NOTIFICATION', avant.version, {}, ACTEUR);
+  const restaure = await templates.restoreVersion(CODE, PANEL, avant.version, ACTEUR);
   check('la restauration rend l’ancien contenu', restaure.subject === avant.subject);
   check('…en créant une version SUPPLÉMENTAIRE', restaure.version === v2.version + 1);
-  const historique = await templates.listVersions('CONTRACT_CANCELLATION_DEV_NOTIFICATION');
+  const historique = await templates.listVersions(CODE, PANEL);
   check('l’historique porte la trace de la restauration',
     historique[0].origin === 'RESTORE' && historique[0].restoredFromVersion === avant.version);
   check('l’historique n’a jamais été réécrit', historique.length >= 3);
+
+  /**
+   * L'HISTORIQUE EST ÉTANCHE À LA PORTÉE (Phase 12).
+   *
+   * `PROJECT/A/CONTACT_ADMIN_NOTIFICATION` porte lui aussi une v1 et une v2.
+   * Restaurer chez A ne doit toucher aucun document PANEL, et réciproquement.
+   * Sans la portée dans la clé de recherche, la restauration serait une loterie
+   * entre documents homonymes.
+   */
+  const versionsA = await templates.listVersions('CONTACT_ADMIN_NOTIFICATION', SCOPE_A);
+  const versionsB = await templates.listVersions('CONTACT_ADMIN_NOTIFICATION', SCOPE_B);
+  check('chaque portée a son PROPRE historique',
+    versionsA.length >= 1 && versionsB.length >= 1
+    && versionsA.every((v) => v.projectId === PROJET_A)
+    && versionsB.every((v) => v.projectId === PROJET_B));
+
+  const avantB = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_B);
+  await templates.restoreVersion('CONTACT_ADMIN_NOTIFICATION', SCOPE_A, 1, ACTEUR);
+  const apresB = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_B);
+  check('restaurer chez A ne touche RIEN chez B',
+    apresB.version === avantB.version && apresB.subject === avantB.subject);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -521,7 +689,7 @@ section('10 · Tout survit à un redémarrage');
 {
   await simulateRestart();
 
-  const modele = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', { projectId: PROJET_A });
+  const modele = await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', SCOPE_A);
   check('le contenu du projet a survécu', modele.source === 'PROJECT');
 
   const identite = await senders.describeForProject(PROJET_A, 'TEST');

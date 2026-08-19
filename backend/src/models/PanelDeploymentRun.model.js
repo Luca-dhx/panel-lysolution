@@ -155,6 +155,24 @@ const runSchema = new mongoose.Schema(
     summary: { type: String, default: null },
     error: { type: mongoose.Schema.Types.Mixed, default: null },
 
+    /**
+     * ── LA PANNE DE JOURNAL, À CÔTÉ DE L'ERREUR MÉTIER ──────────────────
+     *
+     * Deux champs parce que ce sont deux faits, et qu'un seul champ obligerait
+     * à en sacrifier un. `error` dit pourquoi le DÉPLOIEMENT a échoué (`npm ci`,
+     * préflight, santé publique) ; celui-ci dit qu'on n'a pas su l'ÉCRIRE.
+     *
+     * L'ordre d'arrivée aurait décidé du survivant : la panne de persistance
+     * survient presque toujours en dernier, elle aurait donc systématiquement
+     * effacé la cause réelle — et fait chercher dans la base ce qui s'était
+     * passé sur le serveur.
+     *
+     *   { code, phase: PRE_PUBLICATION|POST_PUBLICATION, stepId, reason, at }
+     *
+     * `reason` est caviardé à l'écriture : aucune URI, aucun identifiant.
+     */
+    persistenceError: { type: mongoose.Schema.Types.Mixed, default: null },
+
     // ── LE RAPPORT ──────────────────────────────────────────────────────
     // Produit par le moteur lui-même (`report/RunRecorder` + `markdown`),
     // pas reconstruit ici : le Panel n'a aucune raison d'avoir sa propre
@@ -164,6 +182,34 @@ const runSchema = new mongoose.Schema(
     // compris après un redémarrage du backend — c'est la pièce d'audit.
     structuredReport: { type: mongoose.Schema.Types.Mixed, default: null },
     markdownReport: { type: String, default: null },
+
+    /**
+     * ── CE QUE LE PUBLIC A VU ───────────────────────────────────────────
+     *
+     * Distinct du statut de l'opération, et volontairement : un déploiement
+     * peut échouer APRÈS avoir mis la nouvelle version en ligne. C'est même
+     * l'état le plus fréquent d'une interruption tardive, et celui où le pire
+     * conseil possible est « relancez ».
+     *
+     *   NOT_REACHED — la bascule n'a jamais eu lieu ;
+     *   POSSIBLE    — elle a commencé, son issue est inconnue ;
+     *   OCCURRED    — elle s'est terminée : le site sert la nouvelle version.
+     *
+     * `journalComplete: false` marque un run dont la chronologie est trouée —
+     * une écriture perdue après publication. C'est le drapeau que lira la
+     * réconciliation, et sans lui un run incomplet est indistinguable d'un run
+     * complet.
+     */
+    publication: {
+      state: {
+        type: String,
+        enum: ['NOT_REACHED', 'POSSIBLE', 'OCCURRED'],
+        default: 'NOT_REACHED',
+      },
+      boundaryStepId: { type: String, default: null },
+      journalComplete: { type: Boolean, default: true },
+      degradedAtStepId: { type: String, default: null },
+    },
 
     user: { type: String, default: null },
 

@@ -6,6 +6,7 @@
  * dédié. On (re)démarre l'app, on persiste la liste PM2 (survie au reboot).
  */
 import { serviceName } from './config/project.profile.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, sonde } from './remoteCommand.js';
 import { assertPortAvailableFor, readPm2Processes, verifyServiceHealth } from './ports.js';
 
 /** Nom PM2 déterministe d'une cible. */
@@ -83,7 +84,7 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
    */
   await assertPortAvailableFor(transport, { port, host, expectedPm2Name: name });
 
-  const list = await transport.exec(`pm2 jlist 2>/dev/null || echo '[]'`);
+  const list = await sonde(transport, 'services.probe_pm2', `pm2 jlist 2>/dev/null || echo '[]'`);
   const emplacement = readPm2Location(list.stdout, name);
   // Compteur de redémarrages AVANT l'opération : seuls ceux survenus DEPUIS
   // prouvent une boucle. Un compteur élevé peut n'être qu'un historique.
@@ -114,12 +115,17 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
     commande = `pm2 delete ${name} >/dev/null 2>&1; cd ${backendDir} && PORT=${port} ENV=${env} pm2 start src/server.js --name ${name} --update-env`;
   }
 
-  const res = await transport.exec(commande, { timeoutMs: 60_000 });
-  if (res.code !== 0) {
+  /**
+   * SONDE, puis erreur MÉTIER — comme la copie de médias. Ce qu'il faut lire
+   * n'est pas « commande distante échouée » mais QUELLE action PM2 a échoué
+   * (démarrage, rechargement, recréation) et sur quel service.
+   */
+  const res = await sonde(transport, 'services.pm2_apply', commande, { timeoutMs: TIMEOUTS.SERVICE, step: 'pm2' });
+  if (!res.ok) {
     const { DeploymentError } = await import('./errors.js');
     throw new DeploymentError('PM2_RESTART_FAILED', `Échec du (re)démarrage PM2 de ${name}.`, {
       step: 'pm2',
-      details: { action, output: (res.stderr || res.stdout).slice(0, 500) },
+      details: { action, exitCode: res.exitCode, output: res.stderrTail || res.stdoutTail },
     });
   }
 
@@ -137,7 +143,7 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
    * qu'il est en ligne, stable, qu'il a un PID, qu'il écoute son port — et que
    * la socket appartient bien à CE PID.
    */
-  const apres = await transport.exec(`pm2 jlist 2>/dev/null || echo '[]'`);
+  const apres = await sonde(transport, 'services.probe_pm2_after', `pm2 jlist 2>/dev/null || echo '[]'`);
   const final = readPm2Location(apres.stdout, name);
   const conforme = final !== null
     && [final.execPath, final.cwd].some((v) => {
@@ -162,7 +168,19 @@ export async function restartBackend(transport, { host, backendDir, port, env = 
     settleMs: health.settleMs,
   });
 
-  await transport.exec('pm2 save');
+  /**
+   * BEST-EFFORT, ET DÉCLARÉ COMME TEL. `pm2 save` grave la liste des process
+   * pour qu'ils redémarrent avec la machine. Son échec ne casse pas le
+   * déploiement en cours — mais il n'est plus silencieux : le résultat est
+   * rendu, et son absence de succès reste lisible.
+   */
+  await runRemoteCommand(transport, {
+    commandId: 'services.pm2_save',
+    command: 'pm2 save',
+    commandClass: COMMAND_CLASS.BEST_EFFORT,
+    timeoutMs: TIMEOUTS.SERVICE,
+    step: 'pm2',
+  });
   return {
     name,
     action,

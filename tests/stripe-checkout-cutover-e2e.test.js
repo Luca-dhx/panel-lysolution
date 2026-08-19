@@ -180,8 +180,6 @@ const STRIPE_BASE = `http://127.0.0.1:${fauxStripe.address().port}`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
-const commercial = await import('../backend/src/services/capabilities/commercialReadiness.service.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
 const { updateNetworkConfiguration } = await import('../backend/src/services/network/networkConfig.service.js');
@@ -307,36 +305,33 @@ section('3. Le Panel connaît le prix — le projet ne l’annonce pas');
   check('la projection du contrat A porte son montant',
     projete.pricing.launchFee.amountIncludingTax === MONTANT_TTC);
 
-  await grantsModule.setCapabilityGrants(idA, [CHECKOUT], ACTEUR);
-  await grantsModule.setCapabilityGrants(idB, [CHECKOUT], ACTEUR);
 
   /**
-   * ── LA POLITIQUE PASSE AVANT LE COFFRE, ET AVANT L'ENTRÉE ─────────────────
+   * ── CE QUE CETTE SONDE PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ──────────
    *
-   * Les deux instances sont appairées, accordées, et le Panel détient la clé :
-   * tout est prêt. Elles sont pourtant en PRÉ-OUVERTURE, et une écriture
-   * financière y est refusée. Le refus tombe AVANT la validation de l'entrée —
-   * on le voit ici : une charge utile pourtant invalide (`amount`) reçoit le
-   * refus commercial, pas le refus de schéma. C'est la garantie « zéro contact
-   * fournisseur » par la politique, et non par le calendrier de migration.
+   * Elle envoyait une charge utile délibérément invalide (`amount`, refusé par
+   * le schéma) sur une instance en PRÉ-OUVERTURE, et vérifiait que le refus
+   * était COMMERCIAL et non structurel — ce qui prouvait l'ordre : la politique
+   * passait avant la validation d'entrée, donc « zéro contact fournisseur »
+   * tenait par la politique et non par le calendrier de migration.
+   *
+   * La politique d'ouverture a été supprimée. Le même appel atteint désormais
+   * le contrat d'entrée, qui le refuse — et c'est LE refus structurel qui reste
+   * la garantie : `amount` ne peut PAS venir du projet, quel que soit l'état de
+   * l'instance. Le montant vient de la projection de contrat que le Panel
+   * détient, et c'est cela qui empêche de facturer un euro un contrat à mille.
    */
-  const enPreouverture = await projetA.invokeCapability({
+  const montantImpose = await projetA.invokeCapability({
     code: CHECKOUT,
     input: {
       contractRef: CONTRAT_A, paymentType: 'LAUNCH_FEE',
       successUrl: 'https://a.test/ok', cancelUrl: 'https://a.test/ko',
-      operationId: 'op-l62b-preouverture-01', amount: 1,
+      operationId: 'op-l62b-montant-impose-01', amount: 1,
     },
   });
-  check('PRÉ-OUVERTURE × écriture financière → refusé',
-    enPreouverture.code === 'CAPABILITY_BLOCKED_PREOPENING');
-  check('…et le refus NOMME l’effet', enPreouverture.panelDetails?.effect === 'FINANCIAL_WRITE');
+  check('un montant proposé par le projet → refusé',
+    montantImpose.code === 'CAPABILITY_INPUT_INVALID');
   check('…AUCUNE session créée', creations().length === 0);
-
-  // On ouvre commercialement les deux projets : à partir d'ici, l'argent peut
-  // bouger, et c'est une décision explicite.
-  await commercial.setCommercialReadiness(idA, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2B' });
-  await commercial.setCommercialReadiness(idB, 'LIVE', { actor: ACTEUR, reason: 'E2E L6.2B' });
 
   // Commerce ouvert : le contrat d'entrée REFUSE tout montant. Structurel.
   const avecMontant = await projetA.invokeCapability({

@@ -196,6 +196,45 @@ section('Vivacité (dérivée, jamais stockée)');
   check('après 2×intervalle : STALE', registry.deriveLiveness(record, now + 2 * 300_000 + 1000) === 'STALE');
   check('après 6×intervalle : OFFLINE', registry.deriveLiveness(record, now + 6 * 300_000 + 1000) === 'OFFLINE');
   check('version logicielle mise à jour par le heartbeat', record.runtime.softwareVersion === '1.4.3');
+
+  /**
+   * ══ LA VERSION DE CONTRAT NE FIGE PAS À L'APPAIRAGE ═══════════════════════
+   *
+   * Elle était relevée une fois, au moment de l'appairage, et plus jamais. Un
+   * projet monté de 1.4.0 à 1.8.0 restait donc affiché en 1.4.0 dans le Panel —
+   * alors qu'il annonçait 1.8.0 dans l'en-tête de CHAQUE requête, sous les yeux
+   * de la garde de compatibilité qui la lisait déjà pour la juger.
+   *
+   * Ce que cela coûtait : l'écran qui sert à décider d'une montée de version
+   * disait le contraire de la réalité, et rien ne le contredisait.
+   */
+  record.runtime.contractVersion = '1.4.0';
+  await registry.recordHeartbeat(record, {
+    sentAt: new Date().toISOString(),
+    softwareVersion: '1.4.3',
+    environment: 'TEST',
+    health: { status: 'OK', details: null },
+    bridgeStats: { outboxSize: 0 },
+  }, '1.8.0');
+  check('la version de contrat suit le projet, heartbeat après heartbeat',
+    record.runtime.contractVersion === '1.8.0');
+
+  /**
+   * ET UN APPELANT QUI NE LA TRANSMET PAS N'EFFACE RIEN.
+   *
+   * `null` est l'absence d'information, pas l'information « aucune version ».
+   * Les confondre ferait oublier au Panel ce que le pont venait de lui apprendre,
+   * au premier appelant qui ne passe pas l'en-tête (façade, test, script).
+   */
+  await registry.recordHeartbeat(record, {
+    sentAt: new Date().toISOString(),
+    softwareVersion: '1.4.3',
+    environment: 'TEST',
+    health: { status: 'OK', details: null },
+    bridgeStats: { outboxSize: 0 },
+  });
+  check('une absence de version ne remplace pas celle qu’on savait',
+    record.runtime.contractVersion === '1.8.0');
   const publicView = registry.toPublicProject(record, now);
   check('projection publique sans aucun hash ni secret',
     !JSON.stringify(publicView).includes('Hash') && !JSON.stringify(publicView).includes('Encrypted'));

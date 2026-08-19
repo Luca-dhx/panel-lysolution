@@ -22,6 +22,7 @@ export const PROJECT_BRIDGE_CLIENT_METHODS = Object.freeze([
   'getIdentity',
   'getHealth',
   'getManifest',
+  'getAccounts',
   'deliverChanges',
   'readLocalChanges',
   'listOperations',
@@ -154,6 +155,17 @@ export class ProjectBridgeClient {
   // Manifeste officiel du projet (contrat ≥ 1.1.0) — relisible à tout moment.
   getManifest() {
     return this.#request('GET', PROJECT_API_ROUTES.manifest);
+  }
+
+  /**
+   * LES COMPTES DU PROJET, À L'INSTANT.
+   *
+   * Aucun paramètre : le projet dont on parle est celui du jeton de pont, et
+   * il n'y a rien à filtrer côté Panel — c'est la liste complète de qui peut
+   * entrer là-bas, dans la représentation que le projet lui-même publie.
+   */
+  getAccounts() {
+    return this.#request('GET', PROJECT_API_ROUTES.accounts);
   }
 
   // -- sync ------------------------------------------------------------------

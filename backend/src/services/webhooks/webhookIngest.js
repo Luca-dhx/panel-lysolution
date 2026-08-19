@@ -33,7 +33,9 @@
 // reviendrait à faire L6 sous un autre nom.
 import logger from '../../utils/logger.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
-import PanelIntegratedApiWebhookBinding from '../../models/PanelIntegratedApiWebhookBinding.model.js';
+import PanelIntegratedApiWebhookBinding, {
+  WEBHOOK_DESTINATION,
+} from '../../models/PanelIntegratedApiWebhookBinding.model.js';
 import PanelProviderWebhookEvent, {
   WEBHOOK_EVENT_STATUS,
 } from '../../models/PanelProviderWebhookEvent.model.js';
@@ -88,7 +90,12 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   // Pas de binding = le Panel n'a jamais enregistré d'endpoint pour ce couple.
   // Accepter quand même reviendrait à traiter des événements dont on ne peut
   // pas dire d'où ils viennent.
-  const binding = await PanelIntegratedApiWebhookBinding.findOne({ provider, environment }).lean();
+  const binding = await PanelIntegratedApiWebhookBinding.findOne({
+    provider,
+    environment,
+    destination: WEBHOOK_DESTINATION.PANEL,
+    projectId: null,
+  }).lean();
   if (!binding) {
     logger.warn(`[webhooks] ${provider}/${environment} : appel entrant sans binding connu — refusé.`);
     return {

@@ -33,7 +33,7 @@ export async function heartbeat(req, res) {
   // pour en déduire les changements (version, santé, redémarrage). Il doit
   // donc s'exécuter AVANT que la fiche ne soit mise à jour.
   await archiveHeartbeat(req.bridgeProject, dto);
-  await recordHeartbeat(req.bridgeProject, dto);
+  await recordHeartbeat(req.bridgeProject, dto, req.bridgeContractVersion ?? null);
   return ok(res, { acknowledged: true, panelTime: nowIso() });
 }
 

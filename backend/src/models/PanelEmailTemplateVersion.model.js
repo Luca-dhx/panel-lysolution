@@ -22,7 +22,22 @@ import mongoose from 'mongoose';
 const panelEmailTemplateVersionSchema = new mongoose.Schema(
   {
     templateCode: { type: String, required: true, trim: true },
-    /** `null` = le défaut de plateforme. Même clé de portée que le template. */
+    /**
+     * MÊME CLÉ DE PORTÉE QUE LE TEMPLATE — et c'est ce qui rend l'historique
+     * étanche (L11.1).
+     *
+     * Une version appartient à UNE instance. Restaurer la v3 de
+     * `PROJECT/<un client>/PASSWORD_RESET_REQUEST` ne peut pas toucher
+     * `PANEL/PASSWORD_RESET_REQUEST` : les deux portent le même code et le même
+     * numéro, et seule la portée les distingue. Si elle manquait, une
+     * restauration serait une loterie.
+     */
+    scopeType: {
+      type: String,
+      enum: ['PANEL', 'PROJECT'],
+      required: true,
+      default: 'PANEL',
+    },
     projectId: { type: String, default: null },
     version: { type: Number, required: true, min: 1 },
 

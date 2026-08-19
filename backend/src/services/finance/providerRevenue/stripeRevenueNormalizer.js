@@ -145,6 +145,42 @@ export function subscriptionIdOfInvoice(invoice) {
     ?? null;
 }
 
+/**
+ * L'INTENTION DE PAIEMENT D'UNE FACTURE — deux emplacements, et le premier
+ * a DISPARU des versions récentes.
+ *
+ * ══ LE DÉFAUT QUE CETTE FONCTION FERME (L10.7) ══════════════════════════════
+ *
+ * `invoice.payment_intent` était lu à plat, et lui seul. Stripe l'a retiré :
+ * depuis `2025-04-30.basil`, une facture porte ses règlements sous
+ * `payments.data[].payment.payment_intent`, et le champ plat n'est plus émis.
+ *
+ * Conséquence observée en recette réelle : une prestation ponctuelle
+ * (`mode: payment` + `invoice_creation`) produit une facture SANS abonnement
+ * — c'est normal — et désormais SANS intention à plat. Les deux filiations
+ * tombaient donc en même temps, `ownershipVia` valait `null`, et le fait
+ * partait en `UNOWNED / NO_OWNERSHIP_RESOURCE`. De l'argent réellement
+ * encaissé, absent du registre, sans qu'aucune erreur ne soit levée.
+ *
+ * On lit donc les deux, dans l'ordre du plus explicite au plus récent. Mais
+ * — et c'est le point important — la correction ne s'ARRÊTE pas ici : lire un
+ * champ de plus ne fait que déplacer la dépendance vers un autre champ que
+ * Stripe pourrait déplacer à son tour. L'appartenance se résout désormais sur
+ * le graphe interne du Panel (`stripeRevenueOwnership.js`), et cette lecture
+ * n'est qu'une des sources qu'elle consulte.
+ */
+export function paymentIntentIdOfInvoice(invoice) {
+  const plat = idOf(invoice?.payment_intent);
+  if (plat) return plat;
+
+  const reglements = Array.isArray(invoice?.payments?.data) ? invoice.payments.data : [];
+  for (const reglement of reglements) {
+    const intent = idOf(reglement?.payment?.payment_intent);
+    if (intent) return intent;
+  }
+  return null;
+}
+
 /** Le libellé métier porté par la première ligne d'une facture, s'il existe. */
 function invoiceLineLabel(invoice) {
   const ligne = invoice?.lines?.data?.[0];
@@ -220,6 +256,7 @@ function normalizeInvoice({ objet, payload, environment }) {
   }
 
   const subscriptionId = subscriptionIdOfInvoice(objet);
+  const paymentIntentId = paymentIntentIdOfInvoice(objet);
   const meta = metadataOf(objet);
 
   return {
@@ -270,14 +307,14 @@ function normalizeInvoice({ objet, payload, environment }) {
        */
       ownershipVia: subscriptionId
         ? { resourceType: 'SUBSCRIPTION', resourceId: subscriptionId }
-        : (idOf(objet.payment_intent)
-          ? { resourceType: 'PAYMENT_INTENT', resourceId: idOf(objet.payment_intent) }
+        : (paymentIntentId
+          ? { resourceType: 'PAYMENT_INTENT', resourceId: paymentIntentId }
           : null),
 
       /** Identités secondaires — pour l'audit et pour préparer L10.4. */
       corroboration: {
         subscriptionId,
-        paymentIntentId: idOf(objet.payment_intent),
+        paymentIntentId,
         chargeId: idOf(objet.charge),
         customerId: idOf(objet.customer),
         checkoutSessionId: null,
@@ -573,6 +610,7 @@ export default {
   CORROBORATING_EVENTS,
   REFUND_EVENTS,
   subscriptionIdOfInvoice,
+  paymentIntentIdOfInvoice,
   normalizeStripeRevenueEvent,
   normalizeStripeRefundObject,
   normalizeStripeRefundEvent,

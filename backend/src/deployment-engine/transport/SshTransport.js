@@ -200,17 +200,37 @@ export class SshTransport extends Transport {
         if (err) return reject(err);
         let stdout = '';
         let stderr = '';
-        let code = null;
+        let signal = null;
         const timer = setTimeout(() => {
           stream.close();
           reject(new Error(`Timeout de commande distante (${timeoutMs} ms).`));
         }, timeoutMs);
         timer.unref?.();
         stream
-          .on('close', (exitCode) => {
+          /**
+           * ══ UN FLUX FERMÉ SANS CODE N'EST PAS UN SUCCÈS ══════════════════
+           *
+           * Cette ligne rendait `exitCode ?? code ?? 0`. Or `close` est émis
+           * SANS code de sortie dans deux cas parfaitement réels : la connexion
+           * est tombée pendant l'exécution, ou le process distant a été tué par
+           * un signal. Les deux étaient donc rapportés comme « code 0 » —
+           * c'est-à-dire comme une réussite.
+           *
+           * Une coupure réseau au milieu d'un `npm ci` produisait ainsi une
+           * étape verte sur une installation qui n'a jamais fini. On rend
+           * désormais `code: null` et le signal : c'est à l'appelant
+           * (`runRemoteCommand`) d'en faire une erreur typée, et il le fait.
+           */
+          .on('close', (exitCode, closeSignal) => {
             clearTimeout(timer);
-            resolve({ code: exitCode ?? code ?? 0, stdout, stderr });
+            resolve({
+              code: exitCode === undefined || exitCode === null ? null : exitCode,
+              signal: closeSignal ?? signal ?? null,
+              stdout,
+              stderr,
+            });
           })
+          .on('exit', (exitCode, exitSignal) => { signal = exitSignal ?? signal; })
           .on('data', (d) => {
             stdout += d.toString('utf8');
           })

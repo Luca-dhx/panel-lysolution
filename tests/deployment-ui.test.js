@@ -356,8 +356,19 @@ section('Le worker est DÉTACHÉ — c’est ce qui le rend survivant');
   check('le worker efface le secret de son propre environnement',
     /delete process\.env\.PANEL_DEPLOY_SSH_PASSWORD/.test(workerSource));
   check('…ouvre sa PROPRE connexion à la base', /connectDatabase/.test(workerSource));
-  check('…et conclut le run même en cas d’erreur inattendue',
-    /finally\s*\{/.test(workerSource) && /finalizeRun/.test(workerSource));
+  /**
+   * L'ORCHESTRATION A QUITTÉ LE POINT D'ENTRÉE.
+   *
+   * Elle vivait ici, donc hors d'atteinte de toute recette : un script qui lit
+   * son environnement et sort par `process.exit()` ne s'exécute pas dans une
+   * suite. Ce qui décide — barrière de publication, conclusion, reprise —
+   * vit maintenant dans `deploymentJob.service.js`, mis en panne pour de vrai
+   * par `deployment-durable-recorder.test.js`.
+   */
+  check('…et délègue l’orchestration au service de travail',
+    /runDeploymentJob\(/.test(workerSource));
+  check('…qui conclut le run quoi qu’il arrive',
+    /recorder\.finalize\(outcome\)/.test(read('services', 'deployment', 'deploymentJob.service.js')));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -897,6 +908,9 @@ section('L’interface ne contourne rien et n’expose aucun secret');
     .map((m) => m[1].replace(/\$\{[^}$]*\}/g, ':id').split(/[?$]/)[0]);
   const known = [
     '/api/deployment', '/api/deployment/self', '/api/deployment/runs',
+    // PRÉREQUIS — interrogés AVANT de proposer le bouton, jamais après l'avoir
+    // cliqué. Lecture pure : aucun mot de passe SSH ne transite par elle.
+    '/api/deployment/readiness',
     '/api/deployment/runs/:id', '/api/deployment/runs/:id/stream',
     '/api/deployment/targets', '/api/deployment/targets/:id',
     '/api/deployment/targets/:id/test-connection', '/api/deployment/targets/:id/preflight',

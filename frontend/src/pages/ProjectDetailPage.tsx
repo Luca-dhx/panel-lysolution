@@ -18,7 +18,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
-import { CommercialReadinessCard } from '@/components/CommercialReadinessCard';
 import { Disclosure } from '@/components/supervision';
 import { ContractCard } from '@/components/ContractCard';
 import { EventConfirmation } from '@/components/EventConfirmation';
@@ -28,7 +27,7 @@ import { FinanceWorkspace } from '@/components/finance/FinanceWorkspace';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
-import { DernierEtatConnu, FreshnessBanner } from '@/components/FreshnessBanner';
+import { FreshnessBanner } from '@/components/FreshnessBanner';
 import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
@@ -41,11 +40,12 @@ import { toPairingRow } from '@/lib/projectConnections';
 import { ConnectionStatusDot } from '@/components/connections';
 import { ConnectionActions } from '@/components/ConnectionActions';
 import type {
-  ProjectDestination, ProjectDestinationsByEnvironment, PublicProject, TeamMember,
+  ProjectAccountView, ProjectAccountsRead,
+  ProjectDestination, ProjectDestinationsByEnvironment, PublicProject,
 } from '@/types';
 import type { Meeting, ProjectEvent } from '@/types.events';
 import { api, integratedApis, errorMessage } from '@/lib/api';
-import type { CapabilityGrantsView } from '@/types.integratedApi';
+import type { CapabilityView } from '@/types.integratedApi';
 import {
   connectionState,
   isBusinessSynchronized,
@@ -289,7 +289,8 @@ function OverviewTab({
   link: { label: string; tone: 'ok' | 'warn' | 'error' | 'neutral' };
   fraicheur: ReturnType<typeof getProjectDataFreshness>;
 }) {
-  const isDev = useIsDev();
+  // `useIsDev()` a disparu d'ici avec la carte d'ouverture commerciale : elle
+  // était le seul geste de cette section réservé aux comptes DEV.
   const site = vitrineState(project);
   const causeSuspension = vitrineSuspensionReason(project);
   const siteStatus = project.business?.siteStatus ?? null;
@@ -458,16 +459,12 @@ function OverviewTab({
       </Card>
 
       {/*
-        ── L'OUVERTURE COMMERCIALE EST UN FAIT DE LA FICHE, PAS UN DÉTAIL DEV ──
-        Elle a d'abord été posée dans l'onglet développeur, à côté de
-        l'environnement. C'était une erreur de lecture : « cette instance
-        peut-elle encaisser ? » est la question d'un gestionnaire, pas d'un
-        technicien — et c'est exactement pourquoi l'API en ouvre la LECTURE à
-        tout compte du Panel et n'en réserve que le GESTE aux DEV. La carte
-        rend les deux badges côte à côte, jamais fondus : une production non
-        ouverte n'est pas une recette.
+        ── LA CARTE « OUVERTURE COMMERCIALE » A ÉTÉ SUPPRIMÉE ────────────────
+        Elle portait deux badges (PRÉ-OUVERTURE / OUVERTE), la liste des
+        contrôles préalables, et le bouton réservé aux DEV qui basculait
+        l'instance. Un projet appairé et configuré agit désormais sans ce
+        geste : il n'y a plus d'état à lire, donc plus rien à afficher ici.
       */}
-      <CommercialReadinessCard projectId={project.projectId} canEdit={isDev} />
 
       {contacts ? (
         <Card title="Contacts">
@@ -511,7 +508,7 @@ function OverviewTab({
         <ContractCard project={project} contract={null} />
       )}
 
-      <TeamCard team={project.business?.team ?? []} fraicheur={fraicheur} />
+      <ProjectAccountsCard projectId={project.projectId} />
 
       <Card title="Suivi">
         <dl className="detail-list">
@@ -649,7 +646,7 @@ function DeveloperTab({
     <>
       <ConnectionSection project={project} />
 
-      <CapabilityGrantsCard projectId={project.projectId} />
+      <ServedActionsCard />
 
       {/*
         ── LES QUATRE HORODATAGES NE FUSIONNENT JAMAIS ───────────────────────
@@ -793,12 +790,39 @@ function DeveloperTab({
           <div><dt>URL du site</dt><dd>{tech.site ?? '—'}</dd></div>
           <div><dt>URL du Manager</dt><dd>{tech.manager ?? '—'}</dd></div>
           {/*
-            AUCUN REPLI sur `runtime.publicBackendUrl` : cette adresse est
-            posée au bootstrap et jamais revue. L'afficher en secours faisait
-            resurgir l'ancien domaine dès que la destination était incomplète —
-            et il ressemblait alors à une donnée à jour.
+            TOUJOURS AUCUN REPLI sur `runtime.publicBackendUrl` ICI, et c'est
+            délibéré : cette ligne présente la DESTINATION, et mélanger deux
+            sources dans une même case ferait ressembler une adresse de secours
+            à une adresse constatée.
+
+            L'adresse déclarée par le projet est affichée SÉPARÉMENT ci-dessous,
+            avec son canal et sa date — un diagnostic, pas un repli. C'est ce
+            qui permet de voir en un coup d'œil qu'une fiche est restée sur une
+            adresse figée à l'appairage, ce que rien ne montrait auparavant.
           */}
           <div><dt>URL du backend</dt><dd>{tech.backend ?? '—'}</dd></div>
+          <div>
+            <dt>Adresse déclarée par le projet</dt>
+            <dd>
+              {project.runtime.publicBackendUrl ?? '—'}
+              {project.runtime.publicBackendUrl
+                && tech.backend
+                && project.runtime.publicBackendUrl !== tech.backend ? (
+                  <span className="badge badge-warn" style={{ marginLeft: '.5rem' }}>
+                    diverge de la destination
+                  </span>
+                ) : null}
+            </dd>
+          </div>
+          <div>
+            <dt>Déclarée par / le</dt>
+            <dd>
+              {project.runtime.publicBackendUrlSource ?? '—'}
+              {project.runtime.publicBackendUrlUpdatedAt
+                ? ` · ${formatDateTime(project.runtime.publicBackendUrlUpdatedAt)}`
+                : ''}
+            </dd>
+          </div>
           <div><dt>Environnement</dt><dd>{project.runtime.environment ?? '—'}</dd></div>
           <div><dt>Version applicative</dt><dd>{d?.versions?.software ?? '—'}</dd></div>
           <div><dt>Version de contrat Bridge</dt><dd>{d?.versions?.contract ?? '—'}</dd></div>
@@ -917,129 +941,238 @@ export default ProjectDetailPage;
  * entier, chaque ligne disant si elle est accordée, et si elle servirait
  * vraiment.
  */
-function CapabilityGrantsCard({ projectId }: { projectId: string }) {
-  const [view, setView] = useState<CapabilityGrantsView | null>(null);
-  const [busy, setBusy] = useState(false);
+/**
+ * LES ACTIONS SERVIES PAR CETTE INSTANCE — informatif, et rien d'autre.
+ *
+ * ── CE QUE CETTE CARTE ÉTAIT ────────────────────────────────────────────────
+ *
+ * « Capacités accordées » : une liste à cocher, projet par projet, doublée d'un
+ * avertissement pour les capacités qu'on pouvait accorder sans qu'elles soient
+ * servies (« Accordée, mais pas encore servie par le Panel… »). Cocher une case
+ * était devenu un prérequis silencieux : un projet correctement appairé et
+ * configuré refusait quand même, et rien à l'écran du projet ne disait laquelle
+ * des vingt-deux cases manquait.
+ *
+ * ── POURQUOI LA GARDER MALGRÉ TOUT ──────────────────────────────────────────
+ *
+ * Parce que la question « qu'est-ce que cette instance sait faire ? » est
+ * légitime, et qu'elle n'a pas de réponse ailleurs. Ce qui disparaît, c'est la
+ * possibilité d'AGIR depuis cet écran — plus de case, plus d'état par projet,
+ * donc plus rien à oublier de cocher.
+ *
+ * Elle ne prend d'ailleurs plus `projectId` : le catalogue est celui de
+ * l'instance, identique pour tous les projets qu'elle sert. Lui passer un
+ * projet laisserait croire qu'il pourrait différer de l'un à l'autre.
+ */
+function ServedActionsCard() {
+  const [capabilities, setCapabilities] = useState<CapabilityView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setView(await integratedApis.grants(projectId));
-      setError(null);
-    } catch (err) {
-      setError(errorMessage(err, 'Octrois indisponibles.'));
-    }
-  }, [projectId]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { capabilities: liste } = await integratedApis.capabilities();
+        setCapabilities(liste);
+        setError(null);
+      } catch (err) {
+        setError(errorMessage(err, 'Catalogue indisponible.'));
+      }
+    })();
+  }, []);
 
-  useEffect(() => { void load(); }, [load]);
-
-  const basculer = async (code: string, accorder: boolean) => {
-    if (!view) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const suivant = accorder
-        ? [...view.granted, code]
-        : view.granted.filter((c) => c !== code);
-      setView(await integratedApis.setGrants(projectId, suivant));
-    } catch (err) {
-      setError(errorMessage(err, 'Octroi refusé.'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!view) {
+  if (!capabilities) {
     return (
-      <Card title="Capacités accordées">
+      <Card title="IntegratedAPI centralisées">
         {error ? <div className="alert alert-error">{error}</div> : <p className="muted">Chargement…</p>}
       </Card>
     );
   }
 
+  /**
+   * Groupées par DOMAINE — le préfixe du code, pas le fournisseur.
+   *
+   * Un opérateur cherche « les actions de facturation », pas « les actions
+   * Stripe » : le fournisseur est un détail d'implémentation que le Panel s'est
+   * précisément donné pour mission de cacher au projet.
+   */
+  const domaines = new Map<string, CapabilityView[]>();
+  for (const capability of capabilities) {
+    const domaine = capability.code.split('.')[0] ?? 'autre';
+    domaines.set(domaine, [...(domaines.get(domaine) ?? []), capability]);
+  }
+
+  const LIBELLES: Record<string, string> = {
+    email: 'Email',
+    billing: 'Facturation',
+    signature: 'Signature',
+    webhook: 'Webhooks',
+    dns: 'DNS',
+  };
+
   return (
-    <Card title={`Capacités accordées (${view.granted.length})`}>
+    <Card title="IntegratedAPI centralisées">
       <p className="muted">
-        Ce projet peut <strong>demander</strong> les actions cochées. Il ne
-        reçoit aucune clé : le Panel exécute avec ses propres identifiants, dans
-        l’environnement de cette instance.
+        Ce projet utilise les intégrations centralisées du Panel. Les
+        identifiants externes restent stockés dans le Panel et ne sont{' '}
+        <strong>jamais</strong> transmis au projet : le projet demande une
+        action, le Panel l’exécute avec ses propres identifiants et ne renvoie
+        que le résultat.
       </p>
       {error ? <div className="alert alert-error">{error}</div> : null}
-      <ul className="plain-list">
-        {view.capabilities.map((capability) => (
-          <li key={capability.code}>
-            <label>
-              <input
-                type="checkbox"
-                checked={capability.granted}
-                disabled={busy}
-                onChange={(event) => { void basculer(capability.code, event.target.checked); }}
-              />{' '}
-              <code>{capability.code}</code> — {capability.label}
-            </label>
-            {capability.granted && !capability.migrated ? (
-              <div className="muted small">
-                Accordée, mais pas encore servie par le Panel : une invocation
-                répondra « capacité indisponible ». {capability.migrationNote}
-              </div>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+      <p className="muted small">
+        <strong>{capabilities.length} actions disponibles</strong> sur cette
+        instance. Toutes sont servies : aucune n’est à activer projet par projet.
+      </p>
+      {[...domaines.entries()].map(([domaine, liste]) => (
+        <div key={domaine}>
+          <h4>{LIBELLES[domaine] ?? domaine}</h4>
+          <ul className="plain-list">
+            {liste.map((capability) => (
+              <li key={capability.code}>
+                <code>{capability.code}</code> — {capability.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </Card>
   );
 }
 
-function TeamCard({
-  team,
-  fraicheur,
-}: {
-  team: TeamMember[];
-  fraicheur: ReturnType<typeof getProjectDataFreshness>;
-}) {
-  // Une équipe reçue d'un AUTRE environnement n'est pas l'équipe actuelle :
-  // ce sont des personnes qui n'ont peut-être aucun compte sur cette instance.
-  const perimee = !fraicheur.isBusinessDataFresh;
-  if (team.length === 0) {
-    return (
-      <Card title="Équipe du projet">
-        <p className="muted">
-          Aucun compte synchronisé. L’équipe remonte automatiquement dès que le projet la publie.
-        </p>
-      </Card>
-    );
-  }
+/**
+ * LES COMPTES DU PROJET — lus EN DIRECT chez le projet, en lecture seule.
+ *
+ * ══ CE QUE CETTE CARTE MONTRAIT AVANT ═══════════════════════════════════════
+ *
+ * `project.business.team`, c'est-à-dire la projection `PanelProjectMember` du
+ * Panel, alimentée par le flux de synchronisation. Trois défauts d'une même
+ * cause — une deuxième source de vérité :
+ *
+ *   · elle VIEILLISSAIT entre deux synchronisations, sans qu'on puisse dire à
+ *     l'écran si ce qu'on lisait était à jour ;
+ *   · elle ne montrait QUE les comptes locaux. Les accès L.Y Solution — les
+ *     identités fédérées qui entrent réellement ici — n'y figuraient pas ;
+ *   · elle avait SA PROPRE FORME, différente de celle du Manager, pour décrire
+ *     les mêmes personnes.
+ *
+ * Elle interroge désormais le projet, qui est l'autorité, et affiche ce qu'il
+ * publie — la représentation canonique que son Manager utilise aussi.
+ *
+ * ══ ET QUAND LE PROJET NE RÉPOND PAS ════════════════════════════════════════
+ *
+ * On le DIT, et on ne montre RIEN d'autre. Ressortir un ancien instantané en
+ * le faisant passer pour l'état courant est précisément ce que ce lot
+ * supprime : une liste périmée sans étiquette est pire qu'une absence de
+ * liste, parce qu'on la croit.
+ */
+function ProjectAccountsCard({ projectId }: { projectId: string }) {
+  const [lecture, setLecture] = useState<ProjectAccountsRead | null>(null);
+  const [chargement, setChargement] = useState(true);
 
-  const initiales = (m: TeamMember) => {
-    const base = (m.name || m.email).trim();
+  const lire = useCallback(async () => {
+    setChargement(true);
+    try {
+      setLecture(await api.getProjectAccounts(projectId));
+    } catch {
+      /**
+       * Le SERVICE du Panel ne lève pas : une indisponibilité du projet est un
+       * résultat, pas une exception. Arriver ici signifie que le PANEL n'a pas
+       * répondu — et on le dit avec le même vocabulaire, sans inventer un
+       * troisième état.
+       */
+      setLecture({
+        available: false,
+        accounts: [],
+        summary: null,
+        readAt: null,
+        reason: 'PANEL_UNREACHABLE',
+        message: 'Comptes du projet temporairement indisponibles.',
+      });
+    } finally {
+      setChargement(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => { void lire(); }, [lire]);
+
+  const initiales = (compte: ProjectAccountView) => {
+    const base = (compte.displayName || compte.email).trim();
     const mots = base.split(/[\s@.]+/).filter(Boolean);
     return (mots[0]?.[0] ?? '?').toUpperCase() + (mots[1]?.[0] ?? '').toUpperCase();
   };
 
   return (
-    <Card title="Équipe du projet">
-      {perimee ? (
-        <p className="muted">
-          <DernierEtatConnu fraicheur={fraicheur} attente="Équipe actuelle : en attente de synchronisation">
-            {`${team.length} utilisateur${team.length > 1 ? 's' : ''}`}
-          </DernierEtatConnu>
-        </p>
+    <Card title="Comptes du projet">
+      {chargement && !lecture ? <p className="muted">Lecture en cours…</p> : null}
+
+      {lecture && !lecture.available ? (
+        <div className="alert alert-error">
+          <p><strong>{lecture.message}</strong></p>
+          <p className="muted">
+            Cette liste est lue en direct dans le projet : elle n’est pas conservée ici,
+            et rien de périmé n’est affiché à la place.
+          </p>
+          <p>
+            <button type="button" className="btn btn-small" onClick={() => void lire()}>
+              Réessayer
+            </button>
+          </p>
+        </div>
       ) : null}
-      <ul className="team-list">
-        {team.map((m) => (
-          <li key={m.entityId} className="team-row">
-            <span className="project-avatar project-avatar-small">{initiales(m)}</span>
-            <span className="team-row-main">
-              <span className="team-row-name">{m.name || m.email}</span>
-              <span className="muted">{m.email}</span>
-            </span>
-            <span className="badge badge-muted">{m.role}</span>
-          </li>
-        ))}
-      </ul>
-      <p className="muted">
-        Ces comptes appartiennent au projet : ils se gèrent dans son Manager, pas ici.
-      </p>
+
+      {lecture?.available ? (
+        <>
+          {lecture.accounts.length === 0 ? (
+            <p className="muted">Ce projet n’a aucun compte.</p>
+          ) : (
+            <ul className="team-list">
+              {lecture.accounts.map((compte) => (
+                <li key={compte.id} className="team-row">
+                  <span className="project-avatar project-avatar-small">{initiales(compte)}</span>
+                  <span className="team-row-main">
+                    <span className="team-row-name">{compte.displayName}</span>
+                    <span className="muted">{compte.email}</span>
+                  </span>
+                  {/*
+                    LES MÊMES LIBELLÉS MÉTIER QUE DANS LE MANAGER.
+                    « Accès L.Y Solution » désigne la même chose des deux côtés :
+                    une identité du Panel projetée ici, jamais un compte local.
+                  */}
+                  <span className={compte.source === 'PANEL' ? 'badge badge-ok' : 'badge badge-muted'}>
+                    {compte.source === 'PANEL' ? 'Accès L.Y Solution' : 'Compte du projet'}
+                  </span>
+                  <span className="badge badge-muted">{compte.role}</span>
+                  {/*
+                    « JAMAIS ACTIVÉ » ET « DÉSACTIVÉ » NE SE RÉPARENT PAS PAREIL.
+                    Le premier appelle un lien d'activation à renvoyer, le second
+                    un interrupteur à rouvrir. Les afficher sous le même mot
+                    faisait chercher au mauvais endroit.
+                  */}
+                  {compte.status === 'PENDING_ACTIVATION' ? (
+                    <span className="badge badge-warn">En attente d’activation</span>
+                  ) : compte.enabled ? null : (
+                    <span className="badge badge-warn">Désactivé</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <p className="muted">
+            {lecture.summary
+              ? `${lecture.summary.local} compte(s) du projet, ${lecture.summary.panel} accès L.Y Solution.`
+              : null}
+            {lecture.readAt
+              ? ` Lu dans le projet le ${new Date(lecture.readAt).toLocaleString('fr-FR')}.`
+              : null}
+          </p>
+          <p className="muted">
+            Les comptes du projet se gèrent dans son Manager ; les accès L.Y Solution
+            depuis « Comptes L.Y Solution ». Cette vue est une supervision, pas une
+            administration.
+          </p>
+        </>
+      ) : null}
     </Card>
   );
 }

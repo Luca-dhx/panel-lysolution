@@ -29,11 +29,37 @@ import PanelDeploymentTarget from '../models/PanelDeploymentTarget.model.js';
 import {
   activeRunFor, createRun, getRunOrThrow, listRuns, readEventsSince,
 } from '../services/deployment/deploymentRun.service.js';
+import { RECORDER_ERRORS } from '../services/deployment/recorderErrors.js';
 import { startDeploymentWorker } from '../services/deployment/deploymentWorker.service.js';
 import { OPERATIONS, executeOperation } from '../services/deployment/deploymentExecutor.service.js';
+import { describeReadiness } from '../services/health/readiness.service.js';
 
 function actorOf(req) {
   return { userId: req.panelUser.userId, userEmail: req.panelUser.email };
+}
+
+/**
+ * ══ OUVRIR LE JOURNAL — LA PREMIÈRE CHOSE, ET LA SEULE INTOLÉRANTE ══════════
+ *
+ * Aucune opération ne commence sans que son run existe DURABLEMENT. À ce
+ * moment précis, rien n'a encore été touché : pas de session SSH, pas
+ * d'enregistrement DNS, pas un octet sur le serveur. C'est le seul instant où
+ * s'arrêter ne coûte rien — après, chaque refus laisse un état à décrire.
+ *
+ * L'échec est traduit en 503 : ce n'est ni la faute de l'appelant (400) ni un
+ * conflit (409), c'est une dépendance du service qui manque, et l'opérateur
+ * peut réessayer. La cause d'origine ne franchit pas cette frontière : un
+ * message de pilote Mongo porte l'URI de connexion, donc des identifiants.
+ */
+async function openRun(args) {
+  try {
+    return await createRun(args);
+  } catch (err) {
+    if (err?.code === RECORDER_ERRORS.UNAVAILABLE) {
+      throw new ApiError(503, 'PANEL_DEPLOY_RECORDER_UNAVAILABLE', err.message);
+    }
+    throw err;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -157,7 +183,7 @@ async function startOperation(req, res, operationType) {
 
   const selfDeployment = target.selfHosted === true && operationType === OPERATIONS.DEPLOYMENT;
 
-  const runId = await createRun({
+  const runId = await openRun({
     target,
     operationType,
     user: req.panelUser.email,
@@ -274,7 +300,7 @@ export async function deprovision(req, res) {
       { runId: active.runId });
   }
 
-  const runId = await createRun({
+  const runId = await openRun({
     target, operationType: OPERATIONS.DEPROVISION, user: req.panelUser.email,
   });
 
@@ -346,7 +372,7 @@ export async function destroy(req, res) {
       + 'sur le serveur : lever cette quarantaine exige une connexion, donc un mot de passe SSH.');
   }
 
-  const runId = await createRun({
+  const runId = await openRun({
     target, operationType: OPERATIONS.DESTINATION_DELETE, user: req.panelUser.email,
   });
   startDeploymentWorker({
@@ -525,6 +551,103 @@ export async function releases(req, res) {
     host: target.host,
     current: outcome.currentRelease ?? null,
     releases: outcome.releases ?? [],
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  PRÉREQUIS DE DÉPLOIEMENT — lecture, sans effet, sans secret                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * « PUIS-JE LANCER UN DÉPLOIEMENT MAINTENANT ? » — la réponse structurée.
+ *
+ * ══ LE DÉFAUT QUE CETTE ROUTE FERME ═══════════════════════════════════════
+ *
+ * L'écran découvrait l'indisponibilité du backend en POSTANT le déploiement
+ * lui-même. Le premier appel après une longue inactivité servait donc de
+ * révélateur : il partait, échouait, et l'opérateur ne savait pas si son
+ * déploiement avait commencé. Un prérequis qui se vérifie APRÈS avoir engagé
+ * l'opération n'est pas un prérequis.
+ *
+ * ══ CE QUE CHAQUE DRAPEAU SIGNIFIE EXACTEMENT ═════════════════════════════
+ *
+ *   backend           ce process répond — trivialement vrai s'il répond ;
+ *   database          la connexion Mongo est ÉTABLIE (lue en mémoire) ;
+ *   deploymentEngine  le worker détaché est présent et lançable ;
+ *   destination       une destination est configurée et son cycle de vie
+ *                     autorise un déploiement.
+ *
+ * ══ CE QUE `destination` NE DIT PAS ═══════════════════════════════════════
+ *
+ * Que le serveur distant répond. Le vérifier exigerait une session SSH, donc
+ * un mot de passe — que cette route ne demande pas et ne doit pas demander :
+ * c'est une LECTURE, et une lecture ne transporte pas de secret. Promettre une
+ * joignabilité qu'on n'a pas mesurée serait pire que se taire, parce que
+ * l'opérateur y ferait confiance.
+ *
+ * Aucune adresse, aucun port, aucun nom d'utilisateur SSH ne figure dans la
+ * réponse : l'état de service se lit sans rien apprendre de l'infrastructure.
+ */
+export async function readiness(req, res) {
+  const etat = describeReadiness();
+
+  const targetId = typeof req.query.targetId === 'string' ? req.query.targetId.trim() : '';
+  let destination = null;
+
+  if (etat.checks.database) {
+    const cibles = await listTargets();
+    const candidate = targetId
+      ? cibles.find((t) => t.targetId === targetId) ?? null
+      : cibles.find((t) => t.lifecycleStatus !== LIFECYCLE.DELETED) ?? null;
+
+    if (!candidate) {
+      destination = {
+        ok: false,
+        reason: targetId
+          ? 'DESTINATION_INTROUVABLE'
+          : 'AUCUNE_DESTINATION_CONFIGUREE',
+      };
+    } else {
+      // Le cycle de vie est la SEULE chose vérifiable sans connexion. On le dit
+      // tel quel plutôt que de le traduire en « prêt » — un état de retrait en
+      // cours n'est pas une panne, c'est une décision.
+      let refus = null;
+      try {
+        assertDeployable(candidate);
+      } catch (err) {
+        refus = err?.code ?? 'DESTINATION_NON_DEPLOYABLE';
+      }
+      const active = refus ? null : await activeRunFor(candidate.targetId);
+      destination = {
+        ok: !refus && !active,
+        reason: refus ?? (active ? 'EXECUTION_DEJA_EN_COURS' : null),
+        // L'identifiant et le nom sont déjà connus de l'écran qui appelle : les
+        // rendre ne divulgue rien et évite un second appel pour les afficher.
+        targetId: candidate.targetId,
+        name: candidate.name,
+        environment: candidate.environment,
+        activeRunId: active?.runId ?? null,
+      };
+    }
+  }
+
+  const ready = etat.ready && Boolean(destination?.ok);
+  res.set('Cache-Control', 'no-store');
+  if (!ready) res.set('Retry-After', '2');
+
+  return res.status(200).json({
+    success: true,
+    data: {
+      ready,
+      checks: {
+        backend: etat.checks.backend,
+        database: etat.checks.database,
+        deploymentEngine: etat.checks.deploymentEngine,
+        destination: Boolean(destination?.ok),
+      },
+      destination,
+      phase: etat.phase,
+    },
   });
 }
 

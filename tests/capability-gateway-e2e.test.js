@@ -66,7 +66,6 @@ const BREVO_BASE = `http://127.0.0.1:${fauxBrevo.address().port}/v3`;
 const { createApp } = await import('../backend/src/app.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
 const controlPlane = await import('../backend/src/services/integratedApi/controlPlane.service.js');
-const grantsModule = await import('../backend/src/services/capabilities/capabilityGrants.js');
 const registryStore = (await import('../backend/src/services/registry/registryStore.js')).default;
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 const { resetSyncCore } = await import('../backend/src/services/sync/syncCore.service.js');
@@ -162,23 +161,47 @@ section('2 bis. Sans jeton d’appairage, la passerelle ne répond rien');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   3. SANS OCTROI, RIEN NE PART — fermé par défaut.
+   3. UN PROJET APPAIRÉ AGIT — par le pont réel, sans rien à cocher.
    ══════════════════════════════════════════════════════════════════════════ */
-section('3. Un projet appairé ne peut RIEN sans octroi');
+section('3. Un projet appairé invoque sans octroi préalable');
 {
+  /**
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ────────
+   *
+   * Elle s'intitulait « Un projet appairé ne peut RIEN sans octroi » et
+   * vérifiait le refus `CAPABILITY_NOT_GRANTED` : un projet techniquement prêt,
+   * authentifié par le pont, avec la clé dans le coffre du Panel, était refusé
+   * parce qu'un opérateur n'avait pas coché une case sur sa fiche.
+   *
+   * C'est exactement ce que la simplification supprime, et cette section est
+   * donc devenue son meilleur témoin : le MÊME appel, sur le MÊME projet,
+   * traverse désormais jusqu'au fournisseur.
+   */
   const avant = appelsFournisseur.length;
-  const refus = await instance.invokeCapability({
+  const succesSansOctroi = await instance.invokeCapability({
     code: VERIFY,
     input: { recipient: { email: 'ops@garage.fr' }, operationId: 'op-e2e-000001' },
   });
-  check('refusé', refus.ok === false);
-  check('…code CAPABILITY_NOT_GRANTED', refus.code === 'CAPABILITY_NOT_GRANTED');
-  check('…en 403', refus.httpStatus === 403);
-  check('…et AUCUN appel fournisseur', appelsFournisseur.length === avant);
+  check('un projet appairé invoque sans aucun octroi', succesSansOctroi.ok === true);
+  check('…et l’appel a RÉELLEMENT atteint le fournisseur',
+    appelsFournisseur.length === avant + 1);
+  check('…aucun refus d’octroi n’existe plus',
+    succesSansOctroi.code !== 'CAPABILITY_NOT_GRANTED');
 
-  // Le code traverse le pont TEL QUEL : sans cela, le projet ne saurait pas
-  // pourquoi il est refusé, et un opérateur chercherait au mauvais endroit.
-  check('le code n’a pas été aplati en BRIDGE_INTERNAL', refus.code.startsWith('CAPABILITY_'));
+  /**
+   * LE REFUS QUI SUBSISTE TRAVERSE LE PONT TEL QUEL.
+   *
+   * On l'éprouve sur une capacité INCONNUE — le seul refus de cette famille qui
+   * reste. Sans cela, le projet ne saurait pas pourquoi il est refusé, et un
+   * opérateur chercherait au mauvais endroit.
+   */
+  const inconnue = await instance.invokeCapability({
+    code: 'pwn.everything',
+    input: { operationId: 'op-e2e-000002' },
+  });
+  check('une capacité inconnue reste refusée', inconnue.ok === false);
+  check('…et le code n’a pas été aplati en BRIDGE_INTERNAL',
+    String(inconnue.code ?? '').startsWith('CAPABILITY_'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -187,7 +210,6 @@ section('3. Un projet appairé ne peut RIEN sans octroi');
 let succes;
 section('4. Le chemin complet : projet → pont → passerelle → coffre → fournisseur');
 {
-  await grantsModule.setCapabilityGrants(projectId, [VERIFY], ACTEUR);
 
   const avant = appelsFournisseur.length;
   succes = await instance.invokeCapability({
@@ -277,35 +299,55 @@ section('5. Le projet ne peut choisir ni son monde ni son identité');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   6. LES OCTROIS SONT PAR PROJET — B n'ouvre rien à A.
+   6. L'IDENTITÉ NE SE PARTAGE PAS — l'existence de B n'ouvre rien pour A.
    ══════════════════════════════════════════════════════════════════════════ */
-section('6. Les octrois ne se partagent pas entre projets');
+section('6. Chaque invocation reste attribuée au projet qui parle');
 {
-  // Un SECOND projet au registre, avec le même octroi. Il n'est pas appairé :
-  // ce qu'on éprouve ici, c'est que son octroi n'ouvre RIEN pour l'autre.
+  /**
+   * ── CE QUE CETTE SECTION PROUVAIT, ET CE QU'ELLE PROUVE MAINTENANT ────────
+   *
+   * Elle éprouvait que les OCTROIS ne se partageaient pas : on retirait
+   * l'octroi de A, on laissait celui de B, et A était refusé. C'était une
+   * propriété du stockage des cases à cocher — pas de l'isolation réelle.
+   *
+   * Les octrois n'existent plus. Ce qui reste à prouver, et qui compte
+   * davantage, c'est que l'invocation de A est ATTRIBUÉE à A : c'est cette
+   * attribution qui fonde ensuite toute vérification d'appartenance. Un second
+   * projet au registre n'y change rien, et ne prête son identité à personne.
+   *
+   * L'isolation des RESSOURCES entre projets est éprouvée exhaustivement par
+   * `capability-multi-project-isolation.test.js`.
+   */
   const autre = await registre.declareProject({
     publicBackendUrl: 'http://127.0.0.1:59999',
     projectName: 'SB Auto L3 — projet B',
     environment: 'TEST',
   });
   const projectIdB = autre.record.projectId;
-  await grantsModule.setCapabilityGrants(projectIdB, [VERIFY], ACTEUR);
+  check('un second projet existe au registre', typeof projectIdB === 'string');
 
-  // On retire l'octroi de A. B garde le sien.
-  await grantsModule.setCapabilityGrants(projectId, [], ACTEUR);
-
-  const avant = appelsFournisseur.length;
-  const refus = await instance.invokeCapability({
+  const succesA = await instance.invokeCapability({
     code: VERIFY,
     input: { recipient: { email: 'ops@garage.fr' }, operationId: 'op-e2e-000006' },
   });
-  check('A refusé, bien que B soit autorisé', refus.code === 'CAPABILITY_NOT_GRANTED');
-  check('…et aucun appel fournisseur', appelsFournisseur.length === avant);
+  check('A invoque pour son propre compte', succesA.ok === true);
 
-  const grantsB = await grantsModule.getCapabilityGrants(projectIdB);
-  check('B conserve bien son octroi', grantsB.granted.includes(VERIFY));
+  /**
+   * ET L'INVOCATION EST JOURNALISÉE AU NOM DE A, JAMAIS DE B.
+   *
+   * C'est l'attribution qui compte : si le journal — et donc le contexte —
+   * pouvait confondre deux projets, toute vérification d'appartenance en aval
+   * s'appliquerait au mauvais périmètre.
+   */
+  const invocationsB = await PanelEvent.countDocuments({
+    projectId: projectIdB, type: 'CAPABILITY_INVOKED',
+  });
+  check('…et B ne porte AUCUNE invocation', invocationsB === 0);
 
-  await grantsModule.setCapabilityGrants(projectId, [VERIFY], ACTEUR);
+  const invocationsA = await PanelEvent.countDocuments({
+    projectId, type: 'CAPABILITY_INVOKED',
+  });
+  check('…tandis que A porte les siennes', invocationsA > 0);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -319,7 +361,6 @@ section('7. Fail closed sur l’inconnu, refus explicite sur le non-migré');
   check('capacité inconnue → CAPABILITY_UNKNOWN', inconnue.code === 'CAPABILITY_UNKNOWN');
   check('…en 404', inconnue.httpStatus === 404);
 
-  await grantsModule.setCapabilityGrants(projectId, [VERIFY, 'email.send_template'], ACTEUR);
   const nonMigree = await instance.invokeCapability({
     code: 'email.send_template',
     input: { templateRef: 'X', recipient: { email: 'a@b.fr' }, operationId: 'op-e2e-000007' },
@@ -384,7 +425,15 @@ section('8. Les sentinelles ne sont NULLE PART hors du coffre');
   // La fiche du Panel n'a pas non plus à porter de secret.
   const fiche = await registryStore.getById(projectId);
   check('…ni dans la fiche du projet côté Panel', propre(fiche));
-  check('la fiche porte bien les octrois', (fiche.capabilityGrants ?? []).includes(VERIFY));
+  /**
+   * ET LA FICHE NE PORTE AUCUNE AUTORISATION STOCKÉE.
+   *
+   * Ce contrôle vérifiait l'inverse — que l'octroi avait bien été enregistré.
+   * On garde la sonde en la retournant : le champ ne doit plus exister, sans
+   * quoi il serait relu un jour.
+   */
+  check('la fiche ne porte plus d’octrois', fiche.capabilityGrants === undefined);
+  check('…ni d’état d’ouverture commerciale', fiche.commercialState === undefined);
 }
 
 await instance.stop();

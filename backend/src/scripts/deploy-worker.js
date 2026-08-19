@@ -61,14 +61,10 @@ if (!runId || !targetId || !operationType) {
 delete process.env.PANEL_DEPLOY_SSH_PASSWORD;
 
 const { connectDatabase, disconnectDatabase } = await import('../config/db.js');
-const runs = await import('../services/deployment/deploymentRun.service.js');
-const targets = await import('../services/deployment/deploymentTarget.service.js');
 const { installProcessGuards, setActiveRun } = await import('../services/deployment/forensics/processGuard.js');
-const { journal, SOURCES, LEVELS } = await import('../services/deployment/forensics/runJournal.service.js');
-const { verifyFinalization } = await import('../services/deployment/forensics/finalization.service.js');
+const { runDeploymentJob } = await import('../services/deployment/deploymentJob.service.js');
 
 await connectDatabase();
-await runs.attachWorker(runId, process.pid);
 
 /**
  * LES OBSERVATEURS D'ERREURS, ICI ET PAS SEULEMENT DANS L'API.
@@ -82,118 +78,35 @@ await runs.attachWorker(runId, process.pid);
  */
 installProcessGuards({ logger: console });
 setActiveRun(runId);
-await journal(runId, {
-  source: SOURCES.WORKER,
-  level: LEVELS.INFO,
-  eventCode: 'WORKER_STARTED',
-  message: `Worker détaché démarré (pid ${process.pid}).`,
-  details: { pid: process.pid, operation: process.env.PANEL_DEPLOY_OPERATION ?? null },
-  pid: process.pid,
-});
-
-// Battement de cœur : c'est lui qui permettra de conclure qu'un run est
-// orphelin si ce processus meurt sans avoir conclu.
-const beat = setInterval(() => { void runs.heartbeat(runId); }, 5_000);
-beat.unref?.();
-
-let outcome = { status: 'error', summary: null, error: null };
 
 /**
- * FILE D'ÉCRITURE DES ÉTAPES — sérialisée, dans l'ordre d'émission.
+ * ══ CE QUE CE SCRIPT NE FAIT PLUS, ET POURQUOI ══════════════════════════════
  *
- * Le moteur émet `running` puis l'état terminal de la même étape. Quand rien
- * ne les sépare (aucun travail distant entre les deux : préflight,
- * finalisation), les deux écritures partaient en parallèle et se doublaient :
- * si `running` se déposait APRÈS `ok`, l'étape restait « en cours », et
- * `finalizeRun` requalifiait tout `running` résiduel en `error`. D'où des
- * étapes rouges sur un déploiement pourtant réussi à 20/20 — et un journal
- * d'évènements qui annonçait la fin avant le début.
+ * Il portait toute l'orchestration : file d'écritures, barrière de publication,
+ * conclusion, enregistrement sur la destination, vérification finale. Un point
+ * d'entrée qui lit son environnement et sort par `process.exit()` ne s'éprouve
+ * pas : la seule garde possible était une expression régulière sur son texte —
+ * qui ne dit rien de ce que le texte fait.
  *
- * Chaîner les écritures rend l'ordre d'émission égal à l'ordre de
- * matérialisation. Aucune étape, aucun statut, aucun contrat ne change.
+ * L'orchestration vit désormais dans `deploymentJob.service.js`, où la recette
+ * peut la mettre en panne sur le chemin RÉEL. Ce script garde exactement ce
+ * qui lui appartient : l'environnement, le secret, sa base, ses gardes, et son
+ * code de sortie.
  */
-let stepQueue = Promise.resolve();
-const enqueueStep = (step) => {
-  stepQueue = stepQueue.then(() => runs.recordStep(runId, step)).catch(() => {});
-  return stepQueue;
-};
+const resultat = await runDeploymentJob({
+  runId,
+  targetId,
+  operationType,
+  sshPassword,
+  releaseId,
+  options: operationOptions,
+  user: process.env.PANEL_DEPLOY_USER || null,
+  // Le PID de l'API qui nous a lancés : c'est LUI qui doit mourir pour qu'un
+  // redémarrage attendu soit avéré. Le worker le transmet plutôt que de laisser
+  // l'exécuteur lire l'environnement — lecture réservée aux points d'entrée.
+  apiPid: Number(process.env.PANEL_DEPLOY_API_PID) || null,
+  logger: console,
+});
 
-try {
-  const target = await targets.getTargetOrThrow(targetId);
-  const { executeOperation } = await import('../services/deployment/deploymentExecutor.service.js');
-
-  outcome = await executeOperation({
-    operationType,
-    target,
-    sshPassword,
-    releaseId,
-    runId,
-    options: operationOptions,
-    // Le PID de l'API qui nous a lancés : c'est LUI qui doit mourir pour qu'un
-    // redémarrage attendu soit avéré. Le worker le transmet plutôt que de
-    // laisser l'exécuteur lire l'environnement — lecture réservée aux points
-    // d'entrée.
-    apiPid: Number(process.env.PANEL_DEPLOY_API_PID) || null,
-    user: process.env.PANEL_DEPLOY_USER || null,
-    onStep: (step) => enqueueStep(step),
-    onLog: (message, level) => runs.appendLog(runId, message, level),
-  });
-} catch (err) {
-  // Une erreur ici est déjà un échec de déploiement : on la consigne au lieu
-  // de laisser le processus mourir en silence, ce qui laisserait le run
-  // « en cours » jusqu'au prochain démarrage du backend.
-  await runs.appendLog(runId, `Erreur inattendue : ${err.message}`, 'ERROR').catch(() => {});
-  outcome = {
-    status: 'error',
-    summary: `Déploiement interrompu par une erreur inattendue : ${err.message}`,
-    error: { code: err.code ?? 'WORKER_UNEXPECTED', message: err.message },
-  };
-} finally {
-  clearInterval(beat);
-  try {
-    // On attend que la file soit vide AVANT de conclure : `finalizeRun`
-    // requalifie les étapes encore `running` en `error`. Conclure pendant
-    // qu'une écriture est en vol condamnerait une étape déjà terminée.
-    await stepQueue;
-    await runs.finalizeRun(runId, outcome);
-
-    // C'est CET appel qui fait passer la destination de « Publication… » à
-    // « En ligne ». Il doit donc précéder toute vérification de cet état.
-    await targets.recordDeployment(targetId, {
-      operationType,
-      ok: outcome.status === 'ok',
-      version: outcome.version ?? null,
-      releaseId: outcome.releaseId ?? null,
-      user: process.env.PANEL_DEPLOY_USER || null,
-      durationMs: null,
-      error: outcome.error,
-      steps: outcome.steps ?? [],
-    });
-
-    /**
-     * L'INVARIANT DU SUCCÈS — vérifié, jamais déduit, et vérifié APRÈS coup.
-     *
-     * Un pipeline vert ne suffit pas : on RELIT la destination et la
-     * réservation de port. C'est en déduisant le succès sans relire l'état
-     * persisté qu'un écran de succès a pu coexister avec une destination
-     * figée en « Publication… ».
-     *
-     * ── L'ORDRE, ET POURQUOI IL EST LE DÉFAUT CORRIGÉ ─────────────────────
-     * Cette relecture précédait `recordDeployment` — c'est-à-dire l'écriture
-     * même qu'elle était censée constater. Elle trouvait donc immanquablement
-     * `state=DEPLOYING` et « verrou encore posé », et classait en
-     * `finalization_failed` un déploiement parfaitement réussi. Le run
-     * `88022404` du 06/08 en est l'exemple : toutes les étapes vertes,
-     * version 62241f6 en ligne, et un rapport annonçant une finalisation non
-     * vérifiée. Vérifier avant d'écrire ne prouve rien : cela invente un échec.
-     */
-    if (outcome?.status === 'ok') {
-      await verifyFinalization(runId, targetId).catch(() => null);
-    }
-  } catch {
-    // La conclusion n'a pas pu être écrite : le run sera vu comme orphelin
-    // au prochain démarrage, ce qui est le comportement correct.
-  }
-  await disconnectDatabase().catch(() => {});
-  process.exit(outcome.status === 'ok' ? 0 : 1);
-}
+await disconnectDatabase().catch(() => {});
+process.exit(resultat.outcome?.status === 'ok' ? 0 : 1);

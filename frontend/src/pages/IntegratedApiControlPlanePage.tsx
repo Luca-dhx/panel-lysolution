@@ -70,19 +70,13 @@ const DRIFT_LABELS: Record<string, string> = {
 };
 
 /**
- * NATURE DE L'EFFET (L1.75) — ce que la capacité change dans le monde réel.
- * C'est cette colonne, et elle seule, qui décide de ce qu'une instance en
- * pré-ouverture a le droit de faire.
+ * `EFFECT_LABELS` A ÉTÉ SUPPRIMÉ ICI.
+ *
+ * Cette table traduisait la nature de l'effet réel d'une capacité (READ_ONLY,
+ * FINANCIAL_WRITE, LEGAL_WRITE…). Deux de ses libellés disaient « bloquée avant
+ * l'ouverture » : ils décrivaient la politique de pré-ouverture, qui n'existe
+ * plus. Le champ `effectNature` qu'elle traduisait a disparu de l'API.
  */
-const EFFECT_LABELS: Record<string, string> = {
-  READ_ONLY: 'lecture seule',
-  CONFIGURATION: 'configuration réversible',
-  REVERSIBLE_EXTERNAL_WRITE: 'écriture réversible chez le fournisseur',
-  FINANCIAL_WRITE: 'argent réel — bloquée avant l’ouverture',
-  LEGAL_WRITE: 'engagement juridique — bloquée avant l’ouverture',
-  COMMUNICATION_WRITE: 'atteint un tiers dans sa boîte',
-  INFRASTRUCTURE_WRITE: 'infrastructure (DNS, hébergement)',
-};
 
 /** Ce qu'on peut se permettre quand une invocation tourne mal. */
 const IDEMPOTENCY_LABELS: Record<string, string> = {
@@ -285,16 +279,16 @@ function ProviderCard({ provider, webhook, capabilities, busy, run }: {
 /**
  * LES CAPACITÉS D'UN FOURNISSEUR (L3) — ce qu'un projet peut DEMANDER.
  *
- * ── POURQUOI CE BLOC N'EST PAS UNE LISTE DE NOMS ────────────────────────────
+ * ── IL N'Y A PLUS DE « DÉCLARÉE » ET DE « SERVIE » ──────────────────────────
  *
- * L'écran affichait « Capacités déclarées : email.send_template,
- * email.sender.verify ». C'était exact et inutilisable : rien n'y disait
- * laquelle fonctionne aujourd'hui, ni pourquoi l'autre ne fonctionne pas.
- * Un opérateur qui accorde une capacité à un projet a besoin de ces deux
- * réponses avant d'en accorder une qui refusera.
+ * Ce bloc portait deux étiquettes, et le compte « n servie(s) sur m ». La
+ * distinction avait un sens tant qu'une capacité pouvait figurer au registre
+ * sans exécutant ; elle n'en a plus, puisque l'alignement exige désormais un
+ * adaptateur pour chacune. Afficher « servie » sur toutes les lignes n'aurait
+ * plus rien appris.
  *
- * L'octroi lui-même ne se fait PAS ici : il porte sur un PROJET, pas sur un
- * fournisseur, et vit donc sur la fiche du projet.
+ * Le pied de bloc renvoyait par ailleurs vers l'octroi à régler « sur la fiche
+ * du projet » — un geste qui n'existe plus.
  */
 function CapabilityPanel({ provider, capabilities }: {
   provider: string;
@@ -308,28 +302,22 @@ function CapabilityPanel({ provider, capabilities }: {
     );
   }
 
-  const servies = capabilities.filter((c) => c.migrated).length;
-
   return (
-    <Disclosure title={`Capacités (${servies} servie(s) sur ${capabilities.length})`}>
+    <Disclosure title={`Capacités (${capabilities.length})`}>
       <ul className="plain-list">
         {capabilities.map((capability) => (
           <li key={capability.code}>
-            <span className={`tag ${capability.migrated ? 'tag-ok' : 'tag-muted'}`}>
-              {capability.migrated ? 'servie' : 'déclarée'}
-            </span>{' '}
             <code>{capability.code}</code> — {capability.label}
             <div className="muted small">
-              Effet : {EFFECT_LABELS[capability.effectNature ?? ''] ?? capability.effectNature ?? 'inconnu'}
-              {' · '}Reprise : {IDEMPOTENCY_LABELS[capability.idempotency] ?? capability.idempotency}
-              {capability.migrationNote ? <><br />{capability.migrationNote}</> : null}
+              Reprise : {IDEMPOTENCY_LABELS[capability.idempotency] ?? capability.idempotency}
             </div>
           </li>
         ))}
       </ul>
       <p className="muted small">
-        Une capacité « servie » n’est invocable que par un projet à qui elle a
-        été <strong>accordée</strong> — l’octroi se règle sur la fiche du projet.
+        Toutes ces actions sont servies par cette instance. Un projet appairé
+        peut les demander sans autorisation supplémentaire ; ce qu’il obtient
+        reste borné aux ressources qui lui appartiennent.
       </p>
     </Disclosure>
   );
@@ -590,19 +578,29 @@ function CredentialRoleRow({ role, state, value, onChange, busy, onRemove }: {
         <span className="muted">non renseigné</span>
       )}
 
-      <input
-        type={role.secret ? 'password' : 'text'}
-        placeholder={placeholder}
-        value={value}
-        disabled={busy}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      {role.autoManaged ? (
+        <span className="field-hint muted">
+          {configured
+            ? 'Géré automatiquement par le Panel.'
+            : 'Sera renseigné automatiquement lors de la réconciliation du webhook.'}
+        </span>
+      ) : (
+        <>
+          <input
+            type={role.secret ? 'password' : 'text'}
+            placeholder={placeholder}
+            value={value}
+            disabled={busy}
+            onChange={(e) => onChange(e.target.value)}
+          />
 
-      {configured ? (
-        <button type="button" className="btn btn-small" disabled={busy} onClick={onRemove}>
-          Retirer
-        </button>
-      ) : null}
+          {configured ? (
+            <button type="button" className="btn btn-small" disabled={busy} onClick={onRemove}>
+              Retirer
+            </button>
+          ) : null}
+        </>
+      )}
 
       {role.hint ? <span className="field-hint muted">{role.hint}</span> : null}
     </li>

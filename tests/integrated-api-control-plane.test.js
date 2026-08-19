@@ -147,6 +147,54 @@ section('Enregistrement — et ce qu’il NE déclenche pas');
     !/emitChange|publishToProject|republish|audience/.test(source));
 }
 
+section('Enregistrement — le webhook géré se réconcilie sur le monde servi');
+{
+  const appels = [];
+
+  await controlPlane.saveCredentialSet('BREVO', 'TEST', {
+    values: { apiKey: 'xkeysib-CONTROLPLANEHOOK000000000001' },
+    reconcileWebhook: async (args) => {
+      appels.push(args);
+      return { status: 'READY' };
+    },
+  }, { userId: 'dev-1' });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  check('la sauvegarde d’un credential racine TEST déclenche une réconciliation Brevo',
+    appels.length === 1
+    && appels[0].provider === 'BREVO'
+    && appels[0].environment === 'TEST');
+
+  const horsMonde = [];
+  await controlPlane.saveCredentialSet('BREVO', 'PROD', {
+    values: { apiKey: 'xkeysib-CONTROLPLANEHOOK000000000002' },
+    reconcileWebhook: async (args) => {
+      horsMonde.push(args);
+      return { status: 'READY' };
+    },
+  }, { userId: 'dev-1' });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  check('le jeu PROD n’est pas réconcilié depuis une instance TEST',
+    horsMonde.length === 0);
+
+  const autoManaged = [];
+  await controlPlane.saveCredentialSet('YOUSIGN', 'TEST', {
+    values: { webhookSecret: 'whsec_AUTOMANAGEDCONTROLPLANE0001' },
+    reconcileWebhook: async (args) => {
+      autoManaged.push(args);
+      return { status: 'READY' };
+    },
+  }, { userId: 'dev-1' });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  check('un rôle auto-géré saisi via saveCredentialSet ne déclenche rien',
+    autoManaged.length === 0);
+}
+
 section('Écriture partielle — rien n’est effacé par accident');
 {
   const apres = await controlPlane.saveCredentialSet('STRIPE', 'TEST', {
@@ -299,7 +347,7 @@ section('Disponibilité — la question que posera la passerelle de capacités')
 
   const brevo = await controlPlane.describeAvailability('BREVO');
   check('Brevo n’est pas disponible', brevo.available === false);
-  check('…et le motif est nommé', brevo.reason === 'NOT_CONFIGURED');
+  check('…et le motif est nommé', brevo.reason === 'NOT_VALIDATED');
 
   // La signature elle-même interdit de demander un autre monde : il n'y a
   // aucun paramètre d'environnement.

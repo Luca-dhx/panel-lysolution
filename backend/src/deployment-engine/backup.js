@@ -14,6 +14,7 @@
 
 import { assertSafeDbName, assertSafeArchive, assertSafePath } from './safety.js';
 import { BACKUP_ROOT, PROJECT_SLUG } from './config/project.profile.js';
+import { COMMAND_CLASS, TIMEOUTS, runRemoteCommand, sonde, strictShell } from './remoteCommand.js';
 
 /** Chemin de l'archive de backup pour une cible + horodatage. */
 export function backupArchivePath(host, stamp) {
@@ -40,28 +41,26 @@ export async function createBackup({ transport, host, dbName, mongoUri, version,
   const staging = `/tmp/${PROJECT_SLUG}-backup-${host}-${stamp}`;
   const archive = backupArchivePath(host, stamp);
 
-  await transport.exec(`mkdir -p ${staging}/db ${staging}/uploads ${staging}/config`);
+  await runRemoteCommand(transport, { commandId: 'backup.create_staging', command: `mkdir -p ${staging}/db ${staging}/uploads ${staging}/config`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
 
   // 1. Dump MongoDB de la base de la cible.
-  await transport.exec(`mongodump --uri='${mongoUri}' --db='${dbName}' --out='${staging}/db'`, {
-    timeoutMs: 300_000,
-  });
+  await runRemoteCommand(transport, { commandId: 'backup.mongodump', commandClass: COMMAND_CLASS.CRITICAL, step: 'backup', command: `mongodump --uri='${mongoUri}' --db='${dbName}' --out='${staging}/db'`, timeoutMs: TIMEOUTS.INSTALL });
 
   // 2. Uploads.
-  await transport.exec(`cp -a ${siteRoot}/backend/uploads/. ${staging}/uploads/ 2>/dev/null || true`);
+  await runRemoteCommand(transport, { commandId: 'backup.copy_uploads', command: `cp -a ${siteRoot}/backend/uploads/. ${staging}/uploads/ 2>/dev/null || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.INSTALL, step: 'backup' });
 
   // 3. Configuration : nginx + .env applicatif (sans secret VPS — il n'y est jamais).
-  await transport.exec(`cp -a /etc/nginx/sites-available/${host}.conf ${staging}/config/ 2>/dev/null || true`);
-  await transport.exec(`cp -a ${siteRoot}/backend/.env ${staging}/config/app.env 2>/dev/null || true`);
+  await runRemoteCommand(transport, { commandId: 'backup.copy_nginx_conf', command: `cp -a /etc/nginx/sites-available/${host}.conf ${staging}/config/ 2>/dev/null || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
+  await runRemoteCommand(transport, { commandId: 'backup.copy_env', command: `cp -a ${siteRoot}/backend/.env ${staging}/config/app.env 2>/dev/null || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
 
   // 4. Manifest de version.
   const manifest = JSON.stringify({ host, dbName, version, stamp }, null, 2);
   await transport.writeFile(`${staging}/manifest.json`, manifest);
 
   // 5. Archive.
-  await transport.exec(`mkdir -p ${BACKUP_ROOT}`);
-  await transport.exec(`tar -czf ${archive} -C ${staging} .`, { timeoutMs: 300_000 });
-  await transport.exec(`rm -rf ${staging}`);
+  await runRemoteCommand(transport, { commandId: 'backup.create_root', command: `mkdir -p ${BACKUP_ROOT}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
+  await runRemoteCommand(transport, { commandId: 'backup.archive', command: `tar -czf ${archive} -C ${staging} .`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.INSTALL, step: 'backup' });
+  await runRemoteCommand(transport, { commandId: 'backup.cleanup_staging', command: `rm -rf ${staging}`, commandClass: COMMAND_CLASS.CLEANUP, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
 
   return { archive, dbName, version };
 }
@@ -77,7 +76,7 @@ export async function restoreBackup({ transport, host, dbName, mongoUri, archive
   const siteRoot = `${remoteRoot}/${host}`;
   const staging = `/tmp/${PROJECT_SLUG}-restore-${host}`;
 
-  const exists = await transport.exec(`test -f ${archive} && echo OK || echo NO`);
+  const exists = await sonde(transport, 'backup.probe_archive', `test -f ${archive} && echo OK || echo NO`, { step: 'restore' });
   if (!exists.stdout.trim().endsWith('OK')) {
     const { DeploymentError } = await import('./errors.js');
     throw new DeploymentError('BACKUP_NOT_FOUND', `Archive de sauvegarde introuvable : ${archive}`, {
@@ -85,24 +84,22 @@ export async function restoreBackup({ transport, host, dbName, mongoUri, archive
     });
   }
 
-  await transport.exec(`rm -rf ${staging} && mkdir -p ${staging}`);
-  await transport.exec(`tar -xzf ${archive} -C ${staging}`, { timeoutMs: 300_000 });
+  await runRemoteCommand(transport, { commandId: 'restore.prepare_staging', command: strictShell(`rm -rf ${staging}; mkdir -p ${staging}`), commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'restore' });
+  await runRemoteCommand(transport, { commandId: 'restore.extract_archive', command: `tar -xzf ${archive} -C ${staging}`, commandClass: COMMAND_CLASS.CRITICAL, timeoutMs: TIMEOUTS.INSTALL, step: 'restore' });
 
   // 1. MongoDB : restauration avec remplacement (--drop).
-  await transport.exec(`mongorestore --uri='${mongoUri}' --drop --db='${dbName}' ${staging}/db/${dbName}`, {
-    timeoutMs: 300_000,
-  });
+  await runRemoteCommand(transport, { commandId: 'restore.mongorestore', commandClass: COMMAND_CLASS.CRITICAL, step: 'restore', command: `mongorestore --uri='${mongoUri}' --drop --db='${dbName}' ${staging}/db/${dbName}`, timeoutMs: TIMEOUTS.INSTALL });
 
   // 2. Uploads.
-  await transport.exec(`mkdir -p ${siteRoot}/backend/uploads && cp -a ${staging}/uploads/. ${siteRoot}/backend/uploads/ 2>/dev/null || true`);
+  await runRemoteCommand(transport, { commandId: 'restore.copy_uploads', command: `mkdir -p ${siteRoot}/backend/uploads && cp -a ${staging}/uploads/. ${siteRoot}/backend/uploads/ 2>/dev/null || true`, commandClass: COMMAND_CLASS.BEST_EFFORT, timeoutMs: TIMEOUTS.INSTALL, step: 'restore' });
 
-  await transport.exec(`rm -rf ${staging}`);
+  await runRemoteCommand(transport, { commandId: 'backup.cleanup_staging', command: `rm -rf ${staging}`, commandClass: COMMAND_CLASS.CLEANUP, timeoutMs: TIMEOUTS.FILESYSTEM, step: 'backup' });
   return { restored: true, archive };
 }
 
 /** Liste les archives de backup présentes sur le VPS pour une cible. */
 export async function listBackups(transport, host) {
-  const res = await transport.exec(`ls -1 ${BACKUP_ROOT}/${host}-*.tar.gz 2>/dev/null || true`);
+  const res = await sonde(transport, 'backup.list_archives', `ls -1 ${BACKUP_ROOT}/${host}-*.tar.gz 2>/dev/null || true`);
   return res.stdout
     .split('\n')
     .map((l) => l.trim())

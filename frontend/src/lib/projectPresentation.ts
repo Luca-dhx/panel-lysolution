@@ -8,7 +8,7 @@
  * chose en français ordinaire, et laisse les pages Développeur garder les
  * termes techniques, qui y sont utiles au diagnostic.
  */
-import type { PublicProject } from '@/types';
+import type { BusinessRecurrence, PublicProject } from '@/types';
 
 /* -------------------------------------------------------------------------- */
 /*  NOM AFFICHABLE                                                            */
@@ -434,10 +434,49 @@ export function formatAmount(amount: { amountIncludingTax: number | null; curren
   }
 }
 
-/** « par mois » / « par an » — jamais `interval: 'month'`. */
-export function formatInterval(interval: string | null | undefined): string | null {
-  if (!interval) return null;
-  if (/month/i.test(interval)) return 'par mois';
-  if (/year|annual/i.test(interval)) return 'par an';
-  return interval;
+/**
+ * LA RÉCURRENCE D'UN ABONNEMENT — « Tous les 3 mois », « Tous les ans ».
+ *
+ * ══ POURQUOI « par mois » A DISPARU ═════════════════════════════════════════
+ *
+ * `formatInterval` traduisait une unité isolée : `month` → « par mois ». Tant
+ * qu'un contrat ne pouvait être que mensuel ou annuel, la phrase était juste
+ * par accident. Elle a cessé de l'être le jour où un contrat a pu dire « tous
+ * les trois mois » : l'écran aurait affiché « 900,00 € par mois » pour un
+ * montant trimestriel — un facteur trois, sur la seule page où un opérateur
+ * vérifie ce qu'un client paie.
+ *
+ * ══ CE QUE CETTE FONCTION REFUSE DE FAIRE ═══════════════════════════════════
+ *
+ * Deviner. `null` en entrée rend `null` en sortie, et l'écran affiche un tiret.
+ * Une projection ancienne sans périodicité n'est pas un contrat mensuel : c'est
+ * un contrat dont on ne sait pas encore la périodicité, et le dire est la seule
+ * réponse honnête.
+ *
+ * Le projet publie déjà le libellé (`recurrenceLabel`) : on le préfère quand il
+ * est là — c'est la phrase de celui qui détient la donnée. La reconstruction
+ * locale ne sert qu'aux projections antérieures.
+ */
+export function formatRecurrence(
+  amount: { recurrence?: BusinessRecurrence | null; recurrenceLabel?: string | null; interval?: string | null } | null | undefined,
+): string | null {
+  if (!amount) return null;
+
+  const publie = typeof amount.recurrenceLabel === 'string' ? amount.recurrenceLabel.trim() : '';
+  if (publie) return publie;
+
+  const unit = String(amount.recurrence?.unit ?? '').toUpperCase();
+  const interval = Number(amount.recurrence?.interval);
+  if ((unit === 'MONTH' || unit === 'YEAR') && Number.isInteger(interval) && interval >= 1) {
+    const annee = unit === 'YEAR';
+    if (interval === 1) return annee ? 'Tous les ans' : 'Tous les mois';
+    return annee ? `Tous les ${interval} ans` : `Tous les ${interval} mois`;
+  }
+
+  // HÉRITAGE : l'unité seule, projetée par un projet non encore redéployé.
+  const herite = String(amount.interval ?? '');
+  if (/month/i.test(herite)) return 'Tous les mois';
+  if (/year|annual/i.test(herite)) return 'Tous les ans';
+
+  return null;
 }
