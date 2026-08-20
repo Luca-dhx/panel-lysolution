@@ -424,4 +424,94 @@ n'est plus celle-là.
 
 ---
 
+## LOT 4 — LE CONTRAT SB AUTO BASCULE
+
+### 4.1 La persistance cesse de nommer son fournisseur
+
+`contract.yousign` devient `contract.signature`. Le bloc historique est
+**conservé et toujours lu** (`signatureRecord.js` : `signatureOf`,
+`signatureTarget`, `setSignatureField`) — un contrat signé en 2025 se relit
+sans être réécrit, et la migration (`migrate-signature-block.js`) reste
+facultative pour fonctionner.
+
+Le bloc neutre porte un champ que l'ancien n'avait pas : **`provider`**. Il
+n'est pas déductible après coup. Les deux fournisseurs coexisteront en base
+pendant des années, et c'est ce champ qui dira où chercher une demande de 2025.
+
+### 4.2 Deux défauts réels, trouvés par la bascule
+
+Ni l'un ni l'autre n'était un effet du changement de fournisseur — les deux
+étaient déjà là, masqués par des tests qui lisaient la base au lieu du parcours.
+
+| Où | Ce qui était écrit | Ce que ça produisait |
+|---|---|---|
+| `contractStateMachine.deriveSignatureState` | `y.signatureRequestId`, `y.adminSignedAt` sur le résultat de `signatureOf` (qui rend `requestId`, `clientSignedAt`) | l'état retombait à `NONE` pour **toute** demande — l'écran n'a jamais affiché « signature en cours » |
+| `signatureEvent.applier` | `downloadSignedDocument(y.signatureRequestId)` | `undefined` — le **PDF signé n'était jamais récupéré** à l'achèvement |
+
+Les deux sont couverts par `signature-flow.test.js`, qui lit désormais la
+**vue HTTP** là où il lisait la base : c'est ce changement qui les a révélés.
+
+### 4.3 Une seule adresse de retour
+
+Le fournisseur n'en accepte qu'une, pour tout le document, **sans paramètre
+ajouté** (mesuré, lot 1). Les trois adresses par signataire disparaissent.
+
+`SignatureReturnPage` lit la **session** pour renvoyer chacun chez soi. Le
+parcours n'y perd rien : il n'a jamais cru un `?status=success` — un paramètre
+d'URL est contrôlé par celui qui revient, l'état du contrat non.
+
+### 4.4 La limite locale passe de 12 à 10 Mio
+
+Le document voyage en base64 dans un corps JSON. Garder 12 Mio aurait laissé
+passer un document de 11 Mo : accepté localement, transporté, **crédit débité**,
+puis refusé par un message parlant du fournisseur pour un problème qui est
+celui du PDF.
+
+### 4.5 Le catalogue nomme un DOMAINE
+
+L'entrée `YOUSIGN` devient `SIGNATURE`. Ce n'est pas cosmétique : sans elle,
+`isPanelAuthority('SIGNATURE')` répondait faux et **toute ouverture échouait en
+`CAPABILITY_MISSING`** alors que la plateforme servait parfaitement la capacité.
+
+Disparaissent avec elle : `testYousign` (un testeur sans appelant, qui invitait
+à coller une clé que ce projet ne doit plus détenir) et `yousign-sandbox.js`
+(il importait un module supprimé au cutover — il ne démarrait plus).
+
+### 4.6 Recette réelle — `tools/opensign/projectContractRecipe.js`
+
+Elle importe `buildSignatureOpenPayload` **depuis SB Auto** et pousse le
+résultat dans la vraie passerelle, jusqu'au vrai bac à sable. C'est le seul
+contrôle qui éprouve les **deux dépôts ensemble**, là où ils se touchent.
+
+| Étape | Mesure |
+|---|---|
+| 0 · zones valides pour le projet | 2 zones, 0 erreur |
+| 1 · charge utile construite | 8 clés, aucun retour par signataire |
+| 2 · schéma d'entrée du Panel | acceptée, fournisseur `OPENSIGN` |
+| 3 · conversion des zones | **écart maximal 0 point** — origine coin haut-gauche |
+| 4 · ouverture réelle | `OPENED`, poignées de 32 caractères, liens rendus |
+| 5 · relecture | `ONGOING` → statut contractuel `ONGOING` |
+| 6 · téléchargement | PDF authentique, `certificateAvailable: false` |
+| 7 · deux clics « Signer » | `ALREADY_OPEN`, 1 demande vivante, 1 crédit |
+| 8 · annuler puis relancer | 0 vivante après annulation, relance `OPENED` |
+
+L'étape 8 envoie **exactement** ce que le projet envoie — la même clé
+`sig-open-<contrat>`, stable exprès. Lui en donner une autre aurait éprouvé un
+parcours que personne ne suit, et laissé passer le cas où la réservation
+d'opération rendrait une demande révoquée : le contrat serait bloqué pour
+toujours, sans erreur, avec un lien mort. `replayByReexecution` évite cela.
+
+**Nettoyage** : 2 documents supprimés chez le fournisseur, 2 liens
+d'appartenance de recette retirés. Aucun résidu.
+
+### 4.7 Chaînes de qualité
+
+- SB Auto backend (`npm test`, ~100 suites) : **vert**.
+- Manager : `tsc -b --noEmit` **vert**, toutes les suites vertes **sauf**
+  `subscriptionPricing.test.mjs` (7 contrôles) — **rouge avant ce lot**, sur la
+  carte de coût d'abonnement, sans aucun rapport avec la signature. Vérifié en
+  rejouant les assertions contre le contenu de `HEAD`.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*
