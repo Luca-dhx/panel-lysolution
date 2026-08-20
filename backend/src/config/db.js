@@ -6,6 +6,7 @@
 import mongoose from 'mongoose';
 import config from './env.js';
 import logger from '../utils/logger.js';
+import { assertDatabaseAllowedForThisProcess } from './testDatabaseGuard.js';
 
 mongoose.set('strictQuery', true);
 
@@ -26,6 +27,19 @@ mongoose.connection.on('disconnected', () => {
 });
 
 export async function connectDatabase() {
+  // AVANT TOUT : une suite automatisée ne joint pas une base partagée.
+  // Le contrôle est ici, et non dans le harnais de tests, parce qu'une suite
+  // peut très bien se connecter sans passer par le harnais — c'est d'ailleurs
+  // ce qui a laissé sept projets de recette dans la base Atlas partagée.
+  assertDatabaseAllowedForThisProcess({
+    mongoHost: config.mongoHost,
+    dbName: config.dbName,
+    env: config.env,
+    isProd: config.isProd,
+    isTestProcess: config.isTestProcess,
+    liveRecipe: config.liveRecipe,
+  });
+
   // Un Panel de PRODUCTION pointant sur une base locale est presque toujours
   // un `.env` oublié. On ne bloque pas — un déploiement peut légitimement
   // héberger sa base sur la même machine — mais on le DIT fort, parce que

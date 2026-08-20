@@ -335,6 +335,153 @@ comme en exploitation : discipline d'intervention, pas de bac à sable.
 
 ---
 
+## TEST DATABASE ISOLATION / LIVE RECIPE POLICY
+
+### L'incident fondateur
+
+Sept projets ont vécu quatre jours dans `panel_test` sans que personne les
+remarque : `Garage UI`, `Jamais appairé`, `projet-a`, `projet-b`,
+`projet-declare`, `projet-revoque`, `Garage Fédéré`. Ils venaient de trois
+suites automatisées, apparus en une trentaine de secondes le 15 août.
+
+Dans l'écran des projets, **rien ne les distinguait d'un vrai client**. Ils
+comptaient dans le registre, apparaissaient dans les portées de modèles
+d'e-mail, et le premier tri par date les mêlait aux projets réels.
+
+La cause n'était pas un nettoyage oublié. C'était une **adresse autorisée** :
+
+```text
+tests/helpers/harness.js
+  process.env.MONGODB_URI = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017'
+  process.env.DB_TEST     = 'panel_test'
+                             ▲
+                             └── le nom de la base PARTAGÉE, écrit en dur
+```
+
+`PANEL_SKIP_DOTENV=1` empêche de lire le **fichier** `.env`. Il ne fait rien
+contre une `MONGODB_URI` déjà exportée par le shell ou héritée d'un processus
+parent qui, lui, avait chargé ce fichier. Il suffisait de cette fuite.
+
+Un cleanup seul n'aurait rien réglé : il aurait fallu le refaire au run suivant.
+
+### La règle
+
+> **Une suite automatisée ne joint qu'une base de BOUCLE LOCALE.**
+
+Elle est **géographique, pas nominative**. On n'interdit pas *un* cluster : on
+interdit *tout ce qui n'est pas local*. Nommer le cluster d'aujourd'hui
+laisserait passer celui de demain ; la règle géographique couvre les clusters
+qui n'existent pas encore.
+
+```text
+processus de test  +  hôte de boucle locale     → AUTORISÉ   (BASE_ISOLEE)
+processus de test  +  hôte distant              → REFUS      (SHARED_DATABASE_FORBIDDEN_IN_TESTS)
+processus de test  +  distant + opt-in explicite→ AUTORISÉ   (RECETTE_LIVE_EXPLICITE)
+n'importe qui      +  opt-in + ENV=PROD         → REFUS      (LIVE_RECIPE_FORBIDDEN_IN_PROD)
+runtime réel       +  n'importe quel hôte       → AUTORISÉ   (RUNTIME)
+```
+
+Le verrou vit dans `backend/src/config/testDatabaseGuard.js` et se pose dans
+`connectDatabase()`, **avant** `mongoose.connect()` — refuser après avoir ouvert
+ne refuse rien. Il est là et non dans le harnais parce qu'une suite peut se
+connecter sans passer par le harnais : c'est précisément ce qui s'est produit.
+
+Un serveur en mémoire écoute sur un port éphémère de `127.0.0.1` : il est couvert
+sans qu'on ait à le reconnaître spécifiquement.
+
+### Reconnaître un processus de test
+
+C'est le **suffixe du fichier** qui tranche, jamais son dossier :
+
+```text
+*.test.js  *.check.mjs  *.spec.js        → suite
+un chemin traversant  tests/             → suite
+PANEL_TEST_PROCESS=1                     → suite (marque héritée par les enfants)
+NODE_ENV=test                            → suite
+
+src/scripts/migrations/*.js              → PAS une suite
+src/scripts/panel-accounts-bootstrap.js  → PAS une suite
+src/server.js                            → PAS une suite
+```
+
+`src/scripts/` n'est pas un critère : on y trouve aussi bien des suites que des
+migrations et des amorçages, qui ont **légitimement** besoin de la vraie base.
+
+Le harnais pose `PANEL_TEST_PROCESS=1` pour que les serveurs qu'une recette
+démarre en enfant héritent de l'interdit — sans quoi un simple `spawn` le
+contournerait.
+
+### La recette live
+
+Une recette qui doit **vraiment** écrire dans l'environnement partagé reste
+possible. Son autorisation est une phrase qu'on ne tape pas par distraction :
+
+```bash
+PANEL_LIVE_RECIPE=ECRITURE-ASSUMEE-SUR-BASE-PARTAGEE node ma-recette.js
+```
+
+Exacte, casse comprise. Une valeur approchante — `1`, `true`, `oui`, la même
+en minuscules — **ne vaut pas autorisation**.
+
+Elle reste soumise à la discipline de la section précédente : marquer, relever
+avant, nettoyer après, prouver.
+
+### PROD n'est jamais une cible
+
+Aucune combinaison de variables n'autorise une recette automatisée sur `panel_prod`.
+Le contrôle précède tous les autres dans le garde, y compris la sortie
+« runtime » : il ne peut être court-circuité par aucune branche.
+
+`ENV=PROD` suffit à refuser, même si le drapeau `isProd` a été mal calculé — les
+deux sont vérifiés, parce qu'un seul des deux pourrait mentir.
+
+### Cleanup partiel — que faire
+
+Le nettoyage supprime **les dépendances d'abord, la racine en dernier**. Si
+l'opération s'interrompt, ce qui reste est un projet dont les satellites ont
+disparu : visible dans le registre, et le rejouer termine le travail. L'ordre
+inverse laisserait des orphelins que plus rien ne désigne.
+
+L'opération est **idempotente** : un second passage trouve 0 élément et réussit.
+
+### Procédure de récupération
+
+Si des fixtures sont à nouveau retrouvées dans `panel_test` :
+
+```text
+1. NE PAS supprimer sur un motif       ni par date, ni par « contient test »
+2. Relever les identifiants exacts     projectId, _id, clé, URL, nom
+3. Prouver la provenance               remonter à la suite et à la fabrique
+   PROVEN_TEST_FIXTURE                 correspondance nom + URL + statut + date
+   LEGITIMATE                          ne pas toucher
+   UNKNOWN                             NE PAS SUPPRIMER — rapporter
+4. Clôture transitive                  balayer TOUTES les collections, et
+                                       recommencer avec les identifiants des
+                                       documents trouvés jusqu'à point fixe
+5. Écarter les jetons PARTAGÉS         un `templateCode` appartient au parc, pas
+                                       à la fixture : l'inclure aspirerait les
+                                       définitions globales
+6. Dry run obligatoire                 identifiants exacts, comptes par collection
+7. Garde-fou d'abandon                 si le plan touche un projet protégé →
+                                       ABANDON TOTAL, jamais « le reste »
+8. Supprimer par _id                   jamais par requête
+9. Prouver l'absence résiduelle        rechercher chaque identité dans toutes
+                                       les collections
+10. Prouver la non-régression          sur le runtime, pas seulement en base
+```
+
+**Une instance de projet n'est pas une définition globale.** Un modèle
+`scopeType=PROJECT` porte un `projectId` et meurt avec son projet ; un modèle
+`scopeType=PANEL` a `projectId` à `null` et **survit à tous les projets**.
+Supprimer le second parce qu'une fixture le référençait priverait le parc entier
+d'un modèle.
+
+⚠️ Le champ est stocké à `null`, pas absent : `{ projectId: { $exists: false } }`
+n'en trouve **aucun**. Compter les définitions globales avec cette requête donne
+zéro et laisse croire qu'on n'en conserve pas.
+
+---
+
 ## Gardes PROD
 
 ```text
@@ -363,6 +510,17 @@ npm run test:finance              # registre financier
 Une suite qui **pose elle-même** son décor ne prouve pas que le décor se pose
 tout seul. C'est la leçon du lot précédent : onze documents sans portée et zéro
 instance de projet, avec toutes les suites au vert.
+
+Et une suite qui pose son décor **au mauvais endroit** ne se contente pas d'être
+fausse : elle abîme le parc. `tests/test-database-isolation.test.js` ouvre la
+chaîne — placée avant tout le reste, parce que si l'adressage est faux, ce qui
+suit ne prouve rien de fiable. Voir *TEST DATABASE ISOLATION / LIVE RECIPE
+POLICY* plus haut.
+
+Le fichier `tests/run-all.js` énumère les suites **explicitement**. Une suite
+présente sur le disque mais absente de cette liste est verte par omission : elle
+ne s'exécute jamais et personne ne s'en aperçoit. Ajouter un fichier de test
+n'est pas terminé tant qu'il n'y figure pas.
 
 ---
 

@@ -8,6 +8,15 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 
 const TESTS = [
   'config.test.js',
+  // ISOLATION DES BASES — placée avant tout, parce qu'une suite qui écrit au
+  // mauvais endroit ne se contente pas d'être fausse : elle abîme le parc.
+  //
+  // Sept projets de recette ont vécu quatre jours dans la base Atlas partagée,
+  // indiscernables de vrais clients dans le registre du Panel. La cause n'était
+  // pas un nettoyage manqué mais une ADRESSE autorisée : le harnais conservait
+  // une `MONGODB_URI` héritée de l'environnement, et le nom de base était écrit
+  // en dur — celui de la base partagée.
+  'test-database-isolation.test.js',
   // DISPONIBILITÉ DU SERVICE — « vivant » n'est pas « prêt ». Le port s'ouvre
   // avant l'amorçage ; les sondes répondent tout de suite ; les routes métier
   // refusent en 503 + code stable tant que les dépendances manquent. Placée

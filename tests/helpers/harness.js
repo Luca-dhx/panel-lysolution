@@ -1,5 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  LIVE_RECIPE_VARIABLE, TEST_PROCESS_VARIABLE, liveRecipeRequested,
+} from '../../backend/src/config/testDatabaseGuard.js';
 // Harnais de test commun — même philosophie que le projet modèle : runners
 // node autonomes, compteur pass/fail, aucun framework.
 // IMPORTANT : appeler setTestEnv() AVANT tout import dynamique du backend
@@ -29,7 +32,25 @@ export function finish() {
 export function setTestEnv() {
   process.env.PANEL_SKIP_DOTENV = '1'; // jamais le .env local dans les tests
   process.env.ENV = 'TEST';
-  process.env.MONGODB_URI = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017';
+  // Les processus que la suite démarre en enfant héritent de l'interdit :
+  // sans cette marque, un simple `spawn` contournerait le garde.
+  process.env[TEST_PROCESS_VARIABLE] = '1';
+  /**
+   * L'URI AMBIANTE N'EST PAS HÉRITÉE — c'est la faille qui a pollué Atlas.
+   *
+   * `PANEL_SKIP_DOTENV` empêche de LIRE le fichier `.env`, mais ne fait rien
+   * contre une `MONGODB_URI` déjà exportée par le shell ou héritée d'un
+   * processus parent qui, lui, avait chargé ce fichier. Le nom de base étant
+   * écrit en dur juste en dessous — `panel_test`, celui de la base partagée —
+   * il suffisait de cette fuite pour écrire chez tout le monde.
+   *
+   * On écrase donc systématiquement. Une recette qui doit VRAIMENT viser la
+   * base partagée le déclare, et sa déclaration est difficile à poser par
+   * accident.
+   */
+  if (!liveRecipeRequested(process.env[LIVE_RECIPE_VARIABLE])) {
+    process.env.MONGODB_URI = 'mongodb://127.0.0.1:27017';
+  }
   process.env.DB_TEST = 'panel_test';
   process.env.DB_PROD = 'panel_prod';
   process.env.JWT_SECRET = 'panel-test-jwt-secret-0123456789abcdef0123456789abcdef';

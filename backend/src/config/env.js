@@ -16,6 +16,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
+import {
+  LIVE_RECIPE_VARIABLE, TEST_PROCESS_VARIABLE,
+  isAutomatedTestProcess, liveRecipeRequested,
+} from './testDatabaseGuard.js';
 
 const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 // PANEL_SKIP_DOTENV=1 : réservé aux tests de configuration, qui doivent
@@ -189,10 +193,32 @@ const corsOrigins = (process.env.CORS_ORIGINS ?? '')
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0);
 
+/**
+ * NATURE DU PROCESSUS — établie ici parce qu'ici est la porte unique.
+ *
+ * Le garde d'isolation des bases (`testDatabaseGuard.js`) a besoin de savoir si
+ * l'on est dans une suite automatisée et si une recette live est déclarée. Il
+ * ne le lit PAS lui-même : ce serait une seconde porte vers l'environnement, et
+ * la configuration cesserait d'être vérifiable en un seul endroit.
+ *
+ * `NODE_ENV` n'est jamais l'interrupteur d'ENVIRONNEMENT du Panel — c'est
+ * `ENV` qui l'est. Il n'est lu ici que comme un INDICE sur la nature du
+ * processus, ce qui est une autre question.
+ */
+const isTestProcess = isAutomatedTestProcess({
+  entryPath: process.argv?.[1] ?? '',
+  testProcessFlag: process.env[TEST_PROCESS_VARIABLE] ?? '',
+  nodeEnv: process.env.NODE_ENV ?? '',
+});
+const liveRecipe = liveRecipeRequested(process.env[LIVE_RECIPE_VARIABLE]);
+
 export const config = {
   env,
   isProd,
   isTest,
+  // Nature du processus — consommée par le garde d'isolation des bases.
+  isTestProcess,
+  liveRecipe,
   port: positiveInt('PORT', 4100),
   mongoUri,
   // Hôte sans identifiants — journalisable sans rien divulguer.
