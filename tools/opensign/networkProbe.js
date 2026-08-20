@@ -6,11 +6,11 @@
 // OpenSign, on regarde ce que le Panel produirait — et d'où il le tient.
 //
 //   node src/scripts/opensign-network-probe.js
-import { connectDatabase, disconnectDatabase } from '../config/db.js';
-import config from '../config/env.js';
-import { resolveBackendUrl, resolveFrontendUrl } from '../services/network/networkConfig.service.js';
-import { resolveWebhookCallback } from '../services/webhooks/webhookCallback.js';
-import { describeAllWebhookStates } from '../services/webhooks/webhookReconciler.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import config from '../../backend/src/config/env.js';
+import { resolveBackendUrl, resolveFrontendUrl } from '../../backend/src/services/network/networkConfig.service.js';
+import { resolveWebhookCallback } from '../../backend/src/services/webhooks/webhookCallback.js';
+import { describeAllWebhookStates } from '../../backend/src/services/webhooks/webhookReconciler.js';
 
 await connectDatabase();
 

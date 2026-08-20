@@ -2,7 +2,7 @@
 //
 // Campagne de migration Yousign → OpenSign, lot 1, point 9 (porte dure).
 //
-//   node src/scripts/opensign/probeRawPlaceholders.js [--keep]
+//   node tools/opensign/probeRawPlaceholders.js [--keep]
 //
 // ══ POURQUOI CETTE SONDE EXISTE ═════════════════════════════════════════════
 //
@@ -35,9 +35,10 @@
 // l'enregistrement BRUT — `Placeholders` compris, `vpWidth` compris.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { connectDatabase, disconnectDatabase } from '../../config/db.js';
-import { openSignFetch } from '../../services/integratedApi/opensign/openSignTransport.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import { openSignFetch } from '../../backend/src/services/integratedApi/opensign/openSignTransport.js';
 import { loadOpenSignSandboxCredentials } from './campaignCredentials.js';
 import { buildFixturePdf, PAGE_SIZES } from './fixturePdf.js';
 
@@ -205,7 +206,7 @@ try {
     }
   } else journal(`\n--keep : ${aNettoyer.join(', ')}`);
 
-  const dossier = path.resolve(process.cwd(), '../.campaign');
+  const dossier = path.resolve(fileURLToPath(new URL('../../.campaign/', import.meta.url)));
   mkdirSync(dossier, { recursive: true });
   writeFileSync(path.join(dossier, 'opensign-placeholders.json'), JSON.stringify(rapport, null, 1), 'utf8');
   journal(`\nartefact : ${path.join(dossier, 'opensign-placeholders.json')}`);

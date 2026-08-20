@@ -12,10 +12,10 @@
 // C'est la seule sonde qu'un exploitant peut relancer autant de fois qu'il veut.
 //
 //   node src/scripts/opensign-probe.js
-import { connectDatabase, disconnectDatabase } from '../config/db.js';
-import config from '../config/env.js';
-import PanelIntegratedApiCredentialSet from '../models/PanelIntegratedApiCredentialSet.model.js';
-import { getCredentialSet, validateCredentialSet } from '../services/integratedApi/controlPlane.service.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import config from '../../backend/src/config/env.js';
+import PanelIntegratedApiCredentialSet from '../../backend/src/models/PanelIntegratedApiCredentialSet.model.js';
+import { getCredentialSet, validateCredentialSet } from '../../backend/src/services/integratedApi/controlPlane.service.js';
 
 const ENVIRONNEMENT = 'TEST';
 

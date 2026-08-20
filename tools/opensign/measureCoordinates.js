@@ -2,7 +2,7 @@
 //
 // Campagne de migration Yousign → OpenSign, lot 1, point 9.
 //
-//   node src/scripts/opensign/measureCoordinates.js [--keep]
+//   node tools/opensign/measureCoordinates.js [--keep]
 //
 // ══ LA QUESTION, ET POURQUOI ELLE NE SE DEVINE PAS ══════════════════════════
 //
@@ -38,10 +38,11 @@
 // ses dimensions sont connues au point près.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
-import { connectDatabase, disconnectDatabase } from '../../config/db.js';
-import { openSignFetch } from '../../services/integratedApi/opensign/openSignTransport.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import { openSignFetch } from '../../backend/src/services/integratedApi/opensign/openSignTransport.js';
 import { loadOpenSignSandboxCredentials } from './campaignCredentials.js';
 import { buildFixturePdf, PAGE_SIZES } from './fixturePdf.js';
 
@@ -206,7 +207,7 @@ try {
   journal(`PDF stocké : ${octets.length} octets (envoyé : ${pdf.length})`);
   journal(`le fournisseur a-t-il RÉÉCRIT le document ? ${octets.length !== pdf.length ? 'OUI' : 'non'}`);
 
-  const dossier = path.resolve(process.cwd(), '../.campaign');
+  const dossier = path.resolve(fileURLToPath(new URL('../../.campaign/', import.meta.url)));
   mkdirSync(dossier, { recursive: true });
   writeFileSync(path.join(dossier, 'coordonnees-rendu.pdf'), octets);
 
@@ -270,7 +271,7 @@ try {
     journal(`\n--keep : documents conservés (${aNettoyer.join(', ')})`);
   }
 
-  const dossier = path.resolve(process.cwd(), '../.campaign');
+  const dossier = path.resolve(fileURLToPath(new URL('../../.campaign/', import.meta.url)));
   mkdirSync(dossier, { recursive: true });
   writeFileSync(path.join(dossier, 'opensign-coordinates.json'), JSON.stringify(rapport, null, 1), 'utf8');
   journal(`\nartefact : ${path.join(dossier, 'opensign-coordinates.json')}`);

@@ -2,7 +2,7 @@
 //
 // Campagne de migration Yousign → OpenSign, lots 1 et 5.
 //
-//   node src/scripts/opensign/signInBrowser.js [--keep] [--headed] [--explore]
+//   node tools/opensign/signInBrowser.js [--keep] [--headed] [--explore]
 //
 // ══ POURQUOI UN NAVIGATEUR ICI, ALORS QUE TOUT LE RESTE S'EN PASSE ══════════
 //
@@ -21,11 +21,13 @@
 // visé. L'écart est rendu en points, et il doit être nul à l'arrondi près.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import zlib from 'node:zlib';
 
-import { connectDatabase, disconnectDatabase } from '../../config/db.js';
-import { openSignFetch } from '../../services/integratedApi/opensign/openSignTransport.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import { openSignFetch } from '../../backend/src/services/integratedApi/opensign/openSignTransport.js';
 import { loadOpenSignSandboxCredentials } from './campaignCredentials.js';
+import { chargerChromium } from './browser.js';
 import { buildFixturePdf, PAGE_SIZES } from './fixturePdf.js';
 
 const GARDER = process.argv.includes('--keep');
@@ -36,7 +38,7 @@ const journal = (...a) => console.log(...a);
 const appel = (credentials, method, chemin, json) =>
   openSignFetch({ credentials, method, path: chemin, json, timeoutMs: 120_000 });
 
-const DOSSIER = path.resolve(process.cwd(), '../.campaign');
+const DOSSIER = path.resolve(fileURLToPath(new URL('../../.campaign/', import.meta.url)));
 mkdirSync(DOSSIER, { recursive: true });
 
 /**
@@ -164,8 +166,7 @@ try {
   journal(`document ${objectId}`);
   if (!lien) throw new Error('Aucun lien de signature.');
 
-  const { chromium } = await import('playwright');
-  navigateur = await chromium.launch({ headless: !VISIBLE });
+  navigateur = await (await chargerChromium()).launch({ headless: !VISIBLE });
   const contexte = await navigateur.newContext({ viewport: { width: 1440, height: 1000 } });
   const page = await contexte.newPage();
 

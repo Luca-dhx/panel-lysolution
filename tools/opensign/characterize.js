@@ -2,7 +2,7 @@
 //
 // Campagne de migration Yousign → OpenSign, lot 1.
 //
-//   node src/scripts/opensign/characterize.js [--keep] [--skip-size]
+//   node tools/opensign/characterize.js [--keep] [--skip-size]
 //
 // ══ CE QUE CE SCRIPT EST ════════════════════════════════════════════════════
 //
@@ -27,10 +27,11 @@
 // vient chercher. Seuls les prérequis (identifiants, jeton accepté) arrêtent.
 import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { connectDatabase, disconnectDatabase } from '../../config/db.js';
-import { openSignFetch, OpenSignTransportError } from '../../services/integratedApi/opensign/openSignTransport.js';
-import { resolveWebhookCallback } from '../../services/webhooks/webhookCallback.js';
+import { connectDatabase, disconnectDatabase } from '../../backend/src/config/db.js';
+import { openSignFetch, OpenSignTransportError } from '../../backend/src/services/integratedApi/opensign/openSignTransport.js';
+import { resolveWebhookCallback } from '../../backend/src/services/webhooks/webhookCallback.js';
 import { loadOpenSignSandboxCredentials } from './campaignCredentials.js';
 import { buildFixturePdf, coordinateProbeLandmarks, PAGE_SIZES } from './fixturePdf.js';
 
@@ -483,7 +484,7 @@ try {
   rapport.createdDocuments = documentsCrees;
   rapport.finishedAt = new Date().toISOString();
 
-  const sortie = path.resolve(process.cwd(), '../.campaign/opensign-characterization.json');
+  const sortie = path.resolve(fileURLToPath(new URL('../../.campaign/opensign-characterization.json', import.meta.url)));
   mkdirSync(path.dirname(sortie), { recursive: true });
   writeFileSync(sortie, JSON.stringify(rapport, null, 1), 'utf8');
   journal(`\nartefact : ${sortie}`);

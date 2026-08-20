@@ -887,25 +887,20 @@ section('21 · Aucun identifiant OpenSign ne vit hors du coffre du Panel');
    * c'est ce qui permet de suivre un changement d'hôte, ou une bascule vers
    * l'UE, sans redéployer et sans chercher où la valeur est recopiée.
    *
-   * ── DEUX EXEMPTIONS, ET CHACUNE EST UN CHOIX, PAS UN OUBLI ────────────────
+   * UNE SEULE EXEMPTION : `providerRegistry.js`, qui EST la source. Les hôtes y
+   * sont, avec la contrainte qui les sépare, et nulle part ailleurs.
    *
-   * `providerRegistry.js` : c'est LA source. Les hôtes y sont, avec la
-   * contrainte qui les sépare, et nulle part ailleurs.
-   *
-   * `src/scripts/` : outillage de recette, pas runtime. Une mesure comme
-   * « qu'arrive-t-il si j'envoie le jeton de bac à sable à l'hôte de
-   * production ? » EXIGE d'écrire l'autre hôte — c'est l'objet même de la
-   * mesure. L'interdire y rendrait la campagne aveugle sur le seul accident
-   * qu'elle cherche à rendre impossible.
-   *
-   * La règle qui compte reste entière : le RUNTIME n'en contient aucun.
+   * L'outillage de campagne (`tools/opensign/`) contient légitimement l'hôte de
+   * production — la mesure « qu'arrive-t-il si j'envoie le jeton de bac à sable
+   * au mauvais monde ? » ne peut pas s'écrire sans lui. Il vit HORS de
+   * `backend/src` précisément pour ne pas avoir à assouplir cette règle-ci, ni
+   * les trois gardes d'architecture du Panel qui l'accompagnent.
    */
-  const runtime = fichiers.filter((f) => !f.includes(`${path.sep}scripts${path.sep}`));
-  const enDur = runtime.filter((f) => /opensignlabs\.com/.test(readFileSync(f, 'utf8')))
+  const enDur = fichiers.filter((f) => /opensignlabs\.com/.test(readFileSync(f, 'utf8')))
     .map((f) => path.basename(f));
   check('aucun hôte OpenSign codé en dur dans le runtime, hors registre',
     enDur.every((n) => n === 'providerRegistry.js'));
-  check('le runtime a bien été balayé (garde anti-test-vide)', runtime.length > 50);
+  check('le runtime a bien été balayé (garde anti-test-vide)', fichiers.length > 50);
 
   check('le driver ne contient aucun hôte',
     !readFileSync(path.join(racine, 'services/integratedApi/opensign/openSignTransport.js'), 'utf8')

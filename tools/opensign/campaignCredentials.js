@@ -15,10 +15,10 @@
 // Ce module ne rend jamais les valeurs à l'appelant sous une forme
 // journalisable : il rend l'objet `credentials` que le transport consomme, et
 // une DESCRIPTION séparée qui, elle, est sûre à afficher.
-import ApiError from '../../utils/ApiError.js';
-import PanelIntegratedApiCredentialSet from '../../models/PanelIntegratedApiCredentialSet.model.js';
-import { decryptCredentialSet } from '../../services/integratedApi/credentialVault.js';
-import { checkHostForEnvironment } from '../../services/integratedApi/providerRegistry.js';
+import ApiError from '../../backend/src/utils/ApiError.js';
+import PanelIntegratedApiCredentialSet from '../../backend/src/models/PanelIntegratedApiCredentialSet.model.js';
+import { decryptCredentialSet } from '../../backend/src/services/integratedApi/credentialVault.js';
+import { checkHostForEnvironment } from '../../backend/src/services/integratedApi/providerRegistry.js';
 
 export const CAMPAIGN_ENVIRONMENT = 'TEST';
 
