@@ -514,4 +514,67 @@ d'appartenance de recette retirés. Aucun résidu.
 
 ---
 
+## LOT 5 — DE L'ÉDITEUR DE ZONES À L'ENCRE SUR LE PAPIER
+
+### 5.1 Ce qui restait à prouver
+
+Trois preuves existaient déjà, chacune sur son maillon :
+
+| Preuve | Ce qu'elle établit | Où elle s'arrête |
+|---|---|---|
+| lot 1 — `signInBrowser.js` | le fournisseur pose l'encre exactement où l'API la demande | coordonnées envoyées à la main |
+| lot 1 — `measureCoordinates.js` | l'unité est le point PDF, origine coin supérieur gauche | widgets `prefill`, pas de signature |
+| lot 4 — `projectContractRecipe.js` | la conversion ratio → point de SB Auto tombe juste (0 pt) | s'arrête à l'ouverture |
+
+Entre « l'éditeur enregistre 0,11834 » et « l'encre est sur la ligne », il y a
+une conversion, un schéma, une passerelle, un adaptateur, un fournisseur et un
+navigateur. Chacun est juste. Rien ne vérifiait leur **composition**.
+
+### 5.2 Le protocole — `tools/opensign/editorWidgetRecipe.js`
+
+Il part de **ratios d'éditeur**, passe par la capacité générique, fait signer
+dans un vrai navigateur, et mesure le PDF signé en recalculant l'attendu
+**depuis les ratios** — jamais depuis les points intermédiaires. Partir des
+points ferait propager une erreur de conversion des deux côtés de la
+comparaison : la mesure se donnerait raison toute seule.
+
+Deux pages, et des ratios non ronds. Une seule page ne distingue pas une
+indexation à 1 d'une indexation à 0 — le décalage se lirait « toutes les
+signatures sont sur la première page », et ne se verrait que sur un vrai
+contrat. Des ratios ronds donnent des points ronds, et masqueraient un arrondi.
+
+### 5.3 Mesures
+
+| Étape | Mesure |
+|---|---|
+| 0 · zones d'éditeur valides | 2 zones, pages 1 et 2, 0 erreur |
+| 1 · ouverture par la capacité | `OPENED` — DEV page 1 (70, 600), CLIENT page 2 (330, 155) |
+| 2 · lien du signataire | `https://sandbox.opensignlabs.com/login/<jeton>` |
+| 3 · rendu dans le DOM du fournisseur | ratio posé **0,11834** → ratio observé **0,11765** (écart 0,00069) ; largeur de rendu 760 px pour 595 pt, facteur **1,27731** |
+| 5 · encre dans le PDF signé | attendu (70,41 ; 187) — mesuré (70 ; 187) — **écart maximal 0,41 pt** |
+| 6 · indice de page | DEV=1, CLIENT=2 — conservé ; états `SIGNED` / `PENDING` |
+
+L'écart de 0,41 pt est l'arrondi à l'entier que fait la conversion : 0,11834 ×
+595 = 70,41 pt, envoyé à 70. Soit **0,14 mm** — sous le trait d'une ligne de
+signature. Le contrôle échoue au-delà de 2 pt.
+
+L'état rendu après la signature du développeur (`SIGNED` / `PENDING`) confirme
+au passage l'**ordre séquentiel** : le client n'a pas été sollicité.
+
+### 5.4 Un défaut de l'outillage, corrigé en chemin
+
+La première version de cette recette importait `imagesPositionnees` depuis
+`signInBrowser.js`. Or celui-ci est un **script** : il ouvre une base, crée un
+document, signe dans un navigateur et supprime. L'importer l'**exécutait** —
+une signature réelle de plus et un crédit consommé avant que la recette du lot
+5 ne commence, sans que rien ne le signale.
+
+La fonction vit désormais dans `tools/opensign/pdfImages.js`, module pur. Les
+deux scripts l'importent.
+
+**Nettoyage** : 1 document supprimé chez le fournisseur, 1 lien d'appartenance
+retiré. Captures conservées dans `.campaign/lot5-*.png`.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*
