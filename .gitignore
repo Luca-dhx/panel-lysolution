@@ -55,3 +55,14 @@ storage/
 *.pfx
 credentials*.json
 secrets*.json
+
+# ARTEFACTS DE MESURE DE LA CAMPAGNE OPENSIGN.
+#
+# Les scripts de `backend/src/scripts/opensign/` écrivent ici ce que le
+# fournisseur a RÉELLEMENT répondu : structures de payload, formes d'URL,
+# statuts, mesures de coordonnées. C'est une matière première d'audit, datée et
+# propre à une exécution — pas du code, et pas une vérité qu'on versionne.
+#
+# Les CONCLUSIONS, elles, remontent dans docs/integrated-api/ : c'est là qu'un
+# fait mesuré devient une décision d'architecture.
+.campaign/

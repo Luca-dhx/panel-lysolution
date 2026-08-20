@@ -40,8 +40,15 @@ export function payloadDigest(rawBody) {
   return createHash('sha256').update(Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody ?? ''), 'utf8')).digest('hex');
 }
 
-/** Lecture d'en-tête insensible à la casse, quelle que soit la forme reçue. */
-function header(headers, name) {
+/**
+ * Lecture d'en-tête insensible à la casse, quelle que soit la forme reçue.
+ *
+ * Exportée sous `readHeader` : le diagnostic de représentation (plus bas) et la
+ * réception en ont besoin, et deux lectures d'en-tête écrites séparément
+ * finiraient par diverger sur la casse — c'est-à-dire sur le seul point qui
+ * compte ici.
+ */
+export function readHeader(headers, name) {
   if (!headers) return '';
   const wanted = String(name).toLowerCase();
   if (typeof headers.get === 'function') return String(headers.get(wanted) ?? '');
@@ -141,7 +148,7 @@ export function verifyWebhookSignature(capability, { rawBody, headers, secrets =
     return { verified: false, proven: false, reason: 'NO_SECRET' };
   }
 
-  const signatureHeader = header(headers, capability.signatureHeader);
+  const signatureHeader = readHeader(headers, capability.signatureHeader);
   if (!signatureHeader) return { verified: false, proven: false, reason: 'MISSING_HEADER' };
 
   const now = Number.isFinite(nowSeconds) ? nowSeconds : Math.floor(Date.now() / 1000);
@@ -231,6 +238,71 @@ export function extractEventIdentity(capability, { rawBody, parsed, environment 
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  DIAGNOSTIC — pourquoi une signature HMAC ne correspond pas                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * QUELLE REPRÉSENTATION DU CORPS LE FOURNISSEUR A-T-IL SIGNÉE ?
+ *
+ * ══ CE QUE CETTE FONCTION N'EST PAS ═════════════════════════════════════════
+ *
+ * Ce n'est PAS un vérificateur de repli. Elle ne rend aucun verdict
+ * d'acceptation, et `verifyWebhookSignature` ne l'appelle jamais. Un
+ * vérificateur qui essaie plusieurs représentations « jusqu'à ce qu'une passe »
+ * accepte tout ce qu'un attaquant peut faire correspondre à l'une d'elles : la
+ * garantie tombe au niveau de la plus faible.
+ *
+ * ══ CE QU'ELLE EST ══════════════════════════════════════════════════════════
+ *
+ * Un instrument de DIAGNOSTIC, appelé uniquement quand la vérification a DÉJÀ
+ * refusé, et dont la sortie ne va que dans le journal.
+ *
+ * Le problème qu'elle résout est concret et documenté : la page d'aide
+ * d'OpenSign dit « utilisez le corps brut », et l'exemple de code publié juste
+ * en dessous calcule le HMAC sur `JSON.stringify(req.body)`, c'est-à-dire sur
+ * une RE-SÉRIALISATION. Les deux ne coïncident que si le fournisseur émet
+ * exactement les octets qu'il a signés.
+ *
+ * Sans ce diagnostic, un désaccord se présente comme un simple `MISMATCH` :
+ * indiscernable d'une mauvaise clé, d'un secret non tourné, ou d'un appel
+ * falsifié. Trois causes, trois actions opposées, et aucune information pour
+ * choisir. Avec lui, le journal dit « le fournisseur signe une
+ * re-sérialisation » — un fait, actionnable en une minute.
+ *
+ * @returns {{matched: string|null, candidates: string[]}} `matched` nomme la
+ *   représentation qui aurait correspondu, ou `null` si aucune — auquel cas la
+ *   cause n'est pas la représentation, et c'est aussi une information.
+ */
+export function diagnoseHmacRepresentation({ rawBody, signatureHeader, secrets = [] }) {
+  const provided = String(signatureHeader ?? '').trim().replace(/^sha256=/i, '').toLowerCase();
+  const candidates = [];
+  if (!provided || secrets.length === 0) return { matched: null, candidates };
+
+  const brut = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody ?? ''), 'utf8');
+  const representations = [{ nom: 'RAW_BODY', octets: brut }];
+
+  /**
+   * La re-sérialisation canonique — celle que produit l'exemple d'OpenSign.
+   * Elle n'existe que si le corps est du JSON : sur un corps illisible, il n'y
+   * a rien à comparer, et prétendre le contraire serait inventer une piste.
+   */
+  try {
+    const parsed = JSON.parse(brut.toString('utf8'));
+    representations.push({ nom: 'JSON_RESERIALIZED', octets: Buffer.from(JSON.stringify(parsed), 'utf8') });
+  } catch { /* corps non-JSON : une seule représentation à examiner */ }
+
+  for (const { nom, octets } of representations) {
+    candidates.push(nom);
+    for (const secret of secrets) {
+      if (createHmac('sha256', secret).update(octets).digest('hex') === provided) {
+        return { matched: nom, candidates };
+      }
+    }
+  }
+  return { matched: null, candidates };
+}
+
 /** Parse tolérant : un corps illisible ne doit pas lever, il doit être vide. */
 export function parseJsonBody(rawBody) {
   try {
@@ -248,4 +320,6 @@ export default {
   extractEventIdentity,
   parseJsonBody,
   payloadDigest,
+  diagnoseHmacRepresentation,
+  readHeader,
 };

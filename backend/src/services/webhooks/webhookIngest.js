@@ -42,7 +42,10 @@ import PanelProviderWebhookEvent, {
 import { runtimeEnvironment } from '../integratedApi/environment.js';
 import { capabilityByCallbackSlug } from './webhookRegistry.js';
 import { loadVerificationSecrets } from './webhookSecrets.js';
-import { verifyWebhookSignature, extractEventIdentity, parseJsonBody } from './webhookSignature.js';
+import {
+  verifyWebhookSignature, extractEventIdentity, parseJsonBody,
+  diagnoseHmacRepresentation, readHeader,
+} from './webhookSignature.js';
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
 import { dispatchSignatureEvent } from './signatureEventDispatch.js';
@@ -120,7 +123,32 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
     // Le motif est journalisé, jamais renvoyé : distinguer « mauvaise
     // signature » de « secret absent » côté appelant renseignerait un attaquant
     // sur l'état de notre configuration.
-    logger.warn(`[webhooks] ${provider}/${environment} : appel refusé (${signature.reason}).`);
+    /**
+     * ── UN `MISMATCH` NE DIT PAS ASSEZ POUR AGIR ──────────────────────────
+     *
+     * Trois causes produisent le même mot : une clé qui n'est pas la bonne, un
+     * appel falsifié, et un fournisseur qui signe une RE-SÉRIALISATION du corps
+     * plutôt que les octets émis. Les trois appellent des gestes opposés, et
+     * `MISMATCH` ne permet pas de choisir — c'est ce qui pousse, au bout de
+     * deux heures, à « désactiver temporairement la vérification ».
+     *
+     * Le diagnostic ci-dessous n'accepte RIEN : il nomme, dans le journal
+     * seulement, la représentation qui aurait correspondu. Le refus, lui, est
+     * déjà prononcé et ne bouge pas.
+     */
+    let representation = null;
+    if (signature.reason === 'MISMATCH' && capability.signatureScheme === 'HMAC_SHA256_BODY') {
+      representation = diagnoseHmacRepresentation({
+        rawBody,
+        headers,
+        signatureHeader: readHeader(headers, capability.signatureHeader),
+        secrets,
+      });
+    }
+    logger.warn(
+      `[webhooks] ${provider}/${environment} : appel refusé (${signature.reason})`
+      + `${representation?.matched ? ` — le fournisseur signe « ${representation.matched} », pas les octets reçus` : ''}.`,
+    );
     return {
       outcome: INGEST_OUTCOME.REJECTED,
       provider,

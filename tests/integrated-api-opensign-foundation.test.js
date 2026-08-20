@@ -631,6 +631,80 @@ section('17 · La signature réelle d’OpenSign est vérifiable par le moteur g
     pendantRotation.verified === true);
 }
 
+section('17b · Le diagnostic de représentation — il NOMME, il n’accepte pas');
+{
+  /**
+   * ══ L'AMBIGUÏTÉ QUE CE DIAGNOSTIC EXISTE POUR TRANCHER ═════════════════════
+   *
+   * La page d'aide d'OpenSign dit « utilisez le corps brut », et l'exemple de
+   * code publié juste en dessous calcule le HMAC sur `JSON.stringify(req.body)`.
+   * Les deux ne coïncident que si le fournisseur émet exactement les octets
+   * qu'il a signés.
+   *
+   * Sans diagnostic, un désaccord se présente comme un `MISMATCH` — le même mot
+   * que pour une mauvaise clé ou un appel falsifié. Trois causes, trois gestes
+   * opposés, aucune information pour choisir.
+   */
+  const charge = { event: 'signed', objectId: 'kpeg6Q2rO7', signer: { email: 'a@b.test' } };
+  // Un corps « au fil » qui n'est PAS la re-sérialisation canonique : espaces
+  // et ordre de clés diffèrent, exactement comme dans la vraie vie.
+  const auFil = Buffer.from(`{ "event": "signed",  "objectId": "kpeg6Q2rO7",\n  "signer": { "email": "a@b.test" } }`, 'utf8');
+  const canonique = Buffer.from(JSON.stringify(JSON.parse(auFil.toString('utf8'))), 'utf8');
+
+  const signeSur = (octets) => createHmac('sha256', CLE_WEBHOOK).update(octets).digest('hex');
+
+  check('il reconnaît une signature portant sur les OCTETS reçus',
+    webhookSignature.diagnoseHmacRepresentation({
+      rawBody: auFil, signatureHeader: signeSur(auFil), secrets: [CLE_WEBHOOK],
+    }).matched === 'RAW_BODY');
+
+  check('il reconnaît une signature portant sur la RE-SÉRIALISATION',
+    webhookSignature.diagnoseHmacRepresentation({
+      rawBody: auFil, signatureHeader: signeSur(canonique), secrets: [CLE_WEBHOOK],
+    }).matched === 'JSON_RESERIALIZED');
+
+  /**
+   * ET SURTOUT : IL NE DIT PAS OUI QUAND C'EST NON. Une clé étrangère ne doit
+   * correspondre à AUCUNE représentation — sinon le diagnostic deviendrait un
+   * oracle, et l'on finirait par s'en servir comme d'un vérificateur.
+   */
+  check('une clé étrangère ne correspond à aucune représentation',
+    webhookSignature.diagnoseHmacRepresentation({
+      rawBody: auFil,
+      signatureHeader: createHmac('sha256', 'cle-etrangere').update(auFil).digest('hex'),
+      secrets: [CLE_WEBHOOK],
+    }).matched === null);
+
+  check('sans secret, il ne diagnostique rien',
+    webhookSignature.diagnoseHmacRepresentation({
+      rawBody: auFil, signatureHeader: signeSur(auFil), secrets: [],
+    }).matched === null);
+
+  check('un corps non-JSON n’a qu’une représentation à examiner',
+    JSON.stringify(webhookSignature.diagnoseHmacRepresentation({
+      rawBody: Buffer.from('pas du json'), signatureHeader: 'ff', secrets: [CLE_WEBHOOK],
+    }).candidates) === JSON.stringify(['RAW_BODY']));
+
+  /**
+   * LA GARDE QUI COMPTE LE PLUS : le VÉRIFICATEUR, lui, n'a pas bougé. Une
+   * signature portant sur la re-sérialisation reste REFUSÉE. Le diagnostic
+   * informe le journal ; il n'ouvre aucune porte.
+   */
+  const cap = webhookRegistry.webhookCapability('OPENSIGN');
+  check('le vérificateur REFUSE toujours une signature sur la re-sérialisation',
+    webhookSignature.verifyWebhookSignature(cap, {
+      rawBody: auFil,
+      headers: { 'x-webhook-signature': signeSur(canonique) },
+      secrets: [CLE_WEBHOOK],
+    }).verified === false);
+  check('…et accepte celle qui porte sur les octets reçus',
+    webhookSignature.verifyWebhookSignature(cap, {
+      rawBody: auFil,
+      headers: { 'x-webhook-signature': signeSur(auFil) },
+      secrets: [CLE_WEBHOOK],
+    }).verified === true);
+}
+
 section('18 · L’identité d’un événement — OpenSign n’en fournit AUCUNE');
 {
   const cap = webhookRegistry.webhookCapability('OPENSIGN');
@@ -812,12 +886,26 @@ section('21 · Aucun identifiant OpenSign ne vit hors du coffre du Panel');
    * L'HÔTE N'EST ÉCRIT QU'AU REGISTRE. Partout ailleurs il vient du coffre —
    * c'est ce qui permet de suivre un changement d'hôte, ou une bascule vers
    * l'UE, sans redéployer et sans chercher où la valeur est recopiée.
+   *
+   * ── DEUX EXEMPTIONS, ET CHACUNE EST UN CHOIX, PAS UN OUBLI ────────────────
+   *
+   * `providerRegistry.js` : c'est LA source. Les hôtes y sont, avec la
+   * contrainte qui les sépare, et nulle part ailleurs.
+   *
+   * `src/scripts/` : outillage de recette, pas runtime. Une mesure comme
+   * « qu'arrive-t-il si j'envoie le jeton de bac à sable à l'hôte de
+   * production ? » EXIGE d'écrire l'autre hôte — c'est l'objet même de la
+   * mesure. L'interdire y rendrait la campagne aveugle sur le seul accident
+   * qu'elle cherche à rendre impossible.
+   *
+   * La règle qui compte reste entière : le RUNTIME n'en contient aucun.
    */
-  const enDur = fichiers.filter((f) => /opensignlabs\.com/.test(readFileSync(f, 'utf8')))
-    .map((f) => path.basename(f))
-    .filter((n) => n !== 'providerRegistry.js');
-  check('aucun hôte OpenSign codé en dur hors du registre',
-    enDur.length === 0 || (enDur.length === 1 && enDur[0] === 'providerValidation.js'));
+  const runtime = fichiers.filter((f) => !f.includes(`${path.sep}scripts${path.sep}`));
+  const enDur = runtime.filter((f) => /opensignlabs\.com/.test(readFileSync(f, 'utf8')))
+    .map((f) => path.basename(f));
+  check('aucun hôte OpenSign codé en dur dans le runtime, hors registre',
+    enDur.every((n) => n === 'providerRegistry.js'));
+  check('le runtime a bien été balayé (garde anti-test-vide)', runtime.length > 50);
 
   check('le driver ne contient aucun hôte',
     !readFileSync(path.join(racine, 'services/integratedApi/opensign/openSignTransport.js'), 'utf8')
