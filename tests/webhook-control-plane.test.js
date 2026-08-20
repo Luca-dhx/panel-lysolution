@@ -230,7 +230,7 @@ section('1 · Le registre webhook est code-first et ADOSSÉ au registre fourniss
 {
   check('l’alignement avec providerRegistry est vérifié à l’import', assertRegistryAlignment() === true);
   check('un descripteur par fournisseur déclaré, pas un de plus',
-    listWebhookCapabilities().length === 4);
+    listWebhookCapabilities().length === 5);
   check('le catalogue est gelé', Object.isFrozen(WEBHOOK_CAPABILITIES));
   check('chaque descripteur est gelé',
     listWebhookCapabilities().every((c) => Object.isFrozen(c)));
@@ -1409,7 +1409,7 @@ section('19b · Le balayage complet ne lève jamais, et rend un rapport');
 {
   await resetWebhookState();
   const rapport = await reconcileAllProviderWebhooks({ fetchImpl: async () => { throw new Error('réseau coupé'); } });
-  check('le balayage rend un résultat par fournisseur', rapport.results.length === 4);
+  check('le balayage rend un résultat par fournisseur', rapport.results.length === 5);
   check('il ne bloque rien', rapport.blocking === false);
   check('Hostinger y figure comme UNSUPPORTED',
     rapport.results.find((r) => r.provider === 'HOSTINGER').status === WEBHOOK_STATUS.UNSUPPORTED);
@@ -1437,7 +1437,7 @@ section('22 · Le plan de contrôle L1 n’a pas bougé');
 {
   const { listProviders, describeAvailability } = await import('../backend/src/services/integratedApi/controlPlane.service.js');
   const fournisseurs = await listProviders();
-  check('les 4 fournisseurs sont toujours là', fournisseurs.length === 4);
+  check('les 5 fournisseurs sont toujours là', fournisseurs.length === 5);
   check('aucune valeur confidentielle dans le catalogue',
     !JSON.stringify(fournisseurs).includes(SK_TEST));
 

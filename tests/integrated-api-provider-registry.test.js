@@ -16,11 +16,25 @@ const {
   defaultRoleValue, environmentsFor, describeProviderDefinition,
 } = registry;
 
-section('PROVIDER_DEFINITION_IS_CODE_FIRST — quatre fournisseurs, pas un de plus');
+section('PROVIDER_DEFINITION_IS_CODE_FIRST — cinq fournisseurs, pas un de plus');
 {
-  check('exactement 4 fournisseurs déclarés', PROVIDER_CODES.length === 4);
-  check('ce sont STRIPE, BREVO, YOUSIGN, HOSTINGER',
-    ['STRIPE', 'BREVO', 'YOUSIGN', 'HOSTINGER'].every((c) => PROVIDER_CODES.includes(c)));
+  check('exactement 5 fournisseurs déclarés', PROVIDER_CODES.length === 5);
+  check('ce sont STRIPE, BREVO, YOUSIGN, OPENSIGN, HOSTINGER',
+    ['STRIPE', 'BREVO', 'YOUSIGN', 'OPENSIGN', 'HOSTINGER'].every((c) => PROVIDER_CODES.includes(c)));
+  /**
+   * DEUX FOURNISSEURS DE SIGNATURE, ET C'EST L'ÉTAT NORMAL PENDANT LA
+   * MIGRATION.
+   *
+   * Yousign reste déclaré, avec ses rôles et ses capacités, tant qu'OpenSign
+   * n'est pas prouvé de bout en bout. Le retirer maintenant supprimerait le
+   * seul chemin de signature qui fonctionne — et il faudrait le réécrire pour
+   * revenir en arrière.
+   */
+  check('YOUSIGN reste déclaré à côté d’OPENSIGN',
+    getProviderDefinition('YOUSIGN') !== null && getProviderDefinition('OPENSIGN') !== null);
+  check('les deux sont de catégorie SIGNATURE',
+    getProviderDefinition('YOUSIGN').category === 'SIGNATURE'
+    && getProviderDefinition('OPENSIGN').category === 'SIGNATURE');
 
   // L'audit §2.1 : ces cinq n'existent nulle part dans le code. Les déclarer
   // ferait apparaître à l'écran une intégration sans driver et sans test.
@@ -55,6 +69,9 @@ section('Scopes — conformes au classement de l’audit §3');
   check('STRIPE   → ENVIRONMENT', getProviderDefinition('STRIPE').scope === SCOPES.ENVIRONMENT);
   check('BREVO    → ENVIRONMENT', getProviderDefinition('BREVO').scope === SCOPES.ENVIRONMENT);
   check('YOUSIGN  → ENVIRONMENT', getProviderDefinition('YOUSIGN').scope === SCOPES.ENVIRONMENT);
+  // OpenSign émet DEUX jetons (Sandbox / Live) sur DEUX hôtes, et documente
+  // qu'ils ne sont pas interchangeables : la portée est imposée, pas choisie.
+  check('OPENSIGN → ENVIRONMENT', getProviderDefinition('OPENSIGN').scope === SCOPES.ENVIRONMENT);
   check('HOSTINGER → PANEL_GLOBAL', getProviderDefinition('HOSTINGER').scope === SCOPES.PANEL_GLOBAL);
 
   check('les 4 valeurs de scope sont admises par le modèle', SCOPE_VALUES.length === 4);
@@ -66,7 +83,7 @@ section('Scopes — conformes au classement de l’audit §3');
 
 section('ENVIRONMENT_PROVIDER_REQUIRES_ENVIRONMENT / PANEL_GLOBAL_PROVIDER_HAS_NO_ENVIRONMENT');
 {
-  for (const code of ['STRIPE', 'BREVO', 'YOUSIGN']) {
+  for (const code of ['STRIPE', 'BREVO', 'YOUSIGN', 'OPENSIGN']) {
     const envs = environmentsFor(code);
     check(`${code} : deux jeux, TEST et PROD`,
       envs.length === 2 && envs[0] === 'TEST' && envs[1] === 'PROD');
@@ -89,6 +106,10 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
     ['apiKey', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('BREVO').includes(r)));
   check('YOUSIGN : apiKey, webhookSecret, baseUrl',
     ['apiKey', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('YOUSIGN').includes(r)));
+  check('OPENSIGN : apiToken, webhookSecret, baseUrl',
+    ['apiToken', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('OPENSIGN').includes(r)));
+  // `apiToken` et non `apiKey` : c'est le nom du fournisseur (`x-api-token`).
+  check('OPENSIGN n’expose PAS de rôle « apiKey »', !roleCodes('OPENSIGN').includes('apiKey'));
   check('HOSTINGER : apiToken, baseUrl',
     ['apiToken', 'baseUrl'].every((r) => roleCodes('HOSTINGER').includes(r)));
 
@@ -96,6 +117,7 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
     requiredRoleCodes('STRIPE').length === 1 && requiredRoleCodes('STRIPE')[0] === 'secretKey');
   check('BREVO requiert apiKey', requiredRoleCodes('BREVO').join() === 'apiKey');
   check('YOUSIGN requiert apiKey', requiredRoleCodes('YOUSIGN').join() === 'apiKey');
+  check('OPENSIGN requiert apiToken', requiredRoleCodes('OPENSIGN').join() === 'apiToken');
   check('HOSTINGER requiert apiToken', requiredRoleCodes('HOSTINGER').join() === 'apiToken');
 
   // Le secret de webhook arrive tout seul, à la création de l'endpoint (L5) :
@@ -106,6 +128,22 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
   const brevoWebhook = credentialRoles('BREVO').find((r) => r.code === 'webhookSecret');
   check('le jeton webhook Brevo est lui aussi auto-géré et non requis',
     brevoWebhook.autoManaged === true && brevoWebhook.required === false);
+
+  /**
+   * OPENSIGN EST L'EXCEPTION, ET ELLE DOIT ÊTRE VÉRIFIÉE.
+   *
+   * Chez les trois autres, le secret de webhook « arrive tout seul ». Chez
+   * OpenSign il n'arrive JAMAIS par l'API : il se génère dans la console. Le
+   * marquer `autoManaged` afficherait « arrive tout seul » sous un champ que
+   * personne ne remplirait — et le webhook resterait sourd en silence.
+   */
+  const openSignWebhook = credentialRoles('OPENSIGN').find((r) => r.code === 'webhookSecret');
+  check('la clé de webhook OpenSign n’est PAS auto-gérée (console uniquement)',
+    openSignWebhook.autoManaged === false && openSignWebhook.required === false);
+  check('elle est marquée « vérification seule » — elle ne sait rien appeler',
+    openSignWebhook.verificationOnly === true);
+  check('son aide dit OÙ la trouver, puisque l’API ne la rend pas',
+    typeof openSignWebhook.hint === 'string' && /console/i.test(openSignWebhook.hint));
 }
 
 section('Confidentialité par rôle — la clé publiable n’est pas un secret');
@@ -135,7 +173,7 @@ section('Préfixes attendus — le filet contre le copier-coller');
     yousignKey.prefixHint === null && yousignKey.prefixByEnvironment === null);
 }
 
-section('URLs par défaut — Yousign a DEUX hôtes, les autres un seul');
+section('URLs par défaut — Yousign et OpenSign ont DEUX hôtes, les autres un seul');
 {
   check('Stripe : même hôte quel que soit l’environnement',
     defaultRoleValue('STRIPE', 'baseUrl', 'TEST') === 'https://api.stripe.com'
@@ -144,6 +182,19 @@ section('URLs par défaut — Yousign a DEUX hôtes, les autres un seul');
     defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === 'https://api-sandbox.yousign.app/v3');
   check('Yousign PROD → production',
     defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === 'https://api.yousign.app/v3');
+  check('OpenSign TEST → sandbox',
+    defaultRoleValue('OPENSIGN', 'baseUrl', 'TEST') === 'https://sandbox.opensignlabs.com/api/v1.2');
+  /**
+   * LE CHOIX `app` PLUTÔT QUE `eu-app` EST DOCUMENTÉ, DONC IL SE TESTE.
+   *
+   * `eu-app.opensignlabs.com` n'est pas un alias de routage : c'est un tenant
+   * distinct, avec ses propres comptes et ses propres jetons. Basculer dessus
+   * n'est pas un réglage d'exploitation mais un changement de compte — et ce
+   * test est ce qui garantit que la bascule sera une modification VUE, revue et
+   * datée, jamais une valeur qu'on découvre après coup dans une base.
+   */
+  check('OpenSign PROD → app (et non eu-app : décision documentée)',
+    defaultRoleValue('OPENSIGN', 'baseUrl', 'PROD') === 'https://app.opensignlabs.com/api/v1.2');
   check('Brevo : v3', defaultRoleValue('BREVO', 'baseUrl', 'TEST') === 'https://api.brevo.com/v3');
   check('Hostinger : global, défaut sans environnement',
     defaultRoleValue('HOSTINGER', 'baseUrl', null) === 'https://developers.hostinger.com');
@@ -151,7 +202,7 @@ section('URLs par défaut — Yousign a DEUX hôtes, les autres un seul');
 
 section('Jeton — aucun fournisseur n’a besoin d’un runtime persisté (NOT_NEEDED_L1)');
 {
-  check('les 4 fournisseurs sont à clé statique',
+  check('tous les fournisseurs sont à clé statique',
     listProviderDefinitions().every((d) => d.tokenStrategy === TOKEN_STRATEGIES.STATIC_KEY));
   // C'est la justification, vérifiée par test, de l'absence d'entité
   // IntegratedApiRuntime en L1. Le jour où un OAuth arrive, ce test tombe et
@@ -168,6 +219,20 @@ section('Webhooks — déclaratif en L1, conforme aux docs officielles');
     && getProviderDefinition('BREVO').webhookSignature === 'SHARED_SECRET');
   check('Yousign : réconciliation possible',
     getProviderDefinition('YOUSIGN').supportsWebhookReconciliation === true);
+  /**
+   * OPENSIGN SIGNE, MAIS NE LIVRE PAS SON SECRET — les deux à la fois.
+   *
+   * Le confondre avec Stripe ou Yousign (`webhookSecretReturnedAtCreationOnly:
+   * true`) ferait recréer l'endpoint en boucle pour capturer une valeur qui
+   * n'arrive jamais — sur une ressource qui, chez OpenSign, est UNIQUE par
+   * compte : chaque passage écraserait l'URL en place.
+   */
+  check('OpenSign : réconciliation possible',
+    getProviderDefinition('OPENSIGN').supportsWebhookReconciliation === true);
+  check('OpenSign : le secret n’est PAS rendu à la création (console uniquement)',
+    getProviderDefinition('OPENSIGN').webhookSecretReturnedAtCreationOnly === false);
+  check('OpenSign : la signature est un vrai HMAC, pas un jeton partagé',
+    getProviderDefinition('OPENSIGN').webhookSignature === 'HMAC_SHA256');
   check('Hostinger : aucun webhook',
     getProviderDefinition('HOSTINGER').supportsWebhookReconciliation === false);
 }
@@ -180,6 +245,21 @@ section('Capacités — déclarées, jamais invocables en L1');
     getProviderDefinition('BREVO').capabilities.includes('email.send_template'));
   check('Hostinger déclare dns.record.ensure',
     getProviderDefinition('HOSTINGER').capabilities.includes('dns.record.ensure'));
+  /**
+   * LE NOM MÉTIER NE PORTE JAMAIS LE NOM DU FOURNISSEUR.
+   *
+   * OpenSign déclare EXACTEMENT les mêmes codes que Yousign. C'est l'invariant
+   * qui rend la migration invisible depuis les projets : SB Auto appelle
+   * `signature.request.open`, et n'apprend jamais qui l'exécute. Un
+   * `opensign.request.open` aurait fait fuiter le fournisseur dans le contrat
+   * métier — et rendu la bascule impossible sans toucher au projet.
+   */
+  check('OpenSign déclare les MÊMES capacités que Yousign, aux mêmes noms',
+    JSON.stringify([...getProviderDefinition('OPENSIGN').capabilities].sort())
+    === JSON.stringify([...getProviderDefinition('YOUSIGN').capabilities].sort()));
+  check('aucune capacité ne porte le nom d’un fournisseur',
+    listProviderDefinitions().every((d) => d.capabilities.every(
+      (c) => !/opensign|yousign|stripe|brevo|hostinger/i.test(c))));
   check('chaque capacité est nommée « domaine.objet[.action] »',
     listProviderDefinitions().every((d) => d.capabilities.every((c) => /^[a-z]+(\.[a-z_]+){1,3}$/.test(c))));
 }

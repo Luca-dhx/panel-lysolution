@@ -48,17 +48,18 @@ async function rejects(fn, code) {
 section('Seed — idempotent, et il ne copie RIEN');
 {
   const premier = await seedIntegratedApiCredentialSets();
-  // 3 fournisseurs × 2 environnements + 1 global = 7.
-  check('7 jeux amorcés au premier passage', premier.created === 7 && premier.existing === 0);
+  // 4 fournisseurs par environnement × 2 environnements + 1 global = 9.
+  // (Stripe, Brevo, Yousign, OpenSign) × (TEST, PROD) + Hostinger.
+  check('9 jeux amorcés au premier passage', premier.created === 9 && premier.existing === 0);
 
   const second = await seedIntegratedApiCredentialSets();
-  check('rejoué : aucun nouveau jeu', second.created === 0 && second.existing === 7);
+  check('rejoué : aucun nouveau jeu', second.created === 0 && second.existing === 9);
 
   const troisieme = await seedIntegratedApiCredentialSets();
-  check('rejoué deux fois : toujours 7', troisieme.created === 0 && troisieme.existing === 7);
+  check('rejoué deux fois : toujours 9', troisieme.created === 0 && troisieme.existing === 9);
 
   const total = await CredentialSet.countDocuments();
-  check('7 documents en base, pas un de plus', total === 7);
+  check('9 documents en base, pas un de plus', total === 9);
 
   const tous = await CredentialSet.find({}).lean();
   check('tous les jeux amorcés sont VIDES',
@@ -100,7 +101,7 @@ section('Index unique — un seul jeu par (fournisseur, environnement)');
 section('Catalogue — l’état de départ dit la vérité');
 {
   const items = await controlPlane.listProviders();
-  check('4 fournisseurs', items.length === 4);
+  check('5 fournisseurs', items.length === 5);
   check('chacun porte sa définition et ses jeux',
     items.every((i) => i.definition && Array.isArray(i.credentialSets)));
 
@@ -356,7 +357,7 @@ section('Disponibilité — la question que posera la passerelle de capacités')
     controlPlane.describeAvailability.length === 1);
 
   const tous = await controlPlane.describeAllAvailability();
-  check('le diagnostic couvre les 4 fournisseurs', tous.length === 4);
+  check('le diagnostic couvre les 5 fournisseurs', tous.length === 5);
   check('chacun annonce l’environnement du runtime',
     tous.every((d) => d.runtimeEnvironment === 'TEST'));
 }

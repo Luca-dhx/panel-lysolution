@@ -679,8 +679,19 @@ section('14. WEBHOOK BREVO — ce que L5 doit savoir, et que L8 ne fait pas');
 section('15. NON-RÉGRESSION — L8 n’a rien pris à personne');
 /* ========================================================================== */
 {
-  // Le registre L1 reste intact : quatre fournisseurs, mêmes rôles.
-  check('toujours 4 fournisseurs', registry.PROVIDER_CODES.length === 4);
+  /**
+   * Le registre L1 reste intact : les fournisseurs de L1 sont TOUS encore là,
+   * avec leurs rôles.
+   *
+   * On ne compte plus. Compter revenait à interdire l'ajout d'un fournisseur —
+   * exactement la faute que le commentaire ci-dessous dénonce pour les rôles :
+   * un test qui refuse un ajout légitime transforme une exigence en obstacle.
+   * Ce que cette suite doit prouver, c'est que L8 n'a RIEN PRIS à personne, pas
+   * que le parc a cessé de grandir. (OpenSign est arrivé depuis, sans rien
+   * retirer.)
+   */
+  check('les fournisseurs de L1 sont tous encore déclarés',
+    ['STRIPE', 'BREVO', 'YOUSIGN', 'HOSTINGER'].every((c) => registry.isKnownProvider(c)));
   // On vérifie que les rôles CONNUS sont intacts, PAS qu'il n'y en a que trois :
   // L8 demande justement à L5 d'ajouter `webhookSecretPrevious` (§9.1, exigence 6),
   // et un test qui refuserait cet ajout transformerait une exigence en obstacle.

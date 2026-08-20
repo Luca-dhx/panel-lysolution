@@ -35,7 +35,7 @@ import { z } from 'zod';
 
 import { MAX_DOCUMENT_BASE64_LENGTH } from '../integratedApi/yousign/signatureDocumentLimits.js';
 
-import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
+import { getProviderDefinition, listProviderDefinitions } from '../integratedApi/providerRegistry.js';
 import { BREVO_CAPABILITY_CODES } from '../integratedApi/brevo/brevoCapabilities.js';
 import {
   HOSTINGER_CAPABILITIES,
@@ -1019,7 +1019,16 @@ export function assertRegistryAlignment() {
     }
   }
 
-  for (const definition of ['STRIPE', 'BREVO', 'YOUSIGN', 'HOSTINGER'].map(getProviderDefinition)) {
+  /**
+   * TOUS les fournisseurs du registre, et non une liste retapée ici.
+   *
+   * La liste littérale était une bombe à retardement silencieuse : un
+   * fournisseur ajouté au registre L1 échappait à ce contrôle, et pouvait donc
+   * annoncer une capacité inexistante sans que rien ne le dise. Le contrôle
+   * s'appliquait exactement aux fournisseurs qui n'en avaient plus besoin —
+   * ceux déjà écrits — et jamais au suivant, qui est le seul cas où il sert.
+   */
+  for (const definition of listProviderDefinitions()) {
     for (const code of definition.capabilities) {
       if (!isKnownCapability(code)) {
         problems.push(`${definition.code} annonce « ${code} » — absent du registre des capacités.`);

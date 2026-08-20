@@ -82,6 +82,36 @@ export const SECRET_DELIVERY = Object.freeze({
   CALLER_SUPPLIED: 'CALLER_SUPPLIED',
   /** Le fournisseur le relit à la demande. Aucun fournisseur actuel. */
   READABLE: 'READABLE',
+  /**
+   * LE SECRET NE PASSE PAS PAR L'API — il naît dans la console du fournisseur
+   * et n'en sort que par un copier-coller humain (OpenSign).
+   *
+   * ══ POURQUOI CETTE QUATRIÈME VALEUR EXISTE ═════════════════════════════════
+   *
+   * Les trois précédentes décrivent toutes un secret que le PLAN DE CONTRÔLE
+   * peut obtenir seul : au vol à la création, en le posant lui-même, ou en le
+   * relisant. Elles pilotent donc une RÉPARATION AUTOMATIQUE — et c'est là que
+   * le rangement approximatif coûte cher :
+   *
+   *   rangé en AT_CREATION_ONLY  → le réconciliateur RECRÉE l'endpoint pour
+   *                                capturer un secret qui n'arrivera jamais.
+   *                                Boucle infinie de recréation, sur une
+   *                                ressource qui, chez OpenSign, est unique par
+   *                                compte : chaque passage écrase l'URL en
+   *                                place.
+   *   rangé en CALLER_SUPPLIED   → il tente une rotation par une route qui
+   *                                n'existe pas.
+   *   rangé en NONE              → l'écran affiche « aucune vérification
+   *                                possible » alors qu'OpenSign signe
+   *                                réellement en HMAC-SHA256.
+   *
+   * `OUT_OF_BAND` dit la seule chose vraie : la vérification EXISTE, le secret
+   * est ABSENT tant qu'un humain ne l'a pas saisi, et aucune réparation
+   * automatique n'est possible. Le réconciliateur laisse alors le binding en
+   * WARNING avec le motif exact — un état stable, lisible, et actionnable en
+   * une minute par l'exploitant.
+   */
+  OUT_OF_BAND: 'OUT_OF_BAND',
   /** Pas de secret du tout. */
   NONE: 'NONE',
 });
@@ -163,6 +193,26 @@ function capability(code, options = {}) {
     signatureScheme: options.signatureScheme ?? SIGNATURE_SCHEMES.NONE,
     /** En-tête portant la preuve. `null` pour `NONE`. */
     signatureHeader: options.signatureHeader ?? null,
+    /**
+     * LE FOURNISSEUR SAIT-IL STOCKER UNE DESCRIPTION D'ENDPOINT ?
+     *
+     * ══ CE QUE CE DRAPEAU EXISTE POUR EMPÊCHER ════════════════════════════
+     *
+     * La description n'est pas décorative : elle porte le JETON
+     * D'APPARTENANCE, c'est-à-dire la preuve qui autorise une suppression.
+     * `computeDrift` la compare donc, et un écart déclenche un `update`.
+     *
+     * Chez un fournisseur qui n'a pas ce champ — OpenSign — la comparaison
+     * oppose une description désirée non vide à une description observée
+     * toujours vide. La divergence est PERPÉTUELLE : le réconciliateur
+     * réécrirait l'unique URL du compte à chaque passage, sans jamais
+     * converger, et le binding resterait éternellement en DRIFTED.
+     *
+     * `false` dit la seule chose vraie : ce champ n'existe pas chez ce
+     * fournisseur, il n'y a donc rien à comparer — et l'appartenance ne repose
+     * plus que sur l'identifiant persisté, ce qui est déclaré et non subi.
+     */
+    supportsDescription: supported ? options.supportsDescription !== false : false,
     secretDelivery: options.secretDelivery ?? SECRET_DELIVERY.NONE,
     /** Rôle du coffre Panel qui porte le secret. Vérifié contre le registre. */
     secretRole: options.secretRole ?? null,
@@ -261,6 +311,91 @@ const YOUSIGN_EVENTS = Object.freeze([
   'signature_request.expired',
   'signature_request.canceled',
 ]);
+
+/**
+ * ÉVÉNEMENTS OPENSIGN — les cinq que le fournisseur émet, et il les émet TOUS.
+ *
+ * Ce n'est pas une souscription : OpenSign n'offre aucun moyen d'en choisir un
+ * sous-ensemble. Cette liste DÉCRIT donc ce qui arrivera sur l'endpoint, et
+ * sert au diagnostic ; elle ne demande rien au fournisseur.
+ *
+ * Noter l'absence de `revoked` : la documentation d'aide l'annonce dans sa
+ * liste (« Document Revoked or Declined ») mais ne publie AUCUN exemple de
+ * charge utile pour lui, et la référence API ne documente que cinq événements,
+ * `declined` compris. Deux hypothèses tiennent — la révocation émet `declined`,
+ * ou elle émet un `revoked` non documenté — et rien dans la doc ne tranche.
+ * On ne l'invente donc pas ici : c'est une observation à faire en bac à sable,
+ * pas une déclaration à écrire de mémoire. Le mapping métier, lui, saura
+ * traiter les deux libellés.
+ */
+const OPENSIGN_EVENTS = Object.freeze([
+  'created',
+  'viewed',
+  'signed',
+  'completed',
+  'declined',
+]);
+
+/**
+ * IDENTITÉ D'UN ÉVÉNEMENT OPENSIGN — composite, faute d'identifiant.
+ *
+ * ══ CE QUI ENTRE DANS LA CLÉ, ET POURQUOI CHAQUE MORCEAU EST NÉCESSAIRE ═════
+ *
+ *   environnement  deux mondes, deux comptes : rien n'interdit au même
+ *                  `objectId` d'exister des deux côtés.
+ *   event          `viewed` puis `signed` sur le même document au même instant
+ *                  sont deux faits distincts.
+ *   objectId       le document. C'est la seule référence stable du fournisseur.
+ *   acteur         l'e-mail du signataire concerné, HACHÉ. Sans lui, deux
+ *                  signataires qui signent dans la même seconde produisent la
+ *                  même clé, et le second est perdu en silence — c'est-à-dire
+ *                  que le contrat reste éternellement à moitié signé.
+ *   horodatage     le champ propre à l'événement (`signedAt`, `viewedAt`…).
+ *
+ * ── POURQUOI L'HORODATAGE N'EST PAS PARSÉ ───────────────────────────────────
+ *
+ * OpenSign date ses événements en RFC 1123 avec un fuseau EN TOUTES LETTRES
+ * (« Fri, 16 May 2025 16:18:16 IST », « GMT+9:30 »). `Date.parse` rend `NaN`
+ * sur la plupart de ces abréviations, et selon le moteur. Une clé bâtie sur un
+ * horodatage parsé serait donc tantôt correcte, tantôt `NaN` — et deux
+ * événements distincts partageraient alors la même identité.
+ *
+ * On garde la CHAÎNE, normalisée. Elle est stable pour un événement donné :
+ * c'est tout ce que l'idempotence demande.
+ *
+ * ── AUCUNE ADRESSE N'ENTRE EN CLAIR ─────────────────────────────────────────
+ *
+ * Même règle que chez Brevo : la clé ne doit pas devenir un annuaire. Elle
+ * porte une empreinte tronquée, qui distingue sans permettre de retrouver.
+ */
+export function openSignEventIdentity(payload, { environment }) {
+  const event = String(payload?.event ?? '').trim().toLowerCase();
+  const objectId = String(payload?.objectId ?? '').trim();
+  if (!event || !objectId) return null;
+
+  const acteur = payload?.viewedBy
+    ?? payload?.declinedBy
+    ?? payload?.signer?.email
+    ?? '';
+  const horodatage = payload?.signedAt
+    ?? payload?.viewedAt
+    ?? payload?.declinedAt
+    ?? payload?.completedAt
+    ?? payload?.createdAt
+    ?? '';
+
+  const empreinte = acteur
+    ? createHash('sha256').update(String(acteur).trim().toLowerCase()).digest('hex').slice(0, 16)
+    : '';
+
+  return `opensign:${[
+    String(environment ?? '').toUpperCase(),
+    event,
+    objectId,
+    empreinte,
+    String(horodatage).trim().toLowerCase(),
+  ].join(':')}`;
+}
 
 /**
  * IDENTITÉ D'UN ÉVÉNEMENT BREVO — clé composite publiée par L8.
@@ -373,6 +508,78 @@ export const WEBHOOK_CAPABILITIES = Object.freeze({
     eventTypeFields: ['event_name', 'event'],
     desiredEvents: YOUSIGN_EVENTS,
     remoteEndpointLimit: null,
+  }),
+
+  /**
+   * OPENSIGN — un webhook UNIQUE par compte, signé, sans abonnement.
+   *
+   * ══ TROIS DIFFÉRENCES STRUCTURELLES, ET AUCUNE N'EST COSMÉTIQUE ═══════════
+   *
+   * 1. LA RESSOURCE EST UN SINGLETON. `GET/POST/DELETE /webhook` — pas de
+   *    liste, pas d'identifiant d'endpoint. L'identité de l'endpoint EST le
+   *    jeton qui l'interroge. Le pilote distant rend donc un identifiant
+   *    SYNTHÉTIQUE et STABLE, parce que le réconciliateur en a besoin d'un pour
+   *    raisonner — et non parce qu'OpenSign en aurait un qu'on aurait manqué.
+   *
+   * 2. AUCUN ABONNEMENT À DES ÉVÉNEMENTS. OpenSign envoie ses cinq événements,
+   *    ou aucun. `desiredEvents` est donc une DOCUMENTATION de ce qu'on va
+   *    recevoir, pas une intention à faire respecter — d'où un comparateur qui
+   *    ne signale jamais de dérive d'événements. Le comparateur par défaut
+   *    verrait cinq événements éternellement « manquants » et déclencherait un
+   *    `update` à chaque passage, c'est-à-dire une réécriture perpétuelle de
+   *    l'unique URL du compte.
+   *
+   * 3. LE SECRET NE VIENT PAS DE L'API. Voir `SECRET_DELIVERY.OUT_OF_BAND`.
+   *
+   * ══ ET UNE QUATRIÈME, QUI EST UNE CONTRAINTE D'EXPLOITATION ══════════════
+   *
+   * Un compte = une URL. Deux Panels (recette et production) NE PEUVENT PAS
+   * partager un compte OpenSign : le second écraserait le webhook du premier.
+   * La séparation TEST/PROD par jeton et par hôte n'est donc pas seulement
+   * imposée par le fournisseur — elle est la seule chose qui rende la
+   * cohabitation possible. `remoteEndpointLimit: 1` fait dire cela au préflight
+   * plutôt qu'à un incident.
+   */
+  OPENSIGN: capability('OPENSIGN', {
+    supported: true,
+    callbackSlug: 'opensign',
+    /** HMAC-SHA256 hexadécimal du corps BRUT — exactement le schéma générique. */
+    signatureScheme: SIGNATURE_SCHEMES.HMAC_SHA256_BODY,
+    signatureHeader: 'x-webhook-signature',
+    secretDelivery: SECRET_DELIVERY.OUT_OF_BAND,
+    secretRole: 'webhookSecret',
+    secretPreviousRole: 'webhookSecretPrevious',
+    apiCredentialRole: 'apiToken',
+    /**
+     * Deux mondes, deux comptes : le jeton Sandbox et le jeton Live ne se
+     * voient pas, et chacun porte SA propre URL de webhook. Le fournisseur ne
+     * distingue donc rien lui-même sur un compte donné — c'est la séparation
+     * des comptes qui fait le travail, comme chez Yousign.
+     */
+    environmentAware: true,
+    /**
+     * AUCUN IDENTIFIANT D'ÉVÉNEMENT dans la charge utile — vérifié sur les cinq
+     * exemples officiels. Sans clé composite, l'idempotence retomberait sur
+     * l'empreinte du corps brut, et deux événements légitimes strictement
+     * identiques (même document, même signataire, même horodatage à la seconde)
+     * seraient confondus — ou, pire, une re-sérialisation par le fournisseur
+     * ferait passer un rejeu pour une nouveauté.
+     */
+    eventIdStrategy: EVENT_ID_STRATEGIES.PROVIDER_COMPOSITE,
+    eventIdentity: openSignEventIdentity,
+    eventTypeFields: ['event'],
+    desiredEvents: OPENSIGN_EVENTS,
+    /**
+     * Il n'y a rien à souscrire : toute liste observée est conforme par
+     * construction. Répondre `aligned: true` n'est pas une complaisance, c'est
+     * le constat exact — la seule dérive possible chez OpenSign est celle de
+     * l'URL, et `computeDrift` la voit sans nous.
+     */
+    compareEvents: () => ({ aligned: true, missing: [] }),
+    /** Aucun champ de description chez OpenSign — voir `capability()`. */
+    supportsDescription: false,
+    /** Une seule URL par compte. Documenté, et vérifié par le préflight. */
+    remoteEndpointLimit: 1,
   }),
 
   HOSTINGER: capability('HOSTINGER', {

@@ -160,15 +160,51 @@ section('4. SOURCE DE VÉRITÉ UNIQUE — aucune seconde liste ne subsiste');
    * `billing.subscription.reconcile` annoncée par le registre des fournisseurs
    * alors qu'elle avait quitté le registre des capacités.
    */
-  for (const provider of ['STRIPE', 'BREVO', 'YOUSIGN', 'HOSTINGER']) {
+  /**
+   * ══ UN FOURNISSEUR PEUT ÊTRE DÉCLARÉ SANS ÊTRE AUTORITÉ ══════════════════
+   *
+   * L'égalité des deux listes vaut pour un fournisseur qui SERT. OpenSign, lui,
+   * est déclaré avec ses capacités cibles alors que le registre des capacités
+   * désigne encore YOUSIGN comme exécutant : c'est l'état exact d'une migration
+   * en cours, et il est VOULU.
+   *
+   * L'exception est nommée ici plutôt que subie ailleurs. Ce qu'on continue
+   * d'exiger d'OpenSign — et qui est testé juste après — c'est le sens qui
+   * compte : tout code qu'il annonce doit EXISTER au registre. C'est ce contrôle
+   * qui empêche un écran d'annoncer une capacité que la passerelle ne connaît
+   * pas. La réciproque n'aurait aucun sens tant qu'il n'exécute rien.
+   *
+   * Le jour où le sélecteur de fournisseur basculera `signature.*` sur
+   * OpenSign, cette exception devra disparaître — et la ligne ci-dessous est ce
+   * qui obligera à s'en souvenir.
+   */
+  const NON_ENCORE_AUTORITE = new Set(['OPENSIGN']);
+
+  for (const provider of providerRegistry.PROVIDER_CODES) {
     const definition = providerRegistry.getProviderDefinition(provider);
     for (const code of definition.capabilities) {
       check(`${provider} annonce « ${code} » → il est déclaré`, registry.isKnownCapability(code));
     }
     const duRegistre = registry.capabilitiesForProvider(provider).map((c) => c.code).sort();
     const duFournisseur = [...definition.capabilities].sort();
+
+    if (NON_ENCORE_AUTORITE.has(provider)) {
+      check(`${provider} — déclaré, pas encore autorité : le registre ne lui confie rien`,
+        duRegistre.length === 0 && duFournisseur.length > 0);
+      continue;
+    }
     check(`${provider} — les deux listes sont IDENTIQUES`,
       JSON.stringify(duRegistre) === JSON.stringify(duFournisseur));
+  }
+
+  /**
+   * ET PENDANT CE TEMPS, YOUSIGN RESTE L'AUTORITÉ — c'est l'invariant de
+   * coexistence. Le vérifier ici garantit qu'aucune bascule ne s'est produite
+   * par inadvertance : la migration doit être un acte, jamais un effet de bord.
+   */
+  for (const code of providerRegistry.getProviderDefinition('OPENSIGN').capabilities) {
+    check(`« ${code} » est encore exécutée par YOUSIGN`,
+      registry.getCapabilityDefinition(code)?.provider === 'YOUSIGN');
   }
 
   /** Les modules d'autorisation supprimés ne doivent pas réapparaître. */

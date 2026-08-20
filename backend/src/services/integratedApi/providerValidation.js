@@ -7,8 +7,11 @@
 //   jeu d'identifiants  →  VALID | INVALID | ERROR
 //
 // Aucun paiement. Aucun e-mail. Aucune signature. Aucun webhook. Aucun
-// enregistrement DNS. Les quatre appels ci-dessous sont ceux, déjà éprouvés en
-// production côté projet, qui prouvent l'authentification sans rien créer.
+// enregistrement DNS. Aucun crédit débité. Les appels ci-dessous sont ceux qui
+// prouvent l'authentification sans rien créer — et pour OpenSign, cette
+// exigence est plus dure qu'ailleurs : la moitié de son API facture un crédit
+// à la création d'un document, ce qui disqualifie d'emblée toute sonde qui
+// « essaierait » un acte métier.
 //
 // ── TROIS ISSUES, ET LA TROISIÈME COMPTE AUTANT QUE LES DEUX AUTRES ─────────
 //
@@ -25,8 +28,8 @@
 // Les valeurs déchiffrées ne vivent que dans la portée de l'appel. Le
 // diagnostic rendu ne contient que des données publiques (identifiant de
 // compte, pays, version d'API, temps de réponse). Un message d'erreur du
-// fournisseur est tronqué et repris tel quel : Stripe, Brevo, Yousign et
-// Hostinger n'échoent jamais la clé dans leurs corps d'erreur.
+// fournisseur est tronqué et repris tel quel : Stripe, Brevo, Yousign, OpenSign
+// et Hostinger n'échoent jamais la clé dans leurs corps d'erreur.
 import { decryptCredentialSet } from './credentialVault.js';
 import {
   checkHostForEnvironment,
@@ -373,6 +376,215 @@ async function probeYousignWebhookManagement(base, apiKey, fetchImpl) {
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*  OPENSIGN                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * OPENSIGN — VALIDATION EN TROIS NIVEAUX, SUR L'USAGE NOMINAL.
+ *
+ * ══ NIVEAU 0 — LE MONDE, AVANT MÊME D'APPELER ══════════════════════════════
+ *
+ * Même règle que Yousign, et pour un symptôme identique : OpenSign documente
+ * explicitement qu'un jeton Live ne fonctionne pas en bac à sable ni l'inverse.
+ * Envoyé au mauvais hôte, un jeton parfaitement valide reçoit un refus
+ * d'authentification indiscernable d'une clé morte. Refuser AVANT le réseau
+ * donne le bon diagnostic tout de suite, et n'expose pas le jeton à un hôte qui
+ * n'est pas le sien.
+ *
+ * ══ NIVEAU 1 — LE CREDENTIAL : `GET /getuser` ══════════════════════════════
+ *
+ * La lecture la plus pauvre en privilèges de toute l'API : elle rend le compte
+ * du porteur du jeton, rien d'autre. Elle ne crée aucun document, n'envoie
+ * aucun e-mail et ne débite aucun crédit — trois propriétés indispensables pour
+ * une sonde qu'un opérateur peut cliquer autant de fois qu'il veut.
+ *
+ * ⚠️ `405` EST LA RÉPONSE D'OPENSIGN À UN JETON REFUSÉ. Le classificateur HTTP
+ * commun à ce fichier le rangerait en `UNEXPECTED_STATUS`, c'est-à-dire en
+ * ERROR — « on n'a pas pu savoir ». Or on sait parfaitement : la clé est
+ * refusée. Le verdict serait faux dans les deux sens à la fois (mauvaise
+ * catégorie, mauvaise action à mener).
+ *
+ * ══ NIVEAUX 2 ET 3 — DEUX CAPACITÉS, SONDÉES À CÔTÉ ════════════════════════
+ *
+ *   webhookManagement  « ce jeton peut-il administrer l'URL de webhook ? »
+ *   credits            « ce compte peut-il encore créer des documents ? »
+ *
+ * Aucune des deux ne dégrade JAMAIS le verdict du credential. Un jeton qui
+ * s'authentifie sur un compte à zéro crédit est valide, capable d'administrer,
+ * et incapable d'ouvrir une signature — trois faits vrais en même temps, que
+ * « clé invalide » écraserait en un seul mensonge. Les crédits, en particulier,
+ * sont une contrainte d'OpenSign que Yousign n'a pas : les ignorer ferait
+ * découvrir l'épuisement au pire moment, c'est-à-dire pendant une signature.
+ */
+async function validateOpenSign(values, { fetchImpl, environment = null }) {
+  const base = stripSlash(values.baseUrl);
+  const details = {
+    baseUrl: base,
+    // Chez OpenSign, c'est l'HÔTE qui porte le monde, pas le jeton.
+    hostEnvironment: /sandbox/.test(base) ? 'sandbox' : /eu-app/.test(base) ? 'eu' : 'production',
+    probe: 'GET /getuser',
+  };
+
+  /* -- NIVEAU 0 : LE MONDE ------------------------------------------------ */
+  const hote = checkHostForEnvironment('OPENSIGN', 'baseUrl', environment, base);
+  if (hote) {
+    return {
+      status: VALIDATION_STATUS.INVALID,
+      code: VALIDATION_CODES.WRONG_ENVIRONMENT,
+      message: hote.reason === 'OTHER_ENVIRONMENT'
+        ? `L’URL de base vise « ${hote.actual} », l’hôte ${hote.otherEnvironment} d’OpenSign, `
+          + `alors que ce jeu est ${environment}. Le jeton n’est pas en cause : un jeton Sandbox `
+          + `et un jeton Live ne sont pas interchangeables, et le refus ressemble à un jeton `
+          + `invalide. Attendu : ${hote.expected}.`
+        : `L’URL de base doit viser « ${hote.expected} » en ${environment}. `
+          + `La région UE (eu-app) est un compte distinct, pas un alias : elle exige une `
+          + `décision d’architecture, pas une URL.`,
+      details: { ...details, expectedHost: hote.expected, actualHost: hote.actual },
+      durationMs: 0,
+    };
+  }
+
+  /* -- NIVEAU 1 : LE CREDENTIAL ------------------------------------------- */
+  const { response, durationMs } = await timedFetch(
+    `${base}/getuser`,
+    { headers: { 'x-api-token': values.apiToken, accept: 'application/json' } },
+    fetchImpl,
+  );
+  const json = await readJson(response);
+  details.httpStatus = response.status;
+  details.durationMs = durationMs;
+
+  if (!response.ok) {
+    details.providerMessage = safeMessage(json?.error ?? json?.message);
+
+    // Le 405 d'OpenSign : un jeton refusé, pas une méthode interdite.
+    if (response.status === 405 || response.status === 401) {
+      return {
+        status: VALIDATION_STATUS.INVALID,
+        code: VALIDATION_CODES.UNAUTHORIZED,
+        message: `OpenSign a refusé le jeton (HTTP ${response.status} — chez ce fournisseur, `
+          + `405 signifie « Invalid API token », pas « méthode non autorisée »). `
+          + `Vérifiez qu’il s’agit bien du jeton ${details.hostEnvironment}.`,
+        details,
+        durationMs,
+      };
+    }
+    if (response.status === 404) {
+      return {
+        status: VALIDATION_STATUS.INVALID,
+        code: VALIDATION_CODES.FORBIDDEN,
+        message: 'OpenSign ne trouve aucun utilisateur pour ce jeton : il est syntaxiquement '
+          + 'accepté mais ne désigne aucun compte.',
+        details,
+        durationMs,
+      };
+    }
+    return {
+      ...classifyHttp(response.status),
+      message: `OpenSign a répondu ${response.status}.`,
+      details,
+      durationMs,
+    };
+  }
+
+  details.account = json?.email ?? null;
+  details.accountName = json?.name ?? null;
+  details.company = json?.company ?? null;
+
+  /* -- NIVEAU 2 : L'ADMINISTRATION DU WEBHOOK ----------------------------- */
+  details.capabilities = {
+    webhookManagement: await probeOpenSignWebhookManagement(base, values.apiToken, fetchImpl),
+  };
+
+  /* -- NIVEAU 3 : LES CRÉDITS -------------------------------------------- */
+  details.credits = await probeOpenSignCredits(base, values.apiToken, fetchImpl);
+
+  const alertes = [];
+  if (details.capabilities.webhookManagement === CAPABILITY_STATE.FORBIDDEN) {
+    alertes.push('elle n’est pas autorisée à administrer l’URL de webhook');
+  }
+  if (details.credits?.total === 0) {
+    alertes.push('le compte n’a plus aucun crédit API : aucune signature ne pourra être ouverte');
+  }
+
+  return {
+    status: VALIDATION_STATUS.VALID,
+    code: VALIDATION_CODES.OK,
+    message: alertes.length
+      ? `OpenSign reconnaît le jeton (${details.hostEnvironment}), mais ${alertes.join(' et ')}.`
+      : `OpenSign reconnaît le jeton (${details.hostEnvironment}`
+        + `${details.account ? `, compte ${details.account}` : ''}).`,
+    details,
+    durationMs,
+  };
+}
+
+/**
+ * L'ADMINISTRATION DU WEBHOOK, SONDÉE EN LECTURE SEULE.
+ *
+ * `GET /webhook` ne crée rien et ne modifie rien. Son échec ne peut pas
+ * invalider le credential : il RENSEIGNE une capacité, et c'est la
+ * réconciliation qui en tirera son propre état.
+ *
+ * ── AUCUN CORPS N'EST CONSERVÉ ──────────────────────────────────────────────
+ *
+ * La réponse porte l'URL de webhook du compte — celle d'un AUTRE Panel, le cas
+ * échéant. On ne lit que le statut : la comparer, l'afficher ou la journaliser
+ * ferait de la sonde de validation un révélateur d'infrastructure tierce.
+ */
+async function probeOpenSignWebhookManagement(base, apiToken, fetchImpl) {
+  try {
+    const { response } = await timedFetch(
+      `${base}/webhook`,
+      { headers: { 'x-api-token': apiToken, accept: 'application/json' } },
+      fetchImpl,
+    );
+    if (response.ok) return CAPABILITY_STATE.GRANTED;
+    // 405 = jeton refusé chez OpenSign ; 401/403 = refus de périmètre.
+    if ([401, 403, 405].includes(response.status)) return CAPABILITY_STATE.FORBIDDEN;
+    // 404 « User not found » sur cette route signifie qu'aucune URL n'est
+    // posée, pas que la capacité manque : le jeton a bien été accepté.
+    if (response.status === 404) return CAPABILITY_STATE.GRANTED;
+    return CAPABILITY_STATE.UNKNOWN;
+  } catch {
+    // Une panne réseau n'est pas un refus : « je n'ai pas pu demander ».
+    return CAPABILITY_STATE.UNKNOWN;
+  }
+}
+
+/**
+ * LES CRÉDITS — une contrainte d'EXPLOITATION, jamais un verdict sur la clé.
+ *
+ * OpenSign facture la création de document à l'API (Self Sign, Draft Document,
+ * Create Document, Draft Template, Create Document From Template). Un compte à
+ * zéro crédit s'authentifie parfaitement et ne peut plus rien ouvrir : c'est
+ * une panne métier qu'aucun test d'authentification ne verrait.
+ *
+ * `400 Subscription not found` est une réponse NORMALE d'un compte sans
+ * abonnement — elle ne dit rien de mauvais sur le jeton, et rend donc `null`.
+ */
+async function probeOpenSignCredits(base, apiToken, fetchImpl) {
+  try {
+    const { response } = await timedFetch(
+      `${base}/getcredits`,
+      { headers: { 'x-api-token': apiToken, accept: 'application/json' } },
+      fetchImpl,
+    );
+    if (!response.ok) return null;
+    const json = await readJson(response);
+    const nombre = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+      plan: nombre(json?.plan_credits),
+      addon: nombre(json?.addon_credits),
+      total: nombre(json?.total_credits),
+      renewalDate: typeof json?.renewal_date === 'string' ? json.renewal_date : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Hostinger : `GET /api/domains/v1/portfolio`. Liste les domaines gérés —
  * lecture pure, aucun enregistrement DNS touché.
@@ -413,6 +625,7 @@ const VALIDATORS = Object.freeze({
   STRIPE: validateStripe,
   BREVO: validateBrevo,
   YOUSIGN: validateYousign,
+  OPENSIGN: validateOpenSign,
   HOSTINGER: validateHostinger,
 });
 

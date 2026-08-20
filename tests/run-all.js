@@ -223,6 +223,11 @@ const TESTS = [
   'integrated-api-encryption.test.js',
   'integrated-api-control-plane.test.js',
   'integrated-api-http-security.test.js',
+  // OPENSIGN — fondation du second fournisseur de signature (migration Yousign
+  // → OpenSign, lot 0). Elle prouve que le Panel sait parler à OpenSign, et
+  // surtout que YOUSIGN RESTE L'AUTORITÉ : un fournisseur ajouté ne prend rien
+  // à celui qui sert. Aucun appel ne sort sur le réseau.
+  'integrated-api-opensign-foundation.test.js',
   // L4 — la frontière : aucun identifiant fournisseur ne franchit le pont.
   // L'invariant est dérivé du registre, donc il survit au provider suivant.
   'bridge-provider-secret-boundary.test.js',

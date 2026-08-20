@@ -468,6 +468,179 @@ export const yousignWebhookAdapter = Object.freeze({
 });
 
 /* -------------------------------------------------------------------------- */
+/*  OPENSIGN — /webhook (JSON, x-api-token, UNE SEULE URL PAR COMPTE)         */
+/* -------------------------------------------------------------------------- */
+
+async function openSignCall(ctx, path, { method = 'GET', json: body } = {}) {
+  const token = requireCredential(ctx, 'apiToken');
+  // L'hôte vient du coffre, jamais d'ici : le registre porte les deux hôtes et
+  // la contrainte qui les sépare. Un hôte en dur ferait partir un jeton de bac
+  // à sable vers la production le jour où quelqu'un croirait bien faire.
+  const base = stripSlash(ctx.credentials.baseUrl);
+  if (!base) {
+    throw new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_CREDENTIALS_MISSING,
+      'URL de base OpenSign absente : elle dépend de l’environnement et doit venir du coffre.',
+    );
+  }
+  const response = await timedFetch(
+    `${base}${path}`,
+    {
+      method,
+      headers: {
+        'x-api-token': token,
+        accept: 'application/json',
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    },
+    ctx.fetchImpl,
+  );
+  return { response, json: await readJson(response) };
+}
+
+/**
+ * TRADUCTION DES REFUS D'OPENSIGN — deux statuts que le traducteur commun
+ * interpréterait à l'envers.
+ *
+ * `405` : chez OpenSign, c'est « Invalid API token! », pas « méthode non
+ * autorisée ». Le traducteur commun le rangerait en `WEBHOOK_REMOTE_ERROR`,
+ * c'est-à-dire en panne transitoire — et la réconciliation réessaierait
+ * indéfiniment un appel qui ne peut pas aboutir, sans jamais dire que la clé
+ * est en cause.
+ *
+ * `401 Webhook url already exists!` : un CONFLIT, pas un refus
+ * d'authentification. Le ranger en `WEBHOOK_AUTH_INVALID` afficherait « jeton
+ * invalide » au moment précis où le webhook est correctement en place.
+ *
+ * Le reste part au traducteur commun — sauf que celui-ci lit
+ * `json.error.message` alors qu'OpenSign écrit `json.error` en CHAÎNE. On lui
+ * passe donc la phrase déjà extraite, sous une forme qu'il sait lire.
+ */
+function openSignRemoteError(response, json) {
+  const phrase = typeof json?.error === 'string' ? json.error : (json?.message ?? '');
+
+  if (response.status === 405) {
+    return new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_AUTH_INVALID,
+      safeMessage(phrase) ?? 'Jeton OpenSign refusé (405 signifie « Invalid API token » chez ce fournisseur).',
+    );
+  }
+  if (response.status === 401 && /exist/i.test(phrase)) {
+    return new WebhookError(
+      WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_ERROR,
+      safeMessage(phrase) ?? 'Une URL de webhook est déjà posée sur ce compte OpenSign.',
+      { httpStatus: response.status },
+    );
+  }
+  return remoteError(response, { ...json, message: phrase || undefined });
+}
+
+/**
+ * OPENSIGN — le pilote d'une ressource SINGLETON.
+ *
+ * ══ CE QUE CE PILOTE NE PEUT PAS FAIRE, ET POURQUOI CE N'EST PAS UN MANQUE ══
+ *
+ * Le contrat du réconciliateur suppose une COLLECTION d'endpoints identifiés.
+ * OpenSign n'en a pas : un compte porte UNE url, sans identifiant, sans
+ * description, sans liste d'événements. Trois conséquences, toutes déclarées
+ * plutôt que contournées :
+ *
+ *   · `id` est L'URL ELLE-MÊME. Ce n'est pas un identifiant fabriqué pour faire
+ *     plaisir au moteur : sur une ressource unique, l'URL EST l'identité, et
+ *     elle est stable, lisible dans un journal, et reconstructible sans base.
+ *
+ *   · `description` est VIDE, toujours. Le champ n'existe pas chez OpenSign.
+ *     C'est pour cela que le descripteur déclare `supportsDescription: false` —
+ *     sans quoi le réconciliateur verrait une divergence de description
+ *     éternelle et réécrirait l'unique URL du compte à chaque passage.
+ *
+ *   · L'APPARTENANCE ne repose donc que sur l'identifiant persisté. Un Panel
+ *     qui découvre une URL déjà posée ne peut PAS prouver qu'elle est la
+ *     sienne : il refuse d'y toucher (plafond de 1 atteint), et c'est le bon
+ *     arbitrage — écraser l'URL d'un autre Panel couperait sa réception de
+ *     signatures sans que rien ne l'en avertisse.
+ */
+export const openSignWebhookAdapter = Object.freeze({
+  provider: 'OPENSIGN',
+
+  async list(ctx) {
+    const { response, json } = await openSignCall(ctx, '/webhook');
+    /**
+     * `404 User not found!` sur cette route signifie « aucune URL posée », pas
+     * « compte inconnu » : le jeton vient d'être accepté par la couche
+     * d'authentification. Le traiter comme une panne rendrait la PREMIÈRE
+     * configuration impossible — le moteur croirait le fournisseur cassé et
+     * n'oserait rien créer.
+     */
+    if (response.status === 404) return [];
+    if (!response.ok) throw openSignRemoteError(response, json);
+
+    const url = String(json?.webhook ?? '').trim();
+    if (!url) return [];
+    return [{
+      id: url,
+      url,
+      /**
+       * `['*']` — le comparateur par défaut lit cette valeur comme « tout est
+       * couvert », et c'est exactement la vérité : OpenSign envoie ses cinq
+       * événements sans qu'on puisse en choisir un sous-ensemble. Le
+       * descripteur neutralise déjà la comparaison, mais un pilote doit rester
+       * lisible seul — un tableau vide se lirait comme « aucun événement ».
+       */
+      events: ['*'],
+      description: '',
+      enabled: true,
+    }];
+  },
+
+  async create(ctx, { url }) {
+    const { response, json } = await openSignCall(ctx, '/webhook', {
+      method: 'POST',
+      json: { url },
+    });
+    if (!response.ok) throw openSignRemoteError(response, json);
+    /**
+     * `secret: null`, TOUJOURS — et ce n'est pas une lacune du pilote.
+     *
+     * OpenSign ne rend la clé de sécurité par aucune route : elle se génère
+     * dans la console (Settings → Webhook → Enable Authentication) et se
+     * recopie à la main dans le coffre. C'est ce que déclare
+     * `SECRET_DELIVERY.OUT_OF_BAND`, et c'est ce qui empêche le réconciliateur
+     * de recréer l'endpoint en boucle pour capturer une valeur qui n'arrivera
+     * jamais.
+     */
+    return { id: url, secret: null };
+  },
+
+  async update(ctx, _id, { url }) {
+    // Le même verbe pose et met à jour : OpenSign n'a pas de PUT sur /webhook.
+    const { response, json } = await openSignCall(ctx, '/webhook', {
+      method: 'POST',
+      json: { url },
+    });
+    /**
+     * « Webhook url already exists! » sur une mise à jour signifie que l'URL
+     * visée est DÉJÀ celle en place. L'état voulu est atteint : lever ici
+     * ferait échouer une réconciliation qui a réussi.
+     */
+    if (response.status === 401 && /exist/i.test(String(json?.error ?? ''))) return;
+    if (!response.ok) throw openSignRemoteError(response, json);
+  },
+
+  async remove(ctx, _id) {
+    /**
+     * ⚠️ `DELETE /webhook` retire L'URL DU COMPTE, sans la nommer. Le pilote ne
+     * peut donc pas vérifier qu'il supprime bien celle qu'on lui désigne —
+     * c'est l'appelant qui doit l'avoir prouvé. Il le fait : toute suppression
+     * du réconciliateur passe par `mayDelete()`, qui exige l'appartenance.
+     */
+    const { response, json } = await openSignCall(ctx, '/webhook', { method: 'DELETE' });
+    if (!response.ok && response.status !== 404) throw openSignRemoteError(response, json);
+  },
+});
+
+/* -------------------------------------------------------------------------- */
 /*  RÉSOLUTION                                                                */
 /* -------------------------------------------------------------------------- */
 
@@ -475,6 +648,7 @@ const ADAPTERS = Object.freeze({
   STRIPE: stripeWebhookAdapter,
   BREVO: brevoWebhookAdapter,
   YOUSIGN: yousignWebhookAdapter,
+  OPENSIGN: openSignWebhookAdapter,
 });
 
 /**
@@ -492,6 +666,7 @@ export default {
   stripeWebhookAdapter,
   brevoWebhookAdapter,
   yousignWebhookAdapter,
+  openSignWebhookAdapter,
   webhookAdapterFor,
   stripeForm,
 };

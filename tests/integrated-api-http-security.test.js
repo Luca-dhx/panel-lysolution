@@ -76,7 +76,7 @@ section('Sans authentification — 401 partout, y compris en lecture');
 section('ADMIN — il constate, il ne touche pas');
 {
   const liste = await call('GET', '/api/integrated-apis', { headers: admin });
-  check('lecture du catalogue autorisée', liste.status === 200 && liste.json.data.items.length === 4);
+  check('lecture du catalogue autorisée', liste.status === 200 && liste.json.data.items.length === 5);
 
   const diag = await call('GET', '/api/integrated-apis/availability', { headers: admin });
   check('lecture du diagnostic autorisée', diag.status === 200);
@@ -224,7 +224,7 @@ section('Compatibilité L1 — l’ancien coffre est intact');
 
   const nouveau = await call('GET', '/api/integrated-apis', { headers: dev });
   check('les deux surfaces coexistent, sur des chemins distincts',
-    nouveau.status === 200 && nouveau.json.data.items.length === 4);
+    nouveau.status === 200 && nouveau.json.data.items.length === 5);
 }
 
 await close();

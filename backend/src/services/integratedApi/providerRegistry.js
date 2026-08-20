@@ -21,9 +21,11 @@
 //
 // ── PÉRIMÈTRE L1 ────────────────────────────────────────────────────────────
 //
-// Les quatre fournisseurs ci-dessous sont les seuls PROUVÉS par le code (audit
-// §2.1). Ubiflow, AssuCarteGrise, CarVertical, Car Studio AI et Autoviza
-// n'existent nulle part : ils ne sont pas déclarés ici.
+// Les fournisseurs ci-dessous sont les seuls PROUVÉS par le code (audit §2.1),
+// auxquels s'ajoute OPENSIGN — déclaré sur la foi de l'audit complet de son API
+// v1.2, avec son driver et son validateur, et sans qu'aucune capacité ne lui
+// soit encore confiée. Ubiflow, AssuCarteGrise, CarVertical, Car Studio AI et
+// Autoviza n'existent nulle part : ils ne sont pas déclarés ici.
 //
 // `capabilities[]` et `webhook` sont DÉCLARATIFS en L1 — ils préparent L3
 // (passerelle de capacités) et L5 (registre de webhooks). Aucune capacité
@@ -153,7 +155,7 @@ function role(code, label, options = {}) {
   });
 }
 
-/** Valeur par défaut d'un rôle qui dépend de l'environnement (Yousign). */
+/** Valeur par défaut d'un rôle qui dépend de l'environnement (Yousign, OpenSign). */
 function environmentDefault(byEnvironment) {
   return Object.freeze({ ...byEnvironment });
 }
@@ -373,6 +375,194 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
         environmentHosts: Object.freeze({
           TEST: 'api-sandbox.yousign.app',
           PROD: 'api.yousign.app',
+        }),
+      }),
+    ]),
+  }),
+
+  /**
+   * OPENSIGN — deuxième fournisseur de SIGNATURE, ajouté SANS retirer Yousign.
+   *
+   * ══ POURQUOI DEUX FOURNISSEURS DE SIGNATURE COEXISTENT ════════════════════
+   *
+   * La migration se fait en marchant : Yousign reste l'autorité du parcours
+   * réel tant qu'OpenSign n'est pas prouvé de bout en bout (bac à sable, puis
+   * recette réelle). Deux entrées de registre ne créent aucune ambiguïté —
+   * c'est le SÉLECTEUR de fournisseur (lot suivant) qui décidera lequel sert
+   * `signature.*`, et il n'existe pas encore. Aujourd'hui, OPENSIGN est
+   * configurable et testable, et n'exécute AUCUNE capacité.
+   *
+   * ── LE MODÈLE D'EXÉCUTION RÉEL, ÉTABLI PAR LA DOC OFFICIELLE ──────────────
+   *
+   *   scope           ENVIRONMENT — et ce n'est pas un choix de confort.
+   *                   OpenSign émet DEUX jetons distincts (« Generate Live API
+   *                   Token » / « Sandbox API Token »), sur DEUX hôtes
+   *                   distincts, et documente explicitement qu'un jeton Live ne
+   *                   fonctionne pas en bac à sable ni l'inverse. Les gabarits
+   *                   eux-mêmes ne traversent pas. C'est la même topologie que
+   *                   Yousign, imposée par le fournisseur.
+   *
+   *   tokenStrategy   STATIC_KEY — `x-api-token`, aucun rafraîchissement.
+   *
+   *   région          `eu-app.opensignlabs.com` n'est PAS un alias de routage :
+   *                   c'est un autre tenant, avec son propre compte et ses
+   *                   propres jetons. Choisir l'UE ne se fait donc pas dans une
+   *                   URL, mais en ouvrant un compte UE. Voir `baseUrl`.
+   *
+   * ── CE QUI DIFFÈRE DE YOUSIGN, ET QUI COÛTERA CHER SI ON L'OUBLIE ─────────
+   *
+   *  · `405` signifie « jeton invalide » chez OpenSign, pas « méthode non
+   *    autorisée ». Un classificateur HTTP générique le rangerait en « refus
+   *    inattendu » et enverrait chercher une erreur d'appel là où il n'y a
+   *    qu'une clé morte. Le transport le sait (`openSignTransport.js`).
+   *
+   *  · Le secret de webhook n'est JAMAIS rendu par l'API : il se génère dans la
+   *    console (Settings → Webhook → Enable Authentication → Generate). Il est
+   *    donc SAISI par un humain — d'où `autoManaged: false`, contrairement à
+   *    Stripe, Brevo et Yousign. Voir `SECRET_DELIVERY.OUT_OF_BAND`.
+   *
+   *  · Un compte n'a QU'UNE seule URL de webhook (`GET/POST/DELETE /webhook`),
+   *    sans identifiant d'endpoint et sans sélection d'événements : le
+   *    fournisseur envoie les cinq événements, ou rien.
+   */
+  OPENSIGN: Object.freeze({
+    code: 'OPENSIGN',
+    label: 'OpenSign',
+    category: 'SIGNATURE',
+    scope: SCOPES.ENVIRONMENT,
+    tokenStrategy: TOKEN_STRATEGIES.STATIC_KEY,
+    supportsTest: true,
+    supportsProd: true,
+    /**
+     * L'API sait lire, poser et retirer l'URL de webhook du compte : la
+     * réconciliation a donc une prise. Ce qu'elle N'A PAS : un identifiant
+     * d'endpoint (la ressource est un singleton — son identité est le jeton),
+     * une sélection d'événements, et un secret livré par l'API.
+     */
+    supportsWebhookReconciliation: true,
+    /**
+     * FAUX, et c'est une DIFFÉRENCE STRUCTURELLE, pas un détail.
+     *
+     * Stripe et Yousign rendent le secret une fois, à la création : le Panel le
+     * capture au vol, et le perdre oblige à recréer l'endpoint. OpenSign ne le
+     * rend jamais, à aucun moment : il se génère dans la console et se recopie
+     * à la main. Déclarer `true` ici ferait recréer l'endpoint en boucle pour
+     * capturer un secret qui n'arrive pas.
+     */
+    webhookSecretReturnedAtCreationOnly: false,
+    /** HMAC-SHA256 hexadécimal du corps BRUT, en-tête `x-webhook-signature`. */
+    webhookSignature: 'HMAC_SHA256',
+    documentation: 'https://docs.opensignlabs.com/docs/API-docs/v1.2/',
+    console: 'https://app.opensignlabs.com',
+    /**
+     * Capacités DÉCLARÉES, pas encore servies par ce fournisseur.
+     *
+     * Ce sont les MÊMES codes métier que Yousign — et c'est tout l'enjeu : les
+     * projets parlent `signature.*`, jamais `opensign.*`. Un renommage aurait
+     * fait fuiter le nom du fournisseur dans le contrat métier, c'est-à-dire
+     * rendu la migration visible depuis SB Auto. Elle ne doit pas l'être.
+     *
+     * `capabilitiesForProvider('OPENSIGN')` rend donc [] tant que le sélecteur
+     * n'existe pas : le registre des capacités continue de désigner YOUSIGN.
+     * L'écart est VOULU et lisible — il dit exactement où en est la migration.
+     */
+    capabilities: Object.freeze([
+      'signature.request.open',
+      'signature.request.retrieve',
+      'signature.signer.retrieve',
+      'signature.document.download',
+      'signature.request.cancel',
+    ]),
+    credentialRoles: Object.freeze([
+      /**
+       * `apiToken` et non `apiKey` : c'est le nom du fournisseur (`x-api-token`,
+       * « Generate Live API Token »). Un rôle qui porte le nom du champ réel
+       * évite la traduction mentale au moment où l'on cherche pourquoi un appel
+       * part sans en-tête.
+       */
+      role('apiToken', 'Jeton d’API', {
+        secret: true,
+        required: true,
+        // Aucun préfixe normalisé : c'est l'HÔTE qui porte le monde, comme
+        // chez Yousign. Un préfixe inventé ici refuserait un jeton valide.
+        hint: 'Console OpenSign → Settings → API Token. Le jeton Sandbox et le jeton Live sont distincts et non interchangeables.',
+      }),
+      role('webhookSecret', 'Clé de sécurité du webhook', {
+        secret: true,
+        /**
+         * Il VÉRIFIE, il n'appelle pas — même doctrine que `whsec_` chez
+         * Stripe. C'est ce qui l'autorise à franchir le pont vers un projet par
+         * le canal dédié, sans ouvrir de brèche générique.
+         */
+        verificationOnly: true,
+        required: false,
+        /**
+         * PAS auto-géré, et c'est la seule chose honnête à écrire.
+         *
+         * L'API OpenSign n'expose aucune route qui rende cette valeur : elle
+         * naît dans la console et n'en sort que par un copier-coller humain.
+         * La marquer `autoManaged` afficherait « arrive tout seul » sous un
+         * champ que personne ne remplirait jamais — et le webhook resterait
+         * sourd sans que rien ne dise pourquoi.
+         */
+        autoManaged: false,
+        hint: 'Console OpenSign → Settings → Webhook → Enable Authentication → Generate. L’API ne la rend jamais : elle se recopie à la main.',
+      }),
+      role('webhookSecretPrevious', 'Clé de sécurité retirée', {
+        secret: true,
+        verificationOnly: true,
+        required: false,
+        autoManaged: true,
+        internal: true,
+        hint: 'Conservée quelques minutes après une rotation manuelle, le temps que les événements en vol se vident.',
+      }),
+      role('baseUrl', 'URL de base de l’API', {
+        secret: false,
+        required: false,
+        /**
+         * DEUX HÔTES, imposés par le fournisseur — même situation que Yousign.
+         *
+         * ══ POURQUOI `app` ET NON `eu-app` EN PRODUCTION ═══════════════════
+         *
+         * La doc liste trois bases : `sandbox`, `app`, `eu-app`. Elles ne sont
+         * pas trois chemins vers un même compte : `eu-app` est un TENANT
+         * distinct, avec ses propres comptes et ses propres jetons. Un jeton
+         * émis sur `app` y reçoit un refus d'authentification, pas un
+         * redirect.
+         *
+         * Le choix n'est donc pas une préférence d'URL, c'est le choix du
+         * compte. Deux faits tranchent aujourd'hui :
+         *
+         *   1. le bac à sable documenté est `sandbox.opensignlabs.com`, et on y
+         *      accède depuis le compte via « Login to Sandbox » — le parcours
+         *      officiel part du compte global ;
+         *   2. aucune exigence de résidence des données n'a été arrêtée pour
+         *      L.Y Solution. Choisir l'UE « au cas où » supposerait de rouvrir
+         *      un compte, de réémettre les jetons, de recréer les gabarits (ils
+         *      ne traversent pas d'un monde à l'autre) — pour une contrainte
+         *      qui n'est pas formulée.
+         *
+         * PROD = `app.opensignlabs.com`. Le jour où la résidence UE devient une
+         * exigence, la bascule est UNE LIGNE ici, revue et datée — et non un
+         * réglage d'exploitation qu'on découvrirait après coup.
+         */
+        defaultValue: environmentDefault({
+          TEST: 'https://sandbox.opensignlabs.com/api/v1.2',
+          PROD: 'https://app.opensignlabs.com/api/v1.2',
+        }),
+        /**
+         * L'HÔTE ATTENDU — une CONTRAINTE, exactement comme chez Yousign, et
+         * pour la même raison vécue : une clé de bac à sable envoyée à l'hôte
+         * de production ne rend pas « mauvais monde », elle rend un refus
+         * d'authentification qui ressemble à une clé morte.
+         *
+         * `eu-app.opensignlabs.com` est volontairement ABSENT : tant qu'il
+         * n'est pas l'hôte choisi, l'y saisir est une erreur, et cette
+         * contrainte est le seul endroit qui sache le dire.
+         */
+        environmentHosts: Object.freeze({
+          TEST: 'sandbox.opensignlabs.com',
+          PROD: 'app.opensignlabs.com',
         }),
       }),
     ]),

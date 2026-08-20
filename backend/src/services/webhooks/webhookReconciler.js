@@ -318,7 +318,18 @@ export function computeDrift(observed, desired, capability = null) {
     drift.push(WEBHOOK_DRIFT_KINDS.EVENTS);
   }
   if (observed.enabled === false) drift.push(WEBHOOK_DRIFT_KINDS.DISABLED);
-  if (desired.description && observed.description !== desired.description) {
+  /**
+   * La description n'est comparée que chez les fournisseurs QUI EN ONT UNE.
+   *
+   * OpenSign n'expose aucun champ de description sur son webhook : la
+   * comparaison opposerait une valeur désirée non vide à une valeur observée
+   * toujours vide, et produirait une divergence que rien ne peut résoudre —
+   * donc un `update` à chaque passage sur l'unique URL du compte. Le
+   * descripteur le déclare (`supportsDescription: false`) plutôt que de laisser
+   * le moteur le découvrir en tournant en rond.
+   */
+  if (capability?.supportsDescription !== false
+    && desired.description && observed.description !== desired.description) {
     drift.push(WEBHOOK_DRIFT_KINDS.DESCRIPTION);
   }
   return drift;
