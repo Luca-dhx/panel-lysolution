@@ -73,7 +73,51 @@ import { checkDocumentSize } from './signatureDocumentLimits.js';
  *
  * Le message du fournisseur n'est jamais relayé tel quel. Les CHAMPS refusés,
  * eux, le sont — ils nomment la cause sans porter de valeur.
+ *
+ * ── ET POURTANT UN REFUS PEUT ÊTRE MUET ─────────────────────────────────────
+ *
+ * Yousign refuse parfois SANS `invalid_params` : la cause n'est pas un champ
+ * mais une règle de compte. Le refus arrivait alors au projet sous la forme
+ * « Entrée refusée par « signature.request.open ». » — un message que personne
+ * ne peut actionner, et qui envoie chercher un défaut de payload là où il n'y
+ * en a pas.
+ *
+ * On ne relaie toujours pas la phrase du fournisseur. On la RECONNAÎT, et on
+ * rend à sa place un motif stable : une donnée testable, traduisible côté
+ * projet, et qui ne transporte aucune valeur.
  */
+
+/**
+ * Refus d'entrée que l'on sait NOMMER — la liste s'allonge par l'expérience.
+ *
+ * `SIGNER_EMAIL_NOT_IN_ORGANISATION` : en bac à sable, Yousign n'accepte comme
+ * destinataire qu'une adresse appartenant à l'organisation du compte. Le
+ * payload est alors parfaitement valide — c'est le compte qui est bridé. Sans
+ * ce motif, l'exploitant cherche un champ fautif qui n'existe pas.
+ */
+export const YOUSIGN_INPUT_REFUSAL = Object.freeze({
+  SIGNER_EMAIL_NOT_IN_ORGANISATION: 'SIGNER_EMAIL_NOT_IN_ORGANISATION',
+});
+
+/**
+ * Reconnaît un refus de compte dans la phrase du fournisseur.
+ *
+ * On teste des CONCEPTS conjoints plutôt qu'une phrase exacte : Yousign peut
+ * reformuler son message sans changer sa règle, et une correspondance littérale
+ * cesserait alors de reconnaître le même refus.
+ */
+export function recogniseInputRefusal(message) {
+  const m = String(message ?? '').toLowerCase();
+  if (!m) return null;
+  const bacASable = m.includes('sandbox');
+  const adresse = m.includes('email') || m.includes('recipient');
+  const organisation = m.includes('organization') || m.includes('organisation');
+  if (bacASable && adresse && organisation) {
+    return YOUSIGN_INPUT_REFUSAL.SIGNER_EMAIL_NOT_IN_ORGANISATION;
+  }
+  return null;
+}
+
 export function translateTransportError(error, capability) {
   if (!(error instanceof YousignTransportError)) {
     return new CapabilityError(
@@ -104,13 +148,28 @@ export function translateTransportError(error, capability) {
   }
 
   if (error.code === TRANSPORT_CODES.INPUT_INVALID) {
+    const champs = error.invalidParams?.length
+      ? ` : ${error.invalidParams.map((p) => p.field).join(', ')}.`
+      : '.';
+    const motif = recogniseInputRefusal(error.message);
+    if (motif) {
+      logger.warn(`[yousign] ${capability.code} refusée par le compte — ${motif}.`);
+    }
     return new CapabilityError(
       CAPABILITY_ERROR_CODES.INPUT_INVALID,
-      `Entrée refusée par « ${capability.code} »`
-      + (error.invalidParams?.length
-        ? ` : ${error.invalidParams.map((p) => p.field).join(', ')}.`
-        : '.'),
-      { httpStatus: error.httpStatus ?? null },
+      `Entrée refusée par « ${capability.code} »${champs}`,
+      {
+        httpStatus: error.httpStatus ?? null,
+        /**
+         * Le motif VOYAGE. C'est lui qui permet au projet de dire à l'exploitant
+         * ce qu'il doit changer, sans que le Panel ait relayé la phrase du
+         * fournisseur ni exposé la moindre valeur.
+         */
+        ...(motif ? { reason: motif } : {}),
+        ...(error.invalidParams?.length
+          ? { invalidParams: error.invalidParams.map((p) => p.field) }
+          : {}),
+      },
     );
   }
 
