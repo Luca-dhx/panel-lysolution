@@ -251,4 +251,177 @@ C'est l'objet du déploiement TEST qui suit.
 
 ---
 
+## LOT 2 — L'ADAPTATEUR ET LES CAPACITÉS GÉNÉRIQUES
+
+### 2.1 Ce qui n'a pas changé, et c'est le point
+
+Les cinq codes `signature.request.open`, `.retrieve`, `.cancel`,
+`signature.signer.retrieve` et `signature.document.download` sont **identiques**.
+Aucun `opensign.*` n'existe, et aucun projet n'apprend qui exécute.
+
+### 2.2 Ce qui a changé : quatre appels au lieu de onze
+
+| Acte | Yousign | OpenSign |
+|---|---|---|
+| ouvrir | 5 appels + nettoyage de brouillon | **1** (`createdocument`) |
+| lire | `GET /signature_requests/{id}` | `GET /document/{id}` |
+| lien d'un signataire | `GET …/signers/{id}` | `GET /signinglinks/{id}` |
+| télécharger | `GET …/download` (octets) | `GET /document` → URL pré-signée → `GET` |
+| annuler | `POST …/cancel` (énumération) | `POST /document/{id}` (texte libre) |
+
+Le nettoyage tout-ou-rien du brouillon **n'a pas été recopié** : il n'a plus
+d'objet. Soit l'appel unique aboutit et le document est complet, soit il échoue
+et rien n'a été créé. Ajouter un `DELETE` « par symétrie » viserait une
+ressource dont on vient d'établir qu'elle n'existe pas.
+
+### 2.3 L'aiguillage entre deux fournisseurs
+
+Deux populations de demandes coexistent, et durablement : un contrat signé doit
+rester relisible aussi longtemps qu'il a une valeur juridique.
+
+```
+signature.request.open        → toujours le fournisseur ACTIF (OPENSIGN)
+signature.request.retrieve    ┐
+signature.signer.retrieve     ├→ CELUI QUI DÉTIENT LA DEMANDE, lu sur son lien
+signature.document.download   │
+signature.request.cancel      ┘
+```
+
+> **« Essayer OpenSign, puis Yousign » est interdit**, et ce n'est pas une
+> question de style. Sur un identifiant inconnu du premier, on interrogerait le
+> second avec les identifiants d'un compte qui ne le connaît pas davantage :
+> deux refus, aucune information, latence doublée. Le premier appel PART — sur
+> une annulation, « essayer » signifie tenter d'annuler chez un fournisseur qui
+> n'a rien à annuler. Et le repli masquerait toute panne du premier.
+
+Le crochet vit dans la **passerelle**, avant l'ouverture du coffre : c'est le
+fournisseur qui décide quels identifiants ouvrir. Le résoudre dans l'adaptateur
+aurait obligé celui-ci à rouvrir le coffre lui-même — une seconde porte, que le
+résolveur d'identifiants existe précisément pour empêcher.
+
+### 2.4 Le vocabulaire cesse d'être celui d'un fournisseur
+
+Le Panel rendait `ongoing`, `done`, `canceled` — les mots de Yousign — et c'est
+le PROJET qui traduisait. Avec un second fournisseur, ce projet lit « inconnu »
+sur chaque état d'OpenSign : **sans erreur, sans journal**, le contrat resterait
+« en cours » pour toujours.
+
+Les sorties portent désormais `state` (neutre : `DRAFT`, `ONGOING`, `DONE`,
+`DECLINED`, `EXPIRED`, `CANCELED`, `UNKNOWN`), `provider`, et conservent
+`status` brut pour le forensic. `UNKNOWN` est un état de première classe : un
+état non listé n'est jamais rabattu sur « le mot le plus proche ».
+
+### 2.5 L'identité d'un signataire
+
+OpenSign n'a **pas d'identifiant de signataire** : il désigne les gens par leur
+adresse. Le contrat de capacité, lui, promet un `signerId` que le projet
+conserve et compare.
+
+La poignée est **dérivée** — `sha256("opensign:" + documentId + ":" + email)`,
+tronquée à 32 hexadécimaux — et jamais persistée : elle se **recalcule** à
+partir des signataires du document. Aucune table à maintenir, à migrer, ni à
+faire diverger.
+
+- Une adresse ne traverse jamais le pont.
+- Le document entre dans le calcul : une poignée apprise sur un contrat ne
+  désigne personne sur un autre.
+- Casse et espaces sont normalisés — sans quoi la poignée de l'ouverture ne
+  correspondrait pas à celle de la lecture.
+
+### 2.6 Un défaut de la passerelle, antérieur à la migration
+
+Sur un acte **déjà réussi**, le rejeu rendait une forme générique
+`{status: 'ALREADY_SENT', providerMessageId, operationId}` — **sans passer par
+le schéma de sortie**. C'est le contrat des envois d'e-mail, et de lui seul.
+
+Pour une ouverture de signature, cette forme est un mensonge : l'appelant reçoit
+un objet auquel il manque `signatureRequestId`, `documentId` et les liens des
+signataires. SB Auto y lirait `signatureRequestId: undefined` et **perdrait la
+demande qu'il vient d'ouvrir** — sans erreur, avec un contrat bloqué et une
+demande orpheline chez le fournisseur.
+
+Le défaut ne s'était jamais vu parce que le projet se garde lui-même avant
+d'appeler. **Une garantie de la passerelle qui repose sur la prudence de son
+appelant n'en est pas une.**
+
+Le registre déclare désormais, capacité par capacité, si son rejeu se
+reconstitue par réexécution. L'ouverture de signature le peut : elle interroge
+d'abord le lien d'appartenance et rend la demande existante sans contacter le
+fournisseur.
+
+### 2.7 Recette réelle — toutes les capacités, sur le bac à sable
+
+| # | Étape | Résultat |
+|---|---|---|
+| 1 | `signature.request.open` | `OPENED`, deux poignées de 32 caractères, deux liens |
+| 2 | double invocation | **`ALREADY_OPEN`**, même demande, aucune seconde création |
+| 3 | `signature.request.retrieve` | `state: ONGOING`, signataires `PENDING` |
+| 4 | `signature.signer.retrieve` | lien rendu |
+| 5 | signataire inconnu | refusé (`CAPABILITY_NOT_AVAILABLE`) |
+| 6 | **isolation** : projet B → retrieve / download / cancel de A | **3× `CAPABILITY_RESOURCE_NOT_OWNED`** |
+| 7 | demande inventée | refusée, sans contact fournisseur |
+| 8 | `signature.document.download` | PDF réel, empreinte cohérente |
+| 9 | `signature.request.cancel` | `state: CANCELED`, lien fermé |
+| 10 | après annulation | contrat de nouveau ouvrable |
+
+Documents supprimés, liens d'appartenance de recette retirés.
+
+---
+
+## LOT 3 — NORMALISATION DES WEBHOOKS
+
+### 3.1 La table de traduction
+
+| OpenSign | Fait métier | Pourquoi |
+|---|---|---|
+| `created` | *(non projeté)* | le projet vient de le demander |
+| `viewed` | *(non projeté)* | consultation — chaque fait inutile est une donnée personnelle de plus |
+| `signed` | `SIGNATURE_SIGNER_SIGNED` | |
+| `completed` | `SIGNATURE_COMPLETED` | |
+| `declined` | `SIGNATURE_FAILED` | |
+| `revoked` | `SIGNATURE_FAILED` | non documenté, traité par précaution assumée |
+| `expired` | `SIGNATURE_FAILED` | idem |
+
+Un événement absent de la table est **acquitté sans agir**. Refuser ferait
+rejouer le fournisseur en boucle pour un événement dont on ne veut rien faire.
+
+La table est **par fournisseur** : `completed` ne veut rien dire chez Yousign,
+`signature_request.done` ne veut rien dire chez OpenSign. Traduire sans savoir
+qui parle reviendrait à leur prêter un vocabulaire commun qu'ils n'ont pas.
+
+### 3.2 L'idempotence, sans identifiant d'événement
+
+OpenSign n'en fournit aucun. La clé composite est
+`opensign:{ENV}:{event}:{objectId}:{sha256(acteur)}:{horodatage brut}`.
+
+L'**acteur** y entre parce que, sans lui, deux signataires qui signent dans la
+même seconde produisent la même clé : le second serait perdu **en silence**, et
+le contrat resterait à moitié signé. Il y entre **haché** : la clé ne doit pas
+devenir un annuaire.
+
+### 3.3 Trois refus qui n'existaient pas
+
+- **Signature portant sur un corps modifié** → refusée. Le cas qui compte : un
+  intermédiaire qui réécrit l'événement ferait changer d'état un contrat sur la
+  foi d'un tiers.
+- **Événement d'un fournisseur sur la demande d'un autre** → refusé
+  (`PROVIDER_MISMATCH`). Sans ce contrôle, la conséquence ne serait pas une
+  erreur : ce serait un contrat marqué signé par un événement qui ne le
+  concerne pas, avec une date de signature fausse sur un objet juridique.
+- **Demande inconnue** → acquittée, jamais acheminée, mais **consignée**.
+
+### 3.4 Un fait retardé reste acheminé — et c'est voulu
+
+Un `signed` qui arrive après le `completed` n'est **pas jeté**. Le Panel n'est
+pas juge de la pertinence d'un événement authentique : il l'a vérifié, daté et
+attribué ; le taire priverait le projet d'une information qu'il est seul à
+savoir interpréter.
+
+La convergence est garantie ailleurs, et **à deux endroits** — ce qui est plus
+robuste qu'un filtre unique : l'état du contrat porte la mémoire (un rang
+inférieur n'écrase rien), et si le contrat a été relancé, sa demande courante
+n'est plus celle-là.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*

@@ -1,6 +1,18 @@
-// LE CHEMIN RETOUR DE LA SIGNATURE — de Yousign jusqu'au bon projet (R10.5C).
+// LE CHEMIN RETOUR DE LA SIGNATURE — du fournisseur jusqu'au bon projet.
 //
-// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §6.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §6, puis
+// docs/integrated-api/OPENSIGN_MIGRATION_CAMPAIGN.md (lot 3).
+//
+// ══ DEUX FOURNISSEURS, UN SEUL VOCABULAIRE DE SORTIE ════════════════════════
+//
+// Ce module reconnaissait un fournisseur et un seul. Il en reconnaît deux, et
+// c'est le POINT DE TRADUCTION : au-delà d'ici, plus rien du parc ne sait qui a
+// signé — ni SB Auto, ni le journal durable, ni les projections de contrat.
+//
+// La table par fournisseur est ci-dessous, en toutes lettres. Un `if (provider
+// === 'OPENSIGN')` semé dans le corps de la fonction aurait produit le même
+// résultat et rendu impossible de VOIR, en une page, qu'aucun événement ne
+// tombe dans le vide.
 //
 // ══ POURQUOI L'ENDPOINT A DÉMÉNAGÉ ══════════════════════════════════════════
 //
@@ -30,6 +42,7 @@ import { createHash } from 'node:crypto';
 import logger from '../../utils/logger.js';
 import { emitChange } from '../sync/syncCore.service.js';
 import { findBinding, closeBinding, maskResourceId } from '../integratedApi/signature/signatureOwnership.js';
+import { signerHandle } from '../integratedApi/opensign/openSignAdapters.js';
 
 /** Type d'entité du journal durable — le projet s'y abonne. */
 export const SIGNATURE_ENTITY_TYPE = 'SIGNATURE_EVENT';
@@ -52,31 +65,86 @@ export const SIGNATURE_EVENTS = Object.freeze({
 });
 
 /**
- * Traduit un événement Yousign en fait métier, ou rend `null`.
+ * LA TABLE DE TRADUCTION, PAR FOURNISSEUR — et elle est exhaustive.
  *
- * `null` n'est pas un échec : c'est la réponse normale pour les notifications
- * d'ouverture et de consultation. Les faire remonter obligerait chaque projet à
- * filtrer un flux qu'il n'a pas demandé.
+ * `null` n'est pas un oubli : c'est la réponse VOULUE pour les notifications de
+ * création et de consultation. Les projeter obligerait chaque projet à filtrer
+ * un flux qu'il n'a pas demandé, et remplirait le journal durable du Panel de
+ * faits que personne ne lit — chacun étant une donnée personnelle de plus à
+ * justifier et à purger.
+ *
+ * Un événement ABSENT de la table rend `null` lui aussi, et c'est l'écriture
+ * qui compte : on acquitte sans agir. Refuser ferait rejouer le fournisseur en
+ * boucle pour un événement dont on ne veut rien faire.
  */
-export function toBusinessEvent(eventName) {
-  switch (String(eventName || '').toLowerCase()) {
-    case 'signature_request.signer.done':
-    case 'signer.done':
-      return SIGNATURE_EVENTS.SIGNER_SIGNED;
-    case 'signature_request.done':
-      return SIGNATURE_EVENTS.COMPLETED;
-    case 'signature_request.declined':
-    case 'signature_request.expired':
-    case 'signature_request.canceled':
-    case 'signer.declined':
-      return SIGNATURE_EVENTS.FAILED;
-    default:
-      return null;
-  }
+/**
+ * LES FOURNISSEURS DE SIGNATURE — dérivés de la table, jamais retapés.
+ *
+ * La réception a besoin de savoir quels fournisseurs relèvent de cet
+ * acheminement. Le lui faire écrire en dur créerait une seconde liste, et la
+ * seconde liste finit toujours par oublier le fournisseur suivant.
+ */
+export const SIGNATURE_PROVIDERS = new Set(['YOUSIGN', 'OPENSIGN']);
+
+const BUSINESS_EVENT_BY_PROVIDER = Object.freeze({
+  YOUSIGN: Object.freeze({
+    'signature_request.signer.done': SIGNATURE_EVENTS.SIGNER_SIGNED,
+    'signer.done': SIGNATURE_EVENTS.SIGNER_SIGNED,
+    'signature_request.done': SIGNATURE_EVENTS.COMPLETED,
+    'signature_request.declined': SIGNATURE_EVENTS.FAILED,
+    'signature_request.expired': SIGNATURE_EVENTS.FAILED,
+    'signature_request.canceled': SIGNATURE_EVENTS.FAILED,
+    'signer.declined': SIGNATURE_EVENTS.FAILED,
+  }),
+  OPENSIGN: Object.freeze({
+    /** `created` et `viewed` sont ACQUITTÉS sans être projetés — voir ci-dessus. */
+    signed: SIGNATURE_EVENTS.SIGNER_SIGNED,
+    completed: SIGNATURE_EVENTS.COMPLETED,
+    declined: SIGNATURE_EVENTS.FAILED,
+    /**
+     * `revoked` N'EST PAS DOCUMENTÉ, ET IL EST QUAND MÊME LÀ.
+     *
+     * La page d'aide d'OpenSign annonce « Document Revoked or Declined » ; la
+     * référence API ne publie que cinq événements, `declined` compris ; et la
+     * mesure montre qu'une révocation place le document en `declined`. Il est
+     * donc probable qu'aucun `revoked` n'arrive jamais.
+     *
+     * On le traite tout de même. Le coût d'une ligne est nul ; le coût de son
+     * absence serait un contrat révoqué qui resterait « en cours » pour
+     * toujours, sans que rien ne le signale.
+     */
+    revoked: SIGNATURE_EVENTS.FAILED,
+    expired: SIGNATURE_EVENTS.FAILED,
+  }),
+});
+
+/**
+ * Traduit un événement fournisseur en fait métier, ou rend `null`.
+ *
+ * @param {string} eventName  le libellé du fournisseur
+ * @param {string} provider   qui l'a émis — DEUX fournisseurs peuvent employer
+ *   le même mot pour des choses différentes, et deviner reviendrait à leur
+ *   prêter un vocabulaire commun qu'ils n'ont pas.
+ */
+export function toBusinessEvent(eventName, provider = 'YOUSIGN') {
+  const table = BUSINESS_EVENT_BY_PROVIDER[String(provider ?? '').toUpperCase()];
+  if (!table) return null;
+  return table[String(eventName || '').trim().toLowerCase()] ?? null;
 }
 
-/** L'identifiant de demande porté par l'événement, quelle que soit sa forme. */
-function extractRequestId(payload) {
+/**
+ * L'identifiant de demande porté par l'événement.
+ *
+ * Les deux fournisseurs le placent ailleurs, et ne le nomment pas pareil :
+ * Yousign l'imbrique sous `data.signature_request.id`, OpenSign le pose à plat
+ * sous `objectId`. Chercher les deux chemins « au cas où » marcherait — et
+ * ferait qu'un jour, un champ homonyme d'un fournisseur serait lu comme
+ * l'identifiant d'un autre. On lit celui du fournisseur qui parle.
+ */
+function extractRequestId(payload, provider) {
+  if (String(provider ?? '').toUpperCase() === 'OPENSIGN') {
+    return String(payload?.objectId ?? '').trim();
+  }
   return String(
     payload?.data?.signature_request?.id
     ?? payload?.signature_request?.id
@@ -136,7 +204,32 @@ export function toBridgeEntityId(seed) {
  * — remettrait le Panel dans le chemin critique de l'application d'un fait déjà
  * établi : un projet hors ligne au mauvais moment perdrait l'information.
  */
-export function extractSignerId(payload) {
+export function extractSignerId(payload, provider, signatureRequestId) {
+  if (String(provider ?? '').toUpperCase() === 'OPENSIGN') {
+    /**
+     * ══ CHEZ OPENSIGN, LE SIGNATAIRE EST UNE ADRESSE ═══════════════════════
+     *
+     * Le webhook `signed` porte `signer.email`, et rien d'autre : aucun
+     * identifiant opaque n'existe chez ce fournisseur.
+     *
+     * La faire traverser telle quelle serait deux fautes en une. Une donnée
+     * personnelle entrerait dans le journal durable du Panel et dans les
+     * projections de chaque projet ; et le projet recevrait une valeur qui ne
+     * correspond PAS à celle qu'il a reçue à l'ouverture — il ne saurait donc
+     * même pas de qui on parle.
+     *
+     * On recalcule la POIGNÉE, exactement comme l'adaptateur l'a fait à
+     * l'ouverture. Même fonction, mêmes entrées, même résultat : le projet
+     * reconnaît son signataire, et aucune adresse ne traverse.
+     */
+    const adresse = payload?.signer?.email
+      ?? payload?.declinedBy
+      ?? payload?.viewedBy
+      ?? null;
+    if (!adresse || !signatureRequestId) return null;
+    return signerHandle(signatureRequestId, adresse);
+  }
+
   const brut = payload?.data?.signer?.id
     ?? payload?.data?.signer_id
     ?? payload?.signer?.id
@@ -158,14 +251,15 @@ export function extractSignerId(payload) {
  * @returns {Promise<{dispatched: boolean, reason?: string, projectId?: string}>}
  */
 export async function dispatchSignatureEvent({ provider, environment, payload, eventType }) {
-  if (String(provider).toUpperCase() !== 'YOUSIGN') {
+  const emetteur = String(provider ?? '').toUpperCase();
+  if (!SIGNATURE_PROVIDERS.has(emetteur)) {
     return { dispatched: false, reason: 'PROVIDER_NOT_DISPATCHED' };
   }
 
-  const businessEvent = toBusinessEvent(eventType ?? payload?.event_name);
+  const businessEvent = toBusinessEvent(eventType ?? payload?.event ?? payload?.event_name, emetteur);
   if (!businessEvent) return { dispatched: false, reason: 'EVENT_NOT_PROJECTED' };
 
-  const signatureRequestId = extractRequestId(payload);
+  const signatureRequestId = extractRequestId(payload, emetteur);
   if (!signatureRequestId) return { dispatched: false, reason: 'NO_REQUEST_ID' };
 
   /**
@@ -178,6 +272,28 @@ export async function dispatchSignatureEvent({ provider, environment, payload, e
    */
   const binding = await findBinding({ environment, resourceId: signatureRequestId });
   if (!binding) return { dispatched: false, reason: 'NO_MATCHING_BINDING' };
+
+  /**
+   * ── LE LIEN DOIT VENIR DU MÊME FOURNISSEUR QUE L'ÉVÉNEMENT ──────────────
+   *
+   * Les identifiants de demande n'ont pas la même forme d'un fournisseur à
+   * l'autre, mais rien ne garantit qu'ils ne se croiseront jamais — dix
+   * caractères alphanumériques chez OpenSign, et un jour peut-être ailleurs.
+   *
+   * Sans ce contrôle, un événement d'un fournisseur pourrait faire avancer
+   * l'état d'un contrat ouvert chez l'autre. La conséquence ne serait pas une
+   * erreur : ce serait un contrat marqué signé par un événement qui ne le
+   * concerne pas. On refuse, et on le journalise — c'est un fait anormal, pas
+   * un cas de bord.
+   */
+  const detenteur = String(binding.provider ?? 'YOUSIGN').toUpperCase();
+  if (detenteur !== emetteur) {
+    logger.warn(
+      `[signature] événement ${emetteur} ignoré : la demande `
+      + `${maskResourceId(signatureRequestId)} appartient à ${detenteur}.`,
+    );
+    return { dispatched: false, reason: 'PROVIDER_MISMATCH' };
+  }
 
   /**
    * UN FAIT TERMINAL FERME LE LIEN.
@@ -213,9 +329,14 @@ export async function dispatchSignatureEvent({ provider, environment, payload, e
       contractRef: binding.contractRef,
       signatureRequestId,
       /** Qui a signé — opaque, et absent des faits qui ne concernent personne. */
-      signerId: extractSignerId(payload),
+      signerId: extractSignerId(payload, emetteur, signatureRequestId),
       /** Le libellé du fournisseur — conservé pour le forensic. */
-      providerEvent: String(eventType ?? payload?.event_name ?? ''),
+      /**
+       * Le libellé du fournisseur, conservé pour le forensic — et le
+       * FOURNISSEUR lui-même, sans quoi « signed » ne dit pas d'où il vient.
+       */
+      provider: emetteur,
+      providerEvent: String(eventType ?? payload?.event ?? payload?.event_name ?? ''),
       occurredAt: new Date().toISOString(),
     },
     // Le destinataire est NOMMÉ : cet événement ne concerne qu'un projet.

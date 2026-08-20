@@ -48,7 +48,7 @@ import {
 } from './webhookSignature.js';
 import { WEBHOOK_DIAGNOSTIC } from './webhookDiagnostics.js';
 import { dispatchDeliveryEvent } from './emailDeliveryDispatch.js';
-import { dispatchSignatureEvent } from './signatureEventDispatch.js';
+import { dispatchSignatureEvent, SIGNATURE_PROVIDERS } from './signatureEventDispatch.js';
 import { resolveStripeEventOwnership, EVENT_OWNERSHIP } from './stripeEventRouting.js';
 import { adoptSubscriptionFromSession } from '../integratedApi/stripe/stripeSubscriptionAdoption.js';
 import {
@@ -335,14 +335,19 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   let dispatch = { dispatched: false, reason: 'DUPLICATE' };
   if (!duplicate) {
     /**
-     * DEUX ACHEMINEMENTS, UN SEUL ORDRE.
+     * DEUX ACHEMINEMENTS, ET CHACUN NE RECONNAÎT QUE LES SIENS.
      *
-     * Chacun ne reconnaît QUE son fournisseur et rend 
-     * sinon — les enchaîner ainsi évite un aiguillage par nom de fournisseur
-     * ici, qui grossirait à chaque migration et finirait par porter la logique
+     * L'aiguillage porte sur le DOMAINE, pas sur le nom d'un fournisseur : la
+     * signature d'un côté, la délivrabilité de l'autre. Un `=== 'YOUSIGN'`
+     * suffisait tant qu'un domaine n'avait qu'un fournisseur ; il aurait fallu
+     * l'allonger à chaque migration, et il aurait fini par porter la logique
      * qu'il était censé router.
+     *
+     * Chaque acheminement refuse poliment ce qui n'est pas de son ressort, et
+     * la liste des fournisseurs de signature vit dans le module qui les
+     * traduit — pas ici.
      */
-    const acheminer = String(provider).toUpperCase() === 'YOUSIGN'
+    const acheminer = SIGNATURE_PROVIDERS.has(String(provider).toUpperCase())
       ? dispatchSignatureEvent
       : dispatchDeliveryEvent;
     dispatch = await acheminer({
