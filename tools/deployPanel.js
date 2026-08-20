@@ -24,7 +24,7 @@
 // souris — pas un second moteur.
 import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const RACINE = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const BACKEND = path.join(RACINE, 'backend');
@@ -54,7 +54,16 @@ const SECRET_COMPTE = process.env.SEED_DEV_PASSWORD ?? '';
 if (!MOT_DE_PASSE || !IDENTIFIANT || !SECRET_COMPTE) {
   // On charge le `.env` du backend comme le fait le Panel lui-même, plutôt que
   // d'exiger de l'exploitant qu'il exporte trois variables à la main.
-  const { config: charger } = await import(path.join(BACKEND, 'node_modules', 'dotenv', 'lib', 'main.js'));
+  /**
+   * UN CHEMIN WINDOWS N'EST PAS UNE URL.
+   *
+   * `import('C:\...')` echoue avec `ERR_UNSUPPORTED_ESM_URL_SCHEME` : le
+   * chargeur y lit un protocole `c:`. La conversion est explicite plutot que
+   * de se souvenir, chaque fois, que ce cas existe.
+   */
+  const { config: charger } = await import(
+    pathToFileURL(path.join(BACKEND, 'node_modules', 'dotenv', 'lib', 'main.js')).href
+  );
   charger({ path: path.join(BACKEND, '.env') });
 }
 
@@ -68,7 +77,15 @@ if (!identifiants.email || !identifiants.motDePasse || !identifiants.ssh) {
   process.exit(1);
 }
 
-const PORT = Number(process.env.PORT || 4100);
+/**
+ * UN PORT DEDIE AU PILOTE, DIFFERENT DE CELUI DU DEVELOPPEMENT.
+ *
+ * Le port du `.env` est celui du backend qu'un developpeur fait tourner. Le
+ * reprendre ferait echouer le deploiement pour la pire raison possible -- « port
+ * occupe » -- ou, si le port etait libre, ferait croire ensuite que l'instance
+ * de developpement est morte. Le pilote prend le sien.
+ */
+const PORT = Number(arg('port', '') || 4177);
 const BASE = `http://127.0.0.1:${PORT}`;
 
 /* -------------------------------------------------------------------------- */
@@ -79,10 +96,13 @@ async function attendreDisponible(limiteMs = 90_000) {
   const debut = Date.now();
   while (Date.now() - debut < limiteMs) {
     try {
-      const r = await fetch(`${BASE}/readiness`);
+      /**
+       * `/readyz` dit « pret a servir », `/health` dit « vivant ». On veut le
+       * premier : un port ouvert avant l'amorcage repondrait « vivant » alors
+       * que les routes metier refusent encore en 503.
+       */
+      const r = await fetch(`${BASE}/readyz`);
       if (r.ok) return true;
-      const j = await r.json().catch(() => ({}));
-      if (j?.data?.ready === true) return true;
     } catch { /* pas encore levé */ }
     await dormir(1500);
   }
@@ -154,10 +174,33 @@ try {
     method: 'POST', jeton, body: { sshPassword: identifiants.ssh },
   });
   journal(`\npréflight (${pre.status}) :`);
-  const checks = pre.corps?.data?.checks ?? pre.corps?.data?.result?.checks ?? [];
-  for (const c of checks) journal(`   ${c.ok === false ? '✗' : '✓'} ${c.id ?? c.label}${c.ok === false && c.message ? ` — ${String(c.message).slice(0, 160)}` : ''}`);
-  const echecs = checks.filter((c) => c.ok === false);
-  if (echecs.length) journal(`   → ${echecs.length} contrôle(s) en échec`);
+  /**
+   * ON ATTEND QUE LE PREFLIGHT SOIT FINI AVANT DE DEPLOYER.
+   *
+   * Le preflight est une EXECUTION, pas une reponse synchrone -- et le Panel
+   * n'autorise qu'une execution a la fois par destination, precisement pour que
+   * deux operations ne se marchent pas dessus sur les memes chemins et le meme
+   * service. Enchainer sans attendre produit un `409 ALREADY_RUNNING` qui a
+   * l'air d'une erreur alors que c'est la garantie qui fonctionne.
+   */
+  const runPreflight = pre.corps?.data?.runId ?? null;
+  if (runPreflight) {
+    const limite = Date.now() + 5 * 60 * 1000;
+    let etat = null;
+    while (Date.now() < limite) {
+      // eslint-disable-next-line no-await-in-loop
+      const vue = await api(`/api/deployment/runs/${runPreflight}`, { jeton });
+      etat = vue.corps?.data?.run ?? vue.corps?.data ?? {};
+      if (['ok', 'error', 'success', 'failed'].includes(String(etat.status))) break;
+      // eslint-disable-next-line no-await-in-loop
+      await dormir(3000);
+    }
+    for (const e of etat?.steps ?? []) {
+      journal(`   ${e.status === 'ok' ? '\u2713' : e.status === 'error' ? '\u2717' : '\u00b7'} ${e.id ?? ''} ${e.label ?? ''}`
+        + `${e.status === 'error' && e.message ? ` \u2014 ${String(e.message).slice(0, 160)}` : ''}`);
+    }
+    journal(`   issue du preflight : ${etat?.status ?? 'indeterminee'}`);
+  }
 
   if (OBSERVER) {
     journal('\n--observe : aucun déploiement lancé.');
