@@ -28,6 +28,7 @@ import {
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -37,8 +38,8 @@ await connectTestDatabase();
    LES SENTINELLES — improbables par construction. Une occurrence hors du
    coffre est une fuite, jamais une coïncidence.
    ══════════════════════════════════════════════════════════════════════════ */
-const CLE_TEST = 'xkeysib-L3SENTINELLETESTJAMAISAILLEURS000001';
-const CLE_PROD = 'xkeysib-L3SENTINELLEPRODJAMAISATTEINTE0000002';
+const CLE_TEST = forme.brevoApiKey('L3SENTINELLETESTJAMAISAILLEU');
+const CLE_PROD = forme.brevoApiKey('L3SENTINELLEPRODJAMAISATTEIN');
 const TOUTES = [CLE_TEST, CLE_PROD];
 
 const ACTEUR = { userId: 'u-dev', userEmail: 'dev@panel.test' };

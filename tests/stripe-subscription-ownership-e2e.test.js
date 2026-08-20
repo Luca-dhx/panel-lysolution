@@ -31,6 +31,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -40,7 +41,7 @@ await connectTestDatabase();
 const prefixe = (monde) => ['sk', monde, ''].join('_');
 const CLE_PANEL = `${prefixe('test')}L62FSENTINELLEPANEL0000000001`;
 const CLE_PROJET = `${prefixe('test')}L62FSENTINELLEPROJETJAMAISVUE2`;
-const WHSEC = 'whsec_l62f_secret_de_signature_0001';
+const WHSEC = forme.stripeWebhook('L62F-SECRET-DE-SIGNATURE-000');
 
 const ACTEUR = { userId: 'u-dev', userEmail: 'dev@panel.test' };
 const CHECKOUT = 'billing.checkout.create';

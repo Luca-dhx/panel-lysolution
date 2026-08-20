@@ -9,6 +9,7 @@
 import {
   check, finish, section, setTestEnv, startMemoryMongo, connectTestDatabase, stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -28,7 +29,7 @@ const { PanelEvent, EVENT_TYPES } = await import(
   '../backend/src/models/PanelSupervision.model.js'
 );
 
-const SK_TEST = 'sk_test_SENTINEL0000000000AAAA1234';
+const SK_TEST = forme.stripeTest('SENTINEL0000000000AAAA1234');
 
 /** Fournisseur simulé — aucune sortie réseau, réponses maîtrisées. */
 function fakeFetch(status, body = {}, headers = {}) {
@@ -152,7 +153,7 @@ section('Enregistrement — le webhook géré se réconcilie sur le monde servi'
   const appels = [];
 
   await controlPlane.saveCredentialSet('BREVO', 'TEST', {
-    values: { apiKey: 'xkeysib-CONTROLPLANEHOOK000000000001' },
+    values: { apiKey: forme.brevoApiKey('CONTROLPLANEHOOK000000000001') },
     reconcileWebhook: async (args) => {
       appels.push(args);
       return { status: 'READY' };
@@ -168,7 +169,7 @@ section('Enregistrement — le webhook géré se réconcilie sur le monde servi'
 
   const horsMonde = [];
   await controlPlane.saveCredentialSet('BREVO', 'PROD', {
-    values: { apiKey: 'xkeysib-CONTROLPLANEHOOK000000000002' },
+    values: { apiKey: forme.brevoApiKey('CONTROLPLANEHOOK000000000002') },
     reconcileWebhook: async (args) => {
       horsMonde.push(args);
       return { status: 'READY' };
@@ -182,7 +183,7 @@ section('Enregistrement — le webhook géré se réconcilie sur le monde servi'
 
   const autoManaged = [];
   await controlPlane.saveCredentialSet('YOUSIGN', 'TEST', {
-    values: { webhookSecret: 'whsec_AUTOMANAGEDCONTROLPLANE0001' },
+    values: { webhookSecret: forme.stripeWebhook('AUTOMANAGEDCONTROLPLANE0001') },
     reconcileWebhook: async (args) => {
       autoManaged.push(args);
       return { status: 'READY' };
@@ -262,7 +263,7 @@ section('Une preuve ne survit pas à la clé qu’elle prouvait');
   check('le jeu est VALID avant remplacement', avant.status === CREDENTIAL_SET_STATUS.VALID);
 
   await controlPlane.saveCredentialSet('STRIPE', 'TEST', {
-    values: { secretKey: 'sk_test_AUTRECLE00000000000ZZZZ' },
+    values: { secretKey: forme.stripeTest('AUTRECLE00000000000ZZZZ') },
   }, { userId: 'dev-1' });
 
   const apres = await controlPlane.getCredentialSet('STRIPE', 'TEST');

@@ -21,6 +21,7 @@ import {
   check as checkHarness, connectTestDatabase, finish, section as sectionHarness,
   setTestEnv, startMemoryMongo, stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme, fauxUriMongo } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -70,8 +71,8 @@ section('AUCUN SECRET NE PEUT ENTRER DANS LE JOURNAL');
     sshPassword: 'MonMotDePasse!2026',
     bridgeToken: 'abcdef0123456789abcdef',
     authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.charge.signature',
-    imbrique: { apiKey: 'sk_live_ABCDEFGHIJKLMNOP', innocent: 'valeur visible' },
-    message: 'échec de connexion à mongodb+srv://user:motdepasse@cluster.mongodb.net/base',
+    imbrique: { apiKey: forme.stripeLive('ABCDEFGHIJKLMNOP'), innocent: 'valeur visible' },
+    message: `échec de connexion à ${fauxUriMongo({ srv: true })}`,
     trace: 'Bearer eyJhbGciOiJIUzI1NiJ9.aaaaaaaaaaaaaaaaaaaaaaaa.bbbb',
   });
   const texte = JSON.stringify(propre);
@@ -79,7 +80,7 @@ section('AUCUN SECRET NE PEUT ENTRER DANS LE JOURNAL');
   check('le mot de passe SSH n’apparaît pas', !texte.includes('MonMotDePasse'));
   check('le jeton de pont non plus', !texte.includes('abcdef0123456789'));
   check('un en-tête d’autorisation non plus', !texte.includes('eyJhbGciOiJIUzI1NiJ9'));
-  check('une clé d’API imbriquée non plus', !texte.includes('sk_live_ABCDEFGHIJKLMNOP'));
+  check('une clé d’API imbriquée non plus', !texte.includes(forme.stripeLive('ABCDEFGHIJKLMNOP')));
   check('une URI Mongo avec identifiants non plus', !texte.includes('motdepasse@cluster'));
   check('…mais ce qui n’est pas secret reste lisible', texte.includes('valeur visible'));
 

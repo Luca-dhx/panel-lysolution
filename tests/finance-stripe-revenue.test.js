@@ -29,6 +29,7 @@ import {
   startServer,
   stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -821,7 +822,7 @@ const WebhookBinding = (await import('../backend/src/models/PanelIntegratedApiWe
 const { storeWebhookSecret } = await import('../backend/src/services/webhooks/webhookSecrets.js');
 const { seedIntegratedApiCredentialSets } = await import('../backend/src/services/integratedApi/seed.js');
 
-const WHSEC = 'whsec_l103_secret_de_signature_0001';
+const WHSEC = forme.stripeWebhook('L103-SECRET-DE-SIGNATURE-000');
 const signer = (corps) => {
   const t = Math.floor(Date.now() / 1000);
   return `t=${t},v1=${createHmac('sha256', WHSEC).update(`${t}.${corps}`).digest('hex')}`;

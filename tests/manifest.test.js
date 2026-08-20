@@ -1,6 +1,7 @@
 // Le ProjectManifest officiel (specs v1.1.0) : validation stricte des champs
 // requis, lecteur tolérant pour le reste.
 import { check, finish, section, setTestEnv } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 
@@ -26,7 +27,7 @@ function baseManifest() {
     modules: [
       { id: 'vitrine', title: 'Vitrine', status: 'ACTIVE' },
       { id: 'panel-bridge', title: 'Pont Panel', status: 'ACTIVE' },
-      { id: 'yousign-signature', title: 'Signature Yousign', status: 'OPTIONAL' },
+      { id: forme.yousignApiKey('SIGNATURE'), title: 'Signature Yousign', status: 'OPTIONAL' },
     ],
     features: [
       { id: 'sync.diagnostic', status: 'AVAILABLE' },

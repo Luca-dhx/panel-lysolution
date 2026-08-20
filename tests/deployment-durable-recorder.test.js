@@ -43,6 +43,7 @@ import path from 'node:path';
 import {
   check, connectTestDatabase, finish, section, setTestEnv, startMemoryMongo, stopMemoryMongo,
 } from './helpers/harness.js';
+import { fauxUriMongo } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -79,7 +80,7 @@ const FRONTIERE = publicationBoundaryStep().id;
  * identifiants. C'est cette chaîne exacte qu'on injecte, pour vérifier qu'elle
  * ne ressort NULLE PART : ni dans le run, ni dans le rapport, ni à l'écran.
  */
-const PANNE_AVEC_SECRET = 'connexion perdue : mongodb://panel:sup3rs3cret@db.interne:27017/panel_prod';
+const PANNE_AVEC_SECRET = `connexion perdue : ${fauxUriMongo()}`;
 const MOT_DE_PASSE_MONGO = 'sup3rs3cret';
 
 const INDEX_HTML = '<!doctype html><html><head><script type="module" src="/assets/app-TEST1234.js"></script></head><body></body></html>';

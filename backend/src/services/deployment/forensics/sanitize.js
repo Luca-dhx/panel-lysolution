@@ -39,6 +39,16 @@ const MOTIFS_SECRETS = [
   [/\beyJ[A-Za-z0-9._-]{20,}\b/g, '«jwt masqué»'],
   // Clés de prestataires courantes.
   [/\b(sk|pk|rk)_(live|test)_[A-Za-z0-9]{10,}\b/gi, '«clé masquée»'],
+  /**
+   * SECRET DE SIGNATURE DE WEBHOOK — il manquait.
+   *
+   * Le masquage par NOM attrapait déjà `webhookSecret`. Mais la même valeur
+   * glissée dans un message d'erreur, une trace ou une URL passait entière :
+   * ce sont précisément les endroits où un secret voyage sans son étiquette.
+   */
+  [/\bwhsec_[A-Za-z0-9_-]{10,}\b/g, '«secret de webhook masqué»'],
+  /** Clé d'API Brevo — même angle mort, même correction. */
+  [/\bxkeysib-[A-Za-z0-9]{10,}\b/g, '«clé masquée»'],
   // Bloc de clé privée.
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '«clé privée masquée»'],
 ];

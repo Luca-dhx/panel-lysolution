@@ -6,13 +6,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { check, finish, section } from './helpers/harness.js';
+import { fauxUriMongo } from './helpers/secretShapes.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const envModuleUrl = pathToFileURL(path.join(root, 'backend', 'src', 'config', 'env.js')).href;
 
 const VALID = {
   ENV: 'TEST',
-  MONGODB_URI: 'mongodb://127.0.0.1:27017',
+  MONGODB_URI: fauxUriMongo(),
   DB_TEST: 'panel_test',
   DB_PROD: 'panel_prod',
   JWT_SECRET: 'panel-test-jwt-secret-0123456789abcdef0123456789abcdef',
@@ -176,12 +177,22 @@ section('Seed : verrouillé en PROD');
 
 section('Les secrets ne fuient jamais dans les messages d’erreur');
 {
+  /**
+   * L'URI ET SON MOT DE PASSE VIENNENT DE LA MÊME VALEUR.
+   *
+   * L'assertion doit viser exactement ce qui a été injecté. Avec deux chaînes
+   * écrites séparément, il suffit d'en changer une pour que le test cherche sur
+   * stderr un mot de passe qui n'y a jamais été envoyé — et passe au vert sans
+   * rien vérifier.
+   */
+  const URI_FUITE = fauxUriMongo({ hote: 'amas.exemple.test:27017' });
+  const MOT_DE_PASSE_FUITE = URI_FUITE.split(':')[2].split('@')[0];
   const leaky = loadConfig({
-    MONGODB_URI: 'mongodb://usager:p4ssw0rd-secret@cluster.example.com:27017',
+    MONGODB_URI: URI_FUITE,
     JWT_SECRET: undefined,
   });
   check('démarrage refusé (JWT manquant)', leaky.status === 1);
-  check('l’URI Mongo (credentials) n’apparaît pas sur stderr', !leaky.stderr.includes('p4ssw0rd-secret'));
+  check('l’URI Mongo (credentials) n’apparaît pas sur stderr', !leaky.stderr.includes(MOT_DE_PASSE_FUITE));
 
   const badSecret = loadConfig({ JWT_SECRET: 'zqx-valeur-refusee' });
   check('la valeur du secret refusé n’est pas répétée', !badSecret.stderr.includes('zqx-valeur-refusee'));

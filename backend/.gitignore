@@ -1,3 +1,33 @@
 node_modules/
-.env
 *.log
+
+# ══ FICHIERS D'ENVIRONNEMENT ════════════════════════════════════════════════
+#
+# `.env` seul ne suffisait pas : `.env.local`, `.env.production` et leurs
+# variantes n'étaient couverts par AUCUNE règle. Un développeur qui range sa
+# configuration de production dans `.env.production` la voyait donc proposée
+# au prochain commit.
+#
+# La forme d'exemple, elle, DOIT rester versionnée : c'est la documentation
+# des clés attendues — et elle ne porte jamais de valeur.
+.env
+.env.*
+!.env.example
+
+# ══ CLÉS ET CERTIFICATS ═════════════════════════════════════════════════════
+#
+# Un fichier de clé n'a aucune raison d'entrer dans l'historique. Ces règles
+# sont préventives : le dépôt n'en a jamais contenu, et c'est cet état-là
+# qu'elles servent à préserver.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# ══ FICHIERS DE CREDENTIALS ═════════════════════════════════════════════════
+#
+# Noms usuels des exports de service (Google, Firebase, comptes de service).
+credentials*.json
+secrets*.json
+service-account*.json

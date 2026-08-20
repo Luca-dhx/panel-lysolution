@@ -17,6 +17,15 @@ const TESTS = [
   // une `MONGODB_URI` héritée de l'environnement, et le nom de base était écrit
   // en dur — celui de la base partagée.
   'test-database-isolation.test.js',
+  // HYGIÈNE DES SECRETS — aussi haut que l'isolation des bases, et pour la même
+  // raison : ce qui fuit d'un dépôt ne se rattrape pas en aval.
+  //
+  // GitHub Secret Scanning a déclenché une alerte « Stripe Webhook Signing
+  // Secret » sur une SENTINELLE de test. Aucun secret réel — et pourtant
+  // l'alerte était fondée : un scanner reconnaît un MOTIF, pas une intention.
+  // Le bruit d'une fausse alerte se paie sur l'attention accordée à la
+  // suivante.
+  'secret-hygiene.test.js',
   // DISPONIBILITÉ DU SERVICE — « vivant » n'est pas « prêt ». Le port s'ouvre
   // avant l'amorçage ; les sondes répondent tout de suite ; les routes métier
   // refusent en 503 + code stable tant que les dépendances manquent. Placée

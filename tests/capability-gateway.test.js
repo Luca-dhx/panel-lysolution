@@ -17,6 +17,7 @@ import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -35,7 +36,7 @@ const registryStore = (await import('../backend/src/services/registry/registrySt
 const { CAPABILITY_ERROR_CODES: CODES, CAPABILITY_OUTCOMES } = errors;
 
 /** Sentinelle : une occurrence hors du coffre est une fuite, jamais un hasard. */
-const SENTINELLE = 'xkeysib-GATEWAYSENTINEL00000000000000000001';
+const SENTINELLE = forme.brevoApiKey('GATEWAYSENTINEL0000000000000');
 const ACTEUR = { userId: 'u-dev', userEmail: 'dev@panel.test' };
 
 const VERIFY = 'email.sender.verify';
@@ -543,7 +544,7 @@ section('6. IDENTIFIANTS — le coffre L1, et une doctrine de disponibilité');
 
   // Une clé remplacée après validation retire la preuve : on refuse.
   await controlPlane.saveCredentialSet('BREVO', 'TEST', {
-    values: { apiKey: 'xkeysib-UNEAUTRECLENONVALIDEE000000000000' },
+    values: { apiKey: forme.brevoApiKey('UNEAUTRECLENONVALIDEE0000000') },
   }, ACTEUR);
   const perimee = await invoquer(fiche, VERIFY, ENTREE(), provider);
   check('clé remplacée après validation → refusé', perimee.code === CODES.CREDENTIALS_MISSING);
@@ -680,7 +681,7 @@ section('10. ENVIRONNEMENT — résolu deux fois, jamais choisi');
 
   // Le jeu PROD existe dans le coffre et ne doit JAMAIS être atteint d'ici.
   await controlPlane.saveCredentialSet('BREVO', 'PROD', {
-    values: { apiKey: 'xkeysib-CLEDEPRODUCTIONJAMAISATTEINTE0001' },
+    values: { apiKey: forme.brevoApiKey('CLEDEPRODUCTIONJAMAISATTEINT') },
   }, ACTEUR);
   const provider = fournisseur(async () => reponse(200, { companyName: 'L.Y Solution' }));
   await invoquer(fiche, VERIFY, ENTREE(), provider);

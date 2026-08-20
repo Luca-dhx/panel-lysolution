@@ -1,6 +1,7 @@
 // Interprétation des capacités déclarées par le ProjectManifest — les règles
 // de 21_PROJECT_CAPABILITIES §3 : le Panel n'affiche que ce qui existe.
 import { check, finish, section, setTestEnv } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 
@@ -78,11 +79,11 @@ section('Modules du projet : ACTIVE / OPTIONAL restitués, jamais inventés');
   const result = interpretCapabilities(manifestWith({
     modules: [
       { id: 'vitrine', title: 'Vitrine', status: 'ACTIVE' },
-      { id: 'yousign-signature', title: 'Signature', status: 'OPTIONAL' },
+      { id: forme.yousignApiKey('SIGNATURE'), title: 'Signature', status: 'OPTIONAL' },
     ],
   }));
   check('modules actifs', result.projectModules.active.includes('vitrine'));
-  check('modules optionnels', result.projectModules.optional.includes('yousign-signature'));
+  check('modules optionnels', result.projectModules.optional.includes(forme.yousignApiKey('SIGNATURE')));
   check('un module ne crée jamais une feature', result.enabled.length === 0);
 }
 

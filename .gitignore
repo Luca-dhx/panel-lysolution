@@ -40,3 +40,18 @@ uploads/
 # applicatif et lui survivent.
 backend/storage/
 storage/
+
+# ══ SECRETS — filet de sécurité à la RACINE ═════════════════════════════════
+#
+# `backend/.gitignore` et `frontend/.gitignore` couvrent leurs dossiers. Un
+# fichier d'environnement déposé à la racine, lui, ne l'était par aucune règle.
+# Ces lignes ne remplacent pas les autres : elles ferment l'espace entre elles.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json

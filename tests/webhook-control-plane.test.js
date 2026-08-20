@@ -12,6 +12,7 @@ import {
   check, finish, section, setTestEnv, startMemoryMongo, connectTestDatabase, stopMemoryMongo,
   simulateRestart, startServer,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
@@ -592,7 +593,7 @@ section('13-15 · Le secret vit dans le coffre, et n’en sort par aucune porte'
 
   // 15 — le masquage de dernier recours attrape ce qu'un message aurait laissé.
   check('safeMessage masque une clé secrète Stripe',
-    safeMessage('erreur avec sk_live_ABCDEF0123456789').includes('[secret masqué]'));
+    safeMessage(`erreur avec ${forme.stripeLive('EXEMPLE')}`).includes('[secret masqué]'));
   check('safeMessage masque un whsec_', safeMessage(`clé ${WHSEC}`).includes('[secret masqué]'));
   check('safeMessage masque un Bearer', safeMessage('Authorization: Bearer abc.def-ghi').includes('[secret masqué]'));
   check('safeMessage masque une clé Brevo', safeMessage('xkeysib-0011aabb-zz').includes('[secret masqué]'));
@@ -644,11 +645,11 @@ section('15b · Le pont ne LIT ni n’ÉCRIT le coffre de webhooks du Panel');
     try { assertVerificationSecretOnly(charge); return false; } catch { return true; }
   };
   check('un secret de signature seul passe',
-    !refuse({ webhookSecret: 'whsec_L63A_canal_etroit_0001' }));
+    !refuse({ webhookSecret: forme.stripeWebhook('L63A-CANAL-ETROIT-0001') }));
   check('…une clé d’appel rangée sous ce nom est refusée par sa FORME',
     refuse({ webhookSecret: SK_TEST }));
-  check('…un champ en plus est refusé', refuse({ webhookSecret: 'whsec_L63A_canal_etroit_0001', secretKey: '' }));
-  check('…un rôle non déclaré « vérification » est refusé', refuse({ apiKey: 'whsec_L63A_canal_etroit_0001' }));
+  check('…un champ en plus est refusé', refuse({ webhookSecret: forme.stripeWebhook('L63A-CANAL-ETROIT-0001'), secretKey: '' }));
+  check('…un rôle non déclaré « vérification » est refusé', refuse({ apiKey: forme.stripeWebhook('L63A-CANAL-ETROIT-0001') }));
   check('…une charge vide est refusée', refuse({}));
 }
 
@@ -1082,7 +1083,7 @@ section('16-18 · Recevoir : prouvé, unique, et routé par le plan de contrôle
   // Signature fausse, signature absente, secret absent : trois refus.
   const faux = await ingestProviderEvent({
     slug: 'stripe', rawBody: corps,
-    headers: { 'stripe-signature': stripeSignatureHeader(corps, 'whsec_autre_chose') },
+    headers: { 'stripe-signature': stripeSignatureHeader(corps, forme.stripeWebhook('AUTRE-CHOSE')) },
   });
   check('une signature FAUSSE est refusée', faux.outcome === INGEST_OUTCOME.REJECTED);
   const sansEntete = await ingestProviderEvent({ slug: 'stripe', rawBody: corps, headers: {} });

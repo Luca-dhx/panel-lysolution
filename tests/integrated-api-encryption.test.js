@@ -11,13 +11,14 @@
 import {
   check, finish, section, setTestEnv, startMemoryMongo, connectTestDatabase, stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
 await connectTestDatabase();
 
-const SENTINEL_SECRET = 'sk_test_SENTINEL0000000000AAAA1234';
-const SENTINEL_BREVO = 'xkeysib-SENTINEL0000000000BBBB5678';
+const SENTINEL_SECRET = forme.stripeTest('SENTINEL0000000000AAAA1234');
+const SENTINEL_BREVO = forme.brevoApiKey('SENTINEL0000000000BBBB5678');
 const SENTINEL_TOKEN = 'SENTINEL0000000000CCCC9012';
 
 const vault = await import('../backend/src/services/integratedApi/credentialVault.js');
@@ -89,7 +90,7 @@ section('Préfixe — une clé LIVE saisie en TEST est refusée AVANT chiffremen
   };
   check('sk_live_ en TEST : refusé, et le motif est nommé',
     refuse(() => vault.encryptCredentialValues({
-      provider: 'STRIPE', values: { secretKey: 'sk_live_SENTINEL' }, environment: 'TEST',
+      provider: 'STRIPE', values: { secretKey: forme.stripeLive('SENTINEL') }, environment: 'TEST',
     }), 'PANEL_INTEGRATED_API_PREFIX_WRONG_ENVIRONMENT'));
   check('sk_test_ en PROD : refusé aussi',
     refuse(() => vault.encryptCredentialValues({
@@ -163,7 +164,7 @@ section('État — configuré, et empreinte de fraîcheur');
 
   const remplace = vault.encryptCredentialValues({
     provider: 'STRIPE', current: complet.stored,
-    values: { secretKey: 'sk_test_AUTRECLE0000000000ZZZZ' }, environment: 'TEST',
+    values: { secretKey: forme.stripeTest('AUTRECLE0000000000ZZZZ') }, environment: 'TEST',
   });
   check('remplacer la clé change l’empreinte — une preuve ne survit pas à sa clé',
     vault.requiredFingerprint('STRIPE', remplace.stored) !== empreinte);

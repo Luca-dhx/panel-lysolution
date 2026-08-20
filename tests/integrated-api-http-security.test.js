@@ -12,12 +12,13 @@ import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 await startMemoryMongo();
 await connectTestDatabase();
 
-const SENTINEL = 'sk_test_SENTINEL0000000000AAAA1234';
+const SENTINEL = forme.stripeTest('SENTINEL0000000000AAAA1234');
 const SENTINEL_TOKEN = 'SENTINEL0000000000CCCC9012';
 
 const { createApp } = await import('../backend/src/app.js');
@@ -135,7 +136,7 @@ section('Refus argumentés — jamais un 500 opaque');
     && envSurGlobal.json.code === 'PANEL_INTEGRATED_API_ENVIRONMENT_UNEXPECTED');
 
   const liveEnTest = await call('PUT', '/api/integrated-apis/STRIPE/credentials', {
-    headers: dev, body: { environment: 'TEST', values: { secretKey: 'sk_live_SENTINELLIVE' } },
+    headers: dev, body: { environment: 'TEST', values: { secretKey: forme.stripeLive('SENTINELLIVE') } },
   });
   check('une clé LIVE saisie en TEST → 400, et le motif est nommé',
     liveEnTest.status === 400

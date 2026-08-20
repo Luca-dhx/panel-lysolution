@@ -32,6 +32,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -41,7 +42,7 @@ await connectTestDatabase();
 const prefixe = (monde) => ['sk', monde, ''].join('_');
 const CLE_PANEL = `${prefixe('test')}L62CSENTINELLEPANEL00000000001`;
 const CLE_PROJET = `${prefixe('test')}L62CSENTINELLEPROJETJAMAISVUE2`;
-const WHSEC = 'whsec_l62c_secret_de_signature_0001';
+const WHSEC = forme.stripeWebhook('L62C-SECRET-DE-SIGNATURE-000');
 
 const ACTEUR = { userId: 'u-dev', userEmail: 'dev@panel.test' };
 const CREATE = 'billing.checkout.create';
@@ -585,7 +586,7 @@ section('12. Sans signature valide, la question du destinataire ne se pose pas')
   const faux = await ingestProviderEvent({
     slug: 'stripe',
     rawBody: Buffer.from(corps),
-    headers: { 'stripe-signature': signer(corps, 'whsec_ce_nest_pas_le_bon_secret') },
+    headers: { 'stripe-signature': signer(corps, forme.stripeWebhook('CE-NEST-PAS-LE-BON-SECRET')) },
   });
   check('signature invalide → refusé', faux.outcome === INGEST_OUTCOME.REJECTED);
   check('…aucun destinataire résolu', faux.routedProjectId === undefined || faux.routedProjectId === null);

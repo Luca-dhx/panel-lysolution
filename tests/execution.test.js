@@ -12,6 +12,7 @@ import {
   check, connectTestDatabase, finish, section, setTestEnv,
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
+import { fauxUriMongo } from './helpers/secretShapes.js';
 
 setTestEnv();
 process.env.HEARTBEAT_INTERVAL_S = '300';
@@ -268,7 +269,7 @@ section('LOT 7 — Journal auditable et masquage des secrets');
   check('ce qui n’est pas secret reste lisible', masked.innocent === 'valeur visible' && masked.nested.ok === 1);
 
   const byShape = logSvc.redact({
-    trace: 'connexion vers mongodb://root:s3cr3t@10.0.0.1:27017/panel établie',
+    trace: `connexion vers ${fauxUriMongo()} établie`,
     jeton: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.abcdefghijklmnop',
   });
   check('une valeur sensible est masquée même sous une clé anodine',

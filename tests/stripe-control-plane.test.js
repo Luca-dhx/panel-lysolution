@@ -16,6 +16,7 @@
 import {
   check, finish, section, setTestEnv,
 } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 
@@ -29,7 +30,7 @@ const { STRIPE_CAPABILITIES, STRIPE_CAPABILITY_CODES } = capabilities;
 const { TRANSPORT_CODES, OUTCOMES } = transport;
 
 /** Sentinelle : une occurrence hors du coffre est une fuite, jamais un hasard. */
-const CLE = 'sk_test_L61SENTINELLESTRIPEJAMAISAILLEURS0001';
+const CLE = forme.stripeTest('L61SENTINELLESTRIPEJAMAISAIL');
 const CREDENTIALS = Object.freeze({ secretKey: CLE, baseUrl: 'https://faux-stripe.test' });
 
 const OP = 'op-l61-0000000000000001';

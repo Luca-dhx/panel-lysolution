@@ -32,6 +32,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -500,7 +501,7 @@ section('J. Un événement signé atteint toujours le métier du projet');
    * ET IL REFUSE LE RESTE. Sans ce second contrôle, le premier ne prouverait
    * rien : une route qui accepte tout accepte aussi une signature valide.
    */
-  const mauvais = createHmac('sha256', 'whsec_ce_nest_pas_le_bon_secret_0001')
+  const mauvais = createHmac('sha256', forme.stripeWebhook('CE-NEST-PAS-LE-BON-SECRET-00'))
     .update(`${t}.${corps}`).digest('hex');
   const refus = await projetA.postWebhook({
     path: '/api/webhooks/stripe',

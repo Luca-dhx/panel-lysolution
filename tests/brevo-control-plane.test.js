@@ -11,6 +11,7 @@
 //
 // Aucun réseau, aucune base : `fetchImpl` est injecté partout.
 import { check, finish, section, setTestEnv } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 
@@ -34,7 +35,7 @@ const {
   normalizeProviderMessageId, providerMessageIdVariants, maskEmail,
 } = transport;
 
-const SECRET_KEY = 'xkeysib-0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+const SECRET_KEY = forme.brevoApiKey('0123456789ABCDEF0123456789AB');
 const CREDENTIALS = Object.freeze({ apiKey: SECRET_KEY, baseUrl: 'https://api.brevo.com/v3' });
 
 const SENDER = { email: 'contact@garage-a.fr', name: 'Garage A' };

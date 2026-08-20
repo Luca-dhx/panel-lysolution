@@ -31,6 +31,7 @@ import {
   startMemoryMongo, startServer, stopMemoryMongo,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -42,8 +43,8 @@ await connectTestDatabase();
    le coffre (une clé Stripe TEST doit commencer par `sk_test_`).
    ══════════════════════════════════════════════════════════════════════════ */
 const SENTINELLES = Object.freeze({
-  STRIPE: 'sk_test_STRIPESUPERSECRETSENTINEL0001',
-  BREVO: 'xkeysib-BREVOSUPERSECRETSENTINEL0002',
+  STRIPE: forme.stripeTest('STRIPESUPERSECRETSENTINEL000'),
+  BREVO: forme.brevoApiKey('BREVOSUPERSECRETSENTINEL0002'),
   YOUSIGN: 'YOUSIGNSUPERSECRETSENTINEL0003',
   HOSTINGER: 'HOSTINGERSUPERSECRETSENTINEL0004',
 });

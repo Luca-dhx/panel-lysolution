@@ -9,6 +9,7 @@
 // Une garde adossée à une liste de mots vieillit mal : elle protège ce qu'on
 // connaissait le jour où on l'a écrite. Celle-ci lit le registre.
 import { check, finish, section, setTestEnv } from './helpers/harness.js';
+import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
 
@@ -42,21 +43,21 @@ section('Le vocabulaire vient du registre, pas d’une liste de mots');
 
 section('Les quatre fournisseurs actuels — refusés par le NOM du champ');
 {
-  check('Stripe secretKey', refuse({ provider: 'STRIPE', secretKey: 'sk_test_XXXXXXXXXXXX' }));
-  check('Brevo apiKey', refuse({ provider: 'BREVO', apiKey: 'xkeysib-AAAAAAAAAAAAAAAAAAAA' }));
-  check('Yousign apiKey', refuse({ provider: 'YOUSIGN', apiKey: 'yousign-AAAAAAAAAAAA' }));
+  check('Stripe secretKey', refuse({ provider: 'STRIPE', secretKey: forme.stripeTest('XXXXXXXXXXXX') }));
+  check('Brevo apiKey', refuse({ provider: 'BREVO', apiKey: forme.brevoApiKey('AAAAAAAAAAAAAAAAAAAA') }));
+  check('Yousign apiKey', refuse({ provider: 'YOUSIGN', apiKey: forme.yousignApiKey('AAAAAAAAAAAA') }));
   check('Hostinger apiToken', refuse({ provider: 'HOSTINGER', apiToken: 'AAAAAAAAAAAAAAAA' }));
-  check('secret de webhook', refuse({ webhookSecret: 'whsec_AAAAAAAAAAAA' }));
+  check('secret de webhook', refuse({ webhookSecret: forme.stripeWebhook('AAAAAAAAAAAA') }));
 
   check('la forme historique { credentials: {...} } est refusée',
-    refuse({ apiId: 'x', key: 'stripe', credentials: { secretKey: 'sk_test_AAAAAAAAAAAA' } }));
+    refuse({ apiId: 'x', key: 'stripe', credentials: { secretKey: forme.stripeTest('AAAAAAAAAAAA') } }));
 
   check('un champ interdit imbriqué profond est trouvé',
-    refuse({ a: { b: { c: [{ apiKey: 'xkeysib-AAAAAAAAAAAAAAAAAAAA' }] } } }));
+    refuse({ a: { b: { c: [{ apiKey: forme.brevoApiKey('AAAAAAAAAAAAAAAAAAAA') }] } } }));
 
   check('l’erreur NOMME le chemin, jamais la valeur', (() => {
     try {
-      assertNoProviderSecrets({ api: { secretKey: 'sk_test_SENTINELLE123456' } });
+      assertNoProviderSecrets({ api: { secretKey: forme.stripeTest('SENTINELLE123456') } });
       return false;
     } catch (err) {
       return err instanceof ProviderSecretLeakError
@@ -69,10 +70,11 @@ section('Les quatre fournisseurs actuels — refusés par le NOM du champ');
 section('Refusés par la FORME de la valeur, quel que soit le champ');
 {
   // Une clé peut fuir sous un nom innocent : la garde la reconnaît quand même.
-  check('sk_live_ sous « note »', refuse({ note: 'la clé est sk_live_AbCdEfGhIjKl' }));
-  check('sk_test_ sous « description »', refuse({ description: 'sk_test_AbCdEfGhIjKl' }));
-  check('whsec_ dans un tableau', refuse({ items: ['whsec_AbCdEfGhIjKl'] }));
-  check('xkeysib- sous « value »', refuse({ value: 'xkeysib-AbCdEfGhIjKlMnOpQrSt' }));
+  check('sk_live_ sous « note »',
+    refuse({ note: `la clé est ${forme.stripeLive('AB-CD-EF-GH-IJ-KL')}` }));
+  check('sk_test_ sous « description »', refuse({ description: forme.stripeTest('AB-CD-EF-GH-IJ-KL') }));
+  check('whsec_ dans un tableau', refuse({ items: [forme.stripeWebhook('AB-CD-EF-GH-IJ-KL')] }));
+  check('xkeysib- sous « value »', refuse({ value: forme.brevoApiKey('AB-CD-EF-GH-IJ-KL-MN-OP-QR-S') }));
 
   // Une documentation qui cite le préfixe seul ne doit pas être refusée : la
   // garde exige une longueur plausible.
