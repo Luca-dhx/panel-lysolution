@@ -39,6 +39,7 @@ import {
   getSignatureRequest,
   getSigner,
   cancelSignatureRequest,
+  YOUSIGN_CANCEL_REASON,
   deleteSignatureRequest,
   downloadSignedDocument,
 } from './yousignTransport.js';
@@ -494,7 +495,12 @@ async function signatureRequestCancel({ definition, context, credentials, input,
   await cancelSignatureRequest({
     credentials,
     requestId: input.signatureRequestId,
-    reason: input.reason ?? 'cancelled',
+    /**
+     * `'cancelled'` était écrit ici aussi, et Yousign le refuse : le motif est
+     * une ÉNUMÉRATION du fournisseur, pas un libellé. Voir
+     * `YOUSIGN_CANCEL_REASON` — la valeur dont on a la preuve qu'elle marche.
+     */
+    reason: input.reason ?? YOUSIGN_CANCEL_REASON,
     timeoutMs: definition.timeoutMs,
     ...(fetchImpl ? { fetchImpl } : {}),
   });

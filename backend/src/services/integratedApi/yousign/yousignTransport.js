@@ -322,9 +322,29 @@ export const getSignatureRequest = ({ credentials, requestId, ...rest }) =>
 export const getSigner = ({ credentials, requestId, signerId, ...rest }) =>
   call({ ...rest, credentials, path: `/signature_requests/${requestId}/signers/${signerId}` });
 
+/**
+ * LE MOTIF D'ANNULATION EST UNE ÉNUMÉRATION DU FOURNISSEUR, PAS UN LIBELLÉ.
+ *
+ * `'cancelled'` paraissait naturel — et Yousign le refusait, avec un
+ * « You have some invalid params in your payload » qui ne nomme pas le champ.
+ * L'annulation d'une demande de signature était donc IMPOSSIBLE : le seul
+ * moyen de retirer une demande activée ne fonctionnait pas, et l'échec ne
+ * disait pas pourquoi.
+ *
+ * Constaté sur le compte réel : `contractualized` et `mistake` sont eux aussi
+ * refusés en l'état (ils attendent vraisemblablement un complément), `other`
+ * est accepté et rend `status: canceled`. C'est donc la valeur par défaut —
+ * celle dont on a la preuve qu'elle marche, pas celle qui se lisait le mieux.
+ */
+export const YOUSIGN_CANCEL_REASON = 'other';
+
 /** POST /signature_requests/:id/cancel — annule une demande en cours. */
-export const cancelSignatureRequest = ({ credentials, requestId, reason = 'cancelled', ...rest }) =>
-  call({ ...rest, credentials, method: 'POST', path: `/signature_requests/${requestId}/cancel`, json: { reason } });
+export const cancelSignatureRequest = ({
+  credentials, requestId, reason = YOUSIGN_CANCEL_REASON, ...rest
+}) => call({
+  ...rest, credentials, method: 'POST',
+  path: `/signature_requests/${requestId}/cancel`, json: { reason },
+});
 
 /** DELETE /signature_requests/:id — supprime un BROUILLON resté en plan. */
 export const deleteSignatureRequest = ({ credentials, requestId, ...rest }) =>
