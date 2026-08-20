@@ -323,6 +323,7 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       'signature.request.retrieve',
       'signature.signer.retrieve',
       'signature.document.download',
+      'signature.certificate.download',
       'signature.request.cancel',
     ]),
     credentialRoles: Object.freeze([
@@ -471,6 +472,7 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       'signature.request.retrieve',
       'signature.signer.retrieve',
       'signature.document.download',
+      'signature.certificate.download',
       'signature.request.cancel',
     ]),
     credentialRoles: Object.freeze([

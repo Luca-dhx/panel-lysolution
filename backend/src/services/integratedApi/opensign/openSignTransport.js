@@ -428,6 +428,18 @@ export const updateDocument = ({ credentials, documentId, patch, ...rest }) =>
  */
 export async function fetchProviderFile({
   url, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = 32 * 1024 * 1024, fetchImpl,
+  /**
+   * `detaille` rend `{ octets, contentType }` au lieu des seuls octets.
+   *
+   * Le type déclaré ne sert à rien quand on rend un contrat — c'est un PDF, on
+   * le sait. Il compte pour une pièce qu'on ARCHIVE : un fichier conservé dix
+   * ans sans son type se relit mal, et le deviner à la relecture, c'est deviner
+   * au pire moment.
+   *
+   * L'option existe plutôt qu'un changement de forme général : les appelants
+   * qui ne veulent que des octets n'ont pas à déballer un objet.
+   */
+  detaille = false,
 }) {
   let cible;
   try {
@@ -484,7 +496,14 @@ export async function fetchProviderFile({
       'Le stockage d’OpenSign a rendu un fichier vide.',
     );
   }
-  return octets;
+  if (!detaille) return octets;
+  /**
+   * Le type déclaré, débarrassé de ses paramètres (`; charset=…`), et un
+   * repli explicite. `application/octet-stream` dit « je ne sais pas » — c'est
+   * préférable à affirmer « PDF » sur la foi d'une habitude.
+   */
+  const declare = String(reponse.headers?.get?.('content-type') ?? '').split(';')[0].trim();
+  return { octets, contentType: declare || 'application/octet-stream' };
 }
 
 export default {

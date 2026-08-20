@@ -368,6 +368,27 @@ const signatureDocumentDownloadOutput = z.object({
   certificateAvailable: z.boolean().optional(),
 }).strict();
 
+/**
+ * LA PIECE D'AUDIT — séparée du contrat, et c'est voulu.
+ *
+ * Le certificat atteste QUI a signé, QUAND et DEPUIS OÙ. Il n'est pas fusionné
+ * au contrat (`merge_certificate: false`) : fusionner rendrait impossible de
+ * distinguer l'engagement de sa preuve, et l'opération est irréversible.
+ *
+ * `contentType` est rendu parce que rien ne garantit un PDF à perpétuité :
+ * l'appelant l'archive, et un fichier archivé sans son type se relit mal dix
+ * ans plus tard.
+ */
+const signatureCertificateDownloadOutput = z.object({
+  signatureRequestId: z.string(),
+  documentId: z.string(),
+  contentBase64: z.string(),
+  byteLength: z.number().int(),
+  sha256: z.string(),
+  contentType: z.string(),
+  provider: z.string(),
+}).strict();
+
 const signatureRequestCancelInput = z.object({
   signatureRequestId: z.string().trim().min(8).max(64),
   reason: z.string().trim().max(200).optional(),
@@ -953,6 +974,29 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     label: 'Télécharger un document signé',
     inputSchema: signatureRequestRefInput,
     outputSchema: signatureDocumentDownloadOutput,
+    timeoutMs: 60_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
+  }),
+  /**
+   * LA PREUVE D'AUDIT — UNE CAPACITÉ À PART, PAS UNE OPTION DU TÉLÉCHARGEMENT.
+   *
+   * On aurait pu ajouter un drapeau à `signature.document.download`. C'aurait
+   * été une erreur : ce sont deux pièces DIFFÉRENTES — l'une est l'engagement,
+   * l'autre en atteste. Les servir par le même verbe aurait fait transiter les
+   * deux à chaque appel, ou imposé à l'appelant de dire ce qu'il veut par un
+   * booléen — et un booléen mal posé archive la mauvaise pièce.
+   *
+   * Elle n'existe que pour les demandes ACHEVÉES : avant, il n'y a rien à
+   * attester. Le refus est explicite, pas un contenu vide.
+   */
+  'signature.certificate.download': capability('signature.certificate.download', {
+    provider: ACTIVE_SIGNATURE_PROVIDER,
+    /** La demande est servie par CELUI QUI LA DÉTIENT — voir `resolveProvider`. */
+    resolveProvider: resolveSignatureProvider,
+    label: 'Télécharger le certificat d’audit d’une signature',
+    inputSchema: signatureRequestRefInput,
+    outputSchema: signatureCertificateDownloadOutput,
     timeoutMs: 60_000,
     idempotency: IDEMPOTENCY.SAFE_RETRY,
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],

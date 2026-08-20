@@ -184,13 +184,19 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'billing.invoice.retrieve',
     'billing.portal.create',
     /**
-     * R10.5C — LES CINQ ACTES DE SIGNATURE.
+     * LES SIX ACTES DE SIGNATURE.
      *
-     * Cinq, et non onze : l’API Yousign expose onze endpoints, mais ouvrir une
-     * signature suppose d’en enchaîner cinq (demande, document, signataires,
-     * champs, activation). Les exposer séparément aurait laissé un projet
-     * s’arrêter au milieu d’une préparation — précisément l’état que le
-     * tout-ou-rien s’échine à ne jamais rendre observable.
+     * Cinq à l’origine, et non onze : l’API historique exposait onze endpoints,
+     * mais ouvrir une signature supposait d’en enchaîner cinq (demande,
+     * document, signataires, champs, activation). Les exposer séparément aurait
+     * laissé un projet s’arrêter au milieu d’une préparation — précisément
+     * l’état que le tout-ou-rien s’échine à ne jamais rendre observable.
+     *
+     * Le sixième est arrivé avec le fournisseur actuel : il publie une PREUVE
+     * D’AUDIT séparée du contrat. Elle n’est pas une variante du téléchargement
+     * — ce sont deux pièces distinctes, l’une étant l’engagement et l’autre son
+     * attestation — et les servir par le même verbe aurait fait choisir
+     * l’appelant par un booléen, donc archiver un jour la mauvaise.
      *
      * Ce sont aussi les premières capacités dont l’appartenance repose sur un
      * lien écrit AVANT l’appel fournisseur, et non sur une metadata rendue par
@@ -200,6 +206,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'signature.request.retrieve',
     'signature.signer.retrieve',
     'signature.document.download',
+    'signature.certificate.download',
     'signature.request.cancel',
   ].sort();
   /**

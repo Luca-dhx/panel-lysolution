@@ -557,6 +557,32 @@ async function signatureRequestCancel({ definition, context, credentials, input,
   };
 }
 
+/**
+ * `signature.certificate.download` — CE FOURNISSEUR N'EN PUBLIE PAS PAR ICI.
+ *
+ * ── POURQUOI UNE ENTRÉE QUI REFUSE, PLUTÔT QUE PAS D'ENTRÉE ─────────────
+ *
+ * Un domaine à deux fournisseurs exige que chacun serve TOUS les actes : un
+ * acte manquant ne se découvrirait qu'à l'exécution, sur un contrat réel, par
+ * une exception nue (`table[code] is not a function`). Le contrôle
+ * d'alignement, au chargement, l'interdit — et il a raison.
+ *
+ * Ce qu'on sert ici, c'est donc un REFUS EXPLICITE. Il porte un motif qui dit
+ * la vérité : les contrats signés chez ce fournisseur restent lisibles, mais
+ * leur preuve d'audit n'a jamais transité par cette voie — elle vit dans son
+ * espace client. Une demande de 2025 doit obtenir cette phrase, pas un
+ * plantage, et surtout pas un fichier vide qu'on archiverait comme certificat.
+ */
+async function signatureCertificateDownload({ input }) {
+  throw new CapabilityError(
+    CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+    'Cette demande a été signée chez le fournisseur historique, qui ne publie '
+    + 'pas de certificat d’audit par cette voie. Le contrat signé reste '
+    + 'téléchargeable ; la preuve d’audit se récupère depuis l’espace du compte.',
+    { reason: 'CERTIFICATE_NOT_SERVED_BY_LEGACY_PROVIDER', signatureRequestId: input?.signatureRequestId ?? null },
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  LA TABLE                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -566,6 +592,7 @@ export const YOUSIGN_ADAPTERS = Object.freeze({
   'signature.request.retrieve': signatureRequestRetrieve,
   'signature.signer.retrieve': signatureSignerRetrieve,
   'signature.document.download': signatureDocumentDownload,
+  'signature.certificate.download': signatureCertificateDownload,
   'signature.request.cancel': signatureRequestCancel,
 });
 

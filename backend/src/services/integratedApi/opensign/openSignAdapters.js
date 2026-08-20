@@ -588,6 +588,52 @@ async function signatureDocumentDownload({ definition, context, credentials, inp
   };
 }
 
+/**
+ * `signature.certificate.download` — la PREUVE, pas l'engagement.
+ *
+ * ── POURQUOI ELLE N'EXISTE QU'APRÈS L'ACHÈVEMENT ────────────────────────
+ *
+ * OpenSign publie la piste d'audit quand le document est achevé, et pas avant.
+ * Une demande en cours n'a rien à attester : rendre un contenu vide ferait
+ * archiver au projet un fichier de zéro octet nommé « certificat », qu'il
+ * croirait avoir. On refuse EXPLICITEMENT.
+ *
+ * ── L'URL NE SORT PAS D'ICI ──────────────────────────────────────
+ *
+ * Comme pour le contrat : l'adresse est pré-signée, elle porte son propre droit
+ * d'accès. La remettre au projet contournerait la preuve d'appartenance — et
+ * elle expire, ce qui en ferait de surcroît une référence morte en archive.
+ */
+async function signatureCertificateDownload({ definition, context, credentials, input, fetchImpl }) {
+  const binding = await requireOwned({ context, definition, resourceId: input.signatureRequestId });
+  const commun = { credentials, timeoutMs: definition.timeoutMs, ...(fetchImpl ? { fetchImpl } : {}) };
+
+  const document = await getDocument({ ...commun, documentId: binding.documentId ?? input.signatureRequestId });
+  const url = document?.certificate ?? null;
+  if (!url) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      'Aucun certificat d’audit n’est publié pour cette demande : il ne l’est '
+      + 'qu’une fois la signature ACHEVÉE par tous les signataires.',
+      { reason: 'CERTIFICATE_NOT_PUBLISHED_YET' },
+    );
+  }
+
+  const { octets, contentType } = await fetchProviderFile({
+    url, timeoutMs: definition.timeoutMs, detaille: true, ...(fetchImpl ? { fetchImpl } : {}),
+  });
+
+  return {
+    signatureRequestId: input.signatureRequestId,
+    documentId: binding.documentId ?? input.signatureRequestId,
+    provider: PROVIDER,
+    contentBase64: octets.toString('base64'),
+    byteLength: octets.length,
+    sha256: createHash('sha256').update(octets).digest('hex'),
+    contentType,
+  };
+}
+
 /* -------------------------------------------------------------------------- */
 /*  ANNULATION                                                                */
 /* -------------------------------------------------------------------------- */
@@ -638,6 +684,7 @@ export const OPENSIGN_ADAPTERS = Object.freeze({
   'signature.request.retrieve': signatureRequestRetrieve,
   'signature.signer.retrieve': signatureSignerRetrieve,
   'signature.document.download': signatureDocumentDownload,
+  'signature.certificate.download': signatureCertificateDownload,
   'signature.request.cancel': signatureRequestCancel,
 });
 

@@ -231,11 +231,17 @@ section('4. SOURCE DE VÉRITÉ UNIQUE — aucune seconde liste ne subsiste');
 }
 
 /* ========================================================================== */
-section('5. INVENTAIRE — 22 actions, toutes servies');
+section('5. INVENTAIRE — 23 actions, toutes servies');
 /* ========================================================================== */
 {
-  check('22 actions déclarées', definitions.length === 22);
-  check('…et 22 exécutants', adapters.listAdaptedCapabilities().length === 22);
+  /**
+   * 23 depuis que la PREUVE D’AUDIT est un acte à part
+   * (`signature.certificate.download`). Le compte est écrit en dur exprès : une
+   * capacité qui apparaît sans que personne l’ait voulue est exactement ce que
+   * ce contrôle existe pour attraper.
+   */
+  check('23 actions déclarées', definitions.length === 23);
+  check('…et 23 exécutants', adapters.listAdaptedCapabilities().length === 23);
   check('billing.subscription.reconcile n’est plus déclarée',
     !registry.isKnownCapability('billing.subscription.reconcile'));
   /**

@@ -577,4 +577,107 @@ retiré. Captures conservées dans `.campaign/lot5-*.png`.
 
 ---
 
+## LOT 6 — ACHÈVEMENT, PDF SIGNÉ ET PREUVE D'AUDIT
+
+### 6.1 Une capacité de plus, et pourquoi ce n'est pas une option
+
+`signature.certificate.download` rejoint les cinq actes. La tentation était
+d'ajouter un drapeau à `signature.document.download` : ce sont deux **pièces
+différentes** — l'une est l'engagement, l'autre en atteste. Les servir par le
+même verbe aurait fait transiter les deux à chaque appel, ou imposé à
+l'appelant de choisir par un booléen — et un booléen mal posé archive la
+mauvaise pièce, ce qu'on ne découvre qu'en ayant besoin de l'autre.
+
+`merge_certificate: false` est envoyé à chaque ouverture pour la même raison,
+et la fusion est irréversible.
+
+| | contrat signé | certificat d'audit |
+|---|---|---|
+| capacité | `signature.document.download` | `signature.certificate.download` |
+| existe dès | l'ouverture | l'**achèvement**, jamais avant |
+| chez le fournisseur historique | oui | **non** — refus explicite |
+| taille mesurée (recette) | ~52 ko | ~112 ko |
+
+### 6.2 L'URL pré-signée ne sort jamais du Panel
+
+Comme pour le contrat : elle porte son propre droit d'accès. La remettre au
+projet contournerait la preuve d'appartenance — et elle expire, ce qui en
+ferait une **référence morte en archive**. Le Panel la suit et rend le contenu,
+avec son empreinte et son **type déclaré** : un fichier conservé dix ans sans
+son type se relit mal.
+
+### 6.3 Le fournisseur historique répond, et il répond non
+
+Le contrôle d'alignement exige que **chaque** fournisseur serve **tous** les
+actes : un acte manquant ne se découvrirait qu'à l'exécution, sur un contrat
+réel, par une exception nue. L'adaptateur historique sert donc le code, et rend
+un refus lisible — `CERTIFICATE_NOT_SERVED_BY_LEGACY_PROVIDER` — en rappelant
+que le contrat signé, lui, reste téléchargeable.
+
+Côté SB Auto, les deux motifs connus (`…NOT_PUBLISHED_YET`,
+`…NOT_SERVED_BY_LEGACY_PROVIDER`) rendent **`null`**, pas une exception :
+confondre « pas de certificat » avec « échec » ferait échouer l'achèvement d'un
+contrat pour une pièce annexe.
+
+### 6.4 L'archivage côté projet
+
+Trois champs neufs (`certificateFilename`, `certificateChecksum`,
+`certificateContentType`, `certificateFetchedAt`), une variante `CERTIFICATE`
+au résolveur de chemin, et **la même porte** de téléchargement — même contrôle
+d'accès, même relais vers l'autorité documentaire, même refus de se rabattre
+sur une copie locale. Un chemin à part aurait créé une seconde porte à garder,
+donc une porte qu'on oublie de garder.
+
+La récupération est **non bloquante** et a son propre `if`, dans l'applicateur
+comme dans la réconciliation : le contrat signé peut être arrivé et pas le
+certificat, ou l'inverse. Les imbriquer ferait qu'un dossier ayant déjà son PDF
+n'irait jamais chercher sa preuve.
+
+`storeSignatureCertificate` ne passe **pas** par `validatePdfBuffer` : cette
+validation compte les pages et relève les dimensions, pour un document sur
+lequel on posera des zones. Le certificat n'en recevra jamais. Ce qui est
+vérifié, c'est qu'il n'est pas VIDE — archiver zéro octet sous le nom
+« certificat » est pire que ne rien archiver.
+
+### 6.5 Recette réelle — `tools/opensign/completionRecipe.js`
+
+Première recette à mener une demande **jusqu'au bout** : les deux signatures,
+réellement, dans un navigateur.
+
+| Étape | Mesure |
+|---|---|
+| 1 · ouverture | `OPENED`, deux signataires |
+| 2 · certificat avant achèvement | **refusé** — `CERTIFICATE_NOT_PUBLISHED_YET` |
+| 3 · le client ouvre le document | état `VIEWED`, **pas** `SIGNED` |
+| 4 · le développeur signe | `SIGNED` / `VIEWED`, demande `ONGOING` |
+| 5 · le client signe | `SIGNED` / `SIGNED`, demande **`DONE`** |
+| 6 · certificat publié | `application/pdf`, 111 968 o, empreinte cohérente, **diffère** du contrat (51 611 o), aucune adresse transmise |
+| 7 · archivage SB Auto | noms distincts, empreintes distinctes, extension conforme au type |
+
+### 6.6 Une fausse alerte, et la sonde qui l'a levée
+
+La première version de l'étape 3 exigeait l'état `PENDING` et concluait
+« **ordre non imposé** » : le client était passé à `VIEWED` parce qu'il avait
+simplement OUVERT le document. Consulter n'est pas signer — et le lot 1 avait
+déjà mesuré que la lecture est permise avant son tour.
+
+Plutôt que de corriger l'assertion sur parole, `tools/opensign/probeSigningOrder.js`
+va au bout : le client **tente réellement** de signer, en premier.
+
+| Mesure | Résultat |
+|---|---|
+| blocs présents dans le DOM | 2 — mais tous deux à `top: 0; left: 0`, non positionnés |
+| pavé de signature | **ne s'ouvre pas** (aucun `canvas.signatureCanvas`) |
+| états après tentative complète | `DEVELOPER: PENDING`, `CLIENT: VIEWED` |
+| verdict | **l'ordre est imposé** — le client n'a pas pu signer |
+
+C'est l'invariant dont dépend le cycle de vie de SB Auto : le contrat passe en
+`INACTIVE` sur la signature du développeur, puis s'ouvre au client. Si l'ordre
+tombait, l'état métier décrirait une réalité qui n'existe pas.
+
+**Nettoyage** : documents supprimés chez le fournisseur à chaque passage, liens
+d'appartenance retirés, stockage de recette effacé après l'étape 7.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*

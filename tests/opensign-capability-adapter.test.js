@@ -319,14 +319,15 @@ section('6 · L’appartenance porte le fournisseur dès la réservation');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('7 · Le contrat de capacité — cinq codes, un exécutant actif');
+section('7 · Le contrat de capacité — six codes, un exécutant actif');
 /* ══════════════════════════════════════════════════════════════════════════ */
 {
   const codes = ['signature.request.open', 'signature.request.retrieve',
-    'signature.signer.retrieve', 'signature.document.download', 'signature.request.cancel'];
-  check('l’adaptateur OpenSign sert les cinq',
+    'signature.signer.retrieve', 'signature.document.download',
+    'signature.certificate.download', 'signature.request.cancel'];
+  check('l’adaptateur OpenSign sert les six',
     codes.every((c) => typeof OPENSIGN_ADAPTERS[c] === 'function'));
-  check('…et rien de plus', Object.keys(OPENSIGN_ADAPTERS).length === 5);
+  check('…et rien de plus', Object.keys(OPENSIGN_ADAPTERS).length === 6);
 
   /**
    * AUCUNE CAPACITÉ NE PORTE LE NOM D'UN FOURNISSEUR. C'est l'invariant qui a
@@ -341,6 +342,125 @@ section('7 · Le contrat de capacité — cinq codes, un exécutant actif');
     ouverture.inputSchema.safeParse({ ...ENTREE, returnUrl: 'https://x.test/r' }).success);
   check('…et refuse toujours une clé inconnue',
     !ouverture.inputSchema.safeParse({ ...ENTREE, provider: 'OPENSIGN' }).success);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+section('8 · LA PREUVE D’AUDIT — une pièce à part, servie séparément');
+/* ═══════════════════════════════════════════════════════════════════════ */
+{
+  await Binding.deleteMany({});
+  await Binding.collection.insertOne({
+    projectId: 'projet-cert', environment: 'TEST', resourceType: 'REQUEST',
+    provider: 'OPENSIGN', resourceId: 'docAvecCert', documentId: 'docAvecCert',
+    contractRef: 'contrat-cert', source: 'CREATED', createdAt: new Date().toISOString(), closedAt: null,
+  });
+
+  const definition = registre.getCapabilityDefinition('signature.certificate.download');
+  const contexte = { environment: 'TEST', projectId: 'projet-cert' };
+  const credentials = { apiToken: 'jeton-de-test', baseUrl: 'https://sandbox.opensignlabs.com' };
+  const CERTIFICAT = Buffer.from('%PDF-1.7 certificat de recette');
+
+  /**
+   * LE TRANSPORT EST INJECTÉ, ET IL DISTINGUE LES DEUX APPELS.
+   *
+   * Le premier vise l’API (`/document/…`), le second l’URL PRÉ-SIGNÉE du
+   * stockage. C’est cette distinction qui est éprouvée : un adaptateur qui
+   * rendrait l’URL au projet au lieu de la suivre lui-même passerait un test
+   * plus lâche sans qu’on le voie.
+   */
+  const appels = [];
+  const transport = async (url, options) => {
+    appels.push({ url: String(url), methode: options?.method ?? 'GET' });
+    if (String(url).includes('/document/')) {
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/json' },
+        /** Le transport lit `text()` puis parse : le mock rend donc du TEXTE. */
+        text: async () => JSON.stringify({
+          objectId: 'docAvecCert', status: 'completed',
+          file: 'https://stockage.opensignlabs.test/contrat-signe.pdf',
+          certificate: 'https://stockage.opensignlabs.test/certificat.pdf?jeton=abc',
+        }),
+      };
+    }
+    return {
+      ok: true, status: 200,
+      headers: { get: (n) => (String(n).toLowerCase() === 'content-type' ? 'application/pdf' : null) },
+      arrayBuffer: async () => CERTIFICAT.buffer.slice(
+        CERTIFICAT.byteOffset, CERTIFICAT.byteOffset + CERTIFICAT.byteLength,
+      ),
+    };
+  };
+
+  const rendu = await OPENSIGN_ADAPTERS['signature.certificate.download']({
+    definition, context: contexte, credentials,
+    input: { signatureRequestId: 'docAvecCert' }, fetchImpl: transport,
+  });
+
+  check('le certificat est rendu en CONTENU, pas en adresse',
+    rendu.contentBase64 === CERTIFICAT.toString('base64') && !('url' in rendu) && !('certificate' in rendu));
+  check('…avec son empreinte, pour que l’archive soit vérifiable',
+    rendu.sha256 === (await import('node:crypto')).createHash('sha256').update(CERTIFICAT).digest('hex'));
+  check('…et son type déclaré, parce qu’on l’archive pour des années',
+    rendu.contentType === 'application/pdf');
+  check('…sous le nom du fournisseur qui l’a produit', rendu.provider === 'OPENSIGN');
+
+  /**
+   * L’URL PRÉ-SIGNÉE EST SUIVIE PAR LE PANEL, JAMAIS TRANSMISE.
+   *
+   * Elle porte son propre droit d’accès : la remettre au projet contournerait
+   * la preuve d’appartenance, et elle expire — elle deviendrait une référence
+   * morte en archive.
+   */
+  check('le Panel a suivi l’adresse lui-même',
+    appels.length === 2 && appels[1].url.includes('certificat.pdf'));
+  check('…et la sortie ne contient aucune adresse du fournisseur',
+    !JSON.stringify(rendu).includes('stockage.opensignlabs.test'));
+
+  /* ── AVANT L’ACHÈVEMENT, IL N’Y A RIEN À ATTESTER ──────────────────── */
+
+  const sansCertificat = async (url) => {
+    if (String(url).includes('/document/')) {
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify({
+          objectId: 'docAvecCert', status: 'in-progress', file: 'https://x.test/a.pdf',
+        }),
+      };
+    }
+    throw new Error('le stockage ne doit pas être appelé');
+  };
+  let refus = null;
+  try {
+    await OPENSIGN_ADAPTERS['signature.certificate.download']({
+      definition, context: contexte, credentials,
+      input: { signatureRequestId: 'docAvecCert' }, fetchImpl: sansCertificat,
+    });
+  } catch (e) { refus = e; }
+  check('une demande non achevée est refusée EXPLICITEMENT', refus !== null);
+  check('…et le motif dit qu’il faut attendre l’achèvement',
+    refus?.details?.reason === 'CERTIFICATE_NOT_PUBLISHED_YET');
+  check('…plutôt qu’un fichier vide qu’on archiverait comme certificat',
+    refus?.code !== undefined && !('contentBase64' in (refus?.details ?? {})));
+
+  /* ── LE FOURNISSEUR HISTORIQUE RÉPOND, ET IL RÉPOND NON ─────────────── */
+
+  const { YOUSIGN_ADAPTERS } = await import('../backend/src/services/integratedApi/yousign/yousignAdapters.js');
+  check('l’ancien fournisseur sert le MÊME code',
+    typeof YOUSIGN_ADAPTERS['signature.certificate.download'] === 'function');
+  let refusHistorique = null;
+  try {
+    await YOUSIGN_ADAPTERS['signature.certificate.download']({
+      definition, context: contexte, credentials: {}, input: { signatureRequestId: 'ancienne-000001' },
+    });
+  } catch (e) { refusHistorique = e; }
+  check('…par un refus lisible, pas par un plantage',
+    refusHistorique?.details?.reason === 'CERTIFICATE_NOT_SERVED_BY_LEGACY_PROVIDER');
+  check('…qui dit que le contrat signé, lui, reste téléchargeable',
+    /téléchargeable/.test(String(refusHistorique?.message ?? '')));
+
+  await Binding.deleteMany({});
 }
 
 await stopMemoryMongo();
