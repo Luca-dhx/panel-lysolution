@@ -657,7 +657,20 @@ async function runReconciliation({
     return fail(err?.code ?? WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_ERROR, err?.message);
   }
 
-  let { owned, peers, foreign } = partitionRemote(remoteList, binding);
+  /**
+   * L'APPARTENANCE DÉPEND DE CE QUE LE FOURNISSEUR SAIT PORTER.
+   *
+   * Chez Stripe, Brevo et Yousign, elle est prouvée par un jeton écrit dans la
+   * description. OpenSign n'a pas de description : sa preuve est l'URL — la
+   * NÔTRE. On transmet donc les deux éléments dont `classifyOwnership` a besoin
+   * pour choisir la bonne règle, plutôt que de lui faire deviner le fournisseur.
+   */
+  const preuve = {
+    desiredUrl: desired.url,
+    canCarryOwnershipToken: capability.supportsDescription !== false,
+  };
+
+  let { owned, peers, foreign } = partitionRemote(remoteList, binding, preuve);
   outcome.peersLeftAlone = peers.length;
   outcome.foreignLeftAlone = foreign.length;
 
@@ -716,7 +729,7 @@ async function runReconciliation({
         outcome.created = true;
         outcome.secretCaptured = created.secretCaptured;
         secretPresent = created.secretCaptured;
-        if (allowDelete && mayDelete(keeper, binding) && String(keeper.id) !== String(created.id)) {
+        if (allowDelete && mayDelete(keeper, binding, preuve) && String(keeper.id) !== String(created.id)) {
           await adapter.remove(ctx, keeper.id);
           outcome.deleted += 1;
         }
@@ -761,7 +774,7 @@ async function runReconciliation({
     if (outcome.created || outcome.updated || outcome.deleted) {
       verified = await adapter.list(ctx);
     }
-    const after = partitionRemote(verified, { ...binding, remoteWebhookId: null });
+    const after = partitionRemote(verified, { ...binding, remoteWebhookId: null }, preuve);
     const keeper = pickKeeper(after.owned, desired, capability);
 
     // ── 8. RETIRER les doublons — et EUX SEULS ─────────────────────────
@@ -772,7 +785,7 @@ async function runReconciliation({
     if (allowDelete && keeper && computeDrift(keeper, desired, capability).length === 0) {
       for (const extra of after.owned) {
         if (String(extra.id) === String(keeper.id)) continue;
-        if (!mayDelete(extra, binding)) continue; // ceinture et bretelles
+        if (!mayDelete(extra, binding, preuve)) continue; // ceinture et bretelles
         await adapter.remove(ctx, extra.id);
         outcome.deleted += 1;
         logger.info(`[webhooks] ${provider}/${environment} : doublon possédé retiré (${extra.id}).`);

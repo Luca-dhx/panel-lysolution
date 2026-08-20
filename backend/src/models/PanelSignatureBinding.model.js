@@ -78,7 +78,30 @@ const bindingSchema = new mongoose.Schema(
       default: SIGNATURE_RESOURCE_TYPES.REQUEST,
     },
 
-    /** L'identifiant Yousign, tel que Yousign le rend. Jamais normalisé. */
+    /**
+     * QUEL FOURNISSEUR DÉTIENT CETTE DEMANDE.
+     *
+     * ══ POURQUOI CE CHAMP DÉCIDE DE TOUTE LA RETRAITE DE YOUSIGN ═══════════
+     *
+     * Après bascule, deux populations coexistent : les demandes ouvertes chez
+     * OpenSign, et celles — historiques — ouvertes chez Yousign. Les relire,
+     * les annuler ou en télécharger le document exige de savoir À QUI parler.
+     *
+     * Sans ce champ, la seule stratégie possible serait « essayer OpenSign,
+     * puis Yousign ». Elle paraît pragmatique et elle est fausse : sur un
+     * identifiant inconnu du premier, on interrogerait le second avec les
+     * identifiants d'un compte qui ne le connaît pas davantage. Deux refus,
+     * aucune information, la latence doublée — et, le jour où les deux comptes
+     * contiennent un identifiant homographe, une réponse silencieusement
+     * fausse.
+     *
+     * `null` = lien écrit avant l'introduction de ce champ. Les liens
+     * historiques du parc sont TOUS Yousign : c'est ce que la migration
+     * inscrit, une fois, plutôt que de le redeviner à chaque lecture.
+     */
+    provider: { type: String, default: null, index: true },
+
+    /** L'identifiant du fournisseur, tel qu'il le rend. Jamais normalisé. */
     resourceId: { type: String, required: true },
 
     /**

@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ownershipPrefix, ownershipDescription } from './webhookRegistry.js';
+import { sameCallback } from './webhookCallback.js';
 
 export const OWNERSHIP = Object.freeze({
   OWNED: 'OWNED',
@@ -53,10 +54,16 @@ export function mintOwnershipToken() {
 /**
  * Degré d'appartenance d'un endpoint distant.
  *
- * @param {{id: string, description: string}} remote
+ * @param {{id: string, url: string, description: string}} remote
  * @param {{provider: string, environment: string, ownershipToken: string, remoteWebhookId: string|null}} binding
+ * @param {object} [options]
+ * @param {string|null} [options.desiredUrl] la callback de CE Panel
+ * @param {boolean} [options.canCarryOwnershipToken] le fournisseur sait-il
+ *   stocker une description ? `false` change la nature de la preuve — voir plus bas.
  */
-export function classifyOwnership(remote, binding) {
+export function classifyOwnership(remote, binding, {
+  desiredUrl = null, canCarryOwnershipToken = true,
+} = {}) {
   const description = String(remote?.description ?? '');
   const prefix = ownershipPrefix(binding.provider, binding.environment);
 
@@ -65,6 +72,42 @@ export function classifyOwnership(remote, binding) {
   // du fournisseur.
   if (binding.remoteWebhookId && String(remote?.id) === String(binding.remoteWebhookId)) {
     return OWNERSHIP.OWNED;
+  }
+
+  /**
+   * ══ QUAND LE FOURNISSEUR NE SAIT PAS PORTER NOTRE JETON ═══════════════════
+   *
+   * Tout ce qui précède suppose une DESCRIPTION : c'est elle qui transporte le
+   * jeton d'appartenance. OpenSign n'en a pas — son webhook est une URL, seule,
+   * unique par compte. Sans règle propre, aucun endpoint OpenSign ne serait
+   * jamais reconnu comme nôtre, et le plafond d'un endpoint par compte
+   * refuserait ensuite toute création. Le plan de contrôle ne pourrait donc
+   * JAMAIS converger — ni adopter, ni corriger, ni retirer.
+   *
+   * ── POURQUOI L'URL SUFFIT ICI, ET SEULEMENT ICI ───────────────────────────
+   *
+   * L'adresse comparée n'est pas une adresse quelconque : c'est LA CALLBACK DE
+   * CE PANEL, calculée par nous, pointant notre propre hôte et notre propre
+   * segment de fournisseur. Un endpoint qui l'affiche envoie ses événements
+   * chez nous. Un autre Panel a une autre adresse — et s'il avait la même, il
+   * SERAIT nous : même hôte, même route, même destinataire.
+   *
+   * La preuve est donc plus faible qu'un jeton, mais elle est de même nature :
+   * elle établit que retirer ou corriger cet endpoint ne coupe la réception de
+   * personne d'autre. C'est exactement ce que `mayDelete` a besoin de savoir.
+   *
+   * ── ET ELLE RESTE ÉTROITE ─────────────────────────────────────────────────
+   *
+   * Elle ne s'applique QUE si le fournisseur est incapable de porter un jeton,
+   * et QUE sur une égalité d'URL normalisée. Un endpoint OpenSign pointant
+   * ailleurs reste FOREIGN : on ne le touche pas, on ne le compte pas pour
+   * nôtre, et le plafond refusera d'en créer un second — ce qui est le bon
+   * arbitrage, puisqu'on ne peut pas prouver à qui il appartient.
+   */
+  if (!canCarryOwnershipToken) {
+    return desiredUrl && sameCallback(remote?.url, desiredUrl)
+      ? OWNERSHIP.OWNED
+      : OWNERSHIP.FOREIGN;
   }
 
   if (!description.startsWith(prefix)) return OWNERSHIP.FOREIGN;
@@ -90,8 +133,8 @@ export function descriptionFor(binding) {
  * le jour où l'on se demande « qu'est-ce qui a supprimé cet endpoint ». Toute
  * suppression du réconciliateur passe par ici.
  */
-export function mayDelete(remote, binding) {
-  return classifyOwnership(remote, binding) === OWNERSHIP.OWNED;
+export function mayDelete(remote, binding, options = {}) {
+  return classifyOwnership(remote, binding, options) === OWNERSHIP.OWNED;
 }
 
 /**
@@ -101,12 +144,12 @@ export function mayDelete(remote, binding) {
  * création et la persistance de l'identifiant. Le réconciliateur en garde un
  * et ne retire les autres qu'après avoir vérifié que le survivant est conforme.
  */
-export function partitionRemote(remoteList, binding) {
+export function partitionRemote(remoteList, binding, options = {}) {
   const owned = [];
   const peers = [];
   const foreign = [];
   for (const remote of remoteList ?? []) {
-    const verdict = classifyOwnership(remote, binding);
+    const verdict = classifyOwnership(remote, binding, options);
     if (verdict === OWNERSHIP.OWNED) owned.push(remote);
     else if (verdict === OWNERSHIP.PANEL_PEER) peers.push(remote);
     else foreign.push(remote);

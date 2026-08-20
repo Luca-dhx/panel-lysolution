@@ -29,7 +29,7 @@
 import { createHash } from 'node:crypto';
 import logger from '../../utils/logger.js';
 import { emitChange } from '../sync/syncCore.service.js';
-import { findBinding, closeBinding, maskResourceId } from '../integratedApi/yousign/signatureOwnership.js';
+import { findBinding, closeBinding, maskResourceId } from '../integratedApi/signature/signatureOwnership.js';
 
 /** Type d'entité du journal durable — le projet s'y abonne. */
 export const SIGNATURE_ENTITY_TYPE = 'SIGNATURE_EVENT';

@@ -1,6 +1,19 @@
-// APPARTENANCE D'UNE SIGNATURE — « cette demande est-elle à ce projet ? » (R10.5C).
+// APPARTENANCE D'UNE SIGNATURE — « cette demande est-elle à ce projet ? »
 //
-// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §4.
+// docs/R10_5_FINAL_EMAIL_AND_YOUSIGN_CONTROL_PLANE_REPORT.md §4, puis
+// docs/integrated-api/OPENSIGN_MIGRATION_CAMPAIGN.md (neutralisation).
+//
+// ══ CE MODULE NE CONNAÎT AUCUN FOURNISSEUR ══════════════════════════════════
+//
+// Il vivait sous `integratedApi/yousign/` et n'y avait rien à faire : ce qu'il
+// garde — un contrat, un projet, une demande vivante à la fois — est une règle
+// MÉTIER, vraie quel que soit celui qui signe. Le laisser là aurait obligé
+// l'adaptateur OpenSign à importer depuis le dossier de son prédécesseur, ce
+// qui fait exactement croire l'inverse de ce qui est vrai.
+//
+// Il RETIENT en revanche QUEL fournisseur détient chaque demande. Ce n'est pas
+// une connaissance du fournisseur : c'est le fait sans lequel un contrat
+// historique deviendrait illisible après la bascule.
 //
 // ══ LE PIÈGE QUE CE MODULE FERME ════════════════════════════════════════════
 //
@@ -45,12 +58,17 @@ export const SIGNATURE_OWNERSHIP_CODES = Object.freeze({
 });
 
 /**
- * Un identifiant Yousign plausible.
+ * Un identifiant de demande plausible.
  *
- * Volontairement large : Yousign rend des UUID, et se montrer plus précis que
- * le fournisseur ferait échouer un appel légitime le jour où sa forme change.
- * Le rôle de ce contrôle n'est pas d'authentifier — c'est le lien qui le fait —
- * mais d'écarter une chaîne vide ou manifestement absurde avant la base.
+ * Volontairement large : Yousign rend des UUID, OpenSign des chaînes courtes de
+ * dix caractères, et se montrer plus précis qu'un fournisseur ferait échouer un
+ * appel légitime le jour où sa forme change. Le rôle de ce contrôle n'est pas
+ * d'authentifier — c'est le lien qui le fait — mais d'écarter une chaîne vide
+ * ou manifestement absurde avant la base.
+ *
+ * ⚠️ La borne basse est de 8 caractères. Les identifiants OpenSign en font 10 :
+ * la marge est étroite, et c'est pour cela qu'elle est écrite ici plutôt que
+ * découverte le jour où un fournisseur en rendra de plus courts.
  */
 const RESOURCE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{7,63}$/;
 
@@ -93,7 +111,7 @@ export function maskResourceId(resourceId) {
  *   `claimed: false` ⇒ une demande vivante existait déjà pour ce contrat.
  */
 export async function claimSignatureRequest({
-  projectId, environment, contractRef, operationId,
+  projectId, environment, contractRef, operationId, provider = null,
 }) {
   const existing = await PanelSignatureBinding.findOne({
     projectId, environment, contractRef, closedAt: null,
@@ -106,13 +124,25 @@ export async function claimSignatureRequest({
       environment,
       resourceType: SIGNATURE_RESOURCE_TYPES.REQUEST,
       /**
-       * L'identifiant Yousign n'existe PAS encore — il naîtra de l'appel. On
-       * pose une valeur de réservation dérivée de l'opération : elle occupe la
-       * place, respecte l'unicité, et sera remplacée à l'acceptation.
+       * LE FOURNISSEUR EST ÉCRIT AVANT L'APPEL, comme le reste du lien.
+       *
+       * C'est lui qui permettra, plus tard, de servir une demande HISTORIQUE
+       * sans jamais essayer un fournisseur puis l'autre. « Essayer OpenSign,
+       * sinon Yousign » paraîtrait pragmatique et serait faux : sur un
+       * identifiant inconnu du premier, on interrogerait le second avec les
+       * identifiants d'un compte qui ne le connaît pas davantage — deux refus,
+       * aucune information, et une latence doublée.
+       */
+      provider,
+      /**
+       * L'identifiant du fournisseur n'existe PAS encore — il naîtra de
+       * l'appel. On pose une valeur de réservation dérivée de l'opération :
+       * elle occupe la place, respecte l'unicité, et sera remplacée à
+       * l'acceptation.
        *
        * Sans elle, il faudrait écrire le lien APRÈS l'appel — et la fenêtre
        * entre l'appel et l'écriture est exactement celle où un crash laisse une
-       * demande Yousign sans propriétaire connu.
+       * demande sans propriétaire connu.
        */
       resourceId: `pending:${operationId}`,
       contractRef,
@@ -132,7 +162,7 @@ export async function claimSignatureRequest({
 }
 
 /**
- * Attache l'identifiant RÉEL rendu par Yousign à une réservation.
+ * Attache l'identifiant RÉEL rendu par le fournisseur à une réservation.
  *
  * Appelé une fois l'appel accepté. C'est le moment où la réservation devient un
  * lien véritable, et où le webhook pourra retrouver le projet.

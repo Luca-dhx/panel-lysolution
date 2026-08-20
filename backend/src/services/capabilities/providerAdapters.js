@@ -35,6 +35,7 @@ import {
 import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
 import { STRIPE_ADAPTERS } from '../integratedApi/stripe/stripeAdapters.js';
 import { YOUSIGN_ADAPTERS } from '../integratedApi/yousign/yousignAdapters.js';
+import { OPENSIGN_ADAPTERS } from '../integratedApi/opensign/openSignAdapters.js';
 import { brevoSendTemplate } from './brevoSendAdapter.js';
 import {
   CAPABILITY_ERROR_CODES,
@@ -183,17 +184,66 @@ const ADAPTERS = Object.freeze({
    */
   ...STRIPE_ADAPTERS,
   /**
-   * YOUSIGN — cinq actes métier, servis depuis R10.5C.
+   * LA SIGNATURE — CINQ ACTES, DEUX EXÉCUTANTS POSSIBLES.
    *
-   * Hors de ce fichier pour la même raison que les autres : ils traduisent
-   * leurs PROPRES refus. Le traducteur générique ci-dessus ne connaît que
-   * Brevo — une YousignTransportError y tomberait dans « erreur non typée » et
-   * ressortirait en PROVIDER_UNAVAILABLE, c'est-à-dire en « rien ne s'est
-   * passé ». Sur une demande de signature interrompue, c'est faux, et c'est
-   * exactement l’affirmation qui pousse à solliciter deux fois un signataire.
+   * ══ POURQUOI UN AIGUILLEUR PLUTÔT QUE DEUX ENTRÉES ═══════════════════════
+   *
+   * `assertAdapterAlignment()` exige une bijection stricte entre les codes du
+   * registre et ceux de cette table. Un domaine à deux fournisseurs ne peut
+   * donc pas y figurer deux fois — et c'est heureux : deux entrées pour
+   * `signature.request.open` poseraient la question « laquelle gagne ? » à un
+   * endroit où personne ne saurait y répondre.
+   *
+   * Une entrée par code, donc, et l'aiguillage à l'intérieur — sur le
+   * fournisseur que la passerelle a DÉJÀ résolu et dont elle a ouvert le
+   * coffre. L'aiguilleur ne décide rien : il obéit.
    */
-  ...YOUSIGN_ADAPTERS,
+  ...signatureAdapters(),
 });
+
+/**
+ * Construit les cinq entrées de signature, chacune aiguillant sur l'exécutant
+ * effectif.
+ *
+ * ── CE QUI EST VÉRIFIÉ ICI, ET POURQUOI CE N'EST PAS DE LA PARANOÏA ────────
+ *
+ * Les deux tables doivent couvrir exactement les mêmes codes. Si l'une en
+ * perdait un, l'aiguilleur recevrait `undefined` et lèverait une exception nue
+ * au moment de l'appel — c'est-à-dire au pire moment, avec le pire message. Le
+ * contrôle a lieu au chargement du module.
+ */
+function signatureAdapters() {
+  const parFournisseur = Object.freeze({
+    YOUSIGN: YOUSIGN_ADAPTERS,
+    OPENSIGN: OPENSIGN_ADAPTERS,
+  });
+
+  const codes = Object.keys(OPENSIGN_ADAPTERS);
+  const manquants = Object.entries(parFournisseur)
+    .flatMap(([code, table]) => codes.filter((c) => !table[c]).map((c) => `${code}:${c}`));
+  if (manquants.length) {
+    throw new Error(
+      `Adaptateurs de signature incomplets — ${manquants.join(', ')}. `
+      + 'Un domaine à plusieurs fournisseurs exige que chacun serve TOUS les actes : '
+      + 'un acte manquant ne se découvrirait qu’à l’exécution, sur un contrat réel.',
+    );
+  }
+
+  return Object.fromEntries(codes.map((code) => [code, async (args) => {
+    const provider = String(args?.definition?.provider ?? '').toUpperCase();
+    const table = parFournisseur[provider];
+    if (!table) {
+      /**
+       * AUCUN REPLI. Un fournisseur inconnu pour un acte de signature signifie
+       * que le lien d'appartenance porte une valeur qu'on ne sait pas servir.
+       * Choisir « le plus probable » enverrait l'identifiant d'un contrat chez
+       * un fournisseur qui ne le connaît pas — avec les identifiants du Panel.
+       */
+      throw capabilityNotAvailable(code, `NO_SIGNATURE_ADAPTER_FOR_${provider || 'UNKNOWN'}`);
+    }
+    return table[code](args);
+  }]));
+}
 
 export function hasAdapter(code) {
   return Object.hasOwn(ADAPTERS, String(code));

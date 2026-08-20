@@ -36,6 +36,8 @@ const validation = await import('../backend/src/services/integratedApi/providerV
 const webhookRegistry = await import('../backend/src/services/webhooks/webhookRegistry.js');
 const webhookSignature = await import('../backend/src/services/webhooks/webhookSignature.js');
 const webhookAdapters = await import('../backend/src/services/webhooks/providerWebhookAdapters.js');
+const ownership = await import('../backend/src/services/webhooks/webhookOwnership.js');
+const routing = await import('../backend/src/services/integratedApi/signature/signatureProviderRouting.js');
 const capabilityRegistry = await import('../backend/src/services/capabilities/capabilityRegistry.js');
 const vault = await import('../backend/src/services/integratedApi/credentialVault.js');
 
@@ -827,35 +829,140 @@ section('19 · Le pilote distant — une ressource SINGLETON, sans tricherie');
   check('supprimer ce qui n’existe plus n’est pas une erreur', leveSurVide === false);
 }
 
+section('19b · L’appartenance d’un webhook SANS description');
+{
+  /**
+   * ══ LE BLOCAGE QUE CETTE RÈGLE DÉNOUE ═════════════════════════════════════
+   *
+   * L'appartenance d'un endpoint se prouve normalement par un JETON écrit dans
+   * sa description. OpenSign n'a pas de description : son webhook est une URL,
+   * seule, unique par compte.
+   *
+   * Sans règle propre, AUCUN endpoint OpenSign n'est jamais reconnu comme nôtre.
+   * Le plafond d'un endpoint par compte refuse alors toute création, et le plan
+   * de contrôle ne converge JAMAIS : ni adoption, ni correction, ni retrait.
+   * C'est un blocage définitif, pas une gêne.
+   */
+  const binding = {
+    provider: 'OPENSIGN', environment: 'TEST',
+    ownershipToken: 'jeton-de-ce-panel', remoteWebhookId: null,
+  };
+  const NOTRE = 'https://api.panel.test/webhooks/providers/opensign';
+  const sansJeton = { desiredUrl: NOTRE, canCarryOwnershipToken: false };
+
+  check('l’endpoint qui porte NOTRE callback est reconnu comme nôtre',
+    ownership.classifyOwnership({ id: NOTRE, url: NOTRE, description: '' }, binding, sansJeton)
+    === ownership.OWNERSHIP.OWNED);
+
+  /**
+   * ET LA RÈGLE RESTE ÉTROITE : une autre adresse reste étrangère. C'est ce qui
+   * empêche d'écraser le webhook d'un autre Panel — sur une ressource unique
+   * par compte, l'écraser couperait sa réception sans qu'il en soit averti.
+   */
+  check('un endpoint pointant AILLEURS reste étranger',
+    ownership.classifyOwnership(
+      { id: 'x', url: 'https://api.autre-panel.test/webhooks/providers/opensign', description: '' },
+      binding, sansJeton,
+    ) === ownership.OWNERSHIP.FOREIGN);
+  check('…et il est donc INTOUCHABLE',
+    ownership.mayDelete(
+      { id: 'x', url: 'https://api.autre-panel.test/webhooks/providers/opensign', description: '' },
+      binding, sansJeton,
+    ) === false);
+
+  check('une URL absente ne prouve rien',
+    ownership.classifyOwnership({ id: 'x', url: '', description: '' }, binding, sansJeton)
+    === ownership.OWNERSHIP.FOREIGN);
+
+  /**
+   * LA RÈGLE NE DÉBORDE PAS SUR LES AUTRES FOURNISSEURS. Chez eux, la preuve
+   * reste le jeton : une simple égalité d'URL ne doit RIEN donner, sans quoi on
+   * aurait affaibli Stripe et Yousign pour arranger OpenSign.
+   */
+  check('chez un fournisseur à description, l’URL seule ne prouve rien',
+    ownership.classifyOwnership(
+      { id: 'we_1', url: NOTRE, description: '' }, binding,
+      { desiredUrl: NOTRE, canCarryOwnershipToken: true },
+    ) === ownership.OWNERSHIP.FOREIGN);
+  check('…et le jeton, lui, prouve toujours',
+    ownership.classifyOwnership(
+      { id: 'we_1', url: NOTRE, description: 'PANEL_CONTROL_PLANE_OPENSIGN_TEST#jeton-de-ce-panel' },
+      binding, { desiredUrl: NOTRE, canCarryOwnershipToken: true },
+    ) === ownership.OWNERSHIP.OWNED);
+
+  /** L'identifiant persisté reste la preuve la plus forte, quel que soit le cas. */
+  check('l’identifiant persisté prime sur tout le reste',
+    ownership.classifyOwnership(
+      { id: 'deja-connu', url: 'https://ailleurs.test/x', description: '' },
+      { ...binding, remoteWebhookId: 'deja-connu' }, sansJeton,
+    ) === ownership.OWNERSHIP.OWNED);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  20. L'INVARIANT DE COEXISTENCE                                            */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-section('20 · YOUSIGN reste l’autorité — rien n’a basculé');
+section('20 · LA BASCULE — OpenSign sert, Yousign reste lisible');
 {
-  for (const code of getProviderDefinition('OPENSIGN').capabilities) {
-    check(`« ${code} » est encore exécutée par YOUSIGN`,
-      capabilityRegistry.getCapabilityDefinition(code)?.provider === 'YOUSIGN');
-  }
-  check('le registre ne confie AUCUNE capacité à OPENSIGN',
-    capabilityRegistry.capabilitiesForProvider('OPENSIGN').length === 0);
   /**
-   * L'ÉCART EST L'ÉTAT DE LA MIGRATION, et il est lisible : OpenSign DÉCLARE
-   * ses cinq capacités cibles, le registre n'en sert aucune. Le jour où le
-   * sélecteur basculera, ces deux contrôles tomberont ensemble — et c'est
-   * exactement ce qu'on veut d'un garde-fou de migration.
+   * ══ CE QUE CETTE SECTION GARDE, MAINTENANT QUE LA BASCULE A EU LIEU ═══════
+   *
+   * Elle gardait « rien n'a basculé ». C'était le bon invariant tant que la
+   * migration n'était pas décidée ; le conserver après la bascule aurait fait
+   * échouer la suite sur le succès de son propre objet.
+   *
+   * Ce qu'elle garde désormais est plus dur : la bascule est FAITE et
+   * RÉVERSIBLE PAR LECTURE — les nouvelles demandes partent chez OpenSign, et
+   * les demandes historiques restent servies par celui qui les détient.
    */
-  check('…alors qu’il en déclare cinq',
-    getProviderDefinition('OPENSIGN').capabilities.length === 5);
+  for (const code of getProviderDefinition('OPENSIGN').capabilities) {
+    check(`« ${code} » est exécutée par OPENSIGN`,
+      capabilityRegistry.getCapabilityDefinition(code)?.provider === 'OPENSIGN');
+  }
+  check('OPENSIGN sert bien les cinq capacités de signature',
+    capabilityRegistry.capabilitiesForProvider('OPENSIGN').length === 5);
+
+  /**
+   * YOUSIGN N'A RIEN PERDU DE CE QU'IL SAIT FAIRE.
+   *
+   * Le registre des capacités ne lui confie plus rien par DÉFAUT — mais le
+   * registre des fournisseurs continue de déclarer les cinq codes, et sa table
+   * d'adaptateurs continue de les servir. C'est ce qui rend un contrat signé
+   * l'an dernier encore relisible aujourd'hui.
+   */
+  check('YOUSIGN déclare toujours les cinq codes de signature',
+    getProviderDefinition('YOUSIGN').capabilities.length === 5);
+  check('…et le registre ne lui en confie plus par défaut',
+    capabilityRegistry.capabilitiesForProvider('YOUSIGN').length === 0);
+
+  /**
+   * L'AIGUILLAGE EXISTE, ET IL EST EXPLICITE.
+   *
+   * Sans lui, il n'y aurait que deux issues : renoncer aux contrats
+   * historiques, ou essayer les fournisseurs l'un après l'autre — c'est-à-dire
+   * envoyer l'identifiant d'un contrat chez un fournisseur qui ne le connaît
+   * pas, avec les identifiants du Panel.
+   */
+  check('le fournisseur ACTIF est OPENSIGN', routing.ACTIVE_SIGNATURE_PROVIDER === 'OPENSIGN');
+  check('les liens antérieurs au champ « provider » sont YOUSIGN',
+    routing.LEGACY_SIGNATURE_PROVIDER === 'YOUSIGN');
+  for (const code of ['signature.request.retrieve', 'signature.signer.retrieve',
+    'signature.document.download', 'signature.request.cancel']) {
+    check(`« ${code} » résout son exécutant depuis la demande`,
+      typeof capabilityRegistry.getCapabilityDefinition(code).resolveProvider === 'function');
+  }
+  check('« signature.request.open » n’a AUCUN aiguillage : une nouvelle demande n’a pas d’histoire',
+    capabilityRegistry.getCapabilityDefinition('signature.request.open').resolveProvider === null);
+
+  /** L'ouverture n'a pas d'identifiant : l'aiguilleur rend le fournisseur actif. */
+  check('sans demande nommée, l’aiguilleur rend l’ACTIF',
+    await routing.resolveSignatureProvider({ environment: 'TEST' }, {}) === 'OPENSIGN');
+
   check('le registre des capacités reste cohérent',
     capabilityRegistry.assertRegistryAlignment().length === 0);
-  check('YOUSIGN garde ses cinq capacités servies',
-    capabilityRegistry.capabilitiesForProvider('YOUSIGN').length === 5);
   check('les hôtes Yousign n’ont pas bougé',
     defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === 'https://api-sandbox.yousign.app/v3'
     && defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === 'https://api.yousign.app/v3');
-  check('le webhook Yousign garde son schéma et son en-tête',
-    webhookRegistry.webhookCapability('YOUSIGN').signatureHeader === 'x-yousign-signature');
   check('les deux fournisseurs ont des segments de callback DISTINCTS',
     webhookRegistry.webhookCapability('YOUSIGN').callbackSlug !== webhookRegistry.webhookCapability('OPENSIGN').callbackSlug);
 }

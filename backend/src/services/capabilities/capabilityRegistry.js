@@ -33,7 +33,15 @@
 // exige de chacune un exécutant, et le contrôle échoue si l'un manque.
 import { z } from 'zod';
 
-import { MAX_DOCUMENT_BASE64_LENGTH } from '../integratedApi/yousign/signatureDocumentLimits.js';
+import { MAX_DOCUMENT_BASE64_LENGTH } from '../integratedApi/signature/signatureDocumentLimits.js';
+import {
+  ACTIVE_SIGNATURE_PROVIDER,
+  resolveSignatureProvider,
+} from '../integratedApi/signature/signatureProviderRouting.js';
+import {
+  SIGNATURE_REQUEST_STATE_VALUES,
+  SIGNER_STATE_VALUES,
+} from '../integratedApi/signature/signatureVocabulary.js';
 
 import { getProviderDefinition, listProviderDefinitions } from '../integratedApi/providerRegistry.js';
 import { BREVO_CAPABILITY_CODES } from '../integratedApi/brevo/brevoCapabilities.js';
@@ -251,11 +259,53 @@ const signatureRequestOpenInput = z.object({
   /** L'ORDRE du tableau EST l'ordre de signature. */
   signers: z.array(signerSchema).min(1).max(4),
   fields: z.array(signatureFieldSchema).min(1).max(40),
+  /**
+   * L'URL DE RETOUR — UNE, POUR LA DEMANDE ENTIÈRE.
+   *
+   * ══ POURQUOI CE CHAMP APPARAÎT ═════════════════════════════════════════
+   *
+   * `signers[].redirectUrls` portait trois URL PAR SIGNATAIRE (succès, erreur,
+   * refus) parce que Yousign les acceptait. C'était une forme de fournisseur
+   * qui s'était installée dans le contrat générique.
+   *
+   * Aucun fournisseur ne garantit cette finesse : OpenSign n'accepte qu'une
+   * seule adresse, pour tout le document, et n'y ajoute aucun paramètre
+   * (mesuré). Le contrat générique décrit donc ce qui est réellement portable,
+   * et l'ancien champ reste accepté le temps que les projets migrent.
+   *
+   * ── ET L'ISSUE NE VOYAGE PAS DANS L'URL ────────────────────────────────
+   *
+   * Elle se lit dans l'état du contrat, jamais dans un paramètre que le
+   * signataire contrôle. C'était déjà la règle des pages de retour de SB Auto ;
+   * elle devient ici une nécessité.
+   */
+  returnUrl: z.string().url().max(500).optional(),
   operationId: z.string().trim().min(8).max(64),
 }).strict();
 
+/**
+ * ══ LE PROJET LIT UN VOCABULAIRE, PAS CELUI D'UN FOURNISSEUR ═══════════════
+ *
+ * Chaque sortie de signature porte désormais trois choses de plus, et chacune
+ * ferme un défaut précis :
+ *
+ *   `provider`  QUI a servi l'acte. Sans lui, un projet ne peut pas distinguer
+ *               un contrat historique d'un contrat récent, et le support ne
+ *               peut pas savoir chez qui aller regarder.
+ *
+ *   `state`     l'état en vocabulaire NEUTRE. Jusqu'ici le Panel rendait le
+ *               `status` du fournisseur tel quel — `ongoing`, `done` — et c'est
+ *               le PROJET qui traduisait. Avec deux fournisseurs, ce projet lit
+ *               « inconnu » sur chaque état d'OpenSign : sans erreur, sans
+ *               journal, le contrat resterait « en cours » pour toujours.
+ *
+ *   `status`    la chaîne BRUTE, conservée. Elle ne sert plus à décider, mais
+ *               elle reste la seule façon de comprendre, six mois plus tard,
+ *               ce que le fournisseur avait réellement répondu.
+ */
 const signatureRequestOpenOutput = z.object({
   status: z.enum(['OPENED', 'ALREADY_OPEN']),
+  provider: z.string(),
   signatureRequestId: z.string().nullable(),
   documentId: z.string().nullable(),
   contractRef: z.string(),
@@ -273,9 +323,14 @@ const signatureRequestRefInput = z.object({
 
 const signatureRequestRetrieveOutput = z.object({
   signatureRequestId: z.string(),
+  provider: z.string(),
+  state: z.enum(SIGNATURE_REQUEST_STATE_VALUES),
   status: z.string().nullable(),
   signers: z.array(z.object({
     signerId: z.string(),
+    /** Le rôle métier tel que l'ouverture l'a déclaré, quand le fournisseur le rend. */
+    role: z.string().nullable().optional(),
+    state: z.enum(SIGNER_STATE_VALUES),
     status: z.string().nullable(),
   }).strict()),
 }).strict();
@@ -288,6 +343,8 @@ const signatureSignerRetrieveInput = z.object({
 
 const signatureSignerRetrieveOutput = z.object({
   signerId: z.string(),
+  provider: z.string(),
+  state: z.enum(SIGNER_STATE_VALUES),
   status: z.string().nullable(),
   signatureLink: z.string().nullable(),
 }).strict();
@@ -299,6 +356,16 @@ const signatureDocumentDownloadOutput = z.object({
   byteLength: z.number().int(),
   /** L'empreinte accompagne le contenu : le projet vérifie ce qu'il a reçu. */
   sha256: z.string(),
+  provider: z.string(),
+  /**
+   * LE CERTIFICAT EXISTE-T-IL ? — un booléen, jamais une URL.
+   *
+   * OpenSign publie une piste d'audit signée dès qu'un document est achevé.
+   * Yousign n'en rendait pas par cette voie. L'annoncer permet à l'appelant de
+   * savoir qu'il peut la demander ; lui remettre l'URL lui donnerait un droit
+   * d'accès qui contourne la preuve d'appartenance.
+   */
+  certificateAvailable: z.boolean().optional(),
 }).strict();
 
 const signatureRequestCancelInput = z.object({
@@ -309,6 +376,8 @@ const signatureRequestCancelInput = z.object({
 
 const signatureRequestCancelOutput = z.object({
   signatureRequestId: z.string(),
+  provider: z.string(),
+  state: z.enum(SIGNATURE_REQUEST_STATE_VALUES),
   status: z.literal('CANCELED'),
 }).strict();
 
@@ -436,6 +505,53 @@ function capability(code, options) {
      * `null` = le projet nomme l'acte, comme partout ailleurs.
      */
     deriveOperationId: options.deriveOperationId ?? null,
+    /**
+     * L'EXÉCUTANT RÉEL, QUAND IL DÉPEND DE LA RESSOURCE VISÉE.
+     *
+     * ══ POURQUOI CE CROCHET EXISTE ═════════════════════════════════════════
+     *
+     * `provider` ci-dessus dit qui SERT CETTE CAPACITÉ. C'était suffisant tant
+     * qu'un domaine n'avait qu'un fournisseur pour toujours.
+     *
+     * La signature en a deux, et durablement : les nouvelles demandes partent
+     * chez le fournisseur actif, les demandes HISTORIQUES restent chez celui
+     * qui les détient — un contrat signé doit rester relisible aussi longtemps
+     * qu'il a une valeur juridique.
+     *
+     * Sans crochet, il n'y aurait que deux issues, toutes deux mauvaises :
+     * renoncer à lire les contrats historiques, ou faire essayer les
+     * fournisseurs l'un après l'autre — c'est-à-dire envoyer un identifiant
+     * étranger à un fournisseur réel, avec les identifiants du Panel.
+     *
+     * ── CE QU'IL PEUT, ET CE QU'IL NE PEUT PAS ─────────────────────────────
+     *
+     * Il rend un CODE de fournisseur, et rien d'autre. Il n'ouvre aucun coffre,
+     * ne choisit aucun environnement, et n'autorise rien : la passerelle
+     * résout ensuite les identifiants de ce fournisseur par la porte unique,
+     * exactement comme si le registre l'avait déclaré.
+     *
+     * `null` = l'exécutant est celui du registre, quoi qu'il arrive.
+     */
+    resolveProvider: options.resolveProvider ?? null,
+    /**
+     * LE REJEU D'UN ACTE DÉJÀ RÉUSSI SE RECONSTITUE-T-IL PAR RÉEXÉCUTION ?
+     *
+     * `false` (le défaut) : la passerelle rend une mémoïsation générique,
+     * `{status: 'ALREADY_SENT', …}`. C'est le contrat des envois, et il est
+     * correct pour eux — un e-mail rejoué ne peut pas rendre un message qu'on
+     * n'a pas conservé, et le conserver serait garder une donnée personnelle
+     * sans usage.
+     *
+     * `true` : l'adaptateur est réexécuté. Réservé aux capacités dont
+     * l'exécutant COMMENCE par chercher ce que l'acte a déjà produit, et le
+     * rend sans contacter le fournisseur. L'ouverture de signature en est une :
+     * elle interroge le lien d'appartenance, et l'index « une demande vivante
+     * par contrat » lui interdit d'en créer une seconde.
+     *
+     * Sans ce drapeau, un second clic rendait au projet un objet auquel il
+     * manquait l'identifiant de la demande et les liens des signataires.
+     */
+    replayByReexecution: options.replayByReexecution === true,
   });
 }
 
@@ -753,18 +869,37 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     correlationField: 'refundId',
   }),
 
-  /* ── Yousign — SERVIES (R10.5C) ─────────────────────────────────────────── */
+  /* ── Signature — SERVIES par le fournisseur ACTIF ───────────────────────── */
+  //
+  // ══ LE NOM NE PORTE AUCUN FOURNISSEUR, ET C'EST TOUT L'ENJEU ══════════════
+  //
+  // Ces cinq codes n'ont pas changé en passant de Yousign à OpenSign. C'est ce
+  // qui a rendu la bascule invisible depuis les projets : SB Auto appelle
+  // `signature.request.open` et n'apprend jamais qui l'exécute.
+  //
+  // ══ DEUX FOURNISSEURS, ET L'AIGUILLAGE EST EXPLICITE ══════════════════════
+  //
+  // `provider` déclare l'exécutant par DÉFAUT — celui des nouvelles demandes.
+  // `resolveProvider` le remplace quand l'entrée nomme une demande EXISTANTE :
+  // elle est alors servie par celui qui la détient, lu sur son lien
+  // d'appartenance. Jamais deviné, jamais essayé en cascade.
 
   /**
-   * OUVRIR UNE SIGNATURE — un acte, cinq appels.
+   * OUVRIR UNE SIGNATURE — un acte.
    *
    * Elle remplace `signature.request.create` : le nom `create` laissait croire
    * à un acte élémentaire qu'on compléterait ensuite, et c'est cette lecture
    * qui aurait fait exposer six capacités — donc laissé un projet capable de
    * s'arrêter au milieu d'une préparation.
+   *
+   * ── ELLE N'A QU'UN EXÉCUTANT POSSIBLE ────────────────────────────────────
+   *
+   * Une NOUVELLE demande n'a pas d'histoire : elle part chez le fournisseur
+   * actif, et nulle part ailleurs. Pas de `resolveProvider` ici — il n'y a rien
+   * à résoudre, et en écrire un laisserait croire le contraire.
    */
   'signature.request.open': capability('signature.request.open', {
-    provider: 'YOUSIGN',
+    provider: ACTIVE_SIGNATURE_PROVIDER,
     label: 'Ouvrir une demande de signature',
     inputSchema: signatureRequestOpenInput,
     outputSchema: signatureRequestOpenOutput,
@@ -777,11 +912,22 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
      * vivante par contrat ».
      */
     idempotency: IDEMPOTENCY.UNKNOWN_ON_TIMEOUT,
+    /**
+     * UN SECOND CLIC DOIT RENDRE LA DEMANDE, PAS UN ACCUSÉ DE RÉCEPTION.
+     *
+     * L'adaptateur cherche d'abord le lien d'appartenance : s'il trouve une
+     * demande vivante pour ce contrat, il la rend telle quelle, sans appeler le
+     * fournisseur ni débiter de crédit. Le contrat de sortie est donc tenu dans
+     * les deux cas — `OPENED` la première fois, `ALREADY_OPEN` ensuite.
+     */
+    replayByReexecution: true,
     requiredPermissions: [PERMISSIONS.SIGNATURE_WRITE],
     correlationField: 'signatureRequestId',
   }),
   'signature.request.retrieve': capability('signature.request.retrieve', {
-    provider: 'YOUSIGN',
+    provider: ACTIVE_SIGNATURE_PROVIDER,
+    /** La demande est servie par CELUI QUI LA DÉTIENT — voir `resolveProvider`. */
+    resolveProvider: resolveSignatureProvider,
     label: 'Lire l’état d’une demande de signature',
     inputSchema: signatureRequestRefInput,
     outputSchema: signatureRequestRetrieveOutput,
@@ -790,7 +936,9 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
   }),
   'signature.signer.retrieve': capability('signature.signer.retrieve', {
-    provider: 'YOUSIGN',
+    provider: ACTIVE_SIGNATURE_PROVIDER,
+    /** La demande est servie par CELUI QUI LA DÉTIENT — voir `resolveProvider`. */
+    resolveProvider: resolveSignatureProvider,
     label: 'Lire le lien de signature d’un signataire',
     inputSchema: signatureSignerRetrieveInput,
     outputSchema: signatureSignerRetrieveOutput,
@@ -799,7 +947,9 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
   }),
   'signature.document.download': capability('signature.document.download', {
-    provider: 'YOUSIGN',
+    provider: ACTIVE_SIGNATURE_PROVIDER,
+    /** La demande est servie par CELUI QUI LA DÉTIENT — voir `resolveProvider`. */
+    resolveProvider: resolveSignatureProvider,
     label: 'Télécharger un document signé',
     inputSchema: signatureRequestRefInput,
     outputSchema: signatureDocumentDownloadOutput,
@@ -808,7 +958,9 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     requiredPermissions: [PERMISSIONS.SIGNATURE_READ],
   }),
   'signature.request.cancel': capability('signature.request.cancel', {
-    provider: 'YOUSIGN',
+    provider: ACTIVE_SIGNATURE_PROVIDER,
+    /** La demande est servie par CELUI QUI LA DÉTIENT — voir `resolveProvider`. */
+    resolveProvider: resolveSignatureProvider,
     label: 'Annuler une demande de signature',
     inputSchema: signatureRequestCancelInput,
     outputSchema: signatureRequestCancelOutput,

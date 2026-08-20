@@ -25,9 +25,9 @@ setTestEnv();
 await startMemoryMongo();
 await connectTestDatabase();
 
-const limits = await import('../backend/src/services/integratedApi/yousign/signatureDocumentLimits.js');
-const ownership = await import('../backend/src/services/integratedApi/yousign/signatureOwnership.js');
-const reservations = await import('../backend/src/services/integratedApi/yousign/signatureReservations.service.js');
+const limits = await import('../backend/src/services/integratedApi/signature/signatureDocumentLimits.js');
+const ownership = await import('../backend/src/services/integratedApi/signature/signatureOwnership.js');
+const reservations = await import('../backend/src/services/integratedApi/signature/signatureReservations.service.js');
 const { default: PanelSignatureBinding } = await import('../backend/src/models/PanelSignatureBinding.model.js');
 const { PanelEvent } = await import('../backend/src/models/PanelSupervision.model.js');
 

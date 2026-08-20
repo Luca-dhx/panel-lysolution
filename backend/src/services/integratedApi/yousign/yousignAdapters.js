@@ -51,12 +51,26 @@ import {
   closeBinding,
   describeOwnership,
   maskResourceId,
-} from './signatureOwnership.js';
+} from '../signature/signatureOwnership.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
 } from '../../capabilities/capabilityErrors.js';
-import { checkDocumentSize } from './signatureDocumentLimits.js';
+import { checkDocumentSize } from '../signature/signatureDocumentLimits.js';
+import {
+  SIGNATURE_REQUEST_STATE,
+  toRequestState,
+  toSignerState,
+} from '../signature/signatureVocabulary.js';
+
+/**
+ * LE CODE DE CE FOURNISSEUR — écrit UNE fois, lu partout dans ce fichier.
+ *
+ * Il apparaît maintenant dans chaque sortie : depuis qu'un domaine a deux
+ * exécutants, « qui a servi cet acte » cesse d'être une évidence et devient une
+ * information que le projet et le support ont besoin de lire.
+ */
+export const PROVIDER = 'YOUSIGN';
 
 /* -------------------------------------------------------------------------- */
 /*  TRADUCTION DES REFUS                                                      */
@@ -265,6 +279,7 @@ async function signatureRequestOpen({ definition, context, credentials, input, f
     environment: context.environment,
     contractRef: input.contractRef,
     operationId: input.operationId,
+    provider: PROVIDER,
   });
 
   if (!claim.claimed) {
@@ -272,6 +287,7 @@ async function signatureRequestOpen({ definition, context, credentials, input, f
     // Une demande vivante existe déjà : on rend CE qu'elle est, sans rien créer.
     return {
       status: 'ALREADY_OPEN',
+      provider: existing?.provider ?? PROVIDER,
       signatureRequestId: existing?.resourceId?.startsWith('pending:') ? null : existing?.resourceId ?? null,
       documentId: existing?.documentId ?? null,
       contractRef: input.contractRef,
@@ -345,6 +361,7 @@ async function signatureRequestOpen({ definition, context, credentials, input, f
 
     return {
       status: 'OPENED',
+      provider: PROVIDER,
       signatureRequestId: draft.id,
       documentId: document.id,
       contractRef: input.contractRef,
@@ -409,8 +426,22 @@ async function signatureRequestRetrieve({ definition, context, credentials, inpu
    */
   return {
     signatureRequestId: raw.id,
+    provider: PROVIDER,
+    /**
+     * L'ÉTAT NEUTRE, EN PLUS DU BRUT.
+     *
+     * `status` reste la chaîne de Yousign — elle documente ce qu'il a vraiment
+     * dit, et les projets qui la traduisent encore continuent de fonctionner.
+     * `state` est ce que lira le parc une fois migré : un mot qui ne change pas
+     * quand le fournisseur change.
+     */
+    state: toRequestState(PROVIDER, raw.status),
     status: raw.status ?? null,
-    signers: (raw.signers || []).map((s) => ({ signerId: s.id, status: s.status ?? null })),
+    signers: (raw.signers || []).map((s) => ({
+      signerId: s.id,
+      state: toSignerState(PROVIDER, s.status),
+      status: s.status ?? null,
+    })),
   };
 }
 
@@ -426,6 +457,8 @@ async function signatureSignerRetrieve({ definition, context, credentials, input
   });
   return {
     signerId: raw.id,
+    provider: PROVIDER,
+    state: toSignerState(PROVIDER, raw.status),
     status: raw.status ?? null,
     signatureLink: raw.signature_link ?? null,
   };
@@ -471,6 +504,13 @@ async function signatureDocumentDownload({ definition, context, credentials, inp
   const { createHash } = await import('node:crypto');
   return {
     signatureRequestId: input.signatureRequestId,
+    provider: PROVIDER,
+    /**
+     * Yousign ne publie pas de certificat par cette voie : on le DIT, plutôt
+     * que d'omettre le champ. Un champ absent se lit « on ne sait pas » ;
+     * `false` se lit « il n'y en a pas », et c'est la vérité.
+     */
+    certificateAvailable: false,
     documentId: binding.documentId,
     contentBase64: buffer.toString('base64'),
     byteLength: buffer.length,
@@ -509,7 +549,12 @@ async function signatureRequestCancel({ definition, context, credentials, input,
     resourceId: input.signatureRequestId,
     reason: 'CANCELLED',
   });
-  return { signatureRequestId: input.signatureRequestId, status: 'CANCELED' };
+  return {
+    signatureRequestId: input.signatureRequestId,
+    provider: PROVIDER,
+    state: SIGNATURE_REQUEST_STATE.CANCELED,
+    status: 'CANCELED',
+  };
 }
 
 /* -------------------------------------------------------------------------- */

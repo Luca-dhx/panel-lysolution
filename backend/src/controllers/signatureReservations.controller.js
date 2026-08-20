@@ -6,7 +6,7 @@ import { ok } from '../utils/apiResponse.js';
 import {
   listPendingReservations,
   releaseReservation,
-} from '../services/integratedApi/yousign/signatureReservations.service.js';
+} from '../services/integratedApi/signature/signatureReservations.service.js';
 
 /** GET — les réservations en attente, éventuellement filtrées par projet. */
 export async function getPendingReservations(req, res) {

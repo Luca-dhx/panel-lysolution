@@ -228,6 +228,9 @@ const TESTS = [
   // surtout que YOUSIGN RESTE L'AUTORITÉ : un fournisseur ajouté ne prend rien
   // à celui qui sert. Aucun appel ne sort sur le réseau.
   'integrated-api-opensign-foundation.test.js',
+  // LOT 2 — les cinq capacités de signature, servies par OpenSign, et
+  // l'aiguillage qui garde les demandes historiques chez leur détenteur.
+  'opensign-capability-adapter.test.js',
   // L4 — la frontière : aucun identifiant fournisseur ne franchit le pont.
   // L'invariant est dérivé du registre, donc il survit au provider suivant.
   'bridge-provider-secret-boundary.test.js',

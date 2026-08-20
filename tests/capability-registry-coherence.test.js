@@ -27,6 +27,7 @@ import { check, finish, section, setTestEnv } from './helpers/harness.js';
 setTestEnv();
 
 const registry = await import('../backend/src/services/capabilities/capabilityRegistry.js');
+const routing = await import('../backend/src/services/integratedApi/signature/signatureProviderRouting.js');
 const adapters = await import('../backend/src/services/capabilities/providerAdapters.js');
 const errors = await import('../backend/src/services/capabilities/capabilityErrors.js');
 const providerRegistry = await import('../backend/src/services/integratedApi/providerRegistry.js');
@@ -161,51 +162,61 @@ section('4. SOURCE DE VÉRITÉ UNIQUE — aucune seconde liste ne subsiste');
    * alors qu'elle avait quitté le registre des capacités.
    */
   /**
-   * ══ UN FOURNISSEUR PEUT ÊTRE DÉCLARÉ SANS ÊTRE AUTORITÉ ══════════════════
+   * ══ LA SIGNATURE A DEUX FOURNISSEURS, ET C'EST DÉFINITIF ══════════════════
    *
-   * L'égalité des deux listes vaut pour un fournisseur qui SERT. OpenSign, lui,
-   * est déclaré avec ses capacités cibles alors que le registre des capacités
-   * désigne encore YOUSIGN comme exécutant : c'est l'état exact d'une migration
-   * en cours, et il est VOULU.
+   * L'égalité des deux listes vaut pour un domaine à exécutant unique. La
+   * signature n'en est plus un : OpenSign sert les nouvelles demandes, Yousign
+   * garde celles qu'il détient — aussi longtemps que ces contrats ont une
+   * valeur juridique, c'est-à-dire des années.
    *
-   * L'exception est nommée ici plutôt que subie ailleurs. Ce qu'on continue
-   * d'exiger d'OpenSign — et qui est testé juste après — c'est le sens qui
-   * compte : tout code qu'il annonce doit EXISTER au registre. C'est ce contrôle
-   * qui empêche un écran d'annoncer une capacité que la passerelle ne connaît
-   * pas. La réciproque n'aurait aucun sens tant qu'il n'exécute rien.
+   * Le registre des CAPACITÉS ne peut désigner qu'un exécutant par code : il
+   * désigne l'ACTIF. Le registre des FOURNISSEURS, lui, déclare les codes que
+   * chacun sait servir. Les deux listes divergent donc chez Yousign, et cette
+   * divergence n'est pas une dérive : c'est la coexistence, écrite.
    *
-   * Le jour où le sélecteur de fournisseur basculera `signature.*` sur
-   * OpenSign, cette exception devra disparaître — et la ligne ci-dessous est ce
-   * qui obligera à s'en souvenir.
+   * Ce qu'on continue d'exiger des DEUX — et c'est le contrôle qui compte —
+   * c'est que tout code annoncé EXISTE au registre des capacités. C'est lui
+   * qui empêche un écran d'annoncer ce que la passerelle ignore.
    */
-  const NON_ENCORE_AUTORITE = new Set(['OPENSIGN']);
+  const SIGNATURE_MULTI_FOURNISSEUR = new Set(['YOUSIGN', 'OPENSIGN']);
 
   for (const provider of providerRegistry.PROVIDER_CODES) {
     const definition = providerRegistry.getProviderDefinition(provider);
     for (const code of definition.capabilities) {
       check(`${provider} annonce « ${code} » → il est déclaré`, registry.isKnownCapability(code));
     }
+    if (SIGNATURE_MULTI_FOURNISSEUR.has(provider)) continue;
+
     const duRegistre = registry.capabilitiesForProvider(provider).map((c) => c.code).sort();
     const duFournisseur = [...definition.capabilities].sort();
-
-    if (NON_ENCORE_AUTORITE.has(provider)) {
-      check(`${provider} — déclaré, pas encore autorité : le registre ne lui confie rien`,
-        duRegistre.length === 0 && duFournisseur.length > 0);
-      continue;
-    }
     check(`${provider} — les deux listes sont IDENTIQUES`,
       JSON.stringify(duRegistre) === JSON.stringify(duFournisseur));
   }
 
   /**
-   * ET PENDANT CE TEMPS, YOUSIGN RESTE L'AUTORITÉ — c'est l'invariant de
-   * coexistence. Le vérifier ici garantit qu'aucune bascule ne s'est produite
-   * par inadvertance : la migration doit être un acte, jamais un effet de bord.
+   * L'AIGUILLAGE EST EXPLICITE, ET LES DEUX FOURNISSEURS SAVENT TOUT SERVIR.
+   *
+   * Un acte qu'un seul des deux saurait exécuter produirait, sur un contrat
+   * historique, un refus que rien n'annonce — et il ne se découvrirait qu'au
+   * moment de relire un contrat signé.
    */
-  for (const code of providerRegistry.getProviderDefinition('OPENSIGN').capabilities) {
-    check(`« ${code} » est encore exécutée par YOUSIGN`,
-      registry.getCapabilityDefinition(code)?.provider === 'YOUSIGN');
+  const codesSignature = providerRegistry.getProviderDefinition('OPENSIGN').capabilities;
+  for (const code of codesSignature) {
+    check(`« ${code} » est exécutée par le fournisseur ACTIF`,
+      registry.getCapabilityDefinition(code)?.provider === routing.ACTIVE_SIGNATURE_PROVIDER);
+    check(`« ${code} » sait retrouver le détenteur d’une demande existante`,
+      typeof registry.getCapabilityDefinition(code)?.resolveProvider === 'function'
+      || code === 'signature.request.open');
+    check(`YOUSIGN sait encore servir « ${code} » (contrats historiques)`,
+      providerRegistry.getProviderDefinition('YOUSIGN').capabilities.includes(code));
   }
+
+  /**
+   * OUVRIR N'A QU'UN EXÉCUTANT POSSIBLE. Y poser un `resolveProvider` laisserait
+   * croire qu'une nouvelle demande pourrait partir ailleurs que chez l'actif.
+   */
+  check('« signature.request.open » n’a AUCUN aiguillage — rien à résoudre',
+    registry.getCapabilityDefinition('signature.request.open').resolveProvider === null);
 
   /** Les modules d'autorisation supprimés ne doivent pas réapparaître. */
   const disparus = [

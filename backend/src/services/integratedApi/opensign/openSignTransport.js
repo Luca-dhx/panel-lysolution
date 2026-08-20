@@ -321,6 +321,172 @@ export const saveWebhook = ({ credentials, url, ...rest }) =>
 export const deleteWebhook = ({ credentials, ...rest }) =>
   call({ ...rest, credentials, method: 'DELETE', path: '/webhook' });
 
+/* -------------------------------------------------------------------------- */
+/*  LES VERBES DE DOCUMENT — ceux qui engagent, et qui coûtent                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `POST /createdocument` — L'ACTE COMPLET, EN UN SEUL APPEL.
+ *
+ * ══ CE QUE CET APPEL FAIT, ET QUE YOUSIGN DEMANDAIT EN ONZE ════════════════
+ *
+ * Il crée le document, y attache les signataires, y pose leurs zones, et rend
+ * les liens de signature. Chez Yousign, il fallait créer un brouillon, y
+ * téléverser un PDF en multipart, ajouter n signataires, poser n champs, puis
+ * activer — et surtout : garder une fenêtre pendant laquelle une préparation
+ * pouvait s'arrêter à mi-chemin, laissant un brouillon orphelin et facturable
+ * qu'il fallait penser à supprimer.
+ *
+ * Cette fenêtre n'existe plus. Ce n'est pas une économie d'appels réseau, c'est
+ * la disparition d'un état intermédiaire observable.
+ *
+ * ══ ⚠️ CET APPEL DÉBITE UN CRÉDIT ══════════════════════════════════════════
+ *
+ * Mesuré : un crédit par document créé, et la suppression ne le rend pas. Un
+ * rejeu « pour voir » n'est donc jamais gratuit — c'est la raison d'être de la
+ * réservation d'opération qui le précède côté passerelle.
+ */
+export const createDocument = ({ credentials, document, ...rest }) =>
+  call({ ...rest, credentials, method: 'POST', path: '/createdocument', json: document });
+
+/** `GET /document/:id` — état, piste d'audit, URL du fichier et du certificat. */
+export const getDocument = ({ credentials, documentId, ...rest }) =>
+  call({ ...rest, credentials, path: `/document/${encodeURIComponent(documentId)}` });
+
+/** `GET /signinglinks/:id` — un lien par signataire, indexé par ADRESSE. */
+export const getSigningLinks = ({ credentials, documentId, ...rest }) =>
+  call({ ...rest, credentials, path: `/signinglinks/${encodeURIComponent(documentId)}` });
+
+/**
+ * `POST /document/:id` — RÉVOQUER.
+ *
+ * Le motif est un TEXTE LIBRE, et c'est une différence heureuse : chez Yousign
+ * il s'agissait d'une énumération non documentée, où `'cancelled'` était refusé
+ * par un message qui ne nommait aucun champ. L'incident ne peut pas se
+ * reproduire ici.
+ *
+ * ⚠️ Mesuré : après révocation, le document passe en `declined` — OpenSign n'a
+ * pas d'état « révoqué » distinct.
+ */
+export const revokeDocument = ({ credentials, documentId, reason, ...rest }) =>
+  call({
+    ...rest, credentials, method: 'POST',
+    path: `/document/${encodeURIComponent(documentId)}`, json: { reason },
+  });
+
+/**
+ * `DELETE /document/:id` — SUPPRIMER.
+ *
+ * Réservé au nettoyage de recette et à la reprise après un échec de
+ * préparation. Ce n'est pas l'inverse d'une révocation : révoquer arrête un
+ * engagement en le consignant, supprimer efface la trace. Le parcours métier
+ * révoque ; seule la recette supprime.
+ */
+export const deleteDocument = ({ credentials, documentId, ...rest }) =>
+  call({ ...rest, credentials, method: 'DELETE', path: `/document/${encodeURIComponent(documentId)}` });
+
+/**
+ * `PUT /document/:id` — modifier ce qui reste modifiable (jamais le fichier).
+ *
+ * Utile pour corriger une URL de retour après coup. Le document, lui, est figé
+ * dès sa création : c'est une propriété du fournisseur, pas une limite de ce
+ * module.
+ */
+export const updateDocument = ({ credentials, documentId, patch, ...rest }) =>
+  call({
+    ...rest, credentials, method: 'PUT',
+    path: `/document/${encodeURIComponent(documentId)}`, json: patch,
+  });
+
+/**
+ * TÉLÉCHARGE UN FICHIER QUE LE FOURNISSEUR NOUS A DÉSIGNÉ.
+ *
+ * ══ POURQUOI CE VERBE EXISTE, ALORS QU'IL NE VISE PAS L'API ═════════════════
+ *
+ * OpenSign ne SERT pas les PDF : il rend une URL PRÉ-SIGNÉE vers son stockage
+ * objet, valable quelques minutes. Le document signé et le certificat d'audit
+ * ne s'obtiennent que par là. Un plan de contrôle qui refuserait de suivre
+ * cette URL ne pourrait jamais archiver un contrat signé — c'est-à-dire
+ * échouerait sur le seul livrable qui compte juridiquement.
+ *
+ * ══ LES QUATRE GARDES, ET CE QU'ELLES EMPÊCHENT ═════════════════════════════
+ *
+ * 1. L'URL VIENT D'UNE RÉPONSE DU FOURNISSEUR, jamais d'un appelant. Un
+ *    projet qui pourrait nommer l'URL à télécharger transformerait le Panel en
+ *    relais de requêtes sortantes vers l'adresse de son choix — depuis
+ *    l'intérieur du réseau, avec les identifiants du Panel dans le contexte.
+ * 2. HTTPS EXIGÉ. Un contrat signé ne descend pas en clair.
+ * 3. TAILLE BORNÉE, et vérifiée pendant la lecture — pas seulement d'après
+ *    l'en-tête `content-length`, qu'un serveur peut mentir ou omettre.
+ * 4. DÉLAI BORNÉ, comme tout le reste de ce module.
+ *
+ * ══ ET CETTE URL NE TRAVERSE JAMAIS LE PONT ════════════════════════════════
+ *
+ * Elle porte son propre droit d'accès : la transmettre à un projet reviendrait
+ * à lui donner le document sans passer par la preuve d'appartenance. Le Panel
+ * télécharge, puis rend le CONTENU.
+ */
+export async function fetchProviderFile({
+  url, timeoutMs = DEFAULT_TIMEOUT_MS, maxBytes = 32 * 1024 * 1024, fetchImpl,
+}) {
+  let cible;
+  try {
+    cible = new URL(String(url ?? ''));
+  } catch {
+    throw new OpenSignTransportError(
+      TRANSPORT_CODES.MALFORMED_RESPONSE,
+      'OpenSign a désigné un fichier par une adresse illisible.',
+    );
+  }
+  if (cible.protocol !== 'https:') {
+    throw new OpenSignTransportError(
+      TRANSPORT_CODES.MALFORMED_RESPONSE,
+      'OpenSign a désigné un fichier hors HTTPS : téléchargement refusé.',
+    );
+  }
+
+  const doFetch = fetchImpl ?? globalThis.fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let reponse;
+  try {
+    reponse = await doFetch(cible.href, { method: 'GET', signal: controller.signal });
+  } catch (error) {
+    throw new OpenSignTransportError(
+      error?.name === 'AbortError' ? TRANSPORT_CODES.TIMEOUT : TRANSPORT_CODES.UNREACHABLE,
+      'Le stockage d’OpenSign n’a pas répondu : le document n’a pas pu être lu.',
+      // Une LECTURE indéterminée ne crée rien : elle est rejouable sans risque.
+      { outcome: OUTCOMES.FAILED },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!reponse.ok) {
+    throw new OpenSignTransportError(
+      classify(reponse.status, null),
+      `Le stockage d’OpenSign a refusé le téléchargement (HTTP ${reponse.status}). `
+      + 'Une adresse pré-signée expire : relire le document en redemande une neuve.',
+      { httpStatus: reponse.status },
+    );
+  }
+
+  const octets = Buffer.from(await reponse.arrayBuffer());
+  if (octets.length > maxBytes) {
+    throw new OpenSignTransportError(
+      TRANSPORT_CODES.MALFORMED_RESPONSE,
+      `Fichier hors gabarit : ${octets.length} octets pour une limite de ${maxBytes}.`,
+    );
+  }
+  if (octets.length === 0) {
+    throw new OpenSignTransportError(
+      TRANSPORT_CODES.MALFORMED_RESPONSE,
+      'Le stockage d’OpenSign a rendu un fichier vide.',
+    );
+  }
+  return octets;
+}
+
 export default {
   DEFAULT_TIMEOUT_MS,
   OUTCOMES,
@@ -335,4 +501,11 @@ export default {
   getWebhook,
   saveWebhook,
   deleteWebhook,
+  createDocument,
+  getDocument,
+  getSigningLinks,
+  revokeDocument,
+  deleteDocument,
+  updateDocument,
+  fetchProviderFile,
 };

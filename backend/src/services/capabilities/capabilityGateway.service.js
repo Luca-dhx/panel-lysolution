@@ -168,11 +168,44 @@ export async function invokeCapability({
      */
     const input = parseInput(definition, payload);
 
+    /**
+     * ── 4 bis. QUI EXÉCUTE, RÉELLEMENT ? ────────────────────────────────────
+     *
+     * ══ POURQUOI CETTE ÉTAPE EXISTE ════════════════════════════════════════
+     *
+     * Presque toutes les capacités ont un exécutant unique et définitif : le
+     * registre le déclare, et c'est fini. La signature fait exception, et
+     * durablement — les nouvelles demandes partent chez le fournisseur actif,
+     * les demandes historiques restent chez celui qui les détient, aussi
+     * longtemps que le contrat a une valeur juridique.
+     *
+     * ══ POURQUOI ICI, ET PAS DANS L'ADAPTATEUR ═════════════════════════════
+     *
+     * Parce que le fournisseur décide QUELS IDENTIFIANTS ouvrir. Un adaptateur
+     * qui découvrirait l'exécutant après coup devrait rouvrir le coffre
+     * lui-même — c'est-à-dire créer une seconde porte, exactement celle que
+     * `credentialResolver` existe pour empêcher.
+     *
+     * ══ CE QUE CETTE DÉFINITION EFFECTIVE CHANGE, ET CE QU'ELLE NE CHANGE PAS
+     *
+     * Elle change le fournisseur, donc le coffre, l'adaptateur, le journal et
+     * l'événement d'audit — tous parlent désormais de l'exécutant RÉEL, ce qui
+     * est la seule chose honnête à écrire. Elle ne change ni le code de la
+     * capacité, ni ses schémas, ni ses permissions : le CONTRAT reste celui du
+     * registre.
+     */
+    const effectiveProvider = definition.resolveProvider
+      ? await definition.resolveProvider(context, input, definition.provider)
+      : definition.provider;
+    const executed = effectiveProvider === definition.provider
+      ? definition
+      : Object.freeze({ ...definition, provider: effectiveProvider });
+
     // ── 5. A-T-ON DES IDENTIFIANTS ? ────────────────────────────────────────
     // Les valeurs déchiffrées sont obtenues et consommées dans la même
     // expression : elles ne sont jamais liées à une variable de portée large,
     // jamais journalisées, jamais attachées à une erreur.
-    const resolved = await resolveCredentialsForCapability(context, definition);
+    const resolved = await resolveCredentialsForCapability(context, executed);
 
     /**
      * ── 6. RÉSERVER L'OPÉRATION — LE DERNIER GESTE AVANT LE FOURNISSEUR ─────
@@ -212,7 +245,7 @@ export async function invokeCapability({
     // Déjà exécutée : on rend ce qui avait été mémorisé, et RIEN ne part.
     if (reservation?.memoized) {
       const durationMs = Date.now() - context.startedAt;
-      await audit(context, definition, {
+      await audit(context, executed, {
         outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
         durationMs,
         operationId: actId,
@@ -220,7 +253,7 @@ export async function invokeCapability({
       });
       return {
         capability: definition.code,
-        provider: definition.provider,
+        provider: executed.provider,
         environment: context.environment,
         outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
         operationId: actId,
@@ -234,7 +267,16 @@ export async function invokeCapability({
     let raw;
     try {
       raw = await executeCapability({
-        definition,
+        /**
+         * L'ADAPTATEUR REÇOIT LA DÉFINITION EFFECTIVE.
+         *
+         * Il y lit `provider` pour savoir lequel des exécutants d'un domaine
+         * doit agir. Lui passer la définition du registre lui ferait servir une
+         * demande historique avec le code du fournisseur actif — et les
+         * identifiants, eux, seraient déjà ceux du bon. Deux vérités dans le
+         * même appel : la pire configuration possible.
+         */
+        definition: executed,
         context,
         credentials: resolved.values,
         input,
@@ -289,7 +331,7 @@ export async function invokeCapability({
       });
     }
 
-    await audit(context, definition, {
+    await audit(context, executed, {
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
       durationMs,
       operationId: actId ?? null,
@@ -298,7 +340,7 @@ export async function invokeCapability({
 
     return {
       capability: definition.code,
-      provider: definition.provider,
+      provider: executed.provider,
       environment: context.environment,
       outcome: CAPABILITY_OUTCOMES.SUCCEEDED,
       operationId: actId ?? null,
@@ -430,6 +472,42 @@ async function reserve(context, definition, input, actId) {
       return { operation: outcome.operation, memoized: null, converging: true };
 
     case CLAIM.ALREADY_SUCCEEDED:
+      /**
+       * ══ UN REJEU DOIT RENDRE CE QUE LA CAPACITÉ PROMET ═══════════════════
+       *
+       * Le rejeu rendait une forme GÉNÉRIQUE —
+       * `{status, providerMessageId, operationId}` — sans passer par le schéma
+       * de sortie. C'est le contrat d'`email.send_template`, et de lui seul.
+       *
+       * Pour une ouverture de signature, dont le contrat promet
+       * `signatureRequestId`, `documentId` et les liens des signataires, cette
+       * forme est un mensonge : l'appelant reçoit un objet auquel il manque
+       * tout ce dont il a besoin. SB Auto y lirait `signatureRequestId:
+       * undefined` et PERDRAIT la demande qu'il vient d'ouvrir — sans erreur,
+       * sans journal, avec un contrat bloqué et une demande orpheline chez le
+       * fournisseur.
+       *
+       * Le défaut ne s'était jamais vu parce que le projet se garde lui-même
+       * avant d'appeler. Une garantie de la passerelle qui repose sur la
+       * prudence de son appelant n'est pas une garantie.
+       *
+       * ── DEUX RÉPONSES POSSIBLES, ET LE REGISTRE CHOISIT ──────────────────
+       *
+       * Certaines capacités ne PEUVENT pas reconstituer leur sortie : un envoi
+       * d'e-mail rejoué ne peut pas rendre un message qu'on n'a pas conservé,
+       * et le stocker serait garder une donnée personnelle pour rien. Elles
+       * gardent la mémoïsation générique — c'est leur contrat.
+       *
+       * D'autres SAVENT se relire. `signature.request.open` interroge d'abord
+       * le lien d'appartenance : si une demande vivante existe pour ce contrat,
+       * elle la rend SANS parler au fournisseur. Réexécuter l'adaptateur est
+       * alors strictement plus juste que mémoïser — et strictement aussi sûr,
+       * puisque l'index « une demande vivante par contrat » est ce qui l'en
+       * empêche, pas la chance.
+       */
+      if (definition.replayByReexecution) {
+        return { operation: outcome.operation, memoized: null, converging: true };
+      }
       /**
        * LE REJEU NE RENVOIE RIEN, ET LE DIT.
        *
