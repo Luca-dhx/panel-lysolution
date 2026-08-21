@@ -125,7 +125,7 @@ function RepartitionParProjet({
   return (
     <Card title="Répartition par projet">
       <div className="table-scroll">
-        <table className="data-table finance-table">
+        <table className="data-table finance-table finance-table-stackable">
           <thead>
             <tr>
               <th scope="col">Rattachement</th>
@@ -138,7 +138,7 @@ function RepartitionParProjet({
           <tbody>
             {lignes.map((ligne) => (
               <tr key={ligne.projectId ?? '__company__'}>
-                <td>
+                <td data-label="Rattachement">
                   {ligne.projectId ? (
                     // Depuis le classement, on va lire le détail là où il vit :
                     // sur la fiche du client, dans son onglet Finances.
@@ -149,16 +149,19 @@ function RepartitionParProjet({
                     <span className="cell-primary">{LY_SOLUTION}</span>
                   )}
                 </td>
-                <td className="finance-cell-amount finance-amount-inflow">
+                <td data-label="Revenus" className="finance-cell-amount finance-amount-inflow">
                   {formatCents(ligne.revenueCents)}
                 </td>
-                <td className="finance-cell-amount finance-amount-outflow">
+                <td data-label="Coûts" className="finance-cell-amount finance-amount-outflow">
                   {formatCents(ligne.costCents)}
                 </td>
-                <td className={`finance-cell-amount finance-net-${netTone(ligne.netCents)}`}>
+                <td
+                  data-label="Net"
+                  className={`finance-cell-amount finance-net-${netTone(ligne.netCents)}`}
+                >
                   {formatNetCents(ligne.netCents)}
                 </td>
-                <td className="finance-cell-amount">{ligne.count}</td>
+                <td data-label="Mouvements" className="finance-cell-amount">{ligne.count}</td>
               </tr>
             ))}
           </tbody>

@@ -145,10 +145,12 @@ export function PaymentRequestPanel({
                   <td>
                     <span className={ETIQUETTE[p.status].tone}>{ETIQUETTE[p.status].label}</span>
                   </td>
-                  <td className="row-actions">
-                    <button type="button" className="btn btn-small" onClick={() => setDetail(p)}>
-                      Détails
-                    </button>
+                  <td className="cell-actions">
+                    <div className="row-actions">
+                      <button type="button" className="btn btn-small" onClick={() => setDetail(p)}>
+                        Détails
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -2539,11 +2539,176 @@ body {
 .finance-net-neutral { color: var(--p-text-muted); }
 
 /* Les montants s'alignent à DROITE et sur des chiffres de largeur fixe :
-   c'est ce qui permet de comparer une colonne d'un coup d'œil, sans lire. */
-.finance-cell-amount {
+   c'est ce qui permet de comparer une colonne d'un coup d'œil, sans lire.
+
+   ══ POURQUOI L'ENTÊTE EST NOMMÉE SÉPARÉMENT ═══════════════════════════════
+
+   `.data-table th` porte `text-align: left`, et sa spécificité (classe +
+   élément) l'emportait sur cette règle-ci (classe seule). Résultat : la
+   colonne « REVENUS » restait collée à gauche pendant que « 443,99 € » se
+   rangeait à droite — l'entête ne surplombait plus ses valeurs, et le lecteur
+   devait chercher à quelle colonne appartenait un montant.
+
+   Le correctif est d'égaliser la spécificité, PAS d'ajouter une marge : un
+   décalage manuel serait juste sur une largeur et faux sur toutes les autres. */
+.finance-cell-amount,
+.data-table th.finance-cell-amount {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* ══ LA COLONNE D'ACTIONS EST UNE CELLULE, PAS UNE BOÎTE FLEX ═══════════════
+
+   `.row-actions` (display: flex) était posée SUR le `<td>`. Un `<td>` en
+   `display: flex` cesse d'être une cellule de tableau : le navigateur
+   l'enveloppe dans une cellule anonyme, et le groupe de boutons se cale en
+   haut de celle-ci pendant que les cellules voisines restent centrées. Sur une
+   ligne de 260 px — un mouvement Stripe avec sa période, son origine et son
+   état de remboursement — « Rembourser » flottait donc près du bord supérieur,
+   à côté d'une date centrée, et la ligne se lisait comme deux lignes.
+
+   La cellule redevient une cellule ; le flex descend d'un cran, dans un
+   conteneur qui, lui, a le droit d'en être un. */
+.data-table td.cell-actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.cell-actions .row-actions {
+  justify-content: flex-end;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SOUS 45 rem : LE TABLEAU DEVIENT UNE PILE DE FICHES
+   ══════════════════════════════════════════════════════════════════════════
+
+   ══ POURQUOI PAS SIMPLEMENT UN DÉFILEMENT HORIZONTAL ══════════════════════
+
+   Six colonnes — date, mouvement, rattachement, montant, justificatif,
+   actions — ne rentrent pas dans 390 px, et rien ne les y fera rentrer. Le
+   conteneur `.table-scroll` était censé les faire défiler ; mesuré, il ne
+   défilait pas : c'est la PAGE ENTIÈRE qui débordait (557 px de contenu pour
+   390 px de vue), barre latérale et cartes comprises. Le lecteur devait donc
+   balayer horizontalement tout l'écran pour lire un montant, et perdait la
+   date de la ligne en chemin.
+
+   Élargir le conteneur n'aurait rien réglé non plus : une colonne « Mouvement »
+   de 60 px coupe un libellé au deuxième mot.
+
+   ══ CE QUE LA PILE PRÉSERVE ═══════════════════════════════════════════════
+
+   Chaque ligne devient une fiche, et chaque cellule garde son NOM DE COLONNE
+   à gauche (`data-label`) : aucune information n'est masquée, aucune colonne
+   n'est « dépriorisée » en silence. Le tableau reste un `<table>` — l'ordre de
+   lecture, les entêtes `scope="col"` et l'annonce aux lecteurs d'écran ne
+   changent pas ; seule la présentation change.
+*/
+/*
+  ══ LA BASCULE SUIT LA LARGEUR DISPONIBLE, PAS CELLE DE L'ÉCRAN ═══════════
+
+  Mesuré : à 768 px de fenêtre le tableau dispose de 686 px ; à 1024 px, il en
+  dispose de 684 — la barre latérale réapparaît et reprend exactement ce que la
+  fenêtre a gagné. Une règle sur la largeur d'écran aurait donc empilé les
+  fiches à 768 et rendu le tableau serré à 1024, pour une place identique.
+
+  La requête porte sur le CONTENEUR : le tableau s'empile quand sa colonne est
+  trop étroite, quel que soit l'écran — et il retrouve sa forme tabulaire dès
+  qu'il a la place, y compris dans un panneau latéral ou une fiche projet.
+*/
+.table-scroll:has(.finance-table-stackable) { container-type: inline-size; }
+
+@container (max-width: 46rem) {
+  .finance-table-stackable,
+  .finance-table-stackable tbody,
+  .finance-table-stackable tr,
+  .finance-table-stackable td {
+    display: block;
+    width: auto;
+  }
+
+  /* L'entête visuelle disparaît : chaque cellule porte désormais son libellé.
+     `clip` plutôt que `display: none` — la sémantique reste lisible aux
+     technologies d'assistance, qui associent encore cellules et colonnes. */
+  .finance-table-stackable thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .finance-table-stackable tr {
+    margin-bottom: var(--p-space-3);
+    padding: var(--p-space-3);
+    border: 1px solid var(--p-border);
+    border-radius: var(--p-radius);
+    background: var(--p-surface-raised, var(--bg-elevated));
+  }
+  .finance-table-stackable tr:last-child { margin-bottom: 0; }
+
+  .finance-table-stackable td {
+    display: grid;
+    /* Le libellé prend ce qu'il faut, la valeur prend le reste — et `minmax`
+       avec `0` autorise la valeur à se compresser plutôt qu'à déborder. */
+    grid-template-columns: minmax(6rem, 40%) minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--p-space-3);
+    padding: var(--p-space-2) 0;
+    border-bottom: 1px solid var(--p-border-subtle, var(--border));
+    text-align: left;
+  }
+  .finance-table-stackable td:last-child { border-bottom: none; padding-bottom: 0; }
+
+  .finance-table-stackable td[data-label]::before {
+    content: attr(data-label);
+    grid-column: 1;
+    grid-row: 1;
+    color: var(--p-text-muted);
+    font-size: var(--p-text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /*
+    TOUTE LA VALEUR TIENT DANS LA COLONNE DE DROITE.
+
+    Une cellule « Mouvement » contient plusieurs blocs : le libellé, la
+    période, l'origine, l'état du remboursement. Placés librement dans la
+    grille, ils se répartissaient en zigzag — la période repassait sous le
+    LIBELLÉ de colonne, à gauche, comme si elle en était le nom. Les épingler
+    en colonne 2 les empile sous le libellé principal, dans l'ordre du DOM.
+  */
+  .finance-table-stackable td > * { grid-column: 2; }
+
+  /* Le montant garde ses chiffres tabulaires mais revient à gauche : aligné à
+     droite d'une fiche, il se retrouverait seul contre le bord, sans colonne
+     voisine avec laquelle se comparer. */
+  .finance-table-stackable td.finance-cell-amount {
+    text-align: left;
+    white-space: normal;
+  }
+
+  /* Les actions occupent toute la largeur de la fiche et se touchent au doigt. */
+  .finance-table-stackable td.cell-actions {
+    grid-template-columns: 1fr;
+    white-space: normal;
+  }
+  .finance-table-stackable td.cell-actions .row-actions { justify-content: flex-start; }
+
+  /* Le déclencheur du menu garde sa taille de cible tactile, pas la largeur
+     de la fiche : un « ⋮ » long de 300 px se lit comme un bouton principal. */
+  .finance-table-stackable .conn-menu,
+  .finance-table-stackable .conn-menu-trigger { width: auto; }
+  .finance-table-stackable td.cell-actions .btn,
+  .finance-table-stackable td[data-label="Justificatif"] .btn {
+    min-height: 2.5rem;
+  }
+
+  /* Une fiche ne défile pas horizontalement : il n'y a plus rien à faire
+     défiler, et le conteneur laissé en `auto` créerait une barre fantôme. */
+  .table-scroll:has(.finance-table-stackable) { overflow-x: visible; }
 }
 
 .finance-table .cell-secondary {
@@ -2784,6 +2949,15 @@ body {
   align-items: center;
   gap: var(--p-space-2);
   min-width: 0;
+}
+
+/* Dans une cellule : une seule ligne, et la colonne se dimensionne pour les
+   deux commandes plutôt que pour la plus large. */
+.finance-receipt-compact { flex-wrap: nowrap; white-space: nowrap; }
+
+@container (max-width: 46rem) {
+  /* En fiche empilée, la largeur ne manque plus : on laisse respirer. */
+  .finance-receipt-compact { flex-wrap: wrap; }
 }
 
 /*

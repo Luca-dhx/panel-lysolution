@@ -1858,15 +1858,33 @@ textarea:focus {
   inset: 0;
   z-index: 100;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: 3rem 1rem;
-  overflow-y: auto;
+  padding: 1rem;
+  /*
+    LE FOND NE DÉFILE PLUS — c'est la boîte qui défile, à l'intérieur.
+
+    Il portait `overflow-y: auto` avec `align-items: center`. Une boîte centrée
+    plus haute que son conteneur défilant sort par le HAUT, et cette partie
+    devient inatteignable : le défilement ne remonte jamais au-dessus de zéro.
+    Le titre du mouvement était perdu sur toutes les tailles mesurées, jusqu'au
+    1280×900. Le fond ne défile donc plus du tout, et la boîte ne le dépasse
+    jamais.
+  */
+  overflow: hidden;
   background: color-mix(in srgb, var(--bg) 70%, #000000);
 }
 
 .modal {
   width: min(46rem, 100%);
+  /*
+    `dvh` et non `vh` : sur mobile, `vh` se fige sur la vue SANS la barre
+    d'outils du navigateur. Une boîte haute de `100vh` passe donc sous la barre,
+    et c'est le pied — « Fermer », « Supprimer » — qui disparaît derrière elle.
+    `dvh` suit la vue réellement visible.
+  */
+  max-height: min(100%, calc(100dvh - 2rem));
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.9rem;
@@ -1880,8 +1898,72 @@ textarea:focus {
 /* La bordure dit la nature de l'action avant qu'on ait lu le titre. */
 .modal-danger { border-color: var(--danger); }
 
-.modal-head { display: flex; flex-direction: column; gap: 0.25rem; }
+/* ── EN-TÊTE FIXE ─────────────────────────────────────────────────────────
+   Il ne défile pas : on doit toujours savoir de quel mouvement on parle, même
+   après deux mètres de contenu. */
+.modal-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.modal-head-text { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; }
 .modal-head h2 { font-size: 1.15rem; }
+
+.modal-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 40 px : la cible tactile minimale. Une croix de 16 px se rate au doigt. */
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: -0.375rem -0.375rem 0 0;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1rem;
+}
+.modal-close:hover { color: var(--text); background: var(--bg-input); }
+.modal-close:focus-visible { outline: 2px solid var(--primary, var(--text)); outline-offset: 2px; }
+
+/* ── CONTENU DÉFILANT ─────────────────────────────────────────────────────
+   `min-height: 0` est la clef : sans lui, un enfant flex refuse de descendre
+   sous sa taille de contenu et le débordement remonte sur la boîte entière —
+   exactement le défaut qu'on ferme ici. */
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  /* Le défilement interne ne doit pas coller au bord du panneau collant. */
+  scrollbar-gutter: stable;
+}
+
+/*
+  ── PIED COLLANT ────────────────────────────────────────────────────────────
+
+  Les onze appelants terminent tous par un bloc `.action-buttons`. Le rendre
+  collant au bas du contenu défilant le garde visible sans qu'aucun d'eux ne
+  change : « Fermer » reste à portée même au milieu d'un historique de
+  remboursements. Le fond opaque évite que le texte défile en transparence
+  derrière les boutons.
+*/
+.modal-body > .action-buttons,
+.modal-body > form > .action-buttons {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+}
 
 
 /* ---------- Interrupteur (switch) ---------- */

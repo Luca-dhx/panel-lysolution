@@ -422,7 +422,7 @@ export function FinanceWorkspace({
           />
         ) : (
           <div className="table-scroll">
-            <table className="data-table finance-table">
+            <table className="data-table finance-table finance-table-stackable">
               <thead>
                 <tr>
                   <th scope="col">Date</th>
@@ -441,8 +441,8 @@ export function FinanceWorkspace({
               <tbody>
                 {list.items.map((ligne) => (
                   <tr key={ligne.transactionId}>
-                    <td>{DATE_SEULE.format(new Date(ligne.effectiveDate))}</td>
-                    <td>
+                    <td data-label="Date">{DATE_SEULE.format(new Date(ligne.effectiveDate))}</td>
+                    <td data-label="Mouvement">
                       <span className="cell-primary">{ligne.label}</span>
                       {ligne.description ? (
                         <span className="cell-secondary">{ligne.description}</span>
@@ -494,15 +494,31 @@ export function FinanceWorkspace({
                       ) : null}
                     </td>
                     {!verrouille ? (
-                      <td>{ownershipLabel(ligne.projectId, ligne.projectNameSnapshot, nomsVivants)}</td>
+                      <td data-label="Rattachement">
+                        {ownershipLabel(ligne.projectId, ligne.projectNameSnapshot, nomsVivants)}
+                      </td>
                     ) : null}
-                    <td className={`finance-cell-amount finance-amount-${ligne.flow.toLowerCase()}`}>
+                    <td
+                      data-label="Montant"
+                      className={`finance-cell-amount finance-amount-${ligne.flow.toLowerCase()}`}
+                    >
                       {formatFlowCents(ligne.amountCents, ligne.flow)}
                     </td>
-                    <td>
+                    <td data-label="Justificatif">
                       <ReceiptCell transaction={ligne} onChanged={reload} compact />
                     </td>
-                    <td className="row-actions">
+                    {/*
+                      LA CELLULE RESTE UNE CELLULE — le flex descend d'un cran.
+
+                      `className="row-actions"` posé ici mettait le `<td>` en
+                      `display: flex` : il cessait d'être une cellule de
+                      tableau, et ses boutons se calaient en haut d'une cellule
+                      anonyme pendant que la date, le rattachement et le montant
+                      restaient centrés. Sur une ligne haute, la ligne se lisait
+                      comme deux.
+                    */}
+                    <td className="cell-actions">
+                      <div className="row-actions">
                       {/*
                         « REMBOURSER » N'APPARAÎT QUE LÀ OÙ IL A UN SENS.
 
@@ -529,6 +545,7 @@ export function FinanceWorkspace({
                       >
                         Voir les détails
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

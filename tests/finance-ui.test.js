@@ -597,4 +597,124 @@ section('22. Le client d’API n’interroge jamais Stripe');
   check('…et il passe par le Panel', /\/api\/finances\/transactions\/\$\{transactionId\}/.test(bloc));
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('21. Les tables se lisent comme des tables — alignement et empilement');
+{
+  const modale = lire('frontend/src/components/finance/FinanceModal.tsx');
+  const styles = lire('frontend/src/styles.css');
+
+  /*
+    ── L'ENTÊTE NUMÉRIQUE S'ALIGNE SUR SES VALEURS ────────────────────────
+
+    `.data-table th` porte `text-align: left` et sa spécificité (classe +
+    élément) l'emportait sur `.finance-cell-amount` (classe seule). « REVENUS »
+    restait donc à gauche pendant que « 443,99 € » se rangeait à droite. Le
+    contrôle porte sur le SÉLECTEUR, parce que c'est lui qui a été faux : une
+    marge compensatoire aurait « corrigé » l'écran sans corriger la règle.
+  */
+  check('l’entête d’une colonne de montants est nommée à la même spécificité',
+    /\.data-table th\.finance-cell-amount/.test(css));
+  check('…et elle s’aligne à droite, comme ses valeurs',
+    /\.finance-cell-amount,\s*\.data-table th\.finance-cell-amount \{[^}]*text-align: right/.test(css));
+
+  /*
+    ── LA CELLULE D'ACTIONS RESTE UNE CELLULE ─────────────────────────────
+
+    `.row-actions` (display: flex) posée sur un `<td>` le sortait du modèle de
+    tableau : ses boutons se calaient en haut d'une cellule anonyme pendant que
+    les voisines restaient centrées.
+  */
+  for (const [nom, source] of [
+    ['le livret', workspace],
+    ['les demandes de paiement', lire('frontend/src/components/finance/PaymentRequestPanel.tsx')],
+    ['les règles récurrentes', listeRegles],
+  ]) {
+    check(`${nom} n’applique plus le flex directement sur la cellule`,
+      !/<td className="row-actions">/.test(code(source)));
+    check(`…il l’enveloppe dans un conteneur (${nom})`,
+      /<td className="cell-actions">/.test(code(source)));
+  }
+  check('la cellule d’actions est déclarée comme cellule de tableau',
+    /\.data-table td\.cell-actions/.test(css));
+
+  /*
+    ── SIX COLONNES NE RENTRENT PAS DANS 390 px ───────────────────────────
+
+    Mesuré avant correction : 557 px de contenu pour 390 px de vue. La bascule
+    est une requête de CONTENEUR et non d'écran, parce que la place disponible
+    ne suit pas la largeur de fenêtre : à 768 px le tableau dispose de 686 px,
+    à 1024 px il en dispose de 684 — la barre latérale reprend ce que la
+    fenêtre a gagné.
+  */
+  check('la bascule en fiches suit la largeur DISPONIBLE, pas celle de l’écran',
+    /container-type: inline-size/.test(css) && /@container \(max-width/.test(css));
+  check('les deux tables financières sont empilables',
+    /finance-table-stackable/.test(code(workspace)) && /finance-table-stackable/.test(code(pageGlobale)));
+  check('chaque cellule empilée garde le NOM de sa colonne',
+    /td\[data-label\]::before[^}]*content: attr\(data-label\)/.test(css));
+  for (const etiquette of ['Date', 'Mouvement', 'Rattachement', 'Montant', 'Justificatif']) {
+    check(`« ${etiquette} » est portée par sa cellule`,
+      new RegExp(`data-label="${etiquette}"`).test(code(workspace)));
+  }
+  for (const etiquette of ['Rattachement', 'Revenus', 'Coûts', 'Net', 'Mouvements']) {
+    check(`la répartition porte « ${etiquette} »`,
+      new RegExp(`data-label="${etiquette}"`).test(code(pageGlobale)));
+  }
+  /*
+    La feuille EXPLIQUE qu'elle refuse `display: none` pour l'entête ; chercher
+    la chaîne dans le texte brut ferait échouer le contrôle sur la phrase qui le
+    justifie. On décommente d'abord — même discipline qu'ailleurs dans ce
+    fichier.
+  */
+  const empilement = code(css).slice(code(css).indexOf('.finance-table-stackable'));
+  check('aucune colonne n’est masquée en silence',
+    !/display:\s*none/.test(empilement.slice(0, 3000)));
+
+  /*
+    ── LA FENÊTRE TIENT DANS LA VUE ───────────────────────────────────────
+
+    Le fond défilait avec `align-items: center` : un enfant plus haut que son
+    conteneur défilant sort par le HAUT, et cette partie devient inatteignable.
+    Le titre du mouvement était perdu sur toutes les tailles mesurées, jusqu'au
+    1280×900.
+  */
+  check('le fond ne défile plus', /\.modal-backdrop \{[^}]*overflow: hidden/.test(styles));
+  check('la boîte est bornée à la vue visible (dvh, pas vh)',
+    /\.modal \{[^}]*max-height: min\(100%, calc\(100dvh/.test(styles));
+  check('…et c’est son CONTENU qui défile',
+    /\.modal-body \{[^}]*overflow-y: auto/.test(styles) && /\.modal-body \{[^}]*min-height: 0/.test(styles));
+  check('l’en-tête ne défile pas', /\.modal-head \{[^}]*flex: 0 0 auto/.test(styles));
+  check('le pied reste visible', /\.modal-body > \.action-buttons[^{]*\{[^}]*position: sticky/.test(styles));
+  check('le contenu est bien enveloppé dans la zone défilante',
+    /<div className="modal-body">\{children\}<\/div>/.test(code(modale)));
+
+  /*
+    ── LA FENÊTRE SE FERME, ET LE FOCUS NE S'ÉCHAPPE PAS ──────────────────
+  */
+  check('une croix nommée ferme la fenêtre',
+    /aria-label="Fermer la fenêtre"/.test(code(modale)));
+  check('le focus est piégé pendant qu’elle est ouverte',
+    /e\.key !== 'Tab'/.test(code(modale)) && /shiftKey/.test(code(modale)));
+  check('…et rendu à son point de départ', /rendreLeFocus\.current\?\.focus/.test(code(modale)));
+
+  /*
+    ── LE « ⋮ » RANGE LE SECONDAIRE, JAMAIS L'IMPORTANT ───────────────────
+  */
+  const menu = lire('frontend/src/components/finance/RowMenu.tsx');
+  check('le menu annonce qu’il ouvre un menu', /aria-haspopup="menu"/.test(code(menu)));
+  check('…et son état', /aria-expanded=\{ouvert\}/.test(code(menu)));
+  check('Échap le referme et rend le focus',
+    /e\.key !== 'Escape'/.test(code(menu)) && /declencheur\.current\?\.focus\(\)/.test(code(menu)));
+  check('un retrait garde son traitement destructif jusque dans le menu',
+    /conn-menu-item-danger/.test(code(menu)) && /danger: true/.test(code(recu)));
+  check('« Rembourser » reste un bouton visible, hors du menu',
+    /className="btn btn-small btn-danger"[\s\S]{0,120}Rembourser/.test(code(workspace)));
+  check('« Voir les détails » aussi', /Voir les détails/.test(code(workspace)));
+  check('« Télécharger » reste visible', /Télécharger/.test(code(recu)));
+
+  /* Le champ de fichier est une mécanique : il ne doit pas s’annoncer. */
+  check('le champ de fichier est retiré de l’arbre d’accessibilité',
+    /tabIndex=\{-1\}[\s\S]{0,60}aria-hidden="true"/.test(code(recu)));
+}
+
 finish();

@@ -114,19 +114,21 @@ export function RecurringCostList({
                         <span className="badge badge-ok">Active</span>
                       )}
                     </td>
-                    <td className="row-actions">
-                      {arretee ? (
-                        <span className="muted">—</span>
-                      ) : (
-                        <>
-                          <button type="button" className="btn btn-small" onClick={() => onEdit(regle)}>
-                            Modifier
-                          </button>
-                          <button type="button" className="btn btn-small" onClick={() => onStop(regle)}>
-                            Stopper
-                          </button>
-                        </>
-                      )}
+                    <td className="cell-actions">
+                      <div className="row-actions">
+                        {arretee ? (
+                          <span className="muted">—</span>
+                        ) : (
+                          <>
+                            <button type="button" className="btn btn-small" onClick={() => onEdit(regle)}>
+                              Modifier
+                            </button>
+                            <button type="button" className="btn btn-small" onClick={() => onStop(regle)}>
+                              Stopper
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
