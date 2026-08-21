@@ -162,7 +162,28 @@ export async function recordInvoiceFailure(fait) {
      * Un second échec ne doit réécrire ni l'un ni l'autre : ce sont les termes
      * annoncés au client au moment où l'incident s'est ouvert.
      */
-    await PanelPaymentDefault.updateOne(
+    /**
+     * L'ÉCRITURE DIT ELLE-MÊME SI ELLE A OUVERT L'INCIDENT.
+     *
+     * ══ CE QUE LE COMPTE D'HISTORIQUE PRÉTENDAIT ═══════════════════════════
+     *
+     * L'ouverture se déduisait de `history.length === 1`. Or l'historique n'est
+     * écrit qu'au `$setOnInsert` : les échecs suivants ne l'allongent pas. Sa
+     * longueur restait donc 1 à la deuxième tentative, à la troisième, et à
+     * chaque relivraison du même webhook.
+     *
+     * Conséquence mesurée sur l'environnement de recette : TROIS événements
+     * `PAYMENT_DEFAULT_OPENED` pour un impayé qui ne s'est ouvert qu'une fois.
+     * La chronologie du Panel annonçait trois ouvertures, et `opened` mentait
+     * à tous ses appelants.
+     *
+     * `upsertedCount` est la seule réponse vraie : il vaut 1 quand ce document
+     * vient d'être INSÉRÉ, et 0 quand il existait déjà. C'est atomique, ça ne
+     * dépend d'aucune convention d'historique, et une course perdue (E11000)
+     * rend `undefined` — donc pas d'ouverture, ce qui est exact : le gagnant
+     * l'a tracée.
+     */
+    const ecriture = await PanelPaymentDefault.updateOne(
       { environment, invoiceId },
       {
         $setOnInsert: {
@@ -234,7 +255,7 @@ export async function recordInvoiceFailure(fait) {
       return { recorded: true, paymentDefaultId: incident.paymentDefaultId, ignored: true };
     }
 
-    const premier = incident.history?.length === 1;
+    const premier = ecriture?.upsertedCount === 1;
     if (premier) {
       await trace(incident, EVENT_TYPES.PAYMENT_DEFAULT_OPENED, 'WARNING',
         `Prélèvement échoué — ${formatAmount(incident.amountDueCents, incident.currency)} dus. `
@@ -625,6 +646,20 @@ async function publishIncident(incident) {
       projectId: incident.projectId,
       contractId: incident.contractId ?? null,
       invoiceId: incident.invoiceId ?? null,
+      /**
+       * CE QUE CE RÈGLEMENT PAIE — porté, plus déduit.
+       *
+       * Le projet nomme la prestation dans sa relance : « votre abonnement »
+       * plutôt que « votre facture ». Sans cette identité il ne pouvait rien
+       * affirmer et retombait sur un mot générique — juste, mais inutile au
+       * client qui a plusieurs lignes chez nous.
+       *
+       * Aujourd'hui tout incident naît d'une facture d'abonnement (le
+       * normalisateur écarte le reste). Transmettre l'identité plutôt que de
+       * supposer ce fait évite que l'ouverture du périmètre transforme une
+       * supposition juste en affirmation fausse.
+       */
+      subscriptionId: incident.subscriptionId ?? null,
 
       status: incident.status,
 

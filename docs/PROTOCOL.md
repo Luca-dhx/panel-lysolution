@@ -285,6 +285,61 @@ et n'est légitimement **pas** déclaré.
 
 ---
 
+## IMPAYÉ — qui décide de quoi, et ce qui part au client
+
+Le Panel n'arbitre **qu'une chose** dans tout ce cycle : combien de temps un
+impayé peut courir avant qu'on demande la fermeture. Le prestataire de paiement
+constate les refus et ordonnance ses propres tentatives ; le projet décide de
+l'accessibilité de son site.
+
+### Les trois valeurs de `paymentGraceDays`
+
+| Valeur | Sens | Conséquence |
+|---|---|---|
+| `N` (entier ≥ 0) | politique écrite | échéance = **premier** refus + N jours, figée |
+| `0` | **aucune clémence** | échéance au premier refus |
+| `null` | **aucune politique écrite** | l'incident vit, s'affiche, relance — **jamais d'expiration automatique** |
+
+`null` n'est pas permissif, il est **non automatisé** : la dette reste
+parfaitement visible, elle cesse simplement de fermer un site toute seule. La
+fermeture redevient une décision humaine.
+
+`expireDueGracePeriods` filtre sur `graceDeadlineAt: { $ne: null, $lte: now }`.
+Le `$ne: null` est porteur : en BSON `null` précède les dates, et un `$lte` seul
+capturerait les incidents sans échéance — donc fermerait au premier refus les
+contrats sans politique.
+
+### Ce qui part au client, et quand
+
+| Moment | Modèle | Portée |
+|---|---|---|
+| ouverture de l'impayé | `CONTRACT_PAYMENT_OVERDUE_ADMIN` | PROJET |
+| **chaque nouvelle tentative refusée** | `CONTRACT_PAYMENT_RETRY_FAILED_ADMIN` | PROJET |
+| échéance atteinte | `CONTRACT_PAYMENT_OVERDUE_CRITICAL_ADMIN` | PROJET |
+| fermeture CONFIRMÉE | `SITE_SUSPENDED_PAYMENT_DEFAULT_CLIENT` / `_TEAM` | PANEL |
+| régularisation | `CONTRACT_PAYMENT_RECOVERED_ADMIN` | PROJET |
+| encaissement projeté | `PAYMENT_CONFIRMED_ADMIN` + `PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN` | PROJET + PANEL |
+
+La relance se répète, et c'est voulu — mais une seule fois par tentative RÉELLE.
+Le discriminant est `attemptCount`, le compteur du prestataire : une relivraison
+du même webhook le laisse inchangé et ne produit rien.
+
+### Ce que le Panel ne fait jamais dans ce cycle
+
+Aucune tentative de prélèvement. `expireDueGracePeriods` lit des échéances en
+base et bascule des états — pas un appel au prestataire, pas une facture
+représentée. Y ajouter « et on retente » ferait entrer le double débit.
+
+### Un statut d'incident n'est pas libre
+
+Le champ n'a pas d'enum en base (il est décidé ici, appliqué là-bas), mais le
+projet connaît la liste : `OPEN`, `GRACE_EXPIRED`, `RESOLVED`, `CLOSED`. Une
+valeur hors liste est **appliquée quand même** — diverger serait pire — et
+journalisée en ERREUR côté projet. Avant d'introduire un statut, l'ajouter à
+`STATUTS_CONNUS` dans `paymentDefaultIncident.applier.js`.
+
+---
+
 ## Règle de redéploiement du Panel
 
 ```text
