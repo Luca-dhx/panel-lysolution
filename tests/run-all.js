@@ -212,6 +212,13 @@ const TESTS = [
   //     pendant leur délai de grâce.
   'finance-payment-default-projection.test.js',
   'finance-ui.test.js',
+  // L'ADRESSE DE CONTACT PUBLIC — une autorité, et la preuve que c'est la
+  // seule. Elle était DÉDUITE de l'ordre des références de l'agence : une
+  // donnée que personne ne pouvait ni voir ni choisir, imprimée au bas de
+  // chaque e-mail client. Cette suite verrouille qu'elle reste un champ,
+  // qu'aucune autre adresse ne s'y substitue, et que la migration ne prend
+  // aucune décision d'identité à la place de l'opérateur.
+  'public-contact-email.test.js',
   // L12.B-F — L'ÉCRAN QUI ACCORDE UN DROIT CHEZ UN CLIENT. Le serveur refuse
   // ce qu'un écran pourrait envoyer (mode inconnu, projet inconnu ou non
   // appairé, champ en trop), on ne s'accorde rien à soi-même, et « compte

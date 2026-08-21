@@ -21,11 +21,50 @@ divergent, et c'est toujours celle qu'on ne lit pas qui reste juste.
 | Identité et contrat d'un projet | **le projet** | le Panel en détient une projection |
 | Accessibilité d'un site | **le projet** | le Panel pousse des *causes*, jamais un ordre |
 | Politique de grâce d'un impayé | **Panel** | le projet affiche |
+| **Adresse de contact public** du prestataire | **Panel** (`PanelCompany.contacts.publicContactEmail`) | le projet la reçoit publiée, il ne la devine plus |
+| Expéditeur `From` du parc | **Panel** (`SystemConfiguration`) | c'est une adresse TECHNIQUE, jamais un contact |
 
 La phrase à retenir, et elle vaut pour tout le lot e-mail :
 
 > **Le Panel connaît ce qu'un projet utilise parce que le projet le déclare, pas
 > parce que le Panel le devine.**
+
+
+### Trois adresses e-mail, trois métiers — ne jamais les confondre
+
+Elles se ressemblent, elles se remplacent facilement dans une tête, et aucune
+des trois ne peut jouer le rôle d'une autre.
+
+| Adresse | Où elle vit | À quoi elle sert | Écran |
+|---|---|---|---|
+| **Expéditeur** (`From`) | `SystemConfiguration` | l'en-tête sous lequel TOUT le parc écrit. Peut être une boîte technique que personne ne relève. | « Expéditeur e-mail » |
+| **Contact public** | `PanelCompany.contacts.publicContactEmail` | l'adresse que le pied de chaque e-mail client invite à écrire. Doit aboutir à un humain. | « Expéditeur e-mail » (même écran, carte dédiée) |
+| **Certificats** | `PanelCompany.contacts.supportEmail` | transmise à Let's Encrypt pour les alertes d'expiration. De l'exploitation, jamais du client. | « Mon entreprise » |
+
+**Le contact public était DÉDUIT.** Jusqu'à ce lot, les projets balayaient
+`references[]` — la liste de liens de l'agence — et retenaient la première
+valeur qui ressemblait à une adresse. Le contact de tous les clients dépendait
+donc de l'ORDRE d'une liste que l'opérateur réorganise pour des raisons
+d'affichage. Une donnée que personne ne peut ni voir ni choisir n'est pas une
+configuration : c'est un effet de bord.
+
+**Répliques interdites.** Aucune de ces adresses ne doit jamais servir de repli
+au contact public : l'expéditeur du parc, `contacts.email` (administratif),
+`contacts.supportEmail` (Let's Encrypt), l'adresse d'un compte SUPER_ADMIN, une
+variable d'environnement d'un projet, un réglage local d'un Manager. Absente,
+elle vaut `null` et le projet REFUSE d'envoyer plutôt que d'inventer.
+
+**Propagation.** La valeur voyage dans le bloc `contacts` déjà publié par
+`DEV_COMPANY` : aucun `templateCode` nouveau, aucun provisionnement par projet.
+Enregistrer publie une version ; les projets appairés l'appliquent dans la
+foulée, sans redéploiement ni réappairage. Un projet fraîchement appairé la
+reçoit du premier coup.
+
+**Migration.** `npm run migrate:public-contact-email` (`-- --dry-run` pour
+simuler) reprend la première adresse des références — celle qui servait déjà à
+cet usage. Sans référence e-mail, le champ reste VIDE : remplir à la place de
+l'opérateur publierait au nom de son entreprise une adresse que personne n'a
+choisie.
 
 ---
 

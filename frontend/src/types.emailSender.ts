@@ -70,8 +70,26 @@ export interface EmailSenderConfiguration {
   updatedBy: string | null;
 }
 
+/**
+ * L'ADRESSE DE CONTACT PUBLIC — lue depuis l'entreprise du Panel.
+ *
+ * Elle vit sur cet écran parce que c'est là qu'on la confond avec l'adresse
+ * d'expédition ; elle est stockée sur l'identité parce que c'est elle que les
+ * projets reçoivent.
+ */
+export interface PublicContactEmail {
+  email: string | null;
+  /** `false` = décision d'identité pas encore prise. Ce n'est pas une erreur. */
+  configured: boolean;
+  companyId: string | null;
+  companyName: string | null;
+  /** Ce qui se passe tant qu'elle est vide. Écrit par le backend. */
+  consequence: string | null;
+}
+
 export interface EmailSenderScreen {
   configuration: EmailSenderConfiguration;
+  publicContact: PublicContactEmail;
   /** Le monde fournisseur SERVI par ce Panel. Constaté, jamais choisi. */
   environment: string;
   lastTest: EmailSenderTestReport | null;

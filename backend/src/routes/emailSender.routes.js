@@ -19,6 +19,7 @@ import {
   putEmailSender,
   postEmailSenderTest,
   getEmailSenderTest,
+  putPublicContactEmail,
 } from '../controllers/emailSender.controller.js';
 
 const router = Router();
@@ -27,6 +28,15 @@ router.use(asyncHandler(requirePanelUser));
 
 router.get('/', asyncHandler(getEmailSender));
 router.put('/', requirePanelDev, asyncHandler(putEmailSender));
+
+/**
+ * LE CONTACT PUBLIC — même écran, même garde, autorité différente.
+ *
+ * Il est monté ici parce que c'est ici qu'on le confond avec l'expéditeur ;
+ * il est écrit dans l'entreprise du Panel parce que c'est elle que les projets
+ * reçoivent. Une route par écran n'implique pas une vérité par écran.
+ */
+router.put('/public-contact', requirePanelDev, asyncHandler(putPublicContactEmail));
 
 router.post('/test', requirePanelDev, asyncHandler(postEmailSenderTest));
 /**

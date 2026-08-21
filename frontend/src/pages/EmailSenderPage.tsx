@@ -57,6 +57,7 @@ export function EmailSenderPage() {
 
   const [senderEmail, setSenderEmail] = useState('');
   const [senderName, setSenderName] = useState('');
+  const [contactPublic, setContactPublic] = useState('');
   const [destinataire, setDestinataire] = useState('');
   const [rapport, setRapport] = useState<EmailSenderTestReport | null>(null);
   const [copie, setCopie] = useState(false);
@@ -67,6 +68,7 @@ export function EmailSenderPage() {
       setScreen(vue);
       setSenderEmail(vue.configuration.senderEmail ?? '');
       setSenderName(vue.configuration.senderName ?? '');
+      setContactPublic(vue.publicContact?.email ?? '');
       setRapport((actuel) => actuel ?? vue.lastTest);
     } catch (err) {
       setErreur(errorMessage(err, 'Configuration d’expédition indisponible.'));
@@ -89,6 +91,35 @@ export function EmailSenderPage() {
       setBusy(false);
     }
   };
+
+  /**
+   * ENREGISTRER LE CONTACT PUBLIC — écriture séparée, et volontairement.
+   *
+   * Un seul bouton pour les deux adresses laisserait croire qu'elles voyagent
+   * ensemble. Elles ne vont pas au même endroit : l'expéditeur est une
+   * configuration de plateforme, le contact public est une donnée d'identité
+   * publiée aux projets. Deux gestes, deux effets, deux messages.
+   */
+  const enregistrerContact = async () => {
+    setBusy(true);
+    setErreur(null);
+    setNotice(null);
+    try {
+      const vue = await api.savePublicContactEmail(contactPublic.trim());
+      setScreen(vue);
+      setContactPublic(vue.publicContact?.email ?? '');
+      setNotice(
+        vue.publicContact?.email
+          ? 'Contact public enregistré et publié. Tous les projets appairés l’utilisent immédiatement.'
+          : 'Contact public effacé. Les e-mails clients qui l’exigent seront refusés tant qu’il reste vide.',
+      );
+    } catch (err) {
+      setErreur(errorMessage(err, 'Enregistrement impossible.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
 
   const envoyer = async () => {
     setBusy(true); setErreur(null); setNotice(null);
@@ -209,6 +240,68 @@ export function EmailSenderPage() {
             <div>
               <dt>Nom</dt>
               <dd>{configuration.senderName ?? '— non configuré —'}</dd>
+            </div>
+          </dl>
+        )}
+      </Card>
+
+      {/*
+        ── L'ADRESSE À LAQUELLE LES CLIENTS ÉCRIVENT ─────────────────────────
+
+        Elle est ici, sous l'expéditeur, parce que c'est ici qu'on les confond.
+        « Adresse d'expédition (From / support) » se lit comme l'adresse de
+        contact ; ce n'est pas la même chose, et l'une des deux peut très bien
+        n'être relevée par personne.
+      */}
+      <Card title="E-mail de contact public">
+        <p className="muted read-only-note">
+          L'adresse que le pied de chaque e-mail client invite à écrire. Elle est
+          <strong> distincte de l'expéditeur </strong> ci-dessus : celui-là est l'en-tête
+          technique sous lequel le parc écrit, et peut être une boîte que personne ne
+          relève. Celle-ci doit aboutir à un humain.
+        </p>
+
+        <dl className="detail-list">
+          <div>
+            <dt>Publiée pour</dt>
+            <dd>{screen.publicContact?.companyName ?? '— aucune entreprise active —'}</dd>
+          </div>
+          <div>
+            <dt>État</dt>
+            <dd>
+              <span className={`badge badge-${screen.publicContact?.configured ? 'ok' : 'warn'}`}>
+                {screen.publicContact?.configured ? 'Configurée' : 'À renseigner'}
+              </span>
+              {screen.publicContact?.consequence ? (
+                <span className="muted"> — {screen.publicContact.consequence}</span>
+              ) : null}
+            </dd>
+          </div>
+        </dl>
+
+        {canEdit ? (
+          <div className="parameter-form">
+            <label className="field">
+              <span className="field-label">E-mail de contact public</span>
+              <input type="email" value={contactPublic} maxLength={200}
+                placeholder="contact@exemple.fr"
+                onChange={(e) => setContactPublic(e.target.value)} />
+              <span className="field-hint">
+                Enregistrée sur l'identité du prestataire et publiée aux projets
+                appairés dans la foulée — sans redéploiement ni réappairage.
+              </span>
+            </label>
+            <div className="action-buttons">
+              <button type="button" className="btn" disabled={busy} onClick={() => void enregistrerContact()}>
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        ) : (
+          <dl className="detail-list">
+            <div>
+              <dt>Adresse</dt>
+              <dd>{screen.publicContact?.email ?? '— non renseignée —'}</dd>
             </div>
           </dl>
         )}

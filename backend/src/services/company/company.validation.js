@@ -108,13 +108,42 @@ const mediaDescriptor = (label) =>
     z.null(),
   ]).optional().transform((v) => (v === undefined ? null : v));
 
+/**
+ * EFFACER UN CHAMP FACULTATIF EST UNE INTENTION, PAS UNE ERREUR DE SAISIE.
+ *
+ * ══ CE QUI NE MARCHAIT PAS ══════════════════════════════════════════════════
+ *
+ * Ces deux règles portaient déjà `v === '' ? null` dans leur transformation
+ * finale — l'intention était donc écrite. Mais elle n'était jamais atteinte :
+ * l'union valide AVANT de transformer, `''` échouait au contrôle de format, et
+ * la requête repartait en 400 « adresse e-mail attendue ».
+ *
+ * Conséquence pratique : vider un champ e-mail ou un domaine de la fiche
+ * entreprise était IMPOSSIBLE. On pouvait le remplir, le corriger — jamais le
+ * retirer. Le seul contournement était de laisser une adresse périmée en
+ * place, c'est-à-dire de publier aux projets un contact qui n'existe plus.
+ *
+ * La chaîne vide entre donc explicitement dans l'union, où elle traverse le
+ * format sans être jugée, et ressort `null` de la transformation. On ne
+ * persiste jamais `''` : une chaîne vide passerait les contrôles de présence
+ * (`if (adresse)` est faux, mais `'publicContactEmail' in contacts` est vrai)
+ * et se lirait comme une valeur choisie.
+ */
 const domain = (label) =>
-  z.union([z.string().trim().toLowerCase().regex(DOMAIN_RE, `${label} : nom de domaine attendu (ex. exemple.fr).`), z.null()])
+  z.union([
+    z.literal(''),
+    z.string().trim().toLowerCase().regex(DOMAIN_RE, `${label} : nom de domaine attendu (ex. exemple.fr).`),
+    z.null(),
+  ])
     .optional()
     .transform((v) => (v === undefined || v === '' ? null : v));
 
 const email = (label) =>
-  z.union([z.string().trim().toLowerCase().email(`${label} : adresse e-mail attendue.`), z.null()])
+  z.union([
+    z.literal(''),
+    z.string().trim().toLowerCase().email(`${label} : adresse e-mail attendue.`),
+    z.null(),
+  ])
     .optional()
     .transform((v) => (v === undefined || v === '' ? null : v));
 
@@ -198,6 +227,10 @@ const contactsSchema = z.object({
   email: email('contacts.email'),
   phone: nullableString(40),
   supportEmail: email('contacts.supportEmail'),
+  /* Même règle que les autres adresses : normalisée, et une chaîne vide
+     devient `null` — un contact public « présent mais vide » serait pire
+     qu'absent, puisqu'il passerait les contrôles de présence. */
+  publicContactEmail: email('contacts.publicContactEmail'),
   address: z.object({
     line1: nullableString(200),
     line2: nullableString(200),

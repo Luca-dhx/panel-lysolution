@@ -43,6 +43,7 @@ import { INVOCATION_SOURCES } from '../capabilities/invocationContext.js';
 import { CAPABILITY_ERROR_CODES } from '../capabilities/capabilityErrors.js';
 import { runtimeEnvironment } from '../integratedApi/environment.js';
 import { resolveGlobalSender, describeGlobalSender } from './panelGlobalSender.service.js';
+import { getActiveCompany } from '../company/company.service.js';
 
 /** Le modèle emprunté. Un seul, et il vit dans le registre comme les autres. */
 export const TEST_TEMPLATE_CODE = 'PANEL_EMAIL_SENDER_TEST';
@@ -402,10 +403,45 @@ function buildReport(stored) {
   };
 }
 
-/** Vue d'ensemble de l'écran : la configuration, et le dernier test. */
+/**
+ * LE CONTACT PUBLIC, LU DEPUIS L'IDENTITÉ — pas recopié.
+ *
+ * ══ POURQUOI IL APPARAÎT SUR CET ÉCRAN-LÀ ═══════════════════════════════════
+ *
+ * Parce que c'est ici qu'on le confond. L'écran annonce « Adresse d'expédition
+ * (From / support) » : un opérateur qui la remplit croit légitimement avoir
+ * renseigné l'adresse à laquelle ses clients écriront. Ce sont deux choses —
+ * l'une peut être une boîte technique jamais relevée. Les montrer côte à côte
+ * est le seul endroit où la distinction se voit au moment où elle compte.
+ *
+ * ══ MONTRÉ ICI, STOCKÉ AILLEURS ═════════════════════════════════════════════
+ *
+ * La valeur reste sur l'entreprise du Panel — l'autorité d'identité, celle qui
+ * est publiée aux projets. La recopier dans la configuration d'expéditeur
+ * créerait la seconde vérité que cet écran existe pour empêcher.
+ */
+async function describePublicContact() {
+  const company = await getActiveCompany();
+  const adresse = company?.contacts?.publicContactEmail ?? null;
+  return {
+    email: adresse,
+    /* « À renseigner » n'est pas une erreur : c'est une décision d'identité
+       qui appartient à l'opérateur, et personne d'autre ne peut la prendre. */
+    configured: Boolean(adresse),
+    companyId: company?.companyId ?? null,
+    companyName: company?.identity?.name ?? null,
+    /* Ce qui change quand elle est absente — écrit ici, pas deviné à l'écran. */
+    consequence: adresse
+      ? null
+      : 'Tant qu’elle est vide, les e-mails clients qui l’exigent sont REFUSÉS à l’envoi plutôt qu’expédiés sans adresse de réponse.',
+  };
+}
+
+/** Vue d'ensemble de l'écran : la configuration, le contact public, le dernier test. */
 export async function describeSenderScreen() {
   return {
     configuration: await describeGlobalSender(),
+    publicContact: await describePublicContact(),
     environment: runtimeEnvironment(),
     lastTest: await describeLastTest(),
   };

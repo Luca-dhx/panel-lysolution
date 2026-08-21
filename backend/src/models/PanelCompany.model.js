@@ -200,6 +200,37 @@ const contactsSchema = new mongoose.Schema(
     email: { type: String, default: null },
     phone: { type: String, default: null },
     supportEmail: { type: String, default: null },
+
+    /**
+     * L'ADRESSE DE CONTACT PUBLIQUE — celle que le client a le droit d'écrire.
+     *
+     * ══ TROIS ADRESSES, TROIS MÉTIERS ═══════════════════════════════════════
+     *
+     * Elles se ressemblent et ne se remplacent pas :
+     *
+     *   · l'EXPÉDITEUR (`SystemConfiguration`, écran « Expéditeur e-mail ») est
+     *     l'en-tête `From` du parc. Il peut être une boîte technique que
+     *     personne ne relève ;
+     *   · `supportEmail` est l'adresse transmise à Let's Encrypt pour les
+     *     alertes d'expiration de certificat. C'est de l'exploitation ;
+     *   · CELLE-CI est l'adresse que le pied de chaque e-mail client invite à
+     *     écrire — une boîte relevée par un humain.
+     *
+     * ══ POURQUOI ELLE DEVIENT UN CHAMP ══════════════════════════════════════
+     *
+     * Elle existait déjà, mais DÉDUITE : le projet balayait `references[]` et
+     * retenait la première valeur qui ressemblait à une adresse. Le contact
+     * public dépendait donc de l'ORDRE d'une liste de liens hétéroclites —
+     * ajouter un lien LinkedIn en tête n'aurait rien changé, en glisser un
+     * « contact@ » de service aurait tout changé, et rien à l'écran ne
+     * l'annonçait. Une donnée que l'opérateur ne peut ni voir ni choisir n'est
+     * pas une configuration : c'est un effet de bord.
+     *
+     * Elle voyage vers les projets par le canal existant (`contacts` est publié
+     * en entier) : aucun nouveau modèle d'e-mail, aucun provisionnement par
+     * projet, et un projet fraîchement appairé la reçoit du premier coup.
+     */
+    publicContactEmail: { type: String, default: null },
     address: {
       line1: { type: String, default: null },
       line2: { type: String, default: null },

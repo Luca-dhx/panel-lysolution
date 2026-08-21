@@ -738,6 +738,18 @@ export const api = {
   getEmailSender: () => request<EmailSenderScreen>('/api/email-sender'),
   saveEmailSender: (body: { senderEmail: string; senderName: string }) =>
     request<EmailSenderScreen>('/api/email-sender', { method: 'PUT', body }),
+  /**
+   * L'ADRESSE DE CONTACT PUBLIC — même écran, autre autorité.
+   *
+   * Elle est écrite dans l'entreprise du Panel, puis publiée aux projets par le
+   * canal existant. Une chaîne vide efface l'adresse : c'est une intention
+   * légitime, et le backend la normalise en `null`.
+   */
+  savePublicContactEmail: (publicContactEmail: string) =>
+    request<EmailSenderScreen>('/api/email-sender/public-contact', {
+      method: 'PUT',
+      body: { publicContactEmail },
+    }),
   /** ENVOIE un e-mail réel. À ne jamais appeler pour rafraîchir un écran. */
   sendEmailSenderTest: (recipientEmail: string) =>
     request<EmailSenderTestReport>('/api/email-sender/test', {

@@ -11,6 +11,7 @@
 // et l'une des deux est fausse.
 import { ok } from '../utils/apiResponse.js';
 import { updateGlobalSender } from '../services/email/panelGlobalSender.service.js';
+import { getActiveCompanyOrThrow, saveCompany } from '../services/company/company.service.js';
 import {
   describeSenderScreen,
   describeTest,
@@ -30,6 +31,34 @@ export async function putEmailSender(req, res) {
   });
   // On rend l'ÉCRAN complet, pas seulement la configuration : c'est la même
   // forme qu'au chargement, donc l'interface n'a qu'un seul cas à traiter.
+  return ok(res, await describeSenderScreen());
+}
+
+/**
+ * PUT — l'adresse de CONTACT PUBLIC. DEV uniquement (monté ainsi).
+ *
+ * ══ POURQUOI CETTE ROUTE N'ÉCRIT PAS ELLE-MÊME ══════════════════════════════
+ *
+ * L'adresse appartient à l'entreprise du Panel : c'est elle qui est publiée
+ * aux projets. Écrire ici directement en base court-circuiterait la validation
+ * de la fiche ET la publication — les projets continueraient de servir
+ * l'ancienne adresse jusqu'à la prochaine sauvegarde de l'écran Entreprise,
+ * c'est-à-dire peut-être jamais.
+ *
+ * On passe donc par `saveCompany`, qui valide, enregistre et publie. Le
+ * changement atteint tous les projets appairés sans redéploiement, sans
+ * réappairage, et sans qu'un modèle d'e-mail soit touché.
+ */
+export async function putPublicContactEmail(req, res) {
+  const company = await getActiveCompanyOrThrow();
+  await saveCompany(
+    company.companyId,
+    /* Une chaîne vide est normalisée en `null` par le schéma : « effacer » est
+       une intention légitime, et elle ne doit pas produire une adresse vide
+       qui passerait les contrôles de présence. */
+    { contacts: { publicContactEmail: req.body?.publicContactEmail ?? null } },
+    { userId: req.panelUser?.userId ?? null, userEmail: req.panelUser?.email ?? null },
+  );
   return ok(res, await describeSenderScreen());
 }
 

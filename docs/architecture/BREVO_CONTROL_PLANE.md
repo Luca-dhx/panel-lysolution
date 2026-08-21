@@ -201,6 +201,37 @@ compte, deux clés donc deux comptes possibles, deux expéditeurs autorisés » 
 reste juste. Elle se traduit dans la cible par « une identité par projet et par
 environnement », pas par « une identité globale ».
 
+### 4.1 Expéditeur ≠ contact public
+
+Deux adresses vivent sur le même écran (« Expéditeur e-mail »), et c'est
+délibéré : c'est là qu'on les confond.
+
+| | Expéditeur (`From`) | Contact public |
+|---|---|---|
+| Autorité | `SystemConfiguration` (`panelGlobalSender.service.js`) | `PanelCompany.contacts.publicContactEmail` |
+| Rôle | l'en-tête sous lequel tout le parc écrit | l'adresse que le client est invité à écrire |
+| Peut être technique ? | **oui** — une boîte que personne ne relève | **non** — elle doit aboutir à un humain |
+| Route d'écriture | `PUT /api/email-sender` | `PUT /api/email-sender/public-contact` |
+| Propagation | aucune — le Panel expédie lui-même | publiée aux projets dans `DEV_COMPANY.contacts` |
+
+La route du contact public **n'écrit pas en base** : elle appelle `saveCompany`,
+qui valide la fiche entière puis publie une version. Une écriture directe aurait
+laissé les projets servir l'ancienne adresse jusqu'à la prochaine sauvegarde de
+l'écran « Mon entreprise » — c'est-à-dire peut-être jamais.
+
+Aucun `templateCode` n'a été créé pour elle : les modèles consomment déjà
+`developer.supportEmail`, et c'est le RÉSOLVEUR du projet qui a changé de
+source. Un modèle nouveau aurait exigé un déploiement du Panel puis une
+déclaration par projet, pour transporter une donnée que le canal existant
+transportait déjà.
+
+**Répliques interdites** comme repli du contact public : l'expéditeur du parc,
+`contacts.email`, `contacts.supportEmail` (Let's Encrypt), l'adresse d'un compte
+SUPER_ADMIN, une variable d'environnement de projet, un réglage local de
+Manager. Absente, elle vaut `null` et l'envoi est REFUSÉ.
+
+---
+
 **`/senders` et `/domains` restent hors périmètre.** Reproduire l'état Brevo
 coûtait des centaines de lignes, une demi-douzaine de statuts distants et une
 dépendance à des endpoints indisponibles sur certains comptes — pour une
