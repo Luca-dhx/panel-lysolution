@@ -856,4 +856,96 @@ bandeaux plutôt qu'un simple lien.
 
 ---
 
+## LOT 11 — BASCULE SUR LA PILE DÉPLOYÉE
+
+### 11.1 Ce qu'une recette locale ne pouvait pas prouver
+
+Toutes les recettes précédentes s'exécutent en local. Elles prouvent que le
+CODE fonctionne ; aucune ne prouve que le code DÉPLOYÉ fonctionne — et c'est
+une question différente, parce que **le chemin des webhooks ne passe pas par le
+poste de travail**.
+
+Le fournisseur n'appelle pas une machine de développement : il appelle
+`https://api.panel.ly-solution.com/webhooks/providers/opensign`. Ce qui reçoit
+l'événement, vérifie sa signature HMAC, le normalise et le consigne, c'est le
+Panel **déployé** — un autre processus, une autre release, un autre réseau.
+
+### 11.2 Déploiement du Panel TEST
+
+| | |
+|---|---|
+| destination | `https://panel.ly-solution.com` (TEST) |
+| release | **`fcfc1e7`** — arbre propre, commit poussé |
+| préflight | ok |
+| étapes | 23, de `deployment.initialize` à `deployment.finalize` |
+| issue | **ok** |
+
+Un premier passage avait produit `3ac43dc-dirty` : le correctif du pilote
+n'était pas encore commité. Il a été commité, poussé, puis redéployé — la
+règle « le build déployé correspond à un commit poussé » ne souffre pas
+d'exception, sans quoi on ne sait plus reproduire ce qui tourne.
+
+**Un défaut du pilote, trouvé à cette occasion.** Il déclarait un port dédié
+(4177) et interrogeait bien celui-là, mais l'enfant héritait de `process.env`
+tel quel — donc du port du `.env`. Il ne fonctionnait que par coïncidence :
+sans backend de développement en cours, l'un écoutait 4100 pendant que l'autre
+attendait sur 4177, et l'attente expirait sur « pas devenu disponible ». Avec
+un backend de développement en cours, il échouait sur « port déjà utilisé » —
+et la tentation aurait été d'arrêter celui de quelqu'un d'autre.
+
+### 11.3 Recette réelle — `tools/opensign/cutoverRecipe.js`
+
+Une signature menée jusqu'à son achèvement, les deux parties signant réellement
+dans un navigateur, puis lecture de ce que la pile déployée en a fait.
+
+| Étape | Mesure |
+|---|---|
+| 1 · pile en ligne | `health: ok`, base connectée, webhook visé = hôte public |
+| 2 · ouverture | charge utile de **SB Auto**, `OPENED`, fournisseur `OPENSIGN` |
+| 3 · deux signatures | `SIGNED` / `SIGNED`, demande **`DONE`** |
+| 4 · réception déployée | **6 événements consignés** — `created`, `viewed`, `signed`, `completed` — **0 rejeté** |
+| 5 · liaison | `READY`, dernier événement `completed`, plus récent qu'avant, aucune erreur |
+| 6 · fournisseur retiré | refuse toujours, motif `SIGNATURE_PROVIDER_RETIRED` |
+
+**« 0 rejeté » est le résultat qui compte** : la signature HMAC des six
+événements a été reconnue par la release déployée, sur le corps brut, à travers
+le proxy public. C'est la seule manière de le savoir.
+
+La recette **attend** la livraison, elle ne la provoque pas. Rejouer nous-mêmes
+un événement prouverait que notre code sait traiter ce que NOUS lui donnons ;
+ce qu'on veut savoir est autre chose.
+
+### 11.4 Compatibilité pendant la fenêtre de déploiement
+
+Le Panel a été déployé avant SB Auto. La question qui compte : **la charge
+utile de l'ancien SB Auto reste-t-elle acceptée ?**
+
+Mesuré contre le schéma déployé : **oui**. Les trois adresses de retour PAR
+SIGNATAIRE de l'ancienne forme sont tolérées ; simplement, l'adaptateur ne les
+utilise pas — le fournisseur n'accepte qu'une adresse au niveau du DOCUMENT.
+
+Conséquence pendant la fenêtre : une signature ouverte par l'ancien projet part
+**sans adresse de retour**, donc `autoReturn: false`, donc l'écran demande au
+signataire de revenir de lui-même. Dégradé, correct, et auto-réparé au
+déploiement de SB Auto. Ce n'était pas acquis : un schéma `strict` aurait pu
+refuser la charge entière et bloquer toute signature.
+
+### 11.5 Matrice finale — où l'ancien fournisseur subsiste
+
+`node tools/opensign/inventaireYousign.mjs`, sur les DEUX dépôts :
+
+| Classe | Fichiers | Ce que c'est |
+|---|---|---|
+| **`ACTIVE_RUNTIME`** | **0** | plus un chemin d'exécution |
+| **`À CLASSER`** | **0** | plus une occurrence non expliquée |
+| **`DEAD`** | **0** | plus un vestige sans appelant |
+| `HISTORICAL_COMPAT` | 23 | lecture de ce qui a été écrit avant |
+| `TEST` | 47 | suites et outillage de campagne |
+| `DOC` | 184 | documents, dont la référence d'API archivée |
+
+254 occurrences au total, **0 bloquante**. L'outil sort non nul tant que ce
+n'est pas le cas.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*
