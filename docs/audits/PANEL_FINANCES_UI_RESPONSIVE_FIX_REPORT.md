@@ -659,6 +659,53 @@ des certificats ne sont empruntées.
 
 ---
 
+## 10bis · Postchecks sur le Panel DÉPLOYÉ
+
+Déployé par le pipeline existant — `node tools/deployPanel.js --environment
+TEST`, aucun mécanisme alternatif. Préflight `ok`, 23 étapes, issue `ok`,
+« Version 817836a déployée sur https://panel.ly-solution.com ».
+
+Les trois recettes ont été rejouées **contre le déploiement**, pas contre le
+poste de développement.
+
+**Tables** — six largeurs, aucun débordement horizontal :
+
+| Largeur | Régime constaté | Alignement |
+|---|---|---|
+| 390 px | fiches | chaque valeur sous son libellé |
+| 430 px | fiches | idem |
+| 768 px | fiches | idem |
+| 1024 px | fiches | idem |
+| 1280 px | tableau | **toutes les cellules sous leur entête** |
+| 1680 px | tableau | **toutes les cellules sous leur entête** |
+
+À 1280 px, la colonne d'actions mesure `display=table-cell`, `valign=middle`,
+contenu à +32 px dans une ligne haute — centré, comme ses voisines.
+
+**Fenêtre de détail** — cinq formats :
+
+| Écran | Dépasse la vue | Haut atteignable | Bas | Page figée | Marges |
+|---|---|---|---|---|---|
+| 390×640 | non | **oui** | oui | oui | 16 / 16 px |
+| 390×844 | non | **oui** | oui | oui | 16 / 16 px |
+| 768×700 | non | **oui** | oui | oui | 16 / 16 px |
+| 1280×620 | non | **oui** | oui | oui | 272 / 272 px |
+| 1280×900 | non | **oui** | oui | oui | 272 / 272 px |
+
+**Accessibilité** — `RECETTE A11Y : OK`, 17 contrôles verts sur le déploiement.
+
+**Contact public** — lu sur l'API déployée :
+
+```text
+expediteur    : support@ly-solution.com
+contact public: {"email":"luca.duhoux@lycarz.com","configured":true,
+                 "companyName":"L.Y Solution","consequence":null}
+```
+
+Deux adresses distinctes, servies par le même écran, sur l'instance déployée.
+
+---
+
 ## 11 · Nettoyage
 
 L'adresse `recette-contact-public@ly-solution.com` a servi le temps de la
