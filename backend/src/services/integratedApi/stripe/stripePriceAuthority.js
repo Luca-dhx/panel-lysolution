@@ -49,8 +49,31 @@
 // La contrainte d'immutabilité vient d'ailleurs de Stripe lui-même : un Price ne
 // se modifie pas. On ne la contourne jamais — il n'existe aucune primitive de
 // mise à jour de Price dans le transport.
+// ══ CE QUE LE CHANTIER « FACTURATION LÉGALE » A CHANGÉ ICI ══════════════════
+//
+// Le `unit_amount` d'un Price était le montant TOUTES TAXES COMPRISES, sans
+// qu'aucune taxe ne soit déclarée nulle part. Les factures d'abonnement
+// affichaient donc trois fois le même nombre et aucune mention de TVA.
+//
+// Il porte désormais le HORS TAXE, et le taux est appliqué à l'ABONNEMENT
+// (`subscription_data.default_tax_rates`) — pas au Price, qui n'a pas de champ
+// pour cela. Le débit reste au centime celui du contrat : `HT + TVA = TTC` est
+// VÉRIFIÉ avant tout appel (`contractFiscalLine.js`).
+//
+// ── LA CONSÉQUENCE SUR LA CLÉ, ET POURQUOI ELLE EST SAINE ───────────────────
+//
+// Le montant entre dans `priceOperationId`. Passer du TTC au HT change donc la
+// clé, et un contrat qui ouvrirait un NOUVEL abonnement obtiendrait un NOUVEAU
+// Price. C'est exactement ce qu'on veut : ce sont deux tarifs différents —
+// « 95,99 € toutes taxes » et « 79,99 € hors taxes + 20 % » — et les confondre
+// aurait été la faute.
+//
+// Les abonnements DÉJÀ souscrits ne bougent pas : ils référencent leur Price
+// d'origine, immuable, et continuent de prélever exactement la même somme. On
+// ne réécrit aucune facture, aucun abonnement, aucun tarif historique.
 import { PanelProjectContract } from '../../../models/PanelProjectProjection.model.js';
 import { readRecurrence } from '../../contract/contractRecurrence.js';
+import { readFiscalLine } from '../../contract/contractFiscalLine.js';
 
 /* -------------------------------------------------------------------------- */
 /*  REFUS                                                                     */
@@ -160,7 +183,6 @@ export async function resolvePriceIntent({
   }
 
   const sub = projection.pricing?.subscription ?? null;
-  const amount = Number(sub?.amountIncludingTax ?? 0);
   const currency = String(sub?.currency ?? '').trim().toLowerCase();
 
   /**
@@ -181,12 +203,30 @@ export async function resolvePriceIntent({
    * incomplète. Créer un tarif à zéro produirait un abonnement qui ne prélève
    * rien tout en se déclarant actif.
    */
-  if (!Number.isInteger(amount) || amount <= 0 || !currency || !recurrence) {
+  const gross = Number(sub?.amountIncludingTax ?? 0);
+  if (!Number.isInteger(gross) || gross <= 0 || !currency || !recurrence) {
     throw new PriceAuthorityError(
       PRICE_REFUSALS.SUBSCRIPTION_PRICE_ABSENT,
       'La projection de contrat ne porte pas d’abonnement exploitable.',
     );
   }
+
+  /**
+   * ── LA VENTILATION, LUE ET VÉRIFIÉE ──────────────────────────────────────
+   *
+   * Le refus est traduit dans le vocabulaire de CE module : la passerelle ne
+   * sait traiter que des `PriceAuthorityError`, et laisser passer l'autre
+   * produirait une 500 devant un client qui souscrit — pour un problème qui
+   * est, en réalité, une projection incomplète.
+   */
+  let fiscal;
+  try {
+    fiscal = readFiscalLine(sub, { contractTaxRate: projection.taxRate, label: 'l’abonnement' });
+  } catch (err) {
+    throw new PriceAuthorityError(PRICE_REFUSALS.SUBSCRIPTION_PRICE_ABSENT, err.message);
+  }
+  /** Ce qui entre dans la CLÉ et dans le tarif : le HORS TAXE. */
+  const amount = fiscal.netCents;
 
   const reference = projection.reference ?? null;
   /**
@@ -213,7 +253,10 @@ export async function resolvePriceIntent({
     reference,
     interval,
     intervalCount,
+    /** HORS TAXE — c'est ce que le Price porte, et ce qui entre dans sa clé. */
     amount,
+    /** La ventilation complète, pour que l'adaptateur garantisse le bon taux. */
+    fiscal,
     currency,
     contractVersion,
     productOperationId: productOperationId({ environment, contractId }),
@@ -229,6 +272,24 @@ export async function resolvePriceIntent({
       product: productId,
       unit_amount: amount,
       currency,
+      /**
+       * `tax_behavior: exclusive` — LE MONTANT EST HORS TAXE, et Stripe doit le
+       * savoir.
+       *
+       * ══ CE QUE LA VALEUR PAR DÉFAUT AURAIT FAIT ═══════════════════════════
+       *
+       * Un Price sans `tax_behavior` vaut `unspecified`. Stripe traite alors le
+       * montant comme exclusif quand une taxe s'applique — ce qui donne ici le
+       * bon résultat. Mais « le bon résultat par défaut » est exactement ce
+       * qu'il ne faut pas facturer : le jour où ce défaut change, ou le jour où
+       * un opérateur active Stripe Tax sur le compte, un abonnement à 79,99 €
+       * hors taxe deviendrait un abonnement à 79,99 € toutes taxes comprises,
+       * et il manquerait seize euros à chaque prélèvement.
+       *
+       * On l'écrit. Le champ est IMMUABLE une fois le Price créé, comme le
+       * montant — ce qui est cohérent : c'est un terme du tarif.
+       */
+      tax_behavior: 'exclusive',
       /**
        * `interval_count` est TOUJOURS transmis, même à 1.
        *

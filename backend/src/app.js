@@ -23,6 +23,7 @@ import supervisionRoutes from './routes/supervision.routes.js';
 import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
+import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
 import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
 import providerWebhooksRoutes from './routes/providerWebhooks.routes.js';
@@ -183,6 +184,16 @@ export function createApp() {
   app.use('/api/diagnostic', diagnosticRoutes);
   app.use('/api/executions', executionRoutes);
   app.use('/api/company', companyRoutes);
+  /**
+   * LES ENTREPRISES CLIENTES.
+   *
+   * Volontairement HORS de `/api/company` : ce n'est pas une donnée de
+   * L.Y Solution, c'est l'identité juridique de SES CLIENTS. Les monter sous la
+   * même racine aurait entretenu exactement la confusion que ce chantier existe
+   * pour dissiper — `PanelCompany` est le VENDEUR, `PanelClientCompany` est
+   * l'ACHETEUR, et une facture distingue les deux.
+   */
+  app.use('/api/client-companies', clientCompaniesRoutes);
   // Plan de contrôle IntegratedAPI (L1). Volontairement HORS de /api/company :
   // ce n'est pas une donnée d'entreprise, c'est l'infrastructure d'accès aux
   // fournisseurs — et l'ancien coffre (/api/company/integrated-apis) reste en

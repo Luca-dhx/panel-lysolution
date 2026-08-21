@@ -28,6 +28,10 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { ensureClientCompany, ligneTarifaire, ventilationDepuisTTC } from './helpers/clientCompany.fixture.js';
+
+/** Le HORS TAXE du tarif mensuel de référence — lu par plusieurs sections. */
+const HT_MENSUEL = ventilationDepuisTTC(11_880).net;
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -59,6 +63,10 @@ const lireCorps = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(brut));
 });
 
+/** Le catalogue fiscal du faux compte — voir le bloc de routes plus bas. */
+const tauxTva = new Map();
+/** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
+const tauxParCle = new Map();
 const fauxStripe = http.createServer(async (req, res) => {
   const cle = req.headers['idempotency-key'] ?? null;
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
@@ -107,6 +115,58 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, objet);
   }
 
+  /* ── MISE À JOUR D'UN CLIENT ────────────────────────────────────────────
+     `ensure` fait désormais CONVERGER l'identité de facturation : il relit le
+     client, compare à ce que le Panel détient, et écrit sur écart. Un faux
+     Stripe muet sur cette écriture ferait échouer le paiement pour une route
+     manquante, pas pour une règle métier. */
+  const majClient = /^\/v1\/customers\/([^/?]+)$/.exec(req.url ?? "");
+  if (req.method === 'POST' && majClient) {
+    const client = parId.get(decodeURIComponent(majClient[1]));
+    if (!client) return repondre(404, { error: { code: 'resource_missing' } });
+    const champs = new URLSearchParams(corps);
+    for (const cle of ['name', 'email', 'phone']) {
+      if (champs.has(cle)) client[cle] = champs.get(cle);
+    }
+    client.address = {
+      line1: champs.get('address[line1]') ?? null,
+      line2: champs.get('address[line2]') ?? null,
+      postal_code: champs.get('address[postal_code]') ?? null,
+      city: champs.get('address[city]') ?? null,
+      country: champs.get('address[country]') ?? null,
+    };
+    return repondre(200, client);
+  }
+  /* ── TVA (chantier « facturation légale ») ──────────────────────────────
+     Le plan de contrôle garantit un TaxRate avant toute session, puis pose le
+     numéro de TVA du client. Un faux Stripe muet sur ces routes ferait échouer
+     le paiement en PROVIDER_UNAVAILABLE — c'est-à-dire pour une raison qui n'a
+     rien à voir avec ce que le test éprouve. */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/tax_rates')) {
+    return repondre(200, { object: 'list', data: [...tauxTva.values()] });
+  }
+  if (req.method === 'POST' && req.url === '/v1/tax_rates') {
+    const connu = tauxParCle.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const taux = {
+      id: `txr_test_${sequence}`,
+      object: 'tax_rate',
+      active: true,
+      inclusive: false,
+      percentage: Number(new URLSearchParams(corps).get('percentage')),
+      country: new URLSearchParams(corps).get('country'),
+      display_name: new URLSearchParams(corps).get('display_name'),
+    };
+    tauxTva.set(taux.id, taux);
+    tauxParCle.set(cle, taux);
+    return repondre(200, taux);
+  }
+  const listeTva = /^\/v1\/customers\/([^/?]+)\/tax_ids/.exec(req.url ?? '');
+  if (listeTva && req.method === 'GET') return repondre(200, { object: 'list', data: [] });
+  if (listeTva && req.method === 'POST') {
+    return repondre(200, { id: `txi_test_${(sequence += 1)}`, object: 'tax_id' });
+  }
   return repondre(404, { error: { message: 'route inconnue' } });
 });
 
@@ -190,6 +250,16 @@ let idB;
 
 /** La projection du Panel — SEULE autorité sur les termes du tarif. */
 async function semer(projectId, sourceContractId, { amount = 11_880, interval = 'MONTH', currency = 'EUR', version = 1 } = {}) {
+  /**
+   * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
+   *
+   * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client :
+   * c'est la garde centrale de ce chantier, et elle est autoritative côté
+   * backend. La semer ici n'assouplit rien — elle donne au parcours la donnée
+   * qu'il exige désormais, exactement comme le fait un exploitant qui remplit
+   * la fiche « Clients » avant d'encaisser.
+   */
+  await ensureClientCompany(projectId);
   await PanelProjectContract.updateOne(
     { projectId },
     {
@@ -201,8 +271,8 @@ async function semer(projectId, sourceContractId, { amount = 11_880, interval = 
         reference: `CTR-${sourceContractId.slice(-4)}`,
         document: { available: true, status: 'SIGNED', version },
         pricing: {
-          launchFee: { amountIncludingTax: 118_800, currency: 'EUR', interval: null },
-          subscription: { amountIncludingTax: amount, currency, interval },
+          launchFee: { amountIncludingTax: 118_800, amountExcludingTax: 99000, taxAmount: 19800, taxRate: 20, currency: 'EUR', interval: null },
+          subscription: ligneTarifaire(amount, { currency, interval }),
         },
         sourceModifiedAt: new Date().toISOString(),
         receivedAt: new Date().toISOString(),
@@ -257,15 +327,31 @@ section('3. Le tarif d’un contrat : deux ressources, un seul acte');
   check('…il vient d’être créé', r.data.result.status === 'CREATED');
 
   /* LES TERMES VIENNENT DE LA PROJECTION, PAS DU PROJET. */
-  check('le montant rendu est celui de la projection', r.data.result.amount === 11_880);
+  /**
+   * ── LE MONTANT D’UN PRICE EST DÉSORMAIS LE HORS TAXE ──────────────────
+   *
+   * Il portait le TTC, sans qu’aucune taxe ne soit jamais déclarée : les
+   * factures d’abonnement affichaient trois fois le même nombre et aucune
+   * mention de TVA. Le taux s’applique maintenant à l’ABONNEMENT
+   * (`subscription_data.default_tax_rates`), et le Price porte le HT.
+   *
+   * Le prélèvement, lui, est INCHANGÉ : `HT + TVA = TTC` est vérifié avant
+   * tout appel. C’est ce que la dernière assertion de ce bloc établit.
+   */
+
+  check('le montant rendu est le HORS TAXE de la projection', r.data.result.amount === HT_MENSUEL);
+  check('…et il s’additionne bien au TTC du contrat',
+    HT_MENSUEL + ventilationDepuisTTC(11_880).tax === 11_880);
   check('…la devise aussi', r.data.result.currency === 'eur');
   check('…et la périodicité', r.data.result.interval === 'month');
 
   const post = creations('/v1/prices').at(-1);
   const params = new URLSearchParams(post.corps);
-  check('le montant ENVOYÉ à Stripe est celui de la projection',
-    params.get('unit_amount') === '11880');
-  check('…en centimes, jamais en euros', params.get('unit_amount') !== '118.80');
+  check('le montant ENVOYÉ à Stripe est le HORS TAXE de la projection',
+    params.get('unit_amount') === String(HT_MENSUEL));
+  check('…et le tarif déclare que son montant est HORS TAXE',
+    params.get('tax_behavior') === 'exclusive');
+  check('…en centimes, jamais en euros', !String(params.get('unit_amount')).includes('.'));
   check('…la devise en minuscules', params.get('currency') === 'eur');
   check('…la périodicité', params.get('recurring[interval]') === 'month');
   check('le Price est rattaché au Product', params.get('product') === productA);
@@ -287,7 +373,7 @@ section('3. Le tarif d’un contrat : deux ressources, un seul acte');
     lienPrice.createdByOperationId !== lienProduct.createdByOperationId);
   check('l’acte du Price porte les TERMES',
     lienPrice.createdByOperationId === tarifAutorite.priceOperationId({
-      environment: 'TEST', contractId: CONTRAT_A, interval: 'month', amount: 11_880, currency: 'eur',
+      environment: 'TEST', contractId: CONTRAT_A, interval: 'month', amount: HT_MENSUEL, currency: 'eur',
     }));
   check('l’acte du Product porte le CONTRAT, sans les termes',
     lienProduct.createdByOperationId === tarifAutorite.productOperationId({
@@ -329,11 +415,11 @@ section('4. Changer de tarif crée un AUTRE Price — jamais une mutation');
   const priceA2 = nouveau.data.result.priceId;
   check('un montant différent → un AUTRE Price', priceA2 !== priceA1);
   check('…créé, pas retrouvé', nouveau.data.result.status === 'CREATED');
-  check('…au nouveau montant', nouveau.data.result.amount === 29_900);
+  check('…au nouveau montant HORS TAXE', nouveau.data.result.amount === ventilationDepuisTTC(29_900).net);
   check('le Product, lui, est RÉUTILISÉ', nouveau.data.result.productId === productA);
 
   check('P1 existe toujours chez Stripe', parId.has(priceA1));
-  check('…avec son montant d’origine', parId.get(priceA1).unit_amount === 11_880);
+  check('…avec son montant d’origine', parId.get(priceA1).unit_amount === HT_MENSUEL);
   check('…et son lien est intact',
     (await binding.findBinding({ environment: 'TEST', resourceType: 'PRICE', resourceId: priceA1 }))?.projectId === idA);
   check('AUCUNE mutation de Price n’a été tentée',
@@ -344,7 +430,7 @@ section('4. Changer de tarif crée un AUTRE Price — jamais une mutation');
   const annuel = await projetA.invokeCapability({ code: PRICE, input: { contractRef: CONTRAT_A } });
   check('mensuel → annuel : un AUTRE Price', annuel.data.result.priceId !== priceA2);
   check('…avec la bonne périodicité', annuel.data.result.interval === 'year');
-  check('…et le montant annuel', annuel.data.result.amount === 29_900);
+  check('…et le montant annuel HORS TAXE', annuel.data.result.amount === ventilationDepuisTTC(29_900).net);
   check('les trois Price coexistent',
     new Set([priceA1, priceA2, annuel.data.result.priceId]).size === 3);
 
@@ -416,7 +502,12 @@ section('6. Crash entre Product et Price, puis réponse perdue');
   /* 6b. Crash APRÈS le Price, AVANT son lien. */
   const priceX = reprise.data.result.priceId;
   const actePrice = tarifAutorite.priceOperationId({
-    environment: 'TEST', contractId: CONTRAT_A_X, interval: 'month', amount: 5_500, currency: 'eur',
+    environment: 'TEST',
+    contractId: CONTRAT_A_X,
+    interval: 'month',
+    /** La clé porte le montant du tarif, donc son HORS TAXE depuis ce chantier. */
+    amount: ventilationDepuisTTC(5_500).net,
+    currency: 'eur',
   });
   await PanelStripeResourceBinding.deleteOne({ environment: 'TEST', resourceId: priceX });
   await PanelCapabilityOperation.updateOne(
@@ -464,7 +555,7 @@ section('7. Le projet B n’atteint rien de A');
   // B obtient SON tarif, à SON montant.
   const propre = await projetB.invokeCapability({ code: PRICE, input: { contractRef: CONTRAT_B } });
   check('B obtient son propre tarif', propre.ok === true);
-  check('…à SON montant', propre.data.result.amount === 4_900);
+  check('…à SON montant HORS TAXE', propre.data.result.amount === ventilationDepuisTTC(4_900).net);
   check('…et son Price lui est lié',
     (await binding.findBinding({
       environment: 'TEST', resourceType: 'PRICE', resourceId: propre.data.result.priceId,
@@ -595,10 +686,24 @@ section('11. Le checkout de frais n’a pas bougé');
   const post = creations('/v1/checkout/sessions').at(-1);
   const params = new URLSearchParams(post.corps);
   check('mode payment', params.get('mode') === 'payment');
-  check('…le montant vient toujours de la projection',
-    params.get('line_items[0][price_data][unit_amount]') === '118800');
+  check('…le montant vient toujours de la projection, HORS TAXE',
+    params.get('line_items[0][price_data][unit_amount]') === String(ventilationDepuisTTC(118_800).net));
+  check('…et un taux de TVA exclusif l’accompagne',
+    /^txr_test_/.test(params.get('line_items[0][tax_rates][0]') ?? ''));
   check('…la facture est toujours réclamée', params.get('invoice_creation[enabled]') === 'true');
-  check('…aucun client attaché aux frais (L6.2B)', !params.get('customer'));
+  /**
+   * ── LE CLIENT EST DÉSORMAIS ATTACHÉ AUX FRAIS, ET C’EST LE CHANTIER ───
+   *
+   * L6.2B n’attachait aucun client à `mode: payment` : Stripe en créait un
+   * à la volée depuis le formulaire, et la facture portait l’adresse tapée
+   * par la personne devant l’écran — jamais l’identité juridique du client.
+   *
+   * Les frais de lancement et l’abonnement d’un même contrat référencent
+   * maintenant LE MÊME client : même raison sociale, même adresse, même
+   * numéro de TVA, même historique de facturation.
+   */
+  check('…et le client du contrat est attaché aux frais',
+    /^cus_/.test(params.get('customer') ?? ''));
   check('une session de plus, et une seule', ids('cs_').length === avant + 1);
 }
 

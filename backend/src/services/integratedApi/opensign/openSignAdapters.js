@@ -51,6 +51,7 @@ import {
   maskResourceId,
 } from '../signature/signatureOwnership.js';
 import { checkDocumentSize } from '../signature/signatureDocumentLimits.js';
+import { resolveClientCompanyReadiness } from '../../clientCompany/clientCompanyReadiness.js';
 import {
   SIGNATURE_REQUEST_STATE,
   SIGNER_STATE,
@@ -359,6 +360,76 @@ async function signatureRequestOpen({ definition, context, credentials, input, f
       CAPABILITY_ERROR_CODES.INPUT_INVALID,
       taille.message,
       { reason: taille.code, byteLength: taille.byteLength },
+    );
+  }
+
+  /**
+   * ── L'ENTREPRISE CLIENTE DOIT AVOIR UN SIGNATAIRE ─────────────────────────
+   *
+   * ══ POURQUOI CETTE GARDE EXISTE ICI, ALORS QUE LE PROJET LA PORTE DÉJÀ ════
+   *
+   * Le projet REFUSE déjà de valider un contrat sans signataire client : il lit
+   * l'identité publiée par le Panel et lève avant de figer son instantané. Cette
+   * garde-là est la bonne, et elle reste.
+   *
+   * Celle-ci est la garde AUTORITATIVE. La différence tient en une phrase : le
+   * projet applique une règle qu'il a REÇUE, le Panel applique une règle qu'il
+   * POSSÈDE. Un projet en retard de convergence, une projection périmée, ou
+   * simplement un appel direct au pont suffiraient à contourner la première.
+   *
+   * ══ AVANT LA RÉSERVATION, ET C'EST L'ORDRE QUI COMPTE ════════════════════
+   *
+   * `claimSignatureRequest` verrouille le contrat pour empêcher un second clic.
+   * Refuser APRÈS laisserait une réservation à libérer et un contrat bloqué
+   * pour une raison qui n'a rien à voir avec la signature. Refuser AVANT ne
+   * laisse aucune trace : ni réservation, ni document, ni crédit consommé chez
+   * un fournisseur qui en facture un par création.
+   *
+   * ══ POURQUOI `NOT_AVAILABLE` ET NON `INPUT_INVALID` ═════════════════════
+   *
+   * L'entrée du projet est parfaitement conforme : le document existe, les
+   * zones sont posées, les signataires sont nommés. Ce qui manque est une
+   * donnée du PANEL. Un code d'entrée invalide enverrait un développeur relire
+   * la charge utile du projet, où il ne trouverait rien.
+   */
+  const readiness = await resolveClientCompanyReadiness({ projectId: context.projectId });
+  if (!readiness.signing.ready) {
+    throw new CapabilityError(
+      CAPABILITY_ERROR_CODES.NOT_AVAILABLE,
+      readiness.state === 'MISSING_COMPANY'
+        ? 'Aucune entreprise cliente n’est rattachée à ce projet : la signature est indisponible '
+          + 'tant que le client et son signataire contractuel ne sont pas configurés.'
+        : 'Le signataire contractuel de l’entreprise cliente est incomplet : '
+          + `${readiness.signing.missing.join(', ')}.`,
+      { reason: 'CLIENT_COMPANY_NOT_READY', state: readiness.state },
+    );
+  }
+
+  /**
+   * ── LE SIGNATAIRE ENVOYÉ CORRESPOND-IL À CELUI DE LA FICHE ? ─────────────
+   *
+   * ══ POURQUOI ON SIGNALE SANS BLOQUER ═════════════════════════════════════
+   *
+   * Un contrat fige l'identité de ses parties à sa VALIDATION
+   * (`signersSnapshot`), et c'est la doctrine : une entreprise qui change de
+   * gérant six mois plus tard ne réécrit pas un contrat déjà préparé.
+   *
+   * Refuser sur écart rendrait donc INSIGNABLE tout contrat validé avant un
+   * changement de signataire — une régression pour un client qui n'a rien fait
+   * de mal. Mais un écart reste une information : il dit qu'un contrat part à la
+   * signature au nom d'une personne qui n'engage plus l'entreprise, et c'est
+   * exactement ce qu'un exploitant veut apprendre AVANT que le document ne
+   * parte, pas après.
+   */
+  const attendu = String(readiness.company?.contractualSigner?.email ?? '').trim().toLowerCase();
+  const envoye = String(
+    (input.signers ?? []).find((s) => s.role === 'CLIENT')?.email ?? '',
+  ).trim().toLowerCase();
+  if (attendu && envoye && attendu !== envoye) {
+    logger.warn(
+      `[opensign] ${context.projectId} (${context.environment}) — le signataire CLIENT du contrat `
+      + 'diffère de celui de la fiche « Clients ». Le contrat part avec l’identité figée à sa '
+      + 'validation, comme le veut la doctrine d’immuabilité — mais la fiche a changé depuis.',
     );
   }
 

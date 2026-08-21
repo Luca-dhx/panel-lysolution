@@ -58,6 +58,26 @@
 #     pont — c'est aussi ce qui rend visible, ici, qu'une capacité ne se demande
 #     JAMAIS dans ce sens : le Panel n'invoque pas de capacité chez le projet.
 #     Compatible 1.0.x, 1.1.x, 1.2.x, 1.3.x et 1.4.x.
+#   1.10.0 — ADDITIF, TROIS AJOUTS :
+#     · nouvel entityType `CLIENT_COMPANY` — l'identité JURIDIQUE du client
+#       d'un projet (raison sociale, SIREN, adresses, signataire contractuel),
+#       poussée par le Panel vers UN projet nommé (`audience`). Distincte de
+#       `DEV_COMPANY`, qui porte l'identité du PRESTATAIRE et se diffuse à tout
+#       le parc : les confondre ferait afficher les mentions légales de
+#       l'agence sur le site d'un client. Sens PANEL -> PROJET exclusivement ;
+#     · `Contract.pricing.*.amountExcludingTax` / `.taxAmount` / `.taxRate` —
+#       la ventilation HT/TVA que le projet calcule déjà. Sans elle, l'émetteur
+#       des factures ne connaît que le TTC et ne peut produire qu'un document
+#       muet sur la taxe. Elle est TRANSPORTÉE et non déduite : déduire un HT
+#       depuis un TTC introduit un arrondi que le contrat a déjà tranché ;
+#     · `Heartbeat.bridgeStats.consumption` — ce que le pont CONSOMME. Les
+#       champs existants décrivent la file SORTANTE ; un projet dont le tirage
+#       est mort a une file sortante vide et un battement parfait. Sans ce
+#       bloc, « rien à recevoir » et « plus rien n'arrive » sont indiscernables.
+#     Tous OPTIONNELS. Les schémas d'entrée étant `.strict()` des deux côtés,
+#     l'ORDRE DE DÉPLOIEMENT est imposé : le Panel accepte AVANT que le projet
+#     n'émette, et le projet ne publie qu'à un Panel qui a annoncé savoir lire.
+#     Compatible 1.0.x à 1.9.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -67,7 +87,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.9.0
+  version: 1.10.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -700,13 +720,13 @@ components:
                   - MEETING
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
-            - PROJECT_EMAIL_TEMPLATE_USAGE
                   - PROJECT_EMAIL_TEMPLATE_USAGE
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
                   - PAYMENT_DEFAULT_CAUSE
                   - PAYMENT_DEFAULT_INCIDENT
+                  - CLIENT_COMPANY
             operations:
               type: array
               items: { type: string }
@@ -849,6 +869,7 @@ components:
             - PAYMENT_REQUEST
             - PAYMENT_DEFAULT_CAUSE
             - PAYMENT_DEFAULT_INCIDENT
+            - CLIENT_COMPANY
         entityId: { type: string, format: uuid }
         deleted: { type: boolean }
         payload: { nullable: true }

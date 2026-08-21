@@ -142,6 +142,24 @@ const recurrenceSchema = new mongoose.Schema(
 const amountSchema = new mongoose.Schema(
   {
     amountIncludingTax: { type: Number, default: null },
+    /**
+     * LA VENTILATION FISCALE DE LA LIGNE — reçue, jamais recalculée.
+     *
+     * ══ POURQUOI ELLE EST PERSISTÉE, ALORS QU'ON POURRAIT LA DÉDUIRE ═══════
+     *
+     * Parce que la déduction ne rend pas toujours le même centime que le
+     * contrat. Le projet part du HT et arrondit la TVA ; une déduction part du
+     * TTC et arrondit le HT. L'écart d'un centime entre le contrat SIGNÉ et la
+     * facture ÉMISE est la plus indéfendable des incohérences.
+     *
+     * `null` se lit « projection antérieure au contrat de pont 1.10.0 », et
+     * surtout pas « zéro ». La facturation REFUSE alors de ventiler plutôt que
+     * de supposer un taux — voir `contractFiscalLine.js`.
+     */
+    amountExcludingTax: { type: Number, default: null },
+    taxAmount: { type: Number, default: null },
+    /** Le taux de CETTE ligne, en POURCENTAGE. Prime sur celui du contrat. */
+    taxRate: { type: Number, default: null },
     currency: { type: String, default: null },
     recurrence: { type: recurrenceSchema, default: null },
     /** Libellé prêt à l'affichage, publié par le projet. Jamais la source. */

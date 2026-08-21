@@ -15,6 +15,29 @@ publique. Sans elle, chaque projet porterait son logo, ses mentions légales
 et ses coordonnées en propre — et une adresse qui change devrait être
 corrigée autant de fois qu'il y a de sites.
 
+## 1 bis. `PanelCompany` n'est PAS `PanelClientCompany`
+
+Ce document décrit **le VENDEUR**. Depuis le chantier « entreprise cliente »,
+le Panel connaît aussi **l'ACHETEUR**, et les deux sont des personnes morales
+distinctes qui se font face sur une facture.
+
+| | `PanelCompany` | `PanelClientCompany` |
+|---|---|---|
+| Qui | L.Y Solution — le prestataire | un client — le donneur d'ordre |
+| Combien | une seule, le tenant actif | autant que de clients |
+| Sur une facture | ÉMETTEUR | « Facturer à » |
+| Diffusion par le pont | `DEV_COMPANY`, **tout le parc** | `CLIENT_COMPANY`, **ce projet seul** |
+| Ce qu'elle décide | mentions légales des sites, signataire développeur | identité de facturation Stripe, signataire client |
+| Document | ce document | [63_CLIENT_COMPANY.md](63_CLIENT_COMPANY.md) |
+
+Les fondre en une seule notion aurait obligé chaque projet à deviner, à la
+lecture, laquelle des deux il reçoit — et la page « Mon entreprise » d'un
+client aurait fini par afficher les mentions légales de son prestataire.
+
+L'identité fiscale du vendeur (SIREN, TVA, régime) portée ici alimente aussi
+la ventilation HT / TVA / TTC des factures : voir
+[64_LEGAL_BILLING.md](64_LEGAL_BILLING.md).
+
 ## 2. Multi-tenant par le modèle, mono-tenant par la résolution
 
 `companyId` et `slug` sont des identifiants de premier ordre. Aucun schéma,

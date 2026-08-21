@@ -20,6 +20,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Tableau de bord', section: 'GESTION' },
   { to: '/projects', label: 'Projets clients', section: 'GESTION' },
   { to: '/agenda', label: 'Agenda et événements', section: 'GESTION' },
+  { to: '/clients', label: 'Clients', section: 'GESTION' },
   { to: '/finances', label: 'Finances', section: 'GESTION' },
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },
 

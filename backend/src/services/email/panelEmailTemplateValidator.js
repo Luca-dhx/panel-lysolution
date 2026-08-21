@@ -25,6 +25,8 @@ import {
   DATA_IMAGE_RE,
   PLACEHOLDER_RE,
   ANY_MUSTACHE_RE,
+  BLOCK_OPEN_RE,
+  BLOCK_CLOSE_RE,
   MAX_SUBJECT_LENGTH,
   MAX_HTML_LENGTH,
 } from '../../utils/panelEmailTemplateConstants.js';
@@ -173,6 +175,22 @@ export function extractInvalidPlaceholders(text) {
   let m;
   while ((m = validRe.exec(source)) !== null) valid.add(m[0]);
 
+  /**
+   * ── LES MARQUEURS DE BLOC SONT VALIDES, EUX AUSSI ──────────────────────
+   *
+   * `{{#if contact.pageUrl}}` et `{{/if}}` ne matchent pas
+   * `PLACEHOLDER_RE` — ils ne sont pas des variables. Sans cette ligne, ils
+   * seraient donc dénoncés comme « placeholders invalides » et aucun
+   * template ne pourrait plus porter de bloc facultatif.
+   *
+   * Ils restent soumis à la MÊME grammaire de clé : `{{#if a["b"]}}` ou
+   * `{{#if __proto__}}` ne matchent pas non plus, et sont donc refusés.
+   */
+  for (const re of [BLOCK_OPEN_RE, BLOCK_CLOSE_RE]) {
+    const blockRe = new RegExp(re.source, re.flags);
+    while ((m = blockRe.exec(source)) !== null) valid.add(m[0]);
+  }
+
   const invalid = [];
   const anyRe = new RegExp(ANY_MUSTACHE_RE.source, 'g');
   while ((m = anyRe.exec(source)) !== null) {
@@ -280,7 +298,60 @@ export function validateTemplate({ templateId, subject, html }) {
 
   // Une variable requise absente du contenu : le rendu produirait un e-mail
   // amputé d'une information que le métier juge indispensable.
-  const used = new Set(extractPlaceholders(content));
+  /**
+   * ── LES BLOCS FACULTATIFS ──────────────────────────────────────────────
+   *
+   * Deux contrôles, et les deux comptent :
+   *
+   *   LA CLÉ    un bloc qui teste une variable inexistante ne s’afficherait
+   *             JAMAIS. Le rédacteur croirait avoir écrit une condition ;
+   *             le destinataire ne verrait jamais le contenu. Un silence
+   *             est plus coûteux qu’un refus.
+   *
+   *   L’APPARIEMENT  une ouverture sans fermeture laisse le marqueur en
+   *             clair dans l’e-mail — « {{#if contact.pageUrl}} » lisible
+   *             par le client. Le rendu échouerait plus loin, mais le refus
+   *             doit tomber ICI, à l’enregistrement, devant celui qui écrit.
+   */
+  const ouvertures = [...content.matchAll(new RegExp(BLOCK_OPEN_RE.source, BLOCK_OPEN_RE.flags))];
+  const fermetures = [...content.matchAll(new RegExp(BLOCK_CLOSE_RE.source, BLOCK_CLOSE_RE.flags))];
+  for (const ouverture of ouvertures) {
+    const cle = ouverture[1];
+    if (!allowed.has(cle)) {
+      push(
+        E.UNKNOWN_VARIABLE,
+        `Bloc conditionnel sur une variable inconnue : « ${cle} ». Le bloc ne s’afficherait jamais.`,
+        { variable: cle, line: lineAt(content, ouverture.index) },
+      );
+    }
+  }
+  if (ouvertures.length !== fermetures.length) {
+    push(
+      E.INVALID_PLACEHOLDER,
+      `Bloc conditionnel déséquilibré : ${ouvertures.length} ouverture(s) « {{#if …}} » pour `
+      + `${fermetures.length} fermeture(s) « {{/if}} ». Chaque bloc doit être refermé.`,
+    );
+  }
+
+  // Une variable requise absente du contenu : le rendu produirait un e-mail
+  // amputé d'une information que le métier juge indispensable.
+  /**
+   * ── UNE VARIABLE OBLIGATOIRE HORS DES BLOCS ────────────────────────────
+   *
+   * Le contrôle de présence lit le contenu DÉBARRASSÉ de ses blocs
+   * facultatifs. Sans cela, on pourrait satisfaire « la variable obligatoire
+   * figure bien dans le template » en la plaçant à l’intérieur d’un bloc
+   * qui, par définition, peut ne pas s’afficher — et l’e-mail partirait sans
+   * l’information que le métier juge indispensable.
+   *
+   * Le retrait est brutal et c’est voulu : on ne cherche pas à savoir si le
+   * bloc s’afficherait, on refuse la possibilité qu’il ne s’affiche pas.
+   */
+  const contenuHorsBlocs = content.replace(
+    new RegExp(`${BLOCK_OPEN_RE.source}[\\s\\S]*?${BLOCK_CLOSE_RE.source}`, 'g'),
+    '',
+  );
+  const used = new Set(extractPlaceholders(contenuHorsBlocs));
   for (const v of variablesFor(templateId).filter((x) => x.required)) {
     if (!used.has(v.key)) {
       push(

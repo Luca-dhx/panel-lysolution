@@ -402,12 +402,43 @@ const refundView = z.object({
  * `customerId` est ABSENT du schéma, délibérément : un projet ne propose jamais
  * la ressource à adopter. Voir le § adoption du rapport L6.2D.
  */
+/**
+ * ══ `customer` EST DEVENU FACULTATIF — ET SURTOUT, IL N'EST PLUS LU ═════════
+ *
+ * ── CE QU'IL FAISAIT, ET POURQUOI C'ÉTAIT LA FAUTE DE TOUT LE CHANTIER ──────
+ *
+ * Le commentaire ci-dessus disait vrai à l'époque : « le Panel ne peut pas
+ * déduire l'identité de la personne à facturer, sa projection de contrat ne
+ * porte pas les signataires ». La conclusion — la demander au projet — était
+ * la seule possible.
+ *
+ * En pratique, le projet ne la connaissait pas non plus. Il envoyait donc un
+ * objet vide, et l'autorité retombait sur `projection.reference` : la
+ * RÉFÉRENCE DE CONTRAT. D'où « Facturer à : CTR-2026-0002 » sur des factures
+ * réelles.
+ *
+ * ── CE QUI A CHANGÉ ────────────────────────────────────────────────────────
+ *
+ * Le Panel détient désormais `PanelClientCompany` — l'identité juridique du
+ * client, rattachée au projet, avec sa raison sociale, son SIREN, ses adresses
+ * et son e-mail de facturation. Il n'a plus rien à demander : il SAIT.
+ *
+ * ── POURQUOI LE CHAMP RESTE DÉCLARÉ ────────────────────────────────────────
+ *
+ * Parce qu'un projet non encore redéployé continue de l'envoyer. Le retirer du
+ * schéma ferait échouer ses appels en `CAPABILITY_INPUT_INVALID` — un projet
+ * parfaitement sain rendu incapable de facturer par un durcissement de contrat.
+ *
+ * Il est donc ACCEPTÉ et IGNORÉ. `stripeCustomerAuthority` ne le lit plus, et
+ * un test le vérifie : c'est la seule façon de garantir qu'il ne redeviendra
+ * pas, un jour, un repli « pendant qu'on y est ».
+ */
 const customerEnsureInput = z.object({
   contractRef: z.string().trim().min(1).max(64),
   customer: z.object({
     email: z.string().trim().toLowerCase().email().max(320).optional(),
     name: z.string().trim().min(1).max(160).optional(),
-  }).strict(),
+  }).strict().optional(),
 }).strict();
 
 /**

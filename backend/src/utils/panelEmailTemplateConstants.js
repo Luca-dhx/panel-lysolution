@@ -324,6 +324,50 @@ export const DATA_IMAGE_RE = /^data:image\/(png|jpe?g|gif|webp);base64,/i;
 export const PLACEHOLDER_RE = /\{\{\s*([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\}\}/g;
 
 /**
+ * LE BLOC FACULTATIF — `{{#if cle}} … {{/if}}`.
+ *
+ * ══ POURQUOI IL A FALLU L'AJOUTER ═══════════════════════════════════════════
+ *
+ * Une variable FACULTATIVE absente vaut la chaîne vide. Pour un montant ou un
+ * téléphone, c'est acceptable — le résolveur peut rendre « Non renseigné ».
+ * Pour ce qui ENTOURE la valeur, non :
+ *
+ *     <tr><td>Page</td><td>{{contact.pageUrl}}</td></tr>
+ *
+ * rend une ligne « Page » suivie d'une case vide, que le lecteur prend pour un
+ * défaut d'affichage. Et pour un lien, c'est pire :
+ *
+ *     <a href="{{contact.pageUrl}}">Ouvrir</a>   →   <a href="">Ouvrir</a>
+ *
+ * un bouton qui recharge la page courante. C'est exactement ce que la doctrine
+ * interdit : ni `href` vide, ni placeholder vide, ni bloc orphelin.
+ *
+ * Le contournement — exiger la variable et faire inventer une valeur au
+ * résolveur — a produit le défaut que ce lot répare : `contact.pageUrl` rendait
+ * `''`, le renderer le validait comme une URL, et l'envoi partait en
+ * DEAD_LETTER. Une absence n'est pas une valeur invalide.
+ *
+ * ══ CE QUE CE BLOC N'EST PAS ════════════════════════════════════════════════
+ *
+ * Ce n'est pas une expression. Il n'y a ni opérateur, ni comparaison, ni
+ * négation, ni `else`, ni imbrication. La condition testée est UNIQUEMENT
+ * « cette variable du registre a-t-elle une valeur ? » — et la clé obéit à la
+ * même grammaire que les placeholders, donc aux mêmes refus (`__proto__`,
+ * `a["b"]`, `a()` ne matchent pas).
+ *
+ * Un moteur qui évalue est un moteur qu'on peut détourner. Celui-ci ne peut
+ * répondre qu'à une question fermée, sur un ensemble fini de clés connues.
+ *
+ * `[\s\S]*?` et non `.*?` : un bloc s'étend sur plusieurs lignes — c'est même
+ * son usage principal, envelopper une ligne de tableau.
+ */
+export const OPTIONAL_BLOCK_RE = /\{\{#if\s+([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\}\}([\s\S]*?)\{\{\/if\}\}/g;
+
+/** L'ouverture et la fermeture, isolément — pour repérer un bloc DÉPAREILLÉ. */
+export const BLOCK_OPEN_RE = /\{\{#if\s+([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)\s*\}\}/g;
+export const BLOCK_CLOSE_RE = /\{\{\/if\}\}/g;
+
+/**
  * Détecte TOUT `{{ … }}`, y compris malformé — sert à repérer ce que
  * `PLACEHOLDER_RE` a refusé, au lieu de le laisser passer en texte brut.
  */

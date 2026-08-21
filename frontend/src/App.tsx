@@ -5,6 +5,8 @@ import { Layout } from '@/components/Layout';
 import { ActionsPage } from '@/pages/ActionsPage';
 import { BridgesPage } from '@/pages/BridgesPage';
 import { CompanyPage } from '@/pages/CompanyPage';
+import { ClientCompaniesPage } from '@/pages/ClientCompaniesPage';
+import { ClientCompanyDetailPage } from '@/pages/ClientCompanyDetailPage';
 import { DeploymentPage } from '@/pages/DeploymentPage';
 import { DeploymentRunPage } from '@/pages/DeploymentRunPage';
 import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
@@ -92,6 +94,20 @@ export default function App() {
         */}
         <Route path="/finances" element={<FinancesPage />} />
         <Route path="/company" element={<CompanyPage />} />
+        {/*
+          CLIENTS — les ENTREPRISES CLIENTES, distinctes des PROJETS.
+
+          Un projet est une instance technique ; une entreprise cliente est
+          une personne morale, et elle possède souvent plusieurs projets.
+          C’est son identité que porte le « Facturer à » d’une facture.
+
+          En GESTION, comme les finances et les projets : savoir à qui l’on
+          facture est le travail de l’équipe, pas une opération technique.
+          L’ÉCRITURE, elle, reste réservée aux comptes DEV — côté backend,
+          qui est la seule barrière.
+        */}
+        <Route path="/clients" element={<ClientCompaniesPage />} />
+        <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
         {/*
           MON PROFIL — accessible à TOUT compte du Panel, ADMIN compris.
 

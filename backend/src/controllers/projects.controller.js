@@ -29,6 +29,10 @@ import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { readProjectAccounts } from '../services/registry/projectAccounts.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 import {
+  clientCompanyOfProject,
+  describeClientCompanyReadiness,
+} from '../services/clientCompany/clientCompanyReadiness.js';
+import {
   deleteDestination, describeByEnvironment, destinationKey, loadActiveDestinationHosts,
   markDestinationEmpty, outboundBaseUrl,
 } from '../services/registry/projectDestination.service.js';
@@ -127,6 +131,38 @@ export async function detail(req, res) {
    * mélangeraient à l'œil — c'est précisément la confusion qu'on corrige.
    */
   const destinations = await describeByEnvironment(record.projectId);
+
+  /**
+   * ── À QUELLE ENTREPRISE CE PROJET APPARTIENT-IL ? ────────────────────────
+   *
+   * ══ POURQUOI SUR LA FICHE, ET NON DANS LA LISTE ══════════════════════════
+   *
+   * La liste des projets peut compter des centaines de lignes ; y joindre une
+   * lecture par projet transformerait un affichage en balayage. La FICHE, elle,
+   * n'en montre qu'un — la lecture coûte une requête, et elle répond à la
+   * question qu'on se pose en l'ouvrant : « à qui facture-t-on ce site ? ».
+   *
+   * ══ CE QU'ON EN REND ═════════════════════════════════════════════════════
+   *
+   * L'identité minimale et le VERDICT. Pas la fiche entière : l'écran du projet
+   * n'a pas à devenir un second éditeur d'entreprise cliente, et un lien vers
+   * la fiche « Clients » est plus juste qu'une recopie qui vieillirait.
+   *
+   * `null` se lit « aucun client légal rattaché » — un ÉTAT, avec des
+   * conséquences exactes : ni paiement, ni signature.
+   */
+  const client = await clientCompanyOfProject(record.projectId);
+  project.clientCompany = client
+    ? {
+      clientCompanyId: client.clientCompanyId,
+      legalName: client.legalName,
+      tradingName: client.tradingName ?? null,
+      siren: client.siren ?? null,
+      status: client.status,
+      readiness: describeClientCompanyReadiness(client),
+    }
+    : null;
+
   return ok(res, { project, conformity: describeConformity(record), destinations });
 }
 

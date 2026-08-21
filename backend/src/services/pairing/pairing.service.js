@@ -372,7 +372,6 @@ export async function bootstrap(dto) {
  * journal ; celle-ci ferme la porte de l'appairage.
  */
 async function buildDiscoveryPayload(record) {
-  void record;
   try {
     const [{ getActiveCompany, getPublishedConfiguration }, { currentCursor }] =
       await Promise.all([
@@ -383,6 +382,43 @@ async function buildDiscoveryPayload(record) {
     const company = await getActiveCompany();
     const published = company ? await getPublishedConfiguration(company.companyId) : null;
 
+    /**
+     * ── L'ENTREPRISE CLIENTE EST REPUBLIÉE À L'APPAIRAGE ────────────────────
+     *
+     * ══ LE TROU QUE CE BLOC FERME ═══════════════════════════════════════════
+     *
+     * L'identité juridique du client voyage par une écriture NOMINATIVE
+     * (`audience: <projectId>`), émise au rattachement puis à chaque
+     * modification de la fiche. C'est exactement ce qu'il faut — sauf le jour
+     * d'un RÉAPPAIRAGE.
+     *
+     * Un projet réappairé reçoit un `syncCursor` qui le positionne APRÈS tout
+     * le journal existant, et son curseur durable est remis à zéro (le projet a
+     * changé d'identifiant). Les écritures d'entreprise cliente émises AVANT ce
+     * réappairage étaient adressées à l'ANCIEN `projectId` : elles ne lui
+     * seront jamais servies. Le projet repartirait donc sans client légal —
+     * paiements et signatures bloqués — jusqu'à ce que quelqu'un pense à
+     * rouvrir la fiche pour l'enregistrer à nouveau.
+     *
+     * ══ POURQUOI UNE ÉCRITURE, ET NON UN CHAMP DE PLUS DANS LA RÉPONSE ══════
+     *
+     * Un champ de bootstrap serait un SECOND chemin d'application : il faudrait
+     * un applicateur de découverte en plus de l'applicateur de synchronisation,
+     * et les deux finiraient par diverger. L'écriture, elle, emprunte le chemin
+     * déjà éprouvé — LWW, anti-écho, idempotence, rattrapage.
+     *
+     * ══ AVANT `currentCursor()`, ET C'EST L'ORDRE QUI COMPTE ════════════════
+     *
+     * Le curseur rendu au projet est celui de la TÊTE du journal. Émettre après
+     * l'avoir lu ferait rater l'écriture qu'on vient de produire ; émettre avant
+     * la place derrière le curseur, donc dans la toute première page tirée.
+     *
+     * Best-effort ASSUMÉ : un appairage réussi ne doit pas être annulé parce
+     * qu'une republication a échoué. La modification suivante de la fiche la
+     * rattrapera.
+     */
+    await republierEntrepriseCliente(record);
+
     return {
       company: published?.payload ?? null,
       syncCursor: await currentCursor(),
@@ -390,6 +426,25 @@ async function buildDiscoveryPayload(record) {
   } catch (err) {
     logger.warn(`Découverte non jointe à l’appairage de ${record.projectKey} : ${err.message}`);
     return {};
+  }
+}
+
+/** Republie l'identité juridique du client vers un projet qui vient d'appairer. */
+async function republierEntrepriseCliente(record) {
+  try {
+    const { broadcastToLinkedProjects } = await import(
+      '../clientCompany/clientCompany.service.js'
+    );
+    const { default: PanelProject } = await import('../../models/PanelProject.model.js');
+    const fiche = await PanelProject.findOne({ projectId: record.projectId })
+      .select('clientCompanyId').lean();
+    if (!fiche?.clientCompanyId) return;
+    await broadcastToLinkedProjects(fiche.clientCompanyId);
+  } catch (err) {
+    logger.warn(
+      `Entreprise cliente non republiée à l’appairage de ${record.projectKey} : ${err.message}. `
+      + 'La prochaine modification de la fiche la rattrapera.',
+    );
   }
 }
 

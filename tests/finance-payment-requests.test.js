@@ -52,6 +52,7 @@ const checkoutAuthority = await import('../backend/src/services/integratedApi/st
 const catalogue = await import('../backend/src/services/integratedApi/stripe/stripeCapabilities.js');
 const agregat = await import('../backend/src/services/finance/financialSummary.service.js');
 const projectors = await import('../backend/src/services/sync/projectors.js');
+const { seedClientCompany } = await import('./helpers/clientCompany.fixture.js');
 
 await seedFromEnv();
 await PanelFinancialTransaction.init();
@@ -88,6 +89,16 @@ async function contrat(projectId, taxRate) {
 }
 await declarer(PROJET_A, 'Atelier du Nord');
 await declarer(PROJET_B, 'Atelier du Sud');
+/**
+ * LES DEUX PROJETS ONT UNE ENTREPRISE CLIENTE — et il en faut DEUX.
+ *
+ * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client
+ * (chantier « facturation légale »). N'en donner qu'à A ferait refuser B pour
+ * cette raison-là, et la section 6 croirait prouver le cloisonnement des
+ * prestations alors qu'elle prouverait l'absence de fiche client.
+ */
+await seedClientCompany({ projectId: PROJET_A, legalName: 'SARL ATELIER DU NORD' });
+await seedClientCompany({ projectId: PROJET_B, legalName: 'SARL ATELIER DU SUD' });
 
 const SECONDES = (iso) => Math.floor(new Date(iso).getTime() / 1000);
 
@@ -240,15 +251,29 @@ section('5. L’autorité du montant — le projet n’en fournit aucun');
       operationId: 'service-checkout-0123456789abcdef',
     },
   });
-  check('STRIPE RECEVRA 600 € — le TTC, jamais le HT',
-    intention.params.line_items[0].price_data.unit_amount === 60_000);
+  /**
+   * ── CE QUE STRIPE REÇOIT, ET CE QUE LE CLIENT DÉBITE ───────────────────
+   *
+   * Le test vérifiait « le TTC, jamais le HT » : c'était juste tant qu'aucune
+   * taxe n'était déclarée — envoyer le HT aurait alors sous-facturé de la TVA.
+   *
+   * Depuis le chantier « facturation légale », la ligne porte le HT ET un taux
+   * exclusif. Le débit reste identique — c'est la dernière assertion qui
+   * l'établit — et la facture, elle, sait enfin dire ce qu'elle contient.
+   */
+  const parametres = intention.paramsFor({ taxRateId: 'txr_test_1' });
+  check('STRIPE REÇOIT LE HT, avec son taux',
+    parametres.line_items[0].price_data.unit_amount === 50_000
+    && parametres.line_items[0].tax_rates[0] === 'txr_test_1');
+  check('…et le client débite toujours 600 € TTC',
+    intention.amountIncludingTax === 60_000);
   check('…et la vraie facture Stripe est demandée',
-    intention.params.invoice_creation?.enabled === true);
+    parametres.invoice_creation?.enabled === true);
   check('la corrélation voyage dans les metadata',
-    intention.params.metadata.paymentRequestId === prestation.paymentRequestId);
+    parametres.metadata.paymentRequestId === prestation.paymentRequestId);
   check('…sur l’intention de paiement aussi',
-    intention.params.payment_intent_data.metadata.paymentRequestId === prestation.paymentRequestId);
-  check('…et sur la facture', intention.params.invoice_creation.invoice_data.metadata.paymentRequestId
+    parametres.payment_intent_data.metadata.paymentRequestId === prestation.paymentRequestId);
+  check('…et sur la facture', parametres.invoice_creation.invoice_data.metadata.paymentRequestId
     === prestation.paymentRequestId);
 }
 

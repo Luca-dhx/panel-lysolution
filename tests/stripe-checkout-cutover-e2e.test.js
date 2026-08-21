@@ -28,6 +28,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { ensureClientCompany, ligneTarifaire, ventilationDepuisTTC } from './helpers/clientCompany.fixture.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -96,6 +97,12 @@ const lireCorps = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(brut));
 });
 
+/** Le catalogue fiscal du faux compte — voir le bloc de routes plus bas. */
+const tauxTva = new Map();
+/** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
+const tauxParCle = new Map();
+/** Les clients du faux compte — voir le bloc de routes plus bas. */
+const clientsTest = new Map();
 const fauxStripe = http.createServer(async (req, res) => {
   const cle = req.headers['idempotency-key'] ?? null;
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
@@ -139,6 +146,83 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, session);
   }
 
+  /* ── CLIENTS (chantier « facturation légale ») ─────────────────────────
+     Les frais de lancement référencent désormais le client du contrat : sans
+     lui, la facture Stripe porterait ce que l'acheteur tape dans le
+     formulaire au lieu de l'identité juridique de l'entreprise cliente. */
+  if (req.method === 'POST' && req.url === '/v1/customers') {
+    const connu = clientsTest.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const champs = new URLSearchParams(corps);
+    const client = {
+      id: `cus_test_${sequence}`,
+      object: 'customer',
+      deleted: false,
+      name: champs.get('name'),
+      email: champs.get('email'),
+      phone: champs.get('phone'),
+      address: {
+        line1: champs.get('address[line1]') ?? null,
+        line2: champs.get('address[line2]') ?? null,
+        postal_code: champs.get('address[postal_code]') ?? null,
+        city: champs.get('address[city]') ?? null,
+        country: champs.get('address[country]') ?? null,
+      },
+    };
+    clientsTest.set(cle, client);
+    clientsTest.set(client.id, client);
+    return repondre(200, client);
+  }
+  const lectureClient = /^\/v1\/customers\/([^/?]+)$/.exec(req.url ?? "");
+  if (lectureClient) {
+    const client = clientsTest.get(decodeURIComponent(lectureClient[1]));
+    if (!client) return repondre(404, { error: { code: 'resource_missing' } });
+    if (req.method === 'POST') {
+      const champs = new URLSearchParams(corps);
+      for (const cle2 of ['name', 'email', 'phone']) {
+        if (champs.has(cle2)) client[cle2] = champs.get(cle2);
+      }
+      client.address = {
+        line1: champs.get('address[line1]') ?? null,
+        line2: champs.get('address[line2]') ?? null,
+        postal_code: champs.get('address[postal_code]') ?? null,
+        city: champs.get('address[city]') ?? null,
+        country: champs.get('address[country]') ?? null,
+      };
+    }
+    return repondre(200, client);
+  }
+  /* ── TVA (chantier « facturation légale ») ──────────────────────────────
+     Le plan de contrôle garantit un TaxRate avant toute session, puis pose le
+     numéro de TVA du client. Un faux Stripe muet sur ces routes ferait échouer
+     le paiement en PROVIDER_UNAVAILABLE — c'est-à-dire pour une raison qui n'a
+     rien à voir avec ce que le test éprouve. */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/tax_rates')) {
+    return repondre(200, { object: 'list', data: [...tauxTva.values()] });
+  }
+  if (req.method === 'POST' && req.url === '/v1/tax_rates') {
+    const connu = tauxParCle.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const taux = {
+      id: `txr_test_${sequence}`,
+      object: 'tax_rate',
+      active: true,
+      inclusive: false,
+      percentage: Number(new URLSearchParams(corps).get('percentage')),
+      country: new URLSearchParams(corps).get('country'),
+      display_name: new URLSearchParams(corps).get('display_name'),
+    };
+    tauxTva.set(taux.id, taux);
+    tauxParCle.set(cle, taux);
+    return repondre(200, taux);
+  }
+  const listeTva = /^\/v1\/customers\/([^/?]+)\/tax_ids/.exec(req.url ?? '');
+  if (listeTva && req.method === 'GET') return repondre(200, { object: 'list', data: [] });
+  if (listeTva && req.method === 'POST') {
+    return repondre(200, { id: `txi_test_${(sequence += 1)}`, object: 'tax_id' });
+  }
   return repondre(404, { error: { message: 'route inconnue' } });
 });
 
@@ -263,6 +347,16 @@ async function semerContrats() {
 }
 
 async function semerContrat(projectId, sourceContractId, montant, reference) {
+  /**
+   * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
+   *
+   * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client :
+   * c'est la garde centrale de ce chantier, et elle est autoritative côté
+   * backend. La semer ici n'assouplit rien — elle donne au parcours la donnée
+   * qu'il exige désormais, exactement comme le fait un exploitant qui remplit
+   * la fiche « Clients » avant d'encaisser.
+   */
+  await ensureClientCompany(projectId);
   await PanelProjectContract.updateOne(
     { projectId },
     {
@@ -273,7 +367,7 @@ async function semerContrat(projectId, sourceContractId, montant, reference) {
         status: 'ACTIVE',
         reference,
         pricing: {
-          launchFee: { amountIncludingTax: montant, currency: 'EUR', interval: null },
+          launchFee: ligneTarifaire(montant, { interval: null }),
           subscription: null,
         },
         sourceModifiedAt: new Date().toISOString(),
@@ -382,8 +476,29 @@ section('4. Le chemin complet, une fois');
   check('la clé du PROJET n’a jamais servi', appels.every((a) => a.auth !== CLE_PROJET));
   check('la clé PROD n’a jamais servi', appels.every((a) => a.auth !== CLE_PANEL_PROD));
 
-  check('le montant est celui de la PROJECTION',
-    params.get('line_items[0][price_data][unit_amount]') === String(MONTANT_TTC));
+  /**
+   * ── LE MONTANT ENVOYÉ EST LE HORS TAXE, ET LA TAXE EST DÉCLARÉE ────────
+   *
+   * Ce test vérifiait `unit_amount === MONTANT_TTC` : le Panel envoyait un
+   * TTC sans jamais déclarer de taxe, et la facture Stripe affichait trois
+   * fois le même nombre sans aucune mention de TVA.
+   *
+   * Il vérifie maintenant les deux moitiés indissociables du chantier :
+   * le montant est le HT, ET un taux exclusif l'accompagne. L'une sans
+   * l'autre serait une erreur de facturation — HT seul sous-facturerait la
+   * TVA, TTC avec taxe exclusive la sur-facturerait d'autant.
+   *
+   * La dernière assertion est la plus importante : ce que le client débite
+   * n'a PAS changé. `HT + TVA = TTC`, au centime.
+   */
+  const HT_ATTENDU = ventilationDepuisTTC(MONTANT_TTC).net;
+  const TVA_ATTENDUE = ventilationDepuisTTC(MONTANT_TTC).tax;
+  check('le montant envoyé est le HORS TAXE de la PROJECTION',
+    params.get('line_items[0][price_data][unit_amount]') === String(HT_ATTENDU));
+  check('…et un taux de TVA exclusif l’accompagne',
+    /^txr_test_/.test(params.get('line_items[0][tax_rates][0]') ?? ''));
+  check('…de sorte que le client débite toujours le TTC du contrat',
+    HT_ATTENDU + TVA_ATTENDUE === MONTANT_TTC);
   check('…et la devise aussi', params.get('line_items[0][price_data][currency]') === 'eur');
   check('mode payment', params.get('mode') === 'payment');
   check('la facture Stripe est réclamée', params.get('invoice_creation[enabled]') === 'true');
@@ -436,7 +551,18 @@ section('5. Rejouer le même acte ne crée pas un second paiement');
   check('…sur LA MÊME session', rejeu.data.result.checkoutSessionId === sessionA1);
   check('AUCUNE création supplémentaire chez Stripe', creations().length === avant);
 
-  const liens = await PanelStripeResourceBinding.countDocuments({ projectId: idA });
+  /**
+   * ON COMPTE LES SESSIONS, PAS TOUTES LES RESSOURCES.
+   *
+   * Les frais de lancement référencent désormais le CLIENT du contrat — sans
+   * lui, la facture porterait l'adresse tapée dans le formulaire au lieu de
+   * la raison sociale. Le projet possède donc légitimement un lien de plus,
+   * et compter toutes les ressources ne dirait plus rien sur les doublons de
+   * session, qui sont ce que cette section éprouve.
+   */
+  const liens = await PanelStripeResourceBinding.countDocuments({
+    projectId: idA, resourceType: 'CHECKOUT_SESSION',
+  });
   check('…et toujours un seul lien', liens === 1);
 }
 
@@ -504,7 +630,9 @@ section('6. Crash entre Stripe et le lien : la reprise retrouve, elle ne recrée
   check('T8 — le lien est RÉPARÉ', lien !== null && lien.projectId === idA);
   check('T8 — et il désigne toujours le même acte', lien.createdByOperationId === OP_A2);
 
-  const sessionsDuProjet = await PanelStripeResourceBinding.countDocuments({ projectId: idA });
+  const sessionsDuProjet = await PanelStripeResourceBinding.countDocuments({
+    projectId: idA, resourceType: 'CHECKOUT_SESSION',
+  });
   check('deux actes, deux sessions, aucun doublon', sessionsDuProjet === 2);
 }
 
@@ -737,7 +865,8 @@ section('10. Le projet B ne peut ni lire, ni adopter, ni facturer chez A');
   });
   check('B facture SON contrat sans difficulté', propreB.ok === true);
   const paramsB = new URLSearchParams(creations().at(-1).corps);
-  check('…au montant de SA projection', paramsB.get('line_items[0][price_data][unit_amount]') === '42000');
+  check('…au montant HORS TAXE de SA projection',
+    paramsB.get('line_items[0][price_data][unit_amount]') === String(ventilationDepuisTTC(42_000).net));
   const lienB = await binding.findBinding({
     environment: 'TEST', resourceType: 'CHECKOUT_SESSION',
     resourceId: propreB.data.result.checkoutSessionId,

@@ -98,6 +98,59 @@ appliqué (fonde l'ack `IGNORED` du dernier-écrit-gagne). C'est la mémoire
 d'idempotence du Panel — équivalent central du `WebhookEvent` local des
 projets.
 
+### 2.9 `PanelClientCompany` — l'entreprise CLIENTE
+
+La personne morale **à qui l'on facture**. Elle répond à une question
+qu'aucune collection précédente ne savait trancher : un projet est une
+instance technique, un contrat est un engagement, ni l'un ni l'autre n'est un
+acheteur. Faute de cette entité, une facture Stripe portait « Facturer à :
+CTR-2026-0002 » — un numéro de contrat en guise de raison sociale.
+
+| Bloc | Champs | Notes |
+|---|---|---|
+| identité | `legalName`, `tradingName`, `legalForm` | `legalName` seul fait foi sur une facture |
+| immatriculation | `siren` (9), `siret` (14), `vatNumber`, `registrationCity` | validés **structurellement** (longueur, Luhn, cohérence SIRET/SIREN, TVA FR ↔ SIREN) — jamais auprès d'un registre externe |
+| adresses | `registeredOffice`, `billingAddress` | décomposées ; `billingAddress` nulle = « identique au siège », jamais une copie qui divergerait |
+| contact | `billingEmail`, `phone`, `website`, `administrativeContact` | |
+| engagement | `contractualSigner` | la personne physique qui signe pour l'entreprise — **autorité unique** |
+| pièces | `documents[]` | Kbis, attestation, mandat, RIB… → médias PRIVÉS, jamais publiés |
+| exploitation | `status` (`ACTIVE` | `ARCHIVED`), `notes`, `environment` | |
+
+L'index sur `siren` est **volontairement non unique** : deux fiches peuvent
+légitimement porter le même SIREN (établissements, reprise d'historique). Un
+doublon est **signalé**, jamais bloqué — refuser la saisie enfermerait un
+opérateur dans un cas réel qu'il ne peut pas contourner.
+
+Suppression physique **refusée** dès qu'un projet ou un document y est
+rattaché : on archive. Une facture émise doit rester rattachable à celui à qui
+elle a été adressée.
+
+Détail complet : [63_CLIENT_COMPANY.md](63_CLIENT_COMPANY.md) et
+[64_LEGAL_BILLING.md](64_LEGAL_BILLING.md).
+
+### 2.10 Ne jamais confondre
+
+| Collection | Qui | Combien |
+|---|---|---|
+| `PanelCompany` | L.Y Solution — le **VENDEUR** | une, le tenant |
+| `PanelClientCompany` | un **CLIENT** — l'ACHETEUR | autant que de clients |
+| `ProjectRecord` | une instance technique livrée | autant que de projets |
+| projection de contrat | un engagement commercial | autant que de contrats |
+
+Les quatre apparaissent sur une même facture, chacune à une place différente :
+le vendeur en émetteur, l'acheteur en « Facturer à », le contrat en
+**référence** commerciale, le projet en métadonnée.
+
+### 2.11 L'état de consommation d'un projet — `ProjectRecord.runtime`
+
+```text
+runtime.bridgeStats.consumption   ce que le projet DÉCLARE consommer (≥ 1.10.0)
+runtime.bridgeAlert               la MÉMOIRE de l'alerte : ouverture, envoi, état
+```
+
+Le second est **persisté** et non gardé en mémoire : sans cela, chaque
+redémarrage du Panel rouvrirait toutes les alertes du parc et les
+réexpédierait. Voir [36_SUPERVISION.md](36_SUPERVISION.md) §6 bis.
 ## 3. Les données synchronisées (catégorie 2) — cadre pour la Phase 3
 
 Aucune n'est synchronisée en Phase 2B. Le cadre, figé dès maintenant :
@@ -145,6 +198,8 @@ technique.
 
 ```
 PanelUser ──(agit sur, via l'API interne)──▶ ProjectRecord
+PanelClientCompany 1──n ProjectRecord (ProjectRecord.clientCompanyId)
+PanelClientCompany 1──n PanelMedia (documents juridiques, visibilité PRIVATE)
 ProjectRecord 1──1 pairing (statut, hashes)
 ProjectRecord 1──1 runtime (déclaratif, heartbeats)
 ProjectRecord 1──0..1 manifest ──▶ capabilities (interprétées, jamais stockées
@@ -159,6 +214,15 @@ Deux choix à remarquer :
   Manifest — pas de cache à invalider) ;
 - la **vivacité n'est jamais stockée** (fonction pure du dernier heartbeat et
   de l'horloge).
+
+Le rattachement projet ↔ entreprise cliente vit du côté « plusieurs »
+(`ProjectRecord.clientCompanyId`). Une liste tenue des deux côtés finit par
+diverger, et rien ne dirait laquelle fait foi. `null` = aucun client légal —
+donc, par doctrine, **aucun paiement et aucune signature**.
+
+Ce lien n'est jamais rétroactif : un contrat, une facture ou une demande de
+signature déjà émis portent l'**instantané** juridique capturé à leur création.
+Changer le rattachement aujourd'hui ne réécrit pas ce qui a été adressé hier.
 
 ## 6. Persistance et rétention
 

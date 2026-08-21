@@ -28,7 +28,7 @@ ProjectBridge (il appelle les projets). Ce document décrit les deux rôles.
 Un seul secret d'appairage — le **bridgeToken** — authentifie les deux sens.
 Le révoquer ferme tout, d'un coup.
 
-## 2. Le serveur `/bridge/v1` (contrat PanelBridge, **v1.1.0**)
+## 2. Le serveur `/bridge/v1` (contrat PanelBridge, **v1.10.0**)
 
 ### 2.1 Chaîne de gardes
 
@@ -136,17 +136,61 @@ Le Panel applique les cinq règles minimales de l'écosystème — et rien au-de
 | **Anti-écho** | le pull exclut les écritures dont le projet appelant est l'émetteur d'origine |
 | **Identités UUID** | `entityId` généré par le côté créateur, jamais réattribué |
 
-Seul le type `DIAGNOSTIC` est appliqué (échange de test sans effet métier).
-Tout autre `entityType` — réservé aux lots de la Phase 3 — reçoit un ack
-`REJECTED` avec le code `BRIDGE_ENTITY_TYPE_UNSUPPORTED` : propre, jamais un
-500. Le journal des écritures émises côté Panel existe (il alimente
-`sync/pull`) mais reste vide tant qu'aucun domaine n'est synchronisé.
+Un `entityType` hors de `SYNC_ENTITY_TYPES` reçoit un ack `REJECTED` avec le
+code `BRIDGE_ENTITY_TYPE_UNSUPPORTED` : propre, jamais un 500. Chaque type
+APPLIQUÉ l'est par un applicateur nommé — le noyau ne devine jamais quoi faire
+d'une charge utile qu'il ne connaît pas.
 
 **Depuis la Phase 2C, cet état est persisté en MongoDB** : réceptions
 (idempotence par `writeId`), état par entité (LWW), journal ordonné et son
 compteur de séquence. Une relivraison après redémarrage répond donc
 `DUPLICATE` — elle n'est jamais réappliquée. Un curseur de pull reste valide
 de part et d'autre d'un redémarrage.
+
+## 4 bis. Ce que le Panel PUBLIE vers un projet
+
+Le journal des écritures sortantes porte deux natures d'audience, et la
+distinction est une frontière de confidentialité, pas une commodité :
+
+| Audience | Ce qu'elle sert | Pourquoi |
+|---|---|---|
+| `null` — tout le parc | `DEV_COMPANY`, modèles d'e-mails du Panel | l'identité de L.Y Solution n'est un secret pour personne : elle s'affiche déjà en pied de chaque site |
+| `<projectId>` — nominative | `CLIENT_COMPANY`, demandes de paiement, incidents de défaut, événements d'e-mail et de signature | le SIREN et l'adresse de facturation d'un client n'ont aucune raison d'atteindre les autres projets du parc |
+
+`CLIENT_COMPANY` (contrat ≥ **1.10.0**) porte l'identité **juridique** du client
+d'un projet : raison sociale, SIREN, adresse de facturation, signataire
+contractuel, et le verdict de disponibilité calculé par le Panel. Elle est
+rigoureusement distincte de `DEV_COMPANY` — l'une est l'acheteur, l'autre le
+vendeur. Voir [63_CLIENT_COMPANY.md](63_CLIENT_COMPANY.md).
+
+Elle est **republiée à l'appairage** (`buildDiscoveryPayload`). Un projet
+réappairé reçoit un nouveau `projectId`, et les écritures adressées à l'ancien
+ne lui seront jamais servies : sans cette republication, il repartirait sans
+client légal — donc paiements et signatures bloqués — jusqu'à ce que quelqu'un
+pense à rouvrir la fiche pour la republier à la main.
+
+Ce qui ne sort **jamais** : les notes internes, les documents juridiques, et
+l'identité de l'agent Panel qui a créé la fiche.
+
+## 4 ter. Ce que le Panel APPREND de la consommation d'un projet
+
+`Heartbeat.bridgeStats.consumption` (contrat ≥ **1.10.0**, optionnel).
+
+Tout le reste de `bridgeStats` décrit la file **sortante** du projet. Un projet
+dont le TIRAGE est mort a une file sortante parfaitement vide, un battement
+régulier et aucune erreur : le Panel ne pouvait donc pas distinguer « rien à
+recevoir » de « plus rien n'arrive », et la fiche restait verte pendant que la
+descente était morte.
+
+Le bloc porte le curseur déclaré, les dates de dernière progression et de
+dernière application réussie, et les compteurs d'échecs consécutifs. Aucune
+charge utile, aucun secret. Le Panel en déduit l'**âge du retard** en le
+confrontant à son propre journal — voir [36_SUPERVISION.md](36_SUPERVISION.md)
+§6 bis.
+
+Le bloc est **optionnel** : les schémas sont `.strict()` des deux côtés, un
+projet antérieur à 1.10.0 n'en déclare aucun, et son silence ne vaut pas
+bonne santé.
 
 ## 5. Ce que les ponts s'interdisent côté Panel
 

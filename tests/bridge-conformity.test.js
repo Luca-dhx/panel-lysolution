@@ -160,7 +160,13 @@ section('Types d’entités synchronisées');
    * Le nombre reste écrit en dur : c’est lui qui force à relire le contrat
    * quand une entité s’ajoute, plutôt que de la voir apparaître en silence.
    */
-  check('20 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 20);
+  /**
+   * VINGT ET UN depuis 1.10.0 : `CLIENT_COMPANY` rejoint le miroir — l'identité
+   * JURIDIQUE du client d'un projet, poussée par le Panel vers ce projet et lui
+   * seul. Distincte de `DEV_COMPANY`, qui porte l'identité du PRESTATAIRE et se
+   * diffuse à tout le parc.
+   */
+  check('21 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 21);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

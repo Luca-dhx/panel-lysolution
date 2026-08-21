@@ -63,6 +63,26 @@
 #     deviner lequel des deux il lit.
 #     Compatible 1.0.x à 1.4.x : un projet qui ignore cet endpoint reste
 #     pleinement conforme, un Panel qui ne le sert pas aussi.
+#   1.10.0 — ADDITIF, TROIS AJOUTS :
+#     · nouvel entityType `CLIENT_COMPANY` — l'identité JURIDIQUE du client
+#       d'un projet (raison sociale, SIREN, adresses, signataire contractuel),
+#       poussée par le Panel vers UN projet nommé (`audience`). Distincte de
+#       `DEV_COMPANY`, qui porte l'identité du PRESTATAIRE et se diffuse à tout
+#       le parc : les confondre ferait afficher les mentions légales de
+#       l'agence sur le site d'un client. Sens PANEL -> PROJET exclusivement ;
+#     · `Contract.pricing.*.amountExcludingTax` / `.taxAmount` / `.taxRate` —
+#       la ventilation HT/TVA que le projet calcule déjà. Sans elle, l'émetteur
+#       des factures ne connaît que le TTC et ne peut produire qu'un document
+#       muet sur la taxe. Elle est TRANSPORTÉE et non déduite : déduire un HT
+#       depuis un TTC introduit un arrondi que le contrat a déjà tranché ;
+#     · `Heartbeat.bridgeStats.consumption` — ce que le pont CONSOMME. Les
+#       champs existants décrivent la file SORTANTE ; un projet dont le tirage
+#       est mort a une file sortante vide et un battement parfait. Sans ce
+#       bloc, « rien à recevoir » et « plus rien n'arrive » sont indiscernables.
+#     Tous OPTIONNELS. Les schémas d'entrée étant `.strict()` des deux côtés,
+#     l'ORDRE DE DÉPLOIEMENT est imposé : le Panel accepte AVANT que le projet
+#     n'émette, et le projet ne publie qu'à un Panel qui a annoncé savoir lire.
+#     Compatible 1.0.x à 1.9.x.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -72,7 +92,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.9.0
+  version: 1.10.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -895,13 +915,13 @@ components:
                   - MEETING
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
-            - PROJECT_EMAIL_TEMPLATE_USAGE
                   - PROJECT_EMAIL_TEMPLATE_USAGE
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
                   - PAYMENT_DEFAULT_CAUSE
                   - PAYMENT_DEFAULT_INCIDENT
+                  - CLIENT_COMPANY
             operations:
               type: array
               items: { type: string }
@@ -1206,6 +1226,38 @@ components:
               type: integer
               minimum: 0
               description: Écritures REFUSÉES par le Panel et non encore réparées.
+            consumption:
+              type: object
+              description: >
+                ADDITIF (>= 1.10.0), OPTIONNEL. Ce que le pont CONSOMME, par
+                opposition à tout ce qui précède, qui décrit la file SORTANTE.
+                Un projet dont le TIRAGE est mort a une file sortante vide, un
+                battement régulier et aucune erreur : sans ce bloc, « rien à
+                recevoir » et « plus rien n'arrive » sont indiscernables. Le
+                signal maître est lastCursorAdvanceAt — un curseur qui n'avance
+                plus est un tirage mort, qu'il y ait eu des erreurs ou non.
+                Aucune charge utile, aucun secret : des compteurs, des dates, et
+                un curseur opaque que le Panel a lui-même émis.
+              properties:
+                cursor:
+                  type: string
+                  nullable: true
+                  description: >
+                    Curseur de consommation DURABLE. null chez un projet
+                    antérieur à 1.10.0 : il repart alors de zéro à chaque
+                    redémarrage.
+                lastCursorAdvanceAt: { type: string, format: date-time, nullable: true }
+                lastSuccessfulApplyAt: { type: string, format: date-time, nullable: true }
+                consecutivePullFailures: { type: integer, minimum: 0 }
+                consecutiveUnreadableChanges: { type: integer, minimum: 0 }
+                appliedTotal: { type: integer, minimum: 0 }
+                state:
+                  type: string
+                  nullable: true
+                  description: >
+                    Auto-diagnostic du pont, tel qu'il se voit. CORROBORATIF :
+                    le Panel décide de la dégradation, il ne délègue pas son
+                    verdict au patient.
             oldestRejection:
               type: object
               description: Le refus le plus ancien encore ouvert.
@@ -1353,6 +1405,7 @@ components:
             - PAYMENT_REQUEST
             - PAYMENT_DEFAULT_CAUSE
             - PAYMENT_DEFAULT_INCIDENT
+            - CLIENT_COMPANY
         entityId:
           type: string
           format: uuid

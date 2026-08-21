@@ -838,6 +838,69 @@ export function describeProject(record) {
      * plus commettre.
      */
     businessSync: describeBusinessSyncHealth(runtime),
+    /**
+     * LA SANTÉ DE LA CONSOMMATION — le QUATRIÈME fait, et le dernier angle mort.
+     *
+     * ══ CE QUE LES TROIS AUTRES NE DISENT PAS ════════════════════════════════
+     *
+     * Vivacité, fraîcheur et livraison décrivent toutes la MONTÉE : le projet
+     * répond-il, quand a-t-il parlé, ses écritures passent-elles.
+     *
+     * Aucune ne décrit la DESCENTE. Un projet dont le tirage est mort répond
+     * parfaitement, a une file sortante vide et aucun refus : les trois
+     * indicateurs sont au vert pendant que plus rien n'arrive. C'est
+     * exactement ce qui s'est produit — 91 cycles, `applied: 0`,
+     * `lastError: null` — sans que le Panel puisse en dire un mot.
+     *
+     * ══ POURQUOI CE BLOC EST SYNCHRONE, ALORS QUE LE VERDICT NE L'EST PAS ════
+     *
+     * Le verdict complet exige de compter le RETARD dans le journal, donc une
+     * lecture de base. Cette vue-ci est construite pour des listes, parfois
+     * des dizaines de fiches d'un coup : y glisser une requête par projet
+     * transformerait un affichage en balayage.
+     *
+     * On rend donc ce qu'on détient sans rien lire de plus : ce que le projet
+     * DÉCLARE, et le VERDICT que l'évaluation du battement a déjà inscrit sur
+     * la fiche (`runtime.bridgeAlert`). C'est la même information, calculée au
+     * moment où elle change plutôt qu'au moment où on la regarde.
+     */
+    consumption: describeConsumptionDeclaration(runtime),
+  };
+}
+
+/**
+ * CE QUE LE PROJET DÉCLARE DE SA CONSOMMATION, plus le verdict déjà rendu.
+ *
+ * Aucune déduction : ce qui n'est pas déclaré vaut « inconnu ». Un projet
+ * antérieur au contrat 1.10.0 rend `status: 'UNKNOWN'`, jamais `HEALTHY` —
+ * déduire la santé d'un silence est l'erreur que tout ce lot répare.
+ */
+export function describeConsumptionDeclaration(runtime = {}) {
+  const declaration = runtime.bridgeStats?.consumption ?? null;
+  const alerte = runtime.bridgeAlert ?? null;
+
+  if (!declaration) {
+    return { status: 'UNKNOWN', declares: false, cursor: null, reasons: [], degradedSince: null };
+  }
+  return {
+    /**
+     * Le verdict vient de l'ÉVALUATION, pas d'un recalcul à l'affichage : deux
+     * calculs pour une même question finiraient par se contredire, et l'écran
+     * dirait le contraire de l'e-mail reçu la veille.
+     */
+    status: alerte?.state === 'DEGRADED' ? 'DEGRADED' : 'HEALTHY',
+    declares: true,
+    /** Opaque, et fait pour être COMPARÉ — avant/après un redémarrage. */
+    cursor: declaration.cursor ?? null,
+    lastCursorAdvanceAt: declaration.lastCursorAdvanceAt ?? null,
+    lastSuccessfulApplyAt: declaration.lastSuccessfulApplyAt ?? null,
+    consecutivePullFailures: declaration.consecutivePullFailures ?? 0,
+    consecutiveUnreadableChanges: declaration.consecutiveUnreadableChanges ?? 0,
+    appliedTotal: declaration.appliedTotal ?? null,
+    declaredState: declaration.state ?? null,
+    reasons: alerte?.reasons ?? [],
+    degradedSince: alerte?.since ?? null,
+    lastNotifiedAt: alerte?.lastNotifiedAt ?? null,
   };
 }
 

@@ -105,6 +105,21 @@ export const ACCEPTED_DOCUMENT_TYPES = Object.freeze([
  */
 export const DOCUMENT_POLICIES = Object.freeze({
   receipt: { maxInputBytes: 10 * 1024 * 1024 },
+  /**
+   * `client-document` — les pièces administratives d'une entreprise cliente :
+   * Kbis, attestation de vigilance, mandat, RIB, statuts.
+   *
+   * Même plafond que le justificatif, et pour la même raison : un extrait Kbis
+   * scanné en couleur tient très largement dedans, et la valeur reste SOUS le
+   * plafond des images — la borne Nginx du profil de déploiement n'a donc pas à
+   * être renégociée pour ce lot.
+   *
+   * Un rôle DISTINCT plutôt que la réutilisation de `receipt` : les deux
+   * familles n'ont ni le même propriétaire, ni la même route de sortie, ni les
+   * mêmes droits. Partager l'étiquette aurait fait dépendre la politique de
+   * l'une d'un ajustement décidé pour l'autre.
+   */
+  'client-document': { maxInputBytes: 10 * 1024 * 1024 },
 });
 
 const DEFAUT_DOCUMENT = Object.freeze({ maxInputBytes: 8 * 1024 * 1024 });

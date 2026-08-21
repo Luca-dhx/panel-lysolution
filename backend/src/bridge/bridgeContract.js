@@ -29,7 +29,41 @@ import { z } from 'zod';
 //   RÉELLEMENT, à chaque battement. Voir `heartbeatSchema` pour la doctrine —
 //   en particulier pourquoi ce n'était pas une entité de synchronisation, et
 //   pourquoi l'appairage ne fige plus une URL.
-export const CONTRACT_VERSION = '1.9.0';
+// 1.10.0 (ADDITIF, rétrocompatible) — L'ENTREPRISE CLIENTE, LA VENTILATION
+//   FISCALE, ET LA SANTÉ DE CONSOMMATION DU PONT. Trois ajouts, trois raisons :
+//
+//   · `CLIENT_COMPANY` — nouvel entityType, poussé par le Panel vers UN projet
+//     nommé. Il porte l'identité JURIDIQUE du client (raison sociale, SIREN,
+//     adresses, signataire contractuel). Distinct de `DEV_COMPANY`, qui porte
+//     l'identité du PRESTATAIRE et se diffuse à tout le parc : les confondre
+//     ferait afficher les mentions légales de L.Y Solution sur le site d'un
+//     garage. Un projet antérieur à 1.10 écarte l'entité proprement — la perte
+//     est bornée à elle, et elle se voit (`CHANGE_UNREADABLE`).
+//
+//   · `Contract.pricing.*.amountExcludingTax` / `.taxAmount` / `.taxRate` —
+//     la ventilation HT / TVA que le projet CALCULE DÉJÀ et gardait pour lui.
+//     Sans elle, le Panel ne connaissait que le TTC et ne pouvait produire
+//     qu'une facture muette sur la taxe. Il aurait pu la DÉDUIRE ; déduire un
+//     HT depuis un TTC et un taux introduit un arrondi que le contrat, lui, a
+//     déjà tranché — et deux arrondis pour une même facture, c'est un centime
+//     d'écart qu'aucun comptable ne saura expliquer. Optionnels : une
+//     projection antérieure n'en porte pas, et le Panel refuse alors de
+//     ventiler plutôt que de supposer.
+//
+//   · `Heartbeat.bridgeStats.consumption` — ce que le pont CONSOMME, et non
+//     plus seulement ce qu'il émet. `outboxSize` décrivait la file SORTANTE ;
+//     un projet dont le tirage est mort depuis 91 cycles avait une file
+//     sortante parfaitement vide. Le Panel ne pouvait donc pas distinguer
+//     « rien à recevoir » de « plus rien n'arrive », et la fiche restait verte.
+//     Optionnel, et le silence se lit « ne sait pas dire », jamais « tout va
+//     bien ».
+//
+//   ORDRE DE DÉPLOIEMENT : le Panel accepte ces champs AVANT que le projet ne
+//   les émette — les schémas d'entrée des deux côtés sont `.strict()`, et un
+//   champ inconnu fait refuser le message ENTIER. Le projet ne les publie donc
+//   qu'à un Panel qui a ANNONCÉ savoir les lire (voir `panelSpeaks` côté
+//   projet). Compatible 1.0.x à 1.9.x.
+export const CONTRACT_VERSION = '1.10.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -326,6 +360,45 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * dans `SiteStatus`, et nulle part ailleurs.
    */
   'PAYMENT_DEFAULT_INCIDENT',
+  /**
+   * >= 1.10.0 — L'ENTREPRISE CLIENTE, poussée par le Panel vers UN projet.
+   *
+   * ══ POURQUOI ELLE NE PEUT PAS EMPRUNTER `DEV_COMPANY` ═════════════════════
+   *
+   * Ce sont DEUX personnes morales, et elles se font face :
+   *
+   *     DEV_COMPANY     L.Y Solution — le PRESTATAIRE. Diffusée à TOUT le parc
+   *                     (`audience: null`), parce qu'elle n'est un secret pour
+   *                     personne : elle s'affiche déjà en pied de chaque site.
+   *
+   *     CLIENT_COMPANY  le CLIENT de CE projet — l'ACHETEUR. NOMINATIVE
+   *                     (`audience: <projectId>`), parce que le SIREN et
+   *                     l'adresse de facturation d'un client n'ont aucune
+   *                     raison d'atteindre les autres.
+   *
+   * Les faire voyager sous la même étiquette aurait obligé le projet à deviner,
+   * à la lecture, laquelle des deux il reçoit — et un site aurait fini par
+   * afficher les mentions légales de son prestataire à la place des siennes.
+   * Surcharger `DEV_COMPANY` aurait de surcroît fait basculer une entité de
+   * diffusion générale en entité nominative : la première fuite serait passée
+   * par une écriture qu'on croyait publique.
+   *
+   * ══ CE QU'ELLE PORTE, ET CE QU'ELLE NE PORTERA JAMAIS ═════════════════════
+   *
+   * Porte : identité légale, adresses, coordonnées de facturation, signataire
+   * contractuel, et le VERDICT de complétude calculé par le Panel.
+   *
+   * Ne porte jamais : les notes internes de gestion (une appréciation sur un
+   * client, lue par ce client) ni les documents administratifs (un Kbis n'a
+   * rien à faire dans la base d'un site vitrine).
+   *
+   * ══ SENS UNIQUE ══════════════════════════════════════════════════════════
+   *
+   * PANEL → PROJET, exclusivement. Le Panel est l'autorité de l'identité
+   * juridique ; un projet qui pourrait l'écrire permettrait à un client de
+   * choisir la raison sociale sur laquelle il est facturé.
+   */
+  'CLIENT_COMPANY',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
@@ -572,6 +645,60 @@ export const heartbeatSchema = z
             code: z.string().min(1).nullable().optional(),
             since: isoDate.nullable().optional(),
             rejections: z.number().int().min(0).optional(),
+          })
+          .strict()
+          .optional(),
+        /**
+         * ── CE QUE LE PONT CONSOMME (>= 1.10.0, ADDITIF) ───────────────────
+         *
+         * ══ LE DÉFAUT QUE CE BLOC FERME ═══════════════════════════════════
+         *
+         * Tout ce qui précède décrit la file SORTANTE. Un projet dont le
+         * TIRAGE est mort a une file sortante parfaitement vide, un battement
+         * régulier et aucune erreur : c'est le cas réel observé — 91 cycles
+         * consécutifs, `applied: 0`, `lastError: null`, `state: DEGRADED` — et
+         * rien, absolument rien, n'en parvenait au Panel.
+         *
+         * Le Panel ne pouvait donc pas distinguer « ce projet n'a rien à
+         * recevoir » (le cas NORMAL et majoritaire) de « ce projet ne reçoit
+         * plus rien » (une panne totale de la propagation descendante). Ces
+         * champs portent cette différence, et rien d'autre.
+         *
+         * ══ POURQUOI CES SIGNAUX-LÀ ═══════════════════════════════════════
+         *
+         *   cursor                   ce que le projet a durablement consommé.
+         *                            `null` chez un projet antérieur ; il
+         *                            REPART DE ZÉRO à chaque redémarrage, et
+         *                            c'est précisément la dette que ce lot
+         *                            ferme.
+         *   lastCursorAdvanceAt      la dernière fois que le tirage a
+         *                            PROGRESSÉ. C'est le signal maître : un
+         *                            curseur qui n'avance plus est un tirage
+         *                            mort, qu'il y ait eu des erreurs ou non.
+         *   lastSuccessfulApplyAt    la dernière écriture RÉELLEMENT appliquée.
+         *                            Distinct du précédent : un projet à jour
+         *                            avance son curseur sans rien appliquer.
+         *   consecutivePullFailures  le transport échoue en boucle.
+         *   consecutiveUnreadableChanges  des écritures sont ÉCARTÉES en
+         *                            boucle — le curseur avance, et pourtant
+         *                            la donnée se perd. La panne la plus
+         *                            silencieuse des trois.
+         *   state                    l'auto-diagnostic du pont, tel qu'il se
+         *                            voit. Corroboratif : le Panel décide, il
+         *                            ne délègue pas son verdict au patient.
+         *
+         * Aucune charge utile, aucun secret : des compteurs, des dates, un
+         * curseur opaque déjà connu du Panel puisque c'est lui qui l'émet.
+         */
+        consumption: z
+          .object({
+            cursor: z.string().nullable().optional(),
+            lastCursorAdvanceAt: isoDate.nullable().optional(),
+            lastSuccessfulApplyAt: isoDate.nullable().optional(),
+            consecutivePullFailures: z.number().int().min(0).optional(),
+            consecutiveUnreadableChanges: z.number().int().min(0).optional(),
+            appliedTotal: z.number().int().min(0).optional(),
+            state: z.string().min(1).max(40).nullable().optional(),
           })
           .strict()
           .optional(),
@@ -906,6 +1033,44 @@ const subscriptionRecurrenceSchema = z
   })
   .strict();
 
+/**
+ * LA VENTILATION FISCALE D'UNE LIGNE (>= 1.10.0, ADDITIVE).
+ *
+ * ══ POURQUOI ELLE MONTE, ALORS QUE LE TTC SUFFISAIT ═════════════════════════
+ *
+ * Le Panel est devenu l'émetteur des factures. Une facture française doit
+ * porter le montant HORS TAXE, le TAUX, le MONTANT DE TVA et le TOTAL — et le
+ * Panel ne connaissait que le dernier. Il ne pouvait donc produire qu'un
+ * document muet sur la taxe : « 95,99 € » trois fois, sans jamais dire combien
+ * de TVA il contenait.
+ *
+ * ══ POURQUOI ON NE LE DÉDUIT PAS ═══════════════════════════════════════════
+ *
+ * `HT = round(TTC / (1 + taux/100))` semble suffire. Elle produit un résultat
+ * qui n'est pas toujours celui que le CONTRAT a calculé : le projet part du HT
+ * et arrondit la TVA (`round(HT × taux / 100)`), la déduction part du TTC et
+ * arrondit le HT. Sur 95,99 € à 20 %, les deux chemins peuvent différer d'un
+ * centime — et cet écart-là apparaîtrait entre le contrat signé et la facture
+ * émise, ce qui est exactement l'incohérence la plus coûteuse à expliquer.
+ *
+ * Le HT est donc TRANSPORTÉ, tel que le contrat le porte, et le Panel VÉRIFIE
+ * que `HT + TVA = TTC` avant de facturer plutôt que de recalculer.
+ *
+ * ══ TOUT EST OPTIONNEL, ET L'ABSENCE NE VAUT PAS ZÉRO ══════════════════════
+ *
+ * Une projection antérieure à 1.10 ne porte rien de tout cela. Le Panel refuse
+ * alors de ventiler — il ne facture pas « 0 % de TVA », ce qui serait une
+ * fiscalité inventée.
+ */
+const pricingTaxFields = {
+  /** Le montant HORS TAXE, en centimes, tel que le contrat le porte. */
+  amountExcludingTax: z.number().nullable().optional(),
+  /** Le montant de TVA, en centimes. `HT + celui-ci` doit valoir le TTC. */
+  taxAmount: z.number().nullable().optional(),
+  /** Le taux de CETTE ligne, en POURCENTAGE (20 vaut 20 %). */
+  taxRate: z.number().min(0).max(100).nullable().optional(),
+};
+
 /** Montants d'un contrat — mêmes règles pour le courant et pour l'histoire. */
 const contractPricingSchema = z
   .object({
@@ -918,6 +1083,7 @@ const contractPricingSchema = z
         recurrenceLabel: z.string().nullable().optional(),
         /** HÉRITAGE : l'UNITÉ seule, sous son ancien nom. */
         interval: z.string().nullable().optional(),
+        ...pricingTaxFields,
       })
       .strict()
       .optional(),
@@ -925,6 +1091,7 @@ const contractPricingSchema = z
       .object({
         amountIncludingTax: z.number().nullable().optional(),
         currency: z.string().nullable().optional(),
+        ...pricingTaxFields,
       })
       .strict()
       .optional(),

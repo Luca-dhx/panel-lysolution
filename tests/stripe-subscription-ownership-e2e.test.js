@@ -31,6 +31,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { ensureClientCompany, ligneTarifaire } from './helpers/clientCompany.fixture.js';
 import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
@@ -64,6 +65,10 @@ const lireCorps = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(brut));
 });
 
+/** Le catalogue fiscal du faux compte — voir le bloc de routes plus bas. */
+const tauxTva = new Map();
+/** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
+const tauxParCle = new Map();
 const fauxStripe = http.createServer(async (req, res) => {
   const cle = req.headers['idempotency-key'] ?? null;
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
@@ -91,6 +96,58 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, objet);
   }
 
+  /* ── MISE À JOUR D'UN CLIENT ────────────────────────────────────────────
+     `ensure` fait désormais CONVERGER l'identité de facturation : il relit le
+     client, compare à ce que le Panel détient, et écrit sur écart. Un faux
+     Stripe muet sur cette écriture ferait échouer le paiement pour une route
+     manquante, pas pour une règle métier. */
+  const majClient = /^\/v1\/customers\/([^/?]+)$/.exec(req.url ?? "");
+  if (req.method === 'POST' && majClient) {
+    const client = parId.get(decodeURIComponent(majClient[1]));
+    if (!client) return repondre(404, { error: { code: 'resource_missing' } });
+    const champs = new URLSearchParams(corps);
+    for (const cle of ['name', 'email', 'phone']) {
+      if (champs.has(cle)) client[cle] = champs.get(cle);
+    }
+    client.address = {
+      line1: champs.get('address[line1]') ?? null,
+      line2: champs.get('address[line2]') ?? null,
+      postal_code: champs.get('address[postal_code]') ?? null,
+      city: champs.get('address[city]') ?? null,
+      country: champs.get('address[country]') ?? null,
+    };
+    return repondre(200, client);
+  }
+  /* ── TVA (chantier « facturation légale ») ──────────────────────────────
+     Le plan de contrôle garantit un TaxRate avant toute session, puis pose le
+     numéro de TVA du client. Un faux Stripe muet sur ces routes ferait échouer
+     le paiement en PROVIDER_UNAVAILABLE — c'est-à-dire pour une raison qui n'a
+     rien à voir avec ce que le test éprouve. */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/tax_rates')) {
+    return repondre(200, { object: 'list', data: [...tauxTva.values()] });
+  }
+  if (req.method === 'POST' && req.url === '/v1/tax_rates') {
+    const connu = tauxParCle.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const taux = {
+      id: `txr_test_${sequence}`,
+      object: 'tax_rate',
+      active: true,
+      inclusive: false,
+      percentage: Number(new URLSearchParams(corps).get('percentage')),
+      country: new URLSearchParams(corps).get('country'),
+      display_name: new URLSearchParams(corps).get('display_name'),
+    };
+    tauxTva.set(taux.id, taux);
+    tauxParCle.set(cle, taux);
+    return repondre(200, taux);
+  }
+  const listeTva = /^\/v1\/customers\/([^/?]+)\/tax_ids/.exec(req.url ?? '');
+  if (listeTva && req.method === 'GET') return repondre(200, { object: 'list', data: [] });
+  if (listeTva && req.method === 'POST') {
+    return repondre(200, { id: `txi_test_${(sequence += 1)}`, object: 'tax_id' });
+  }
   return repondre(404, { error: { message: 'route inconnue' } });
 });
 
@@ -190,6 +247,16 @@ let idA;
 let idB;
 
 async function semer(projectId, sourceContractId) {
+  /**
+   * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
+   *
+   * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client :
+   * c'est la garde centrale de ce chantier, et elle est autoritative côté
+   * backend. La semer ici n'assouplit rien — elle donne au parcours la donnée
+   * qu'il exige désormais, exactement comme le fait un exploitant qui remplit
+   * la fiche « Clients » avant d'encaisser.
+   */
+  await ensureClientCompany(projectId);
   await PanelProjectContract.updateOne(
     { projectId },
     {
@@ -198,8 +265,8 @@ async function semer(projectId, sourceContractId) {
         reference: `CTR-${sourceContractId.slice(-4)}`,
         document: { available: true, status: 'SIGNED', version: 1 },
         pricing: {
-          launchFee: { amountIncludingTax: 118_800, currency: 'EUR', interval: null },
-          subscription: { amountIncludingTax: 11_880, currency: 'EUR', interval: 'MONTH' },
+          launchFee: { amountIncludingTax: 118_800, amountExcludingTax: 99000, taxAmount: 19800, taxRate: 20, currency: 'EUR', interval: null },
+          subscription: { amountIncludingTax: 11_880, amountExcludingTax: 9900, taxAmount: 1980, taxRate: 20, currency: 'EUR', interval: 'MONTH' },
         },
         sourceModifiedAt: new Date().toISOString(),
         receivedAt: new Date().toISOString(),

@@ -19,6 +19,7 @@ import {
   VARIABLE_TYPE,
   EMAIL_TEMPLATE_ERROR_CODES as E,
   PLACEHOLDER_RE,
+  OPTIONAL_BLOCK_RE,
   CURRENCY_SYMBOL,
   DISPLAY_TIME_ZONE,
 } from '../../utils/panelEmailTemplateConstants.js';
@@ -291,6 +292,39 @@ function substitute(text, resolve) {
 }
 
 /**
+ * UNE VALEUR ABSENTE — `null`, `undefined`, ou une chaîne d’espaces.
+ *
+ * `0` et `false` ne sont PAS absents : un montant nul et un booléen faux sont
+ * des valeurs, et les traiter comme un vide ferait disparaître « 0,00 € » et
+ * « Non » des e-mails où ils ont un sens précis.
+ */
+function estAbsente(valeur) {
+  if (valeur === null || valeur === undefined) return true;
+  return typeof valeur === 'string' && valeur.trim() === '';
+}
+
+/**
+ * Résout les blocs `{{#if cle}} … {{/if}}` — garde le contenu, ou le retire.
+ *
+ * ══ POURQUOI UNE BOUCLE, ET NON UN SEUL `replace` ══════════════════════════
+ *
+ * Aucune imbrication n’est permise (voir le contrat de la constante), mais un
+ * template peut porter PLUSIEURS blocs successifs. `String.replace` avec un
+ * drapeau global les traite tous en une passe — c’est exactement ce qu’on
+ * veut, et c’est ce qu’on fait. La « boucle » est celle du moteur d’expression
+ * régulière, et elle ne rentre jamais dans le contenu qu’elle vient de garder.
+ *
+ * Un bloc DÉPAREILLÉ — ouverture sans fermeture — ne matche pas et reste donc
+ * en clair. C’est délibéré : le validateur le refuse à l’enregistrement, et
+ * un placeholder resté visible fait échouer le rendu plus bas plutôt que de
+ * partir chez un destinataire.
+ */
+export function resoudreBlocs(texte, estFournie) {
+  const re = new RegExp(OPTIONAL_BLOCK_RE.source, OPTIONAL_BLOCK_RE.flags);
+  return String(texte ?? '').replace(re, (_tout, cle, contenu) => (estFournie(cle) ? contenu : ''));
+}
+
+/**
  * Rend un template.
  *
  * @param {object} input
@@ -362,6 +396,36 @@ export function renderTemplate({ templateId, template, variables, skipTemplateVa
   const formatted = new Map();
   for (const [key, raw] of values) {
     const def = variableDefinition(templateId, key);
+    /**
+     * ── UNE ABSENCE N’EST PAS UNE VALEUR INVALIDE ───────────────────────
+     *
+     * ══ LE DÉFAUT QUE CETTE LIGNE RÉPARE ══════════════════════════════
+     *
+     * Un résolveur écrivait `submission.pageUrl || ''` pour une variable
+     * FACULTATIVE de type URL. La chaîne vide arrivait ici, `formatValue`
+     * la confrontait au type, et refusait : « une URL doit commencer par
+     * http:// ». L’e-mail entier partait en DEAD_LETTER — parce qu’un
+     * visiteur n’avait pas transmis la page depuis laquelle il écrivait.
+     *
+     * ══ LA RÈGLE, ÉNONCÉE UNE FOIS ═══════════════════════════════════
+     *
+     *   variable FACULTATIVE + valeur absente ou vide  ⇒  NON FOURNIE
+     *
+     * Elle ne sera ni formatée, ni typée, ni substituée : le placeholder
+     * rend la chaîne vide, et les blocs `{{#if}}` qui l’entourent
+     * disparaissent. C’est exactement ce que « facultatif » veut dire.
+     *
+     * ══ CE QUI RESTE REFUSÉ, ET DOIT L’ÊTRE ══════════════════════════
+     *
+     * Une valeur PRÉSENTE et NON VIDE qui ne correspond pas à son type.
+     * `pageUrl: "javascript:alert(1)"` échoue toujours, et `pageUrl:
+     * "pas-une-url"` aussi. On distingue « rien » de « faux » — c’est toute
+     * la correction.
+     *
+     * Une variable OBLIGATOIRE, elle, ne passe jamais ici vide : le contrôle
+     * de présence l’a déjà refusée quelques lignes plus haut.
+     */
+    if (!def.required && estAbsente(raw)) continue;
     formatted.set(key, { text: formatValue(raw, def.type, key), type: def.type });
   }
 
@@ -377,8 +441,23 @@ export function renderTemplate({ templateId, template, variables, skipTemplateVa
     return { ok: true, value: type === VARIABLE_TYPE.SAFE_HTML ? text : escapeHtml(text) };
   };
 
-  const subjectResult = substitute(subjectSource, resolveFor('subject'));
-  const htmlResult = substitute(htmlSource, resolveFor('html'));
+  /**
+   * ── LES BLOCS D’ABORD, LES VALEURS ENSUITE ─────────────────────────────
+   *
+   * L’ordre n’est pas indifférent. Substituer d’abord remplacerait
+   * `{{contact.pageUrl}}` par la chaîne vide À L’INTÉRIEUR du bloc, et il ne
+   * resterait plus rien pour décider si le bloc doit disparaître : on aurait
+   * une ligne de tableau vide au lieu de pas de ligne du tout.
+   *
+   * On tranche donc la STRUCTURE en premier, sur la seule question fermée
+   * « cette variable a-t-elle une valeur ? », puis on remplit ce qui reste.
+   */
+  const estFournie = (cle) => formatted.has(cle) && formatted.get(cle).text !== '';
+  const subjectSansBlocs = resoudreBlocs(subjectSource, estFournie);
+  const htmlSansBlocs = resoudreBlocs(htmlSource, estFournie);
+
+  const subjectResult = substitute(subjectSansBlocs, resolveFor('subject'));
+  const htmlResult = substitute(htmlSansBlocs, resolveFor('html'));
 
   // 4. Placeholder non résolu = clé absente du registre restée dans le template
   //    (variable retirée du code depuis la dernière sauvegarde). On refuse plutôt

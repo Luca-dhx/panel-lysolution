@@ -11,6 +11,7 @@ import {
 import { created, ok } from '../utils/apiResponse.js';
 import { bootstrap, unpairByProject } from '../services/pairing/pairing.service.js';
 import { recordHeartbeat } from '../services/registry/projectRegistry.service.js';
+import { evaluateBridgeConsumption } from '../services/supervision/bridgeAlerting.service.js';
 import { archiveHeartbeat } from '../services/supervision/heartbeat.service.js';
 import { applyIncoming, pullForProject } from '../services/sync/syncCore.service.js';
 
@@ -34,6 +35,31 @@ export async function heartbeat(req, res) {
   // donc s'exécuter AVANT que la fiche ne soit mise à jour.
   await archiveHeartbeat(req.bridgeProject, dto);
   await recordHeartbeat(req.bridgeProject, dto, req.bridgeContractVersion ?? null);
+
+  /**
+   * ── LA CONSOMMATION EST ÉVALUÉE ICI, ET NULLE PART AILLEURS ──────────────
+   *
+   * ══ POURQUOI SUR LE BATTEMENT ═══════════════════════════════════════════
+   *
+   * C'est le SEUL instant où le Panel apprend quelque chose de neuf sur ce que
+   * le projet a consommé. L'évaluer depuis un écran ferait partir une alerte
+   * parce que quelqu'un a ouvert une page ; l'évaluer depuis un ordonnanceur
+   * ajouterait une boucle là où une déclaration existe déjà.
+   *
+   * ══ APRÈS L'ENREGISTREMENT, ET SANS L'ATTENDRE ══════════════════════════
+   *
+   * Après : l'évaluation lit `record.runtime.bridgeStats`, qui vient d'être
+   * écrit. Avant, elle jugerait le battement précédent.
+   *
+   * Sans l'attendre : un battement est un signe de vie, et il doit être
+   * acquitté immédiatement. Le faire dépendre d'un envoi d'e-mail ferait
+   * basculer une fiche « hors ligne » parce qu'un fournisseur de messagerie
+   * était lent — c'est-à-dire créer une panne pour en signaler une autre.
+   * `evaluateBridgeConsumption` ne lève jamais, et son `.catch` est une
+   * ceinture, pas une politique.
+   */
+  void evaluateBridgeConsumption(req.bridgeProject).catch(() => {});
+
   return ok(res, { acknowledged: true, panelTime: nowIso() });
 }
 

@@ -88,6 +88,36 @@ const runtimeSchema = new mongoose.Schema(
     lastBusinessSyncAt: { type: String, default: null },
     lastHealth: { type: mongoose.Schema.Types.Mixed, default: null },
     bridgeStats: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
+     * L'ÉTAT D'ALERTE DU PONT — la MÉMOIRE qui empêche de crier en boucle.
+     *
+     * ══ POURQUOI IL EST PERSISTÉ, ET NON GARDÉ EN MÉMOIRE ═══════════════════
+     *
+     * Le battement arrive toutes les minutes. Sans mémoire durable, chaque
+     * redémarrage du Panel rouvrirait toutes les alertes du parc et
+     * réexpédierait tout — c'est-à-dire précisément la panne d'alerting que ce
+     * lot existe pour éviter. Une mémoire de processus n'aurait tenu que le
+     * temps d'une release.
+     *
+     * ══ CE QU'IL PORTE ═════════════════════════════════════════════════════
+     *
+     *   since           quand la dégradation a COMMENCÉ. Ne bouge pas tant
+     *                   qu'elle dure : c'est ce qui rend l'identité d'un envoi
+     *                   reproductible sans horloge.
+     *   state           `DEGRADED`, ou le champ vaut `null` — il n'y a pas
+     *                   d'état « sain » à écrire, l'absence le dit déjà.
+     *   reasons         les motifs constatés, pour la chronologie.
+     *   lastNotifiedAt  le dernier envoi RÉEL. C'est lui qui gouverne le
+     *                   refroidissement.
+     *   notifiedCount   combien de rappels sont partis. À zéro, un
+     *                   rétablissement ne s'annonce pas : personne n'a jamais
+     *                   appris la panne.
+     *
+     * `Mixed` volontairement, comme `bridgeStats` : ce bloc décrit un état
+     * d'exploitation, pas un objet de contrat. Le figer champ par champ
+     * obligerait à une migration au premier motif qui s'ajoute.
+     */
+    bridgeAlert: { type: mongoose.Schema.Types.Mixed, default: null },
     // Supervision (contrat >= 1.2.0) — dernier état publié par le projet.
     // Tout est nullable : un projet parlant un contrat antérieur reste
     // pleinement conforme, et le Panel affiche « inconnu » sans le pénaliser.
@@ -183,6 +213,40 @@ const panelProjectSchema = new mongoose.Schema(
     // registre qui n'est pas dérivée du projet — elle ne lui est jamais
     // transmise et n'influence aucun calcul.
     note: { type: String, default: null },
+
+    /**
+     * L'ENTREPRISE CLIENTE À QUI CE PROJET APPARTIENT — un lien, jamais une copie.
+     *
+     * ══ POURQUOI UN IDENTIFIANT SEUL, ET SURTOUT PAS UN INSTANTANÉ ══════════
+     *
+     * La tentation était d'y recopier la raison sociale « pour éviter une
+     * jointure ». Ce serait installer une seconde vérité : le jour d'un
+     * changement de dénomination, la fiche du registre annoncerait l'ancienne
+     * pendant que l'écran Clients annoncerait la nouvelle, et rien ne dirait
+     * laquelle a servi à facturer.
+     *
+     * L'AUTORITÉ est `PanelClientCompany`. Ici il n'y a qu'un renvoi.
+     *
+     * ══ ET L'HISTOIRE, ALORS ? ══════════════════════════════════════════════
+     *
+     * Elle ne passe pas par ce champ. Les factures, contrats et demandes de
+     * signature portent chacun l'INSTANTANÉ légal utilisé au moment de l'acte
+     * (`clientLegalSnapshot.js`). Changer ce lien n'en réécrit aucun : il
+     * décide des opérations À VENIR, et d'elles seules.
+     *
+     * ══ POURQUOI IL VIT SUR LE PROJET ET NON SUR L'ENTREPRISE ═══════════════
+     *
+     * Parce que la cardinalité est 1 → N : une entreprise possède plusieurs
+     * projets, un projet appartient à au plus une entreprise. Porter une liste
+     * du côté de l'entreprise autoriserait deux entreprises à revendiquer le
+     * même projet, et il faudrait alors arbitrer. Un champ unique du côté
+     * « plusieurs » rend la contradiction inexprimable.
+     *
+     * `null` — ou champ absent — se lit « aucun client légal rattaché ». Ce
+     * n'est pas un état transitoire à combler par un défaut : c'est l'état
+     * d'un projet qui NE PEUT NI PAYER NI SIGNER, et les gardes s'y fient.
+     */
+    clientCompanyId: { type: String, default: null, index: true },
 
     /**
      * ── CINQ CHAMPS ONT ÉTÉ RETIRÉS DE CE SCHÉMA ──────────────────────────────

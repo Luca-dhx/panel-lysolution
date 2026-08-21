@@ -79,7 +79,9 @@ backend/src/services/supervision/
 ├── health.service.js     santé par composant + statut global + alertes
 ├── heartbeat.service.js  archivage passif, historique borné, statistiques
 ├── timeline.service.js   événements reçus et constats de changement
-└── fleet.service.js      agrégation du parc, tableau de bord, recherche
+├── fleet.service.js      agrégation du parc, tableau de bord, recherche
+├── bridgeConsumption.service.js  ce qu'un projet CONSOMME : retard, âge, seuils
+└── bridgeAlerting.service.js     ouverture, refroidissement, rétablissement
 ```
 
 Chaque service a une responsabilité unique et **aucun ne dépend du réseau**.
@@ -108,6 +110,98 @@ Règles de conception appliquées :
 - le tri place d'office en tête ce qui va mal (`issues`), parce qu'un
   opérateur ouvre le Panel pour ça.
 
+## 6 bis. Le QUATRIÈME fait : ce qu'un projet CONSOMME
+
+### L'angle mort
+
+Trois faits étaient déjà séparés, et les trois décrivent la **montée** :
+
+```text
+lastHeartbeatAt      « cette instance répond-elle ? »
+lastBusinessSyncAt   « quand ai-je reçu son état métier ? »
+businessSync         « ses écritures PASSENT-elles ? »
+```
+
+Aucun ne décrit la **descente**. Un projet du parc a tourné 91 cycles
+consécutifs avec `applied: 0`, `lastError: null` et un état interne `DEGRADED`
+que rien ne lisait : son tirage était mort depuis la deuxième écriture du
+journal. Les trois indicateurs étaient au vert pendant que plus rien
+n'arrivait. Un tableau de bord honnête ne pouvait pas rester comme ça.
+
+### Le signal juste : l'ÂGE DU RETARD
+
+« Le curseur n'avance plus » est le premier réflexe, et il est **faux** : c'est
+l'état NORMAL et majoritaire d'un projet à jour dont rien n'a changé. Alerter
+là-dessus produirait un signal permanent que tout le monde apprendrait à
+ignorer — c'est-à-dire pire que pas d'alerte.
+
+Le Panel sait deux choses que le projet ignore :
+
+```text
+ce qu'il a ÉMIS pour ce projet     son journal, filtré par audience
+ce que le projet a CONSOMMÉ        son curseur, déclaré au battement
+```
+
+La différence est un RETARD, et ce retard a un ÂGE — la date de la plus
+ancienne écriture non consommée. Quelques secondes : fonctionnement normal.
+Une heure sur une écriture republiée dix fois : une panne.
+
+Le calcul du retard **rejoue exactement le filtre du tirage** (audience,
+anti-écho, curseur). Un filtre approximatif compterait comme retard des
+écritures que le projet ne recevra jamais, et le tableau de bord signalerait
+en permanence une panne qui n'existe pas.
+
+### Les seuils, et leur justification
+
+| Seuil | Valeur | Pourquoi celle-là |
+|---|---|---|
+| échecs de tirage consécutifs | 3 | le tirage tourne toutes les 2 min : ~6 min absorbent un redémarrage ou une release, pas une panne |
+| écritures illisibles consécutives | 2 | chacune est une PERTE DÉFINITIVE — le curseur avance, le Panel ne relivre pas |
+| âge du retard | 30 min | ~15 cycles manqués ; en dessous, on décrirait comme une panne un projet éteint le temps d'une release |
+
+`UNKNOWN` n'est **jamais** `HEALTHY` : un projet antérieur à 1.10.0 ne déclare
+rien, et déduire sa santé de ce silence serait exactement l'erreur que ce lot
+répare. La règle du §3 s'applique telle quelle.
+
+### L'alerte — une fois, puis silence
+
+`bridgeAlerting.service.js`, déclenché **au battement** — le seul instant où le
+Panel apprend quelque chose de neuf. L'évaluer à l'ouverture d'un écran
+enverrait un message parce que quelqu'un a regardé.
+
+```text
+ouverture        événement PROJECT_BRIDGE_DEGRADED, UNE fois, + état mémorisé
+notification     e-mail aux SUPER_ADMIN, via le système de modèles du Panel
+refroidissement  6 h — 4 rappels par jour au pire, jamais 1 440
+rétablissement   PROJECT_BRIDGE_RECOVERED + e-mail, SI une alerte est partie
+```
+
+L'état vit sur la fiche projet (`runtime.bridgeAlert`) et non en mémoire : sans
+cela, chaque redémarrage du Panel rouvrirait toutes les alertes du parc et
+réexpédierait tout — c'est-à-dire la panne d'alerting que ce module existe pour
+éviter.
+
+L'identité d'un envoi est dérivée de l'instant d'**ouverture**, jamais d'une
+horloge courante : un rejeu après incident retombe sur la même clé et
+n'expédie rien.
+
+Un rétablissement n'est annoncé que si une alerte a réellement été **expédiée**.
+Une dégradation ouverte, puis résolue avant le premier envoi, n'a atteint
+personne : annoncer sa réparation apprendrait une panne au moment exact où elle
+n'existe plus.
+
+Ce module **ne fait jamais échouer un battement** : un projet qui bat
+correctement ne doit pas être déclaré hors ligne parce qu'un fournisseur
+d'e-mails était à terre. Toute erreur d'évaluation est avalée et journalisée.
+
+### Pourquoi ceci n'est pas de l'administration distante
+
+La supervision reste **passive au sens du §2** : elle n'interroge aucun projet,
+n'écrit dans aucun projet, ne déclenche aucune action à distance. Elle
+**décrit** un fait qu'elle a reçu, et prévient un humain. La seule sortie est
+un e-mail vers les administrateurs du Panel — jamais vers un projet, jamais
+vers un client.
+
 ## 7. Ce que la supervision ne fera jamais
 
 1. ❌ Déclencher un déploiement, un rollback ou une duplication.
@@ -129,3 +223,5 @@ garanties. Elle ne se glissera pas dans la supervision par petites touches.
 | [35_HEARTBEATS.md](35_HEARTBEATS.md) | signal passif, seuils, historique |
 | [37_PROJECT_HEALTH.md](37_PROJECT_HEALTH.md) | modèle de santé et calcul du statut global |
 | [38_DASHBOARD.md](38_DASHBOARD.md) | tableau de bord, alertes, recherche |
+| [03_PANEL_BRIDGE.md](03_PANEL_BRIDGE.md) | le pont : audiences, curseur, `bridgeStats.consumption` |
+| [63_CLIENT_COMPANY.md](63_CLIENT_COMPANY.md) | l'entreprise cliente, publiée par le pont vers un projet |

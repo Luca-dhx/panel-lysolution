@@ -250,6 +250,50 @@ export const EVENT_TYPES = Object.freeze({
   PAYMENT_DEFAULT_OPENED: 'PAYMENT_DEFAULT_OPENED',
   PAYMENT_DEFAULT_GRACE_EXPIRED: 'PAYMENT_DEFAULT_GRACE_EXPIRED',
   PAYMENT_DEFAULT_RESOLVED: 'PAYMENT_DEFAULT_RESOLVED',
+  /**
+   * L'ENTREPRISE CLIENTE — l'identité juridique à qui l'on facture.
+   *
+   * ── POURQUOI LE RATTACHEMENT A SON PROPRE TYPE ────────────────────────────
+   *
+   * Parce qu'il change QUI SERA FACTURÉ et QUI SIGNERA les prochains actes
+   * d'un projet. C'est la décision la plus lourde de ce domaine, et c'est la
+   * première qu'on relira le jour où une facture partira au mauvais nom. La
+   * noyer dans un `CLIENT_COMPANY_UPDATED` générique obligerait à ouvrir
+   * chaque événement pour retrouver celui qui compte.
+   *
+   * `projectId` vaut `null` pour la création et la mise à jour d'une fiche —
+   * elle n'appartient à aucun projet en particulier — et porte le projet pour
+   * les deux événements de rattachement, qui, eux, sont des faits de projet.
+   *
+   * Leur `data` porte des identifiants, une raison sociale et un SIREN. Jamais
+   * de note interne, jamais de document, jamais d'adresse e-mail de personne
+   * physique : une chronologie se lit à plusieurs.
+   */
+  CLIENT_COMPANY_CREATED: 'CLIENT_COMPANY_CREATED',
+  CLIENT_COMPANY_UPDATED: 'CLIENT_COMPANY_UPDATED',
+  CLIENT_COMPANY_ARCHIVED: 'CLIENT_COMPANY_ARCHIVED',
+  CLIENT_COMPANY_RESTORED: 'CLIENT_COMPANY_RESTORED',
+  CLIENT_COMPANY_LINKED: 'CLIENT_COMPANY_LINKED',
+  CLIENT_COMPANY_UNLINKED: 'CLIENT_COMPANY_UNLINKED',
+  CLIENT_COMPANY_DOCUMENT_ADDED: 'CLIENT_COMPANY_DOCUMENT_ADDED',
+  CLIENT_COMPANY_DOCUMENT_REMOVED: 'CLIENT_COMPANY_DOCUMENT_REMOVED',
+  /**
+   * LE PONT D'UN PROJET NE CONSOMME PLUS — et il ne le disait à personne.
+   *
+   * ── LE DÉFAUT QUE CE TYPE REND VISIBLE ────────────────────────────────────
+   *
+   * Un projet a tourné 91 cycles avec `applied: 0`, `lastError: null` et
+   * `bridge.state: DEGRADED`. Rien n'avait échoué au sens du transport : c'est
+   * précisément pourquoi rien ne s'affichait. Le seul mécanisme DURABLE de
+   * propagation Panel → projet était hors service, en silence.
+   *
+   * `DEGRADED` est écrit quand le constat franchit un seuil ; `RECOVERED`
+   * quand la consommation repart. Deux types plutôt qu'un avec une issue en
+   * donnée : on relit un journal pour trouver les pannes, pas pour filtrer les
+   * rétablissements.
+   */
+  PROJECT_BRIDGE_DEGRADED: 'PROJECT_BRIDGE_DEGRADED',
+  PROJECT_BRIDGE_RECOVERED: 'PROJECT_BRIDGE_RECOVERED',
 });
 
 export default { PanelHeartbeat, PanelEvent, EVENT_TYPES };

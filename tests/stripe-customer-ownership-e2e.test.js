@@ -27,6 +27,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { ensureClientCompany, ligneTarifaire } from './helpers/clientCompany.fixture.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -59,6 +60,10 @@ const lireCorps = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(brut));
 });
 
+/** Le catalogue fiscal du faux compte — voir le bloc de routes plus bas. */
+const tauxTva = new Map();
+/** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
+const tauxParCle = new Map();
 const fauxStripe = http.createServer(async (req, res) => {
   const cle = req.headers['idempotency-key'] ?? null;
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
@@ -108,6 +113,58 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, session);
   }
 
+  /* ── MISE À JOUR D'UN CLIENT ────────────────────────────────────────────
+     `ensure` fait désormais CONVERGER l'identité de facturation : il relit le
+     client, compare à ce que le Panel détient, et écrit sur écart. Un faux
+     Stripe muet sur cette écriture ferait échouer le paiement pour une route
+     manquante, pas pour une règle métier. */
+  const majClient = /^\/v1\/customers\/([^/?]+)$/.exec(req.url ?? "");
+  if (req.method === 'POST' && majClient) {
+    const client = parId.get(decodeURIComponent(majClient[1]));
+    if (!client) return repondre(404, { error: { code: 'resource_missing' } });
+    const champs = new URLSearchParams(corps);
+    for (const cle of ['name', 'email', 'phone']) {
+      if (champs.has(cle)) client[cle] = champs.get(cle);
+    }
+    client.address = {
+      line1: champs.get('address[line1]') ?? null,
+      line2: champs.get('address[line2]') ?? null,
+      postal_code: champs.get('address[postal_code]') ?? null,
+      city: champs.get('address[city]') ?? null,
+      country: champs.get('address[country]') ?? null,
+    };
+    return repondre(200, client);
+  }
+  /* ── TVA (chantier « facturation légale ») ──────────────────────────────
+     Le plan de contrôle garantit un TaxRate avant toute session, puis pose le
+     numéro de TVA du client. Un faux Stripe muet sur ces routes ferait échouer
+     le paiement en PROVIDER_UNAVAILABLE — c'est-à-dire pour une raison qui n'a
+     rien à voir avec ce que le test éprouve. */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/tax_rates')) {
+    return repondre(200, { object: 'list', data: [...tauxTva.values()] });
+  }
+  if (req.method === 'POST' && req.url === '/v1/tax_rates') {
+    const connu = tauxParCle.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const taux = {
+      id: `txr_test_${sequence}`,
+      object: 'tax_rate',
+      active: true,
+      inclusive: false,
+      percentage: Number(new URLSearchParams(corps).get('percentage')),
+      country: new URLSearchParams(corps).get('country'),
+      display_name: new URLSearchParams(corps).get('display_name'),
+    };
+    tauxTva.set(taux.id, taux);
+    tauxParCle.set(cle, taux);
+    return repondre(200, taux);
+  }
+  const listeTva = /^\/v1\/customers\/([^/?]+)\/tax_ids/.exec(req.url ?? '');
+  if (listeTva && req.method === 'GET') return repondre(200, { object: 'list', data: [] });
+  if (listeTva && req.method === 'POST') {
+    return repondre(200, { id: `txi_test_${(sequence += 1)}`, object: 'tax_id' });
+  }
   return repondre(404, { error: { message: 'route inconnue' } });
 });
 
@@ -181,6 +238,16 @@ let idB;
  * d'un nouvel engagement.
  */
 async function semer(projectId, sourceContractId, reference) {
+  /**
+   * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
+   *
+   * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client :
+   * c'est la garde centrale de ce chantier, et elle est autoritative côté
+   * backend. La semer ici n'assouplit rien — elle donne au parcours la donnée
+   * qu'il exige désormais, exactement comme le fait un exploitant qui remplit
+   * la fiche « Clients » avant d'encaisser.
+   */
+  await ensureClientCompany(projectId);
   await PanelProjectContract.updateOne(
     { projectId },
     {
@@ -191,7 +258,7 @@ async function semer(projectId, sourceContractId, reference) {
         status: 'ACTIVE',
         reference,
         pricing: {
-          launchFee: { amountIncludingTax: 118_800, currency: 'EUR', interval: null },
+          launchFee: { amountIncludingTax: 118_800, amountExcludingTax: 99000, taxAmount: 19800, taxRate: 20, currency: 'EUR', interval: null },
           subscription: null,
         },
         sourceModifiedAt: new Date().toISOString(),
@@ -297,8 +364,43 @@ section('4. Un contrat, un client — et le rejeu ne double pas');
   const params = new URLSearchParams(post.corps);
   check('metadata contractId = celui de la PROJECTION', params.get('metadata[contractId]') === CONTRAT_A1);
   check('metadata providerMode conservée', params.get('metadata[providerMode]') === 'TEST');
-  check('l’adresse du signataire est transmise', params.get('email') === 'client@garage.fr');
-  check('aucune adresse postale ne traverse', !post.corps.includes('address'));
+  /**
+   * ── L'IDENTITÉ VIENT DU PANEL, ET LE PROJET NE PEUT PLUS LA CHOISIR ──────
+   *
+   * ══ CE QUE CES TROIS LIGNES ÉPROUVAIENT AVANT ═══════════════════════════
+   *
+   *     l’adresse du signataire est transmise   params.get('email') === 'client@garage.fr'
+   *     aucune adresse postale ne traverse      !post.corps.includes('address')
+   *
+   * Elles verrouillaient le comportement d'origine : le PROJET proposait
+   * l'identité, et rien d'autre ne partait. C'était cohérent tant que le Panel
+   * ne savait pas qui était le client — mais c'est exactement ce qui produisait
+   * « Facturer à : CTR-2026-0002 » sur les factures réelles, puisque le projet
+   * n'avait, lui non plus, aucune identité juridique à proposer.
+   *
+   * ══ CE QU'ELLES ÉPROUVENT MAINTENANT ════════════════════════════════════
+   *
+   * L'inverse, et c'est le cœur du chantier : le projet propose « Garage A /
+   * client@garage.fr », et CES VALEURS SONT IGNORÉES. Ce qui part est
+   * l'identité de l'entreprise cliente rattachée au projet — raison sociale,
+   * e-mail de facturation, adresse postale.
+   *
+   * L'adresse DOIT traverser : sans elle, la facture ne porte pas l'adresse du
+   * destinataire, qui est une mention obligatoire.
+   */
+  check('la RAISON SOCIALE part, pas le nom proposé par le projet',
+    params.get('name') === 'SARL RECETTE AUTOMOBILE');
+  check('…et surtout pas la référence de contrat', params.get('name') !== 'CTR-A1');
+  check('l’e-mail de FACTURATION part, pas celui proposé par le projet',
+    params.get('email') === 'facturation@recette.test');
+  check('l’adresse postale du client traverse', params.get('address[line1]') === '12 avenue de la Recette');
+  check('…avec son code postal et sa ville',
+    params.get('address[postal_code]') === '06000' && params.get('address[city]') === 'Nice');
+  check('…et son pays en code ISO', params.get('address[country]') === 'FR');
+  check('le SIREN accompagne le client en metadata',
+    params.get('metadata[clientSiren]') === '732829320');
+  check('la référence de contrat reste une RÉFÉRENCE, en metadata',
+    params.get('metadata[contractReference]') === 'CTR-A1');
   check('aucun moyen de paiement ne traverse', !post.corps.includes('payment_method'));
 
   const lien = await binding.findBinding({

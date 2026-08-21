@@ -75,7 +75,9 @@
     "test:capability-preopening": "node ../tests/capability-preopening.test.js",
     "test:commercial-opening": "node ../tests/commercial-opening-concurrency.test.js",
     "test:capability-e2e": "node ../tests/capability-gateway-e2e.test.js",
-    "migrate:public-contact-email": "node src/scripts/migrations/2026-08-21-public-contact-email.js"
+    "migrate:public-contact-email": "node src/scripts/migrations/2026-08-21-public-contact-email.js",
+    "test:client-company": "node ../tests/client-company.test.js",
+    "test:bridge-consumption": "node ../tests/bridge-consumption.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

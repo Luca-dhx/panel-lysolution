@@ -564,6 +564,125 @@ export async function retrieveCustomer({ credentials, customerId, timeoutMs, fet
 }
 
 /**
+ * `POST /v1/customers/{id}` — MISE À JOUR de l'identité de facturation.
+ *
+ * ══ POURQUOI CE VERBE MANQUAIT, ET CE QUE SON ABSENCE COÛTAIT ═══════════════
+ *
+ * Le client Stripe était créé UNE fois, à la première facturation d'un contrat,
+ * et plus jamais relu en écriture. Conséquence directe : une entreprise cliente
+ * rattachée APRÈS l'ouverture du contrat, ou dont l'adresse est corrigée
+ * ensuite, ne parvenait jamais chez le fournisseur. Les factures suivantes
+ * portaient l'identité du premier jour — c'est-à-dire, pour tout le parc
+ * antérieur, la RÉFÉRENCE DE CONTRAT en guise de raison sociale.
+ *
+ * ══ POURQUOI UNE CLÉ D'IDEMPOTENCE MALGRÉ TOUT ═════════════════════════════
+ *
+ * Une mise à jour est idempotente par nature — la rejouer écrit la même chose.
+ * La clé n'est donc pas là pour empêcher un doublon : elle est là parce que le
+ * transport REFUSE toute écriture sans elle, et que cette règle ne doit pas
+ * connaître d'exception de confort. La dérogation `nonDurableWrite` existe pour
+ * les actes qui EXPIRENT, ce qui n'est pas le cas ici.
+ *
+ * La clé porte l'EMPREINTE de ce qu'on écrit (voir l'appelant) : deux
+ * corrections successives sont deux actes distincts, et la seconde ne doit pas
+ * se voir répondre le résultat de la première.
+ */
+export async function updateCustomer({ credentials, customerId, params, idempotencyKey, timeoutMs, fetchImpl }) {
+  if (!customerId) throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de client manquant.');
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: `/v1/customers/${encodeURIComponent(customerId)}`,
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] customer mis à jour — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, customer: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/customers/{id}/tax_ids` — les identifiants fiscaux d'un client.
+ *
+ * Lecture de CONVERGENCE : on ne crée un identifiant que si le bon n'est pas
+ * déjà là. Stripe accepte plusieurs `tax_id` par client et ne déduplique pas —
+ * sans cette lecture, chaque passage en ajouterait un, et la facture finirait
+ * par afficher le même numéro de TVA cinq fois.
+ */
+export async function listCustomerTaxIds({ credentials, customerId, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/customers/${encodeURIComponent(customerId)}/tax_ids`,
+    query: { limit: 20 }, timeoutMs, fetchImpl, retries: 2,
+  });
+  return { outcome: OUTCOMES.DONE, taxIds: res.json?.data ?? [], requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `POST /v1/customers/{id}/tax_ids` — le numéro de TVA du CLIENT.
+ *
+ * ══ CE QUE CET OBJET CHANGE SUR LA FACTURE ══════════════════════════════════
+ *
+ * C'est le SEUL emplacement que Stripe réserve au numéro de TVA de l'acheteur
+ * sur une facture. Le mettre dans `metadata` ou dans une ligne d'adresse ne
+ * l'imprimerait nulle part : la mention obligatoire manquerait, alors même que
+ * la donnée serait chez le fournisseur.
+ *
+ * ══ POURQUOI L'ÉCHEC EST TOLÉRÉ PAR L'APPELANT ═════════════════════════════
+ *
+ * Stripe VALIDE le format d'un `tax_id` et refuse ce qu'il ne reconnaît pas.
+ * Un refus signifie « ce numéro ne ressemble pas à un numéro français » — c'est
+ * une information, pas une raison d'empêcher un client de payer. L'appelant
+ * journalise et poursuit : la facture partira sans le numéro de TVA de
+ * l'acheteur, ce qui est exactement l'état d'avant ce lot.
+ */
+export async function createCustomerTaxId({ credentials, customerId, type, value, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: `/v1/customers/${encodeURIComponent(customerId)}/tax_ids`,
+    body: { type, value }, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  return { outcome: OUTCOMES.DONE, taxId: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/tax_rates` — le catalogue des taux déclarés sur le compte.
+ *
+ * Un TaxRate Stripe est IMMUABLE sur ses termes (pourcentage, inclusif ou non,
+ * pays) : on ne le modifie jamais, on le retrouve ou on en crée un autre. Cette
+ * lecture est donc la première barrière de convergence — sans elle, chaque
+ * paiement créerait un nouveau « TVA 20 % » et le tableau de bord Stripe
+ * deviendrait illisible en quelques semaines.
+ */
+export async function listTaxRates({ credentials, limit = 100, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: '/v1/tax_rates',
+    query: { limit, active: true }, timeoutMs, fetchImpl, retries: 2,
+  });
+  return { outcome: OUTCOMES.DONE, taxRates: res.json?.data ?? [], requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `POST /v1/tax_rates` — déclare un taux de TVA sur le compte.
+ *
+ * ══ POURQUOI UN OBJET DÉDIÉ PLUTÔT QUE `automatic_tax` ══════════════════════
+ *
+ * `automatic_tax` délègue à Stripe Tax le CALCUL du taux à partir de l'adresse
+ * du client. C'est un produit payant, qui exige une adresse validée et une
+ * inscription fiscale déclarée par juridiction — et qui déciderait, seul, du
+ * taux appliqué à une prestation. Or le taux vient déjà d'ailleurs : il est
+ * écrit dans le CONTRAT, il a été accepté par le client, et c'est lui qui doit
+ * figurer sur la facture. Laisser un tiers le recalculer, c'est accepter qu'il
+ * en trouve un autre.
+ *
+ * Un `TaxRate` explicite, `inclusive: false`, appliqué à un montant HORS TAXE,
+ * produit exactement la ventilation attendue — « 79,99 € HT · TVA 20 % 16,00 €
+ * · 95,99 € TTC » — sans qu'aucune décision fiscale ne quitte le contrat.
+ */
+export async function createTaxRate({ credentials, params, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/tax_rates',
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] tax_rate créé — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, taxRate: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
  * `POST /v1/checkout/sessions` — ÉCRITURE FINANCIÈRE.
  *
  * La clé d'idempotence est OBLIGATOIRE et vient de l'appelant : c'est elle, et
@@ -759,6 +878,11 @@ export default {
   cancelSubscriptionNow,
   createCustomer,
   retrieveCustomer,
+  updateCustomer,
+  listCustomerTaxIds,
+  createCustomerTaxId,
+  listTaxRates,
+  createTaxRate,
   createProduct,
   createPrice,
   retrievePrice,

@@ -317,6 +317,58 @@ function OverviewTab({
 
   return (
     <>
+      {/*
+        ── À QUI FACTURE-T-ON CE SITE ? ─────────────────────────────────
+
+        ══ POURQUOI CETTE CARTE VIENT EN PREMIER ═══════════════════════
+
+        Parce que sans elle, ce projet ne peut ni encaisser ni faire
+        signer — et que rien d’autre sur cet écran ne le dit. L’état du
+        site, la connexion, le contrat : tout peut être au vert pendant
+        que le premier paiement est refusé faute de client légal.
+
+        L’identité elle-même n’est pas recopiée ici : un lien vers la fiche
+        « Clients » vaut mieux qu’une copie qui vieillirait.
+      */}
+      <Card title="Client">
+        {project.clientCompany ? (
+          <dl className="detail-list">
+            <div>
+              <dt>Entreprise cliente</dt>
+              <dd>
+                <Link to={`/clients/${project.clientCompany.clientCompanyId}`}>
+                  {project.clientCompany.legalName}
+                </Link>
+                {project.clientCompany.status === 'ARCHIVED' ? (
+                  <span className="badge badge-muted">Archivée</span>
+                ) : null}
+              </dd>
+            </div>
+            {project.clientCompany.siren ? (
+              <div><dt>SIREN</dt><dd>{project.clientCompany.siren}</dd></div>
+            ) : null}
+            <div>
+              <dt>Paiements et signatures</dt>
+              <dd>
+                {project.clientCompany.readiness.ready ? (
+                  <span className="badge badge-ok">Possibles</span>
+                ) : (
+                  <span className="badge badge-danger">
+                    Bloqués — fiche cliente incomplète
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
+        ) : (
+          <p className="muted">
+            Aucune entreprise cliente n’est rattachée à ce projet : il ne peut ni
+            encaisser un paiement, ni faire signer un contrat. Rattachez-le depuis
+            la fiche du client, dans <Link to="/clients">Clients</Link>.
+          </p>
+        )}
+      </Card>
+
       <Card title="Le site">
         <dl className="detail-list">
           {/*

@@ -35,6 +35,8 @@ import { createHash } from 'node:crypto';
 
 import logger from '../../../utils/logger.js';
 import { PanelProjectContract } from '../../../models/PanelProjectProjection.model.js';
+import { FiscalLineError, readFiscalLine } from '../../contract/contractFiscalLine.js';
+import { resolveClientCompanyReadiness } from '../../clientCompany/clientCompanyReadiness.js';
 
 /* -------------------------------------------------------------------------- */
 /*  REFUS                                                                     */
@@ -63,6 +65,36 @@ export const CHECKOUT_REFUSALS = Object.freeze({
    * l'exploitant la lit, et où le projet ne la lit pas.
    */
   SERVICE_NOT_PAYABLE: 'SERVICE_NOT_PAYABLE',
+  /**
+   * AUCUNE IDENTITÉ LÉGALE DE CLIENT — la garde absolue du chantier.
+   *
+   * ══ POURQUOI ELLE EST ICI, ET PAS SEULEMENT DANS L'INTERFACE ═════════════
+   *
+   * Le Manager d'un projet masque déjà le bouton quand l'entreprise est
+   * incomplète. Une interface n'est pas une barrière : la route existe, le
+   * jeton de pont aussi, et un appel direct suffirait à ouvrir un paiement.
+   *
+   * Ce refus est BACKEND et AUTORITATIF. Il tombe AVANT tout contact
+   * fournisseur : aucune session, aucun client, aucune trace chez Stripe.
+   *
+   * ══ POURQUOI IL EST NOMMÉ, CONTRAIREMENT AUX AUTRES ══════════════════════
+   *
+   * La doctrine d'indistinction protège contre un ORACLE — un projet ne doit
+   * pas apprendre le parc en comparant des refus. Ici, le projet interroge SA
+   * propre situation : la réponse ne parle que de lui, et elle est la seule qui
+   * soit ACTIONNABLE. « Refusé » sans motif enverrait chercher une panne
+   * Stripe ; ce code-ci envoie compléter une fiche.
+   */
+  CLIENT_COMPANY_NOT_READY: 'CLIENT_COMPANY_NOT_READY',
+  /**
+   * LA VENTILATION FISCALE MANQUE OU NE S'ADDITIONNE PAS.
+   *
+   * Distinct de `PRICE_ABSENT`, qui dit « aucun montant ». Ici il y a un
+   * montant, mais on ne sait pas dire combien de TVA il contient — et une
+   * facture qui ne le dit pas ne remplit pas ses mentions obligatoires.
+   * Voir `contractFiscalLine.js` pour l'arbitrage complet.
+   */
+  TAX_BREAKDOWN_UNUSABLE: 'CONTRACT_TAX_BREAKDOWN_UNUSABLE',
 });
 
 export class CheckoutAuthorityError extends Error {
@@ -148,7 +180,38 @@ export async function resolveCheckoutIntent({
   projectId, environment, input,
   lookupContract = defaultLookupContract,
   lookupPaymentRequest = defaultLookupPaymentRequest,
+  lookupClientCompany = resolveClientCompanyReadiness,
 }) {
+  /**
+   * ── BARRIÈRE ZÉRO : Y A-T-IL UN CLIENT LÉGAL ? ───────────────────────────
+   *
+   * ══ POURQUOI ELLE PRÉCÈDE TOUT LE RESTE ═══════════════════════════════════
+   *
+   * Elle vaut pour LES TROIS types de paiement — frais de lancement,
+   * abonnement, prestation ponctuelle — parce qu'ils produisent tous une
+   * FACTURE, et qu'une facture sans destinataire identifié n'est pas une
+   * facture. La placer plus bas aurait obligé à la recopier trois fois, et le
+   * troisième exemplaire aurait fini par diverger.
+   *
+   * Elle précède aussi la lecture du contrat, et c'est délibéré : « votre
+   * entreprise n'est pas renseignée » est une réponse utile, alors que
+   * « contrat introuvable » sur un projet dont le contrat existe parfaitement
+   * enverrait chercher au mauvais endroit.
+   *
+   * NO CLIENT COMPANY → NO PAYMENT. Aucune exception, aucun mode dégradé.
+   */
+  const readiness = await lookupClientCompany({ projectId });
+  if (!readiness.billing.ready) {
+    throw new CheckoutAuthorityError(
+      CHECKOUT_REFUSALS.CLIENT_COMPANY_NOT_READY,
+      readiness.state === 'MISSING_COMPANY'
+        ? 'Aucune entreprise cliente n’est rattachée à ce projet : aucun paiement ne peut être '
+          + 'ouvert tant que l’identité légale du client n’est pas renseignée.'
+        : 'L’entreprise cliente rattachée à ce projet est incomplète : '
+          + `${readiness.billing.missing.join(', ')}.`,
+    );
+  }
+
   /**
    * ── LA PRESTATION PONCTUELLE (L10.5) ────────────────────────────────────
    *
@@ -201,13 +264,33 @@ export async function resolveCheckoutIntent({
    * « d'abord les ressources, ensuite la session » sans le dupliquer.
    */
   if (input.paymentType === 'SUBSCRIPTION') {
+    /**
+     * LE TAUX DE L'ABONNEMENT EST RÉSOLU ICI, PAS DANS LE PRICE.
+     *
+     * Un `Price` Stripe porte un montant et une périodicité ; il ne porte pas
+     * de taux. La taxe s'applique au niveau de l'ABONNEMENT
+     * (`subscription_data.default_tax_rates`), et il faut donc connaître le
+     * taux au moment de composer la session — pas seulement au moment de créer
+     * le tarif.
+     *
+     * On le lit à la même source que le montant, et l'on refuse aux mêmes
+     * conditions : un abonnement dont on ne sait pas dire la TVA produirait des
+     * factures récurrentes muettes, mois après mois.
+     */
+    const fiscal = lireVentilation(
+      projection.pricing?.subscription,
+      projection.taxRate,
+      'l’abonnement',
+    );
     return {
       contractId,
       reference,
       /** Le montant vit dans le Price. Aucun chiffre ne transite par la session. */
       amountIncludingTax: null,
       currency: null,
-      paramsFor: ({ customerId, priceId }) => ({
+      /** La ventilation voyage pour que l'adaptateur garantisse le bon taux. */
+      fiscal,
+      paramsFor: ({ customerId, priceId, taxRateId }) => ({
         mode: 'subscription',
         customer: customerId,
         line_items: [{ price: priceId, quantity: 1 }],
@@ -220,45 +303,72 @@ export async function resolveCheckoutIntent({
          * pas de la session, et sans elles un webhook d'abonnement arriverait
          * sans aucun rattachement lisible.
          */
-        subscription_data: { metadata },
+        subscription_data: {
+          metadata,
+          /**
+           * LE TAUX S'APPLIQUE À L'ABONNEMENT, ET DONC À CHAQUE FACTURE QU'IL
+           * ÉMETTRA — y compris celles de l'an prochain, qu'aucun code ne
+           * repassera composer. Le poser sur la seule première session aurait
+           * produit une facture correcte suivie d'une série de factures muettes.
+           */
+          ...(taxRateId ? { default_tax_rates: [taxRateId] } : {}),
+        },
       }),
     };
   }
 
-  const fee = projection.pricing?.launchFee ?? null;
-  const amountIncludingTax = Number(fee?.amountIncludingTax ?? 0);
-  const currency = String(fee?.currency ?? '').trim();
-
-  /**
-   * Un montant nul ou absent n'est PAS « gratuit » : c'est une projection
-   * incomplète. Ouvrir une session à zéro euro créerait un paiement réussi qui
-   * n'a rien encaissé, et le contrat basculerait « payé ».
-   */
-  if (!Number.isInteger(amountIncludingTax) || amountIncludingTax <= 0 || !currency) {
-    throw new CheckoutAuthorityError(
-      CHECKOUT_REFUSALS.PRICE_ABSENT,
-      'La projection de contrat ne porte pas de frais de lancement exploitable.',
-    );
-  }
+  const fiscal = lireVentilation(
+    projection.pricing?.launchFee,
+    projection.taxRate,
+    'les frais de lancement',
+  );
 
   return {
     contractId,
     reference,
-    amountIncludingTax,
-    currency,
-    params: {
+    /** Ce que le client débitera — inchangé par ce chantier. */
+    amountIncludingTax: fiscal.grossCents,
+    currency: fiscal.currency,
+    fiscal,
+    /**
+     * LES PARAMÈTRES SE FERMENT SUR LE TAUX — comme l'abonnement se ferme sur
+     * son client et son tarif. L'adaptateur garantit le `TaxRate` chez le
+     * fournisseur, puis appelle cette fabrique : c'est la seule façon d'écrire
+     * « d'abord la ressource, ensuite la session » sans dupliquer l'ordre.
+     */
+    paramsFor: ({ taxRateId }) => ({
       mode: 'payment',
       line_items: [
         {
           price_data: {
-            currency: currency.toLowerCase(),
+            currency: fiscal.currency.toLowerCase(),
             product_data: {
               name: `Frais de lancement — ${reference || contractId}`,
               description: 'Paiement unique — frais de lancement du site',
             },
-            unit_amount: amountIncludingTax,
+            /**
+             * ── LE MONTANT ENVOYÉ EST LE HORS TAXE ────────────────────────
+             *
+             * ══ CE QUI CHANGE, ET CE QUI NE CHANGE PAS ══════════════════════
+             *
+             * Ce qui NE CHANGE PAS : ce que le client débite. `HT + TVA = TTC`
+             * a été VÉRIFIÉ (`readFiscalLine`), et Stripe recalcule la TVA à
+             * partir du même HT et du même taux. Le total reste au centime ce
+             * que le contrat annonce.
+             *
+             * Ce qui CHANGE : la facture SAIT désormais ce qu'elle contient.
+             * Envoyer le TTC sans taxe déclarée produisait « 95,99 / 95,99 /
+             * 95,99 » — trois fois le même nombre et aucune mention de TVA.
+             *
+             * L'ordre est indissociable : `unit_amount` HORS TAXE **et**
+             * `tax_rates` EXCLUSIF. L'un sans l'autre est une erreur de
+             * facturation — HT seul sous-facture de la TVA, TTC avec taxe
+             * exclusive sur-facture d'autant.
+             */
+            unit_amount: fiscal.netCents,
           },
           quantity: 1,
+          ...(taxRateId ? { tax_rates: [taxRateId] } : {}),
         },
       ],
       success_url: input.successUrl,
@@ -271,9 +381,74 @@ export async function resolveCheckoutIntent({
        * pour que l'événement `invoice.*` retrouve le contrat. Retirer ce bloc
        * casserait silencieusement l'historique de facturation.
        */
-      invoice_creation: { enabled: true, invoice_data: { metadata } },
-    },
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          metadata,
+          /**
+           * ── LA RÉFÉRENCE DE CONTRAT, À SA PLACE ────────────────────────
+           *
+           * Elle figurait en guise de RAISON SOCIALE du client, ce qui était la
+           * faute de tout ce chantier. Elle reste indispensable — c'est par
+           * elle qu'un client rapproche une facture de son engagement — mais
+           * comme RÉFÉRENCE COMMERCIALE.
+           *
+           * Stripe imprime les `custom_fields` en tête de facture, à côté du
+           * numéro. C'est exactement l'emplacement d'un numéro de commande.
+           *
+           * Le champ est OMIS quand aucune référence n'existe : Stripe refuse
+           * une valeur vide, et un champ « Contrat : » sans valeur se lirait
+           * comme une donnée perdue.
+           */
+          ...(reference
+            ? { custom_fields: [{ name: 'Contrat', value: String(reference).slice(0, 30) }] }
+            : {}),
+        },
+      },
+    }),
   };
+}
+
+/**
+ * LIT la ventilation d'une ligne, et TRADUIT le refus dans le vocabulaire du
+ * checkout.
+ *
+ * ══ POURQUOI UNE TRADUCTION, ET NON UNE PROPAGATION ═════════════════════════
+ *
+ * `FiscalLineError` appartient au domaine du contrat ; la passerelle de
+ * capacités, elle, ne sait traiter que des `CheckoutAuthorityError`. Laisser
+ * passer l'autre produirait une erreur non typée — donc une 500 devant un
+ * client qui paie, là où le problème est une projection incomplète.
+ *
+ * Le motif RÉEL part au journal ; le projet reçoit un code stable et un message
+ * qui dit quoi faire.
+ */
+function lireVentilation(ligne, contractTaxRate, label) {
+  const gross = Number(ligne?.amountIncludingTax ?? 0);
+  const currency = String(ligne?.currency ?? '').trim();
+
+  /**
+   * L'ABSENCE PURE ET SIMPLE reste `PRICE_ABSENT` — le motif historique. Une
+   * projection sans montant n'est pas un problème de TVA : c'est un contrat
+   * dont la ligne n'est pas activée, et le distinguer évite d'envoyer un
+   * exploitant chercher une ventilation là où il n'y a rien à ventiler.
+   */
+  if (!Number.isInteger(gross) || gross <= 0 || !currency) {
+    throw new CheckoutAuthorityError(
+      CHECKOUT_REFUSALS.PRICE_ABSENT,
+      `La projection de contrat ne porte pas ${label} de façon exploitable.`,
+    );
+  }
+
+  try {
+    return readFiscalLine(ligne, { contractTaxRate, label });
+  } catch (err) {
+    if (err instanceof FiscalLineError) {
+      logger.warn(`[stripe-checkout] ventilation fiscale refusée — ${err.reason} : ${err.message}`);
+      throw new CheckoutAuthorityError(CHECKOUT_REFUSALS.TAX_BREAKDOWN_UNUSABLE, err.message);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -333,26 +508,53 @@ async function resolveServiceIntent({ projectId, environment, input, lookupPayme
    */
   metadata.paymentRequestId = prestation.paymentRequestId;
 
+  /**
+   * ── LA PRESTATION PORTE DÉJÀ SA VENTILATION ──────────────────────────────
+   *
+   * `PanelPaymentRequest` stocke `netAmountCents`, `taxRate`, `taxAmountCents`
+   * et `grossAmountCents` depuis L10.5 : le Panel est ici l'auteur du calcul,
+   * pas son récepteur. Il n'y a donc rien à lire au contrat et rien à déduire —
+   * seulement à VÉRIFIER que ce qu'on a écrit s'additionne encore.
+   *
+   * La vérification n'est pas de la paranoïa : ces documents sont modifiables
+   * tant qu'ils ne sont pas payés, et une correction de montant qui oublierait
+   * de recalculer la TVA produirait une facture qui ne tombe pas juste.
+   */
+  const fiscal = lireVentilation(
+    {
+      amountIncludingTax: prestation.amountCents,
+      amountExcludingTax: prestation.netAmountCents,
+      taxAmount: prestation.taxAmountCents,
+      taxRate: prestation.taxRate,
+      currency: prestation.currency,
+    },
+    null,
+    'cette prestation',
+  );
+
   return {
     contractId: null,
     reference: prestation.label,
-    amountIncludingTax: prestation.amountCents,
-    currency: prestation.currency,
+    amountIncludingTax: fiscal.grossCents,
+    currency: fiscal.currency,
     paymentRequestId: prestation.paymentRequestId,
-    params: {
+    fiscal,
+    paramsFor: ({ taxRateId }) => ({
       mode: 'payment',
       line_items: [
         {
           price_data: {
-            currency: String(prestation.currency).toLowerCase(),
+            currency: fiscal.currency.toLowerCase(),
             product_data: {
               name: prestation.label,
               /** Stripe refuse une description vide — on omet plutôt qu'on invente. */
               ...(prestation.description ? { description: prestation.description.slice(0, 500) } : {}),
             },
-            unit_amount: prestation.amountCents,
+            /** HORS TAXE — la taxe est déclarée ci-dessous. Voir les frais de lancement. */
+            unit_amount: fiscal.netCents,
           },
           quantity: 1,
+          ...(taxRateId ? { tax_rates: [taxRateId] } : {}),
         },
       ],
       success_url: input.successUrl,
@@ -361,7 +563,7 @@ async function resolveServiceIntent({ projectId, environment, input, lookupPayme
       payment_intent_data: { metadata },
       /** La vraie facture Stripe — page hébergée et PDF, émises au paiement. */
       invoice_creation: { enabled: true, invoice_data: { metadata } },
-    },
+    }),
   };
 }
 

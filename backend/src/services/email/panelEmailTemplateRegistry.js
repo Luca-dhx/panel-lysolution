@@ -1484,6 +1484,133 @@ ${button('Ouvrir le mouvement', '{{transaction.url}}')}
       });
     },
   },
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     LE PONT D'UN PROJET NE CONSOMME PLUS — et il ne le disait à personne.
+
+     ══ POURQUOI CE MODÈLE EXISTE ═══════════════════════════════════════════
+
+     Un projet du parc a tourné 91 cycles avec `applied: 0`, `lastError: null`
+     et un état DEGRADED que rien ne lisait. Le seul mécanisme DURABLE de
+     propagation Panel → projet était hors service, en silence, pendant des
+     jours. Un écran l'aurait montré — encore aurait-il fallu que quelqu'un
+     l'ouvre. Un message le PORTE.
+
+     ══ POURQUOI IL EST DE PORTÉE PANEL ═════════════════════════════════════
+
+     Le destinataire est un exploitant de L.Y Solution, et le contenu nomme des
+     composants internes — un curseur, un journal, un rattrapage. Rien de tout
+     cela n'appartient au client, et ce message ne porte jamais son apparence.
+     Même raisonnement que `PLATFORM_INCIDENT_DEV_ALERT`.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  PROJECT_BRIDGE_DEGRADED_SUPER_ADMIN: {
+    templateId: 'PROJECT_BRIDGE_DEGRADED_SUPER_ADMIN',
+    defaultName: 'Pont — un projet ne consomme plus',
+    defaultDescription:
+      "Prévient les SUPER_ADMIN du Panel qu'un projet du parc ne consomme plus les écritures qui lui sont destinées : rattrapage en échec, écritures écartées, ou retard qui ne se résorbe pas. Ne part qu'après un seuil, et pas plus d'une fois par période de calme.",
+    defaultSubject: '[{{bridge.environment}}] {{project.name}} — le pont ne consomme plus',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'project.name', label: 'Projet', description: 'Nom du projet concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'project.id', label: 'Identifiant projet', description: 'Identifiant du projet au registre.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.environment', label: 'Monde', description: 'TEST ou PROD.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.summary', label: 'Constat', description: 'Ce qui ne va pas, en une phrase.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.pendingChanges', label: 'Écritures en attente', description: "Nombre d'écritures que le projet n'a pas consommées.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.backlogAgeMinutes', label: 'Âge du retard', description: 'Ancienneté, en minutes, de la plus ancienne écriture non consommée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.since', label: 'Dégradé depuis', description: 'Depuis quand le Panel constate cette dégradation.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'bridge.url', label: 'Lien supervision', description: 'Lien vers la fiche de supervision du projet.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      'project.name': 'Projet de démonstration',
+      'project.id': 'e43de003-c6ef-41ed-8ac7-72197f6abe59',
+      'bridge.environment': 'TEST',
+      'bridge.summary': '4 écriture(s) attendent d’être consommées, la plus ancienne depuis 62 minutes',
+      'bridge.pendingChanges': '4',
+      'bridge.backlogAgeMinutes': '62',
+      'bridge.since': '2026-08-21T09:14:00.000Z',
+      'bridge.url': 'https://panel.exemple.fr/supervision/e43de003-c6ef-41ed-8ac7-72197f6abe59',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Un projet ne consomme plus ce que le Panel lui envoie.',
+        heading: 'Le pont d’un projet est dégradé',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              <strong>{{project.name}}</strong> répond au Panel, mais il ne consomme plus
+              les écritures qui lui sont destinées : {{bridge.summary}}.
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Le projet continue de fonctionner avec ce qu’il a déjà reçu — c’est
+              l’autonomie qui le veut. Mais tout ce que le Panel publie depuis
+              n’arrive plus : identité, contrat, entreprise cliente, prestations.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Projet', '{{project.name}}')}
+${row('Monde', '{{bridge.environment}}')}
+${row('Écritures en attente', '{{bridge.pendingChanges}}')}
+${row('Retard le plus ancien', '{{bridge.backlogAgeMinutes}} minutes')}
+${row('Constaté depuis', '{{bridge.since}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Ouvrir la supervision', '{{bridge.url}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Ce message ne se répète pas tant que la situation ne change pas.
+              Un second message annoncera le rétablissement.
+            </p>`,
+        footerHtml: '            Notification interne L.Y Solution — {{project.id}}.',
+      });
+    },
+  },
+
+  /**
+   * LE RÉTABLISSEMENT — et pourquoi il mérite son propre modèle.
+   *
+   * Sans lui, le dernier message qu'un exploitant conserverait d'un projet
+   * serait une alerte. Il ouvrirait l'écran pour vérifier, à chaque fois, si
+   * elle est encore vraie — c'est-à-dire exactement le travail que l'alerte
+   * était censée lui épargner.
+   *
+   * Il est délibérément COURT : un rétablissement se lit en trois secondes.
+   */
+  PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN: {
+    templateId: 'PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN',
+    defaultName: 'Pont — un projet consomme à nouveau',
+    defaultDescription:
+      "Referme le cycle ouvert par l'alerte de dégradation : le projet consomme de nouveau les écritures du Panel. N'est envoyé que si une alerte a réellement été émise.",
+    defaultSubject: '[{{bridge.environment}}] {{project.name}} — le pont consomme à nouveau',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'project.name', label: 'Projet', description: 'Nom du projet concerné.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'project.id', label: 'Identifiant projet', description: 'Identifiant du projet au registre.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.environment', label: 'Monde', description: 'TEST ou PROD.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bridge.degradedSince', label: 'Dégradé depuis', description: 'Début de la dégradation.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'bridge.url', label: 'Lien supervision', description: 'Lien vers la fiche de supervision du projet.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      'project.name': 'Projet de démonstration',
+      'project.id': 'e43de003-c6ef-41ed-8ac7-72197f6abe59',
+      'bridge.environment': 'TEST',
+      'bridge.degradedSince': '2026-08-21T09:14:00.000Z',
+      'bridge.url': 'https://panel.exemple.fr/supervision/e43de003-c6ef-41ed-8ac7-72197f6abe59',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Le pont d’un projet est rétabli.',
+        heading: 'Le pont consomme à nouveau',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              <strong>{{project.name}}</strong> consomme de nouveau les écritures du Panel.
+              Le retard signalé depuis {{bridge.degradedSince}} est résorbé.
+            </p>
+${button('Ouvrir la supervision', '{{bridge.url}}')}`,
+        footerHtml: '            Notification interne L.Y Solution — {{project.id}}.',
+      });
+    },
+  },
 });
 
 

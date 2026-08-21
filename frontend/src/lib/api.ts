@@ -52,6 +52,12 @@ import type {
   DeployStreamEvent,
 } from '@/types.deployment';
 import type {
+  ClientCompanyDetail,
+  ClientCompanyLinkResult,
+  ClientCompanyRow,
+  ClientCompanySaveResult,
+} from '@/types.clientCompany';
+import type {
   BulkDeleteResult, BulkScopePreview, FinanceCriteria, FinanceListResult, FinanceProjectLine,
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
   ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
@@ -1491,6 +1497,185 @@ const financeQuery = (criteria: FinanceCriteria = {}): string => {
   if (criteria.includeDeleted) params.set('includeDeleted', '1');
   const query = params.toString();
   return query ? `?${query}` : '';
+};
+
+/**
+ * LES ENTREPRISES CLIENTES — l'identité JURIDIQUE des clients de L.Y Solution.
+ *
+ * ══ UN OBJET À PART, ET NON UNE SECTION DE `finances` ═══════════════════════
+ *
+ * `finances` est le REGISTRE DES MOUVEMENTS : ce qui est entré, ce qui est
+ * sorti, ce qui reste dû. Une entreprise cliente n’est aucun de ces faits —
+ * c'est une PERSONNE MORALE, qui existe avant le premier euro et continue
+ * d’exister après le dernier.
+ *
+ * Elle est aussi volontairement HORS de `api.*`, où vivent les projets :
+ * confondre le site et la société qui l’exploite est précisément l’erreur que
+ * ce chantier répare.
+ */
+export const clientCompanies = {
+  /* ══════════════════════════════════════════════════════════════════════════
+     LES ENTREPRISES CLIENTES — l'identité JURIDIQUE des clients.
+
+     Volontairement HORS de `/api/company` : celle-là est L.Y Solution, le
+     VENDEUR. Celles-ci sont ses CLIENTS, et c'est leur identité que porte le
+     « Facturer à » d'une facture.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  listClientCompanies: (params: { search?: string; status?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set('search', params.search);
+    if (params.status) q.set('status', params.status);
+    const suffixe = q.toString() ? `?${q}` : '';
+    return request<{ clientCompanies: ClientCompanyRow[] }>(`/api/client-companies${suffixe}`);
+  },
+
+  getClientCompany: (clientCompanyId: string) =>
+    request<{ clientCompany: ClientCompanyDetail }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}`,
+    ),
+
+  createClientCompany: (body: Record<string, unknown>) =>
+    request<ClientCompanySaveResult>('/api/client-companies', { method: 'POST', body }),
+
+  updateClientCompany: (clientCompanyId: string, body: Record<string, unknown>) =>
+    request<ClientCompanySaveResult>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}`,
+      { method: 'PATCH', body },
+    ),
+
+  archiveClientCompany: (clientCompanyId: string) =>
+    request<{ clientCompany: ClientCompanyDetail; alreadyArchived: boolean }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/archive`,
+      { method: 'POST' },
+    ),
+
+  restoreClientCompany: (clientCompanyId: string) =>
+    request<{ clientCompany: ClientCompanyDetail; alreadyActive: boolean }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/restore`,
+      { method: 'POST' },
+    ),
+
+  /**
+   * SUPPRESSION PHYSIQUE — refusée dès qu'un projet ou un document existe.
+   *
+   * Le backend est l'autorité de ce refus (`PANEL_CLIENT_COMPANY_HAS_PROJECTS`).
+   * L’écran ne le devine pas : il propose le geste, et affiche le message.
+   */
+  deleteClientCompany: (clientCompanyId: string) =>
+    request<{ deleted: boolean }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}`,
+      { method: 'DELETE' },
+    ),
+
+  linkProjectToClientCompany: (clientCompanyId: string, projectId: string) =>
+    request<ClientCompanyLinkResult>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/projects`,
+      { method: 'POST', body: { projectId } },
+    ),
+
+  unlinkProjectFromClientCompany: (projectId: string) =>
+    request<{ unlinked: boolean; unchanged: boolean }>(
+      `/api/client-companies/projects/${encodeURIComponent(projectId)}`,
+      { method: 'DELETE' },
+    ),
+
+  /**
+   * DÉPOSE un document administratif — Kbis, attestation, mandat, RIB.
+   *
+   * `multipart`, donc hors du chemin JSON : le `Content-Type` n’est PAS posé à
+   * la main — le navigateur doit y écrire la frontière du multipart, et
+   * l’imposer rendrait le corps illisible au serveur.
+   */
+  async uploadClientDocument(
+    clientCompanyId: string,
+    file: File,
+    meta: { label: string; type?: string | null; documentDate?: string | null },
+  ): Promise<ClientCompanyDetail> {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('label', meta.label);
+    if (meta.type) form.append('type', meta.type);
+    if (meta.documentDate) form.append('documentDate', meta.documentDate);
+
+    const headers: Record<string, string> = {};
+    const token = tokenStore.get();
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    let res: Response;
+    try {
+      res = await fetch(`/api/client-companies/${encodeURIComponent(clientCompanyId)}/documents`, {
+        method: 'POST', headers, body: form,
+      });
+    } catch {
+      throw new ApiError(0, 'Impossible de contacter le serveur du Panel.');
+    }
+    const payload = await res.json().catch(() => null);
+    if (!res.ok || payload?.success !== true) {
+      throw new ApiError(
+        res.status,
+        payload?.message ?? 'Le document n’a pas pu être enregistré.',
+        payload?.code,
+      );
+    }
+    return payload.data.clientCompany as ClientCompanyDetail;
+  },
+
+  /**
+   * TÉLÉCHARGE un document — par la route AUTHENTIFIÉE, jamais un lien nu.
+   *
+   * Un document client vit dans le stockage PRIVÉ : il n’a aucune adresse
+   * publique, et un `<a href>` ne porterait aucun jeton. Le flux est donc
+   * récupéré ici puis l’enregistrement est déclenché — le fichier ne fait que
+   * passer, et aucune adresse permanente n’existe.
+   */
+  async downloadClientDocument(
+    clientCompanyId: string,
+    documentId: string,
+    fallbackName = 'document',
+  ): Promise<void> {
+    const token = tokenStore.get();
+    const res = await fetch(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/documents/${encodeURIComponent(documentId)}`,
+      { headers: token ? { authorization: `Bearer ${token}` } : {} },
+    );
+    if (!res.ok) {
+      const corps = await res.json().catch(() => null);
+      throw new ApiError(
+        res.status,
+        corps?.message ?? 'Le document n’a pas pu être récupéré.',
+        corps?.code,
+      );
+    }
+
+    const disposition = res.headers.get('content-disposition') ?? '';
+    /** La forme encodée (RFC 5987) d’abord : c’est elle qui porte les accents. */
+    const encode = /filename[*]=UTF-8[']['](.+?)(?:;|$)/i.exec(disposition);
+    const simple = /filename="([^"]+)"/i.exec(disposition);
+    const nom = encode
+      ? decodeURIComponent(encode[1].trim())
+      : (simple ? simple[1].trim() : fallbackName);
+
+    const blob = await res.blob();
+    if (blob.size === 0) throw new ApiError(502, 'Le document reçu est vide.');
+
+    const url = URL.createObjectURL(blob);
+    const lien = document.createElement('a');
+    lien.href = url;
+    lien.download = nom;
+    lien.rel = 'noopener';
+    lien.style.display = 'none';
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  },
+
+  removeClientDocument: (clientCompanyId: string, documentId: string) =>
+    request<{ clientCompany: ClientCompanyDetail }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/documents/${encodeURIComponent(documentId)}`,
+      { method: 'DELETE' },
+    ),
 };
 
 export const finances = {

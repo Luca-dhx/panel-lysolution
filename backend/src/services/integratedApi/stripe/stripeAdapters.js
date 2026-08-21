@@ -32,6 +32,8 @@
 // tarif. Un fichier d'adaptateurs qui grossit d'un verbe financier à chaque
 // besoin finit par contenir la logique de facturation ; chacun de ces verbes
 // aura son lot, avec sa propre preuve de non-doublon.
+import { createHash } from 'node:crypto';
+
 import logger from '../../../utils/logger.js';
 import {
   CAPABILITY_ERROR_CODES,
@@ -43,6 +45,9 @@ import {
   retrieveCheckoutSession,
   createCustomer,
   retrieveCustomer,
+  updateCustomer,
+  listCustomerTaxIds,
+  createCustomerTaxId,
   retrieveSubscription,
   createProduct,
   createPrice,
@@ -81,6 +86,7 @@ import {
   PriceAuthorityError,
   resolvePriceIntent,
 } from './stripePriceAuthority.js';
+import { ensureTaxRate } from './stripeTaxRateAuthority.js';
 import { adoptSubscriptionFromSession } from './stripeSubscriptionAdoption.js';
 import {
   CANCELLATION_STATE,
@@ -299,19 +305,86 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
    * manquait. On ne compose pas trois actes en un seul — on les enchaîne, et
    * chacun reste idempotent pour son compte.
    */
-  let params = intent.params;
+  /**
+   * ── LE TAUX DE TVA — GARANTI AVANT TOUTE SESSION ──────────────────────────
+   *
+   * ══ POURQUOI C'EST UN ACTE À PART ENTIÈRE ═════════════════════════════════
+   *
+   * Une session qui référencerait un `tax_rate` inexistant serait refusée par
+   * Stripe — devant un client qui paie. Le taux est donc garanti d'abord,
+   * exactement comme le client et le tarif d'un abonnement le sont : « d'abord
+   * les ressources, ensuite la session ».
+   *
+   * Ce n'est PAS une capacité offerte au projet : aucun projet ne peut demander
+   * la création d'un taux, ce qui lui permettrait de peupler le catalogue
+   * fiscal du compte. C'est une conséquence interne de la construction du
+   * paiement.
+   *
+   * Le taux vient de `intent.fiscal`, c'est-à-dire du CONTRAT — jamais d'une
+   * décision de ce fichier, et jamais d'un calcul du fournisseur.
+   */
+  const taxRateId = await guard(definition, () => ensureTaxRate({
+    credentials,
+    environment,
+    percentage: intent.fiscal.taxRate,
+    /**
+     * LE PAYS D'IMPOSITION est celui du VENDEUR — L.Y Solution —, pas celui de
+     * l'acheteur. C'est le régime de TVA française sur des prestations rendues
+     * à un client français, tel que le contrat l'établit. Le déduire de
+     * l'adresse du client ferait dépendre le taux d'un champ de fiche, et
+     * changerait la fiscalité d'un contrat déjà signé au premier déménagement.
+     */
+    country: 'FR',
+    timeoutMs: definition.timeoutMs,
+    fetchImpl,
+  }));
+
+  let params;
   let customerId = null;
   if (input.paymentType === 'SUBSCRIPTION') {
     const client = await customerEnsure({
       definition: COMPOSEES.CUSTOMER, context, credentials, fetchImpl,
-      input: { contractRef: input.contractRef, customer: {} },
+      input: { contractRef: input.contractRef },
     });
     const tarif = await priceEnsure({
       definition: COMPOSEES.PRICE, context, credentials, fetchImpl,
       input: { contractRef: input.contractRef },
     });
     customerId = client.customerId;
-    params = intent.paramsFor({ customerId: client.customerId, priceId: tarif.priceId });
+    params = intent.paramsFor({ customerId: client.customerId, priceId: tarif.priceId, taxRateId });
+  } else {
+    /**
+     * ── LE PAIEMENT UNIQUE RÉFÉRENCE LUI AUSSI SON CLIENT ─────────────────
+     *
+     * ══ CE QU'IL NE FAISAIT PAS, ET CE QUE ÇA COÛTAIT ═══════════════════════
+     *
+     * `mode: payment` ouvrait une session SANS client : Stripe en créait un à
+     * la volée, à partir de ce que l'acheteur saisissait dans le formulaire.
+     * La facture portait donc l'adresse e-mail tapée par la personne devant
+     * l'écran — un gérant, une secrétaire, parfois une adresse personnelle —
+     * et aucune identité juridique.
+     *
+     * En référençant le client du contrat, la facture porte la RAISON SOCIALE,
+     * l'ADRESSE et le NUMÉRO DE TVA de l'entreprise cliente, exactement comme
+     * une facture d'abonnement. C'est le même client, le même historique, et
+     * la même identité pour les deux natures de paiement d'un même contrat.
+     *
+     * ── ET LES PRESTATIONS PONCTUELLES ? ─────────────────────────────────
+     *
+     * Elles n'ont pas de contrat (`intent.contractId === null`), donc pas de
+     * client dérivable — le client Stripe est lié au CONTRAT, c'est la doctrine
+     * de L6.2D. Elles restent sans client référencé, et le repli est explicite
+     * plutôt que subi.
+     */
+    if (intent.contractId) {
+      const client = await customerEnsure({
+        definition: COMPOSEES.CUSTOMER, context, credentials, fetchImpl,
+        input: { contractRef: input.contractRef },
+      });
+      customerId = client.customerId;
+    }
+    params = intent.paramsFor({ taxRateId });
+    if (customerId) params = { ...params, customer: customerId };
   }
 
   /**
@@ -699,6 +772,45 @@ async function customerEnsure({ definition, context, credentials, input, fetchIm
         { reason: 'BINDING_PROVIDER_DIVERGENCE' },
       );
     }
+    /**
+     * ── LA CONVERGENCE D'IDENTITÉ — CE QUI MANQUAIT ──────────────────────
+     *
+     * ══ LE DÉFAUT QUE CE BLOC FERME ═══════════════════════════════════════
+     *
+     * `ensure` créait le client UNE fois, puis se contentait de le relire.
+     * Toute correction ultérieure de l'identité restait donc côté Panel :
+     *
+     *   · un projet dont l'entreprise cliente est rattachée APRÈS l'ouverture
+     *     du contrat gardait, chez Stripe, le client anonyme du premier jour ;
+     *   · un déménagement, une correction de raison sociale, un SIREN ajouté
+     *     n'atteignaient jamais le fournisseur, et les factures SUIVANTES
+     *     portaient encore l'ancienne identité.
+     *
+     * Le verbe s'appelle « ensure » : il doit garantir que le client EST ce que
+     * le Panel dit, pas seulement qu'il existe.
+     *
+     * ══ POURQUOI LA MISE À JOUR EST CONDITIONNÉE ══════════════════════════
+     *
+     * Écrire à chaque appel produirait un appel fournisseur par ouverture de
+     * paiement, pour ne rien changer dans l'immense majorité des cas. On
+     * compare donc l'état RELU à l'état voulu, et l'on n'écrit que sur écart.
+     *
+     * ══ ET L'HISTORIQUE ? ════════════════════════════════════════════════
+     *
+     * Il ne bouge pas. Une facture Stripe déjà émise porte une COPIE de
+     * l'identité au moment de l'émission : modifier le client aujourd'hui ne
+     * réécrit aucune facture d'hier. C'est la garantie qui rend cette
+     * convergence sans risque — et c'est aussi pourquoi le Panel garde son
+     * propre instantané légal, sans dépendre de celui du fournisseur.
+     */
+    await convergerIdentiteClient({
+      definition, credentials, fetchImpl,
+      customerId: connu.resourceId,
+      actuel: relu.customer,
+      voulu: intent.params,
+      taxIdentity: intent.taxIdentity,
+      environment,
+    });
     return { customerId: connu.resourceId, status: 'EXISTING' };
   }
   if (connu?.revokedAt) {
@@ -752,7 +864,135 @@ async function customerEnsure({ definition, context, credentials, input, fetchIm
     );
   });
 
+  /**
+   * LE NUMÉRO DE TVA DU CLIENT — après la création, jamais dedans.
+   *
+   * Stripe n'accepte pas `tax_id` à la création d'un client : c'est une
+   * sous-ressource. L'inclure ferait échouer la création entière pour un champ
+   * inconnu — devant un client qui paie.
+   */
+  await poserNumeroTva({
+    definition, credentials, fetchImpl, environment,
+    customerId: customer.id, taxIdentity: intent.taxIdentity, existants: [],
+  });
+
   return { customerId: customer.id, status: 'CREATED' };
+}
+
+/**
+ * L'IDENTITÉ CHEZ LE FOURNISSEUR EST-ELLE CELLE QUE LE PANEL DIT ?
+ *
+ * Compare les seuls champs que le Panel gouverne — nom, e-mail, adresse,
+ * téléphone. Les autres attributs du client Stripe (solde, moyens de paiement,
+ * préférences) ne nous appartiennent pas et ne sont jamais touchés.
+ *
+ * L'adresse est comparée CHAMP PAR CHAMP plutôt que par égalité d'objets :
+ * Stripe rend toujours les cinq clés, à `null` pour celles qu'on n'a pas
+ * envoyées, et une comparaison structurelle conclurait à un écart permanent —
+ * donc à une écriture à chaque paiement.
+ */
+function identiteDiverge(actuel, voulu) {
+  const norm = (v) => String(v ?? '').trim();
+  if (norm(actuel?.name) !== norm(voulu.name)) return true;
+  if (norm(actuel?.email) !== norm(voulu.email)) return true;
+  if (norm(actuel?.phone) !== norm(voulu.phone)) return true;
+
+  const a = actuel?.address ?? {};
+  const b = voulu.address ?? {};
+  for (const cle of ['line1', 'line2', 'postal_code', 'city', 'country']) {
+    if (norm(a[cle]) !== norm(b[cle])) return true;
+  }
+  return false;
+}
+
+async function convergerIdentiteClient({
+  definition, credentials, fetchImpl, customerId, actuel, voulu, taxIdentity, environment,
+}) {
+  if (identiteDiverge(actuel, voulu)) {
+    /**
+     * LA CLÉ D'IDEMPOTENCE PORTE L'EMPREINTE DE CE QU'ON ÉCRIT.
+     *
+     * Une clé fixe ferait répondre à la SECONDE correction le résultat de la
+     * première : l'entreprise déménagerait deux fois, et Stripe garderait la
+     * première adresse en rendant « déjà fait ». L'empreinte du contenu rend
+     * chaque écriture distincte tout en restant reproductible au rejeu.
+     */
+    const empreinte = createHash('sha256')
+      .update(JSON.stringify({ customerId, voulu }))
+      .digest('hex')
+      .slice(0, 32);
+    await guard(definition, () => updateCustomer({
+      credentials,
+      customerId,
+      params: voulu,
+      idempotencyKey: `pcp_cusupd_${empreinte}`,
+      timeoutMs: definition.timeoutMs,
+      fetchImpl,
+    }));
+    logger.info(
+      `[stripe] identité de facturation convergée — ${maskResourceId(customerId)} (${environment}).`,
+    );
+  }
+
+  /**
+   * LES NUMÉROS DE TVA DÉJÀ POSÉS sont relus AVANT d'en ajouter un.
+   *
+   * Stripe accepte plusieurs `tax_id` par client et n'en déduplique aucun :
+   * sans cette lecture, chaque paiement en ajouterait un, et la facture
+   * finirait par afficher cinq fois le même numéro.
+   */
+  const { taxIds } = await guard(definition, () => listCustomerTaxIds({
+    credentials, customerId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  await poserNumeroTva({
+    definition, credentials, fetchImpl, environment, customerId, taxIdentity, existants: taxIds,
+  });
+}
+
+/**
+ * POSE le numéro de TVA du client — s'il en a un, et s'il n'y est pas déjà.
+ *
+ * ══ POURQUOI L'ÉCHEC N'INTERROMPT RIEN ══════════════════════════════════════
+ *
+ * Stripe VALIDE le format d'un `tax_id` et refuse ce qu'il ne reconnaît pas.
+ * Un refus signifie « ce numéro ne ressemble pas à un numéro de TVA
+ * intracommunautaire » — c'est une information utile à un exploitant, ce n'est
+ * pas une raison d'empêcher un client de payer.
+ *
+ * L'échec est donc JOURNALISÉ et la facturation continue : elle partira sans le
+ * numéro de TVA de l'acheteur, ce qui est exactement l'état d'avant ce lot.
+ * Faire échouer un paiement pour une mention facultative serait une régression
+ * déguisée en rigueur.
+ */
+async function poserNumeroTva({
+  definition, credentials, fetchImpl, environment, customerId, taxIdentity, existants,
+}) {
+  if (!taxIdentity?.value) return;
+  const deja = (existants ?? []).some(
+    (t) => String(t?.value ?? '').toUpperCase() === taxIdentity.value.toUpperCase(),
+  );
+  if (deja) return;
+
+  try {
+    await createCustomerTaxId({
+      credentials,
+      customerId,
+      type: taxIdentity.type,
+      value: taxIdentity.value,
+      idempotencyKey: `pcp_taxid_${customerId}_${taxIdentity.value}`.toLowerCase(),
+      timeoutMs: definition.timeoutMs,
+      fetchImpl,
+    });
+    logger.info(
+      `[stripe] numéro de TVA client posé sur ${maskResourceId(customerId)} (${environment}).`,
+    );
+  } catch (error) {
+    logger.warn(
+      `[stripe] numéro de TVA client REFUSÉ par le fournisseur sur ${maskResourceId(customerId)} `
+      + `(${environment}) : ${error?.code ?? error?.message ?? 'motif inconnu'}. `
+      + 'La facture partira sans cette mention — vérifiez le numéro sur la fiche client.',
+    );
+  }
 }
 
 /* -------------------------------------------------------------------------- */

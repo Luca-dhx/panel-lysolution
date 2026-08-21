@@ -32,6 +32,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
+import { ensureClientCompany, ligneTarifaire } from './helpers/clientCompany.fixture.js';
 import { forme } from './helpers/secretShapes.js';
 
 setTestEnv();
@@ -62,6 +63,12 @@ const lireCorps = (req) => new Promise((resolve) => {
   req.on('end', () => resolve(brut));
 });
 
+/** Le catalogue fiscal du faux compte — voir le bloc de routes plus bas. */
+const tauxTva = new Map();
+/** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
+const tauxParCle = new Map();
+/** Les clients du faux compte — voir le bloc de routes plus bas. */
+const clientsTest = new Map();
 const fauxStripe = http.createServer(async (req, res) => {
   const cle = req.headers['idempotency-key'] ?? null;
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
@@ -102,6 +109,83 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, session);
   }
 
+  /* ── CLIENTS (chantier « facturation légale ») ─────────────────────────
+     Les frais de lancement référencent désormais le client du contrat : sans
+     lui, la facture Stripe porterait ce que l'acheteur tape dans le
+     formulaire au lieu de l'identité juridique de l'entreprise cliente. */
+  if (req.method === 'POST' && req.url === '/v1/customers') {
+    const connu = clientsTest.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const champs = new URLSearchParams(corps);
+    const client = {
+      id: `cus_test_${sequence}`,
+      object: 'customer',
+      deleted: false,
+      name: champs.get('name'),
+      email: champs.get('email'),
+      phone: champs.get('phone'),
+      address: {
+        line1: champs.get('address[line1]') ?? null,
+        line2: champs.get('address[line2]') ?? null,
+        postal_code: champs.get('address[postal_code]') ?? null,
+        city: champs.get('address[city]') ?? null,
+        country: champs.get('address[country]') ?? null,
+      },
+    };
+    clientsTest.set(cle, client);
+    clientsTest.set(client.id, client);
+    return repondre(200, client);
+  }
+  const lectureClient = /^\/v1\/customers\/([^/?]+)$/.exec(req.url ?? "");
+  if (lectureClient) {
+    const client = clientsTest.get(decodeURIComponent(lectureClient[1]));
+    if (!client) return repondre(404, { error: { code: 'resource_missing' } });
+    if (req.method === 'POST') {
+      const champs = new URLSearchParams(corps);
+      for (const cle2 of ['name', 'email', 'phone']) {
+        if (champs.has(cle2)) client[cle2] = champs.get(cle2);
+      }
+      client.address = {
+        line1: champs.get('address[line1]') ?? null,
+        line2: champs.get('address[line2]') ?? null,
+        postal_code: champs.get('address[postal_code]') ?? null,
+        city: champs.get('address[city]') ?? null,
+        country: champs.get('address[country]') ?? null,
+      };
+    }
+    return repondre(200, client);
+  }
+  /* ── TVA (chantier « facturation légale ») ──────────────────────────────
+     Le plan de contrôle garantit un TaxRate avant toute session, puis pose le
+     numéro de TVA du client. Un faux Stripe muet sur ces routes ferait échouer
+     le paiement en PROVIDER_UNAVAILABLE — c'est-à-dire pour une raison qui n'a
+     rien à voir avec ce que le test éprouve. */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/tax_rates')) {
+    return repondre(200, { object: 'list', data: [...tauxTva.values()] });
+  }
+  if (req.method === 'POST' && req.url === '/v1/tax_rates') {
+    const connu = tauxParCle.get(cle);
+    if (connu) return repondre(200, connu);
+    sequence += 1;
+    const taux = {
+      id: `txr_test_${sequence}`,
+      object: 'tax_rate',
+      active: true,
+      inclusive: false,
+      percentage: Number(new URLSearchParams(corps).get('percentage')),
+      country: new URLSearchParams(corps).get('country'),
+      display_name: new URLSearchParams(corps).get('display_name'),
+    };
+    tauxTva.set(taux.id, taux);
+    tauxParCle.set(cle, taux);
+    return repondre(200, taux);
+  }
+  const listeTva = /^\/v1\/customers\/([^/?]+)\/tax_ids/.exec(req.url ?? '');
+  if (listeTva && req.method === 'GET') return repondre(200, { object: 'list', data: [] });
+  if (listeTva && req.method === 'POST') {
+    return repondre(200, { id: `txi_test_${(sequence += 1)}`, object: 'tax_id' });
+  }
   return repondre(404, { error: { message: 'route inconnue' } });
 });
 
@@ -175,6 +259,16 @@ let idB;
 
 async function semerContrats() {
   for (const [projectId, ref, montant] of [[idA, CONTRAT_A, 118_800], [idB, CONTRAT_B, 42_000]]) {
+    /**
+     * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
+     *
+     * Aucun paiement ne s'ouvre pour un projet sans identité juridique de client :
+     * c'est la garde centrale de ce chantier, et elle est autoritative côté
+     * backend. La semer ici n'assouplit rien — elle donne au parcours la donnée
+     * qu'il exige désormais, exactement comme le fait un exploitant qui remplit
+     * la fiche « Clients » avant d'encaisser.
+     */
+    await ensureClientCompany(projectId);
     await PanelProjectContract.updateOne(
       { projectId },
       {
@@ -185,7 +279,7 @@ async function semerContrats() {
           status: 'ACTIVE',
           reference: `CTR-${ref.slice(-4)}`,
           pricing: {
-            launchFee: { amountIncludingTax: montant, currency: 'EUR', interval: null },
+            launchFee: ligneTarifaire(montant, { interval: null }),
             subscription: null,
           },
           sourceModifiedAt: new Date().toISOString(),

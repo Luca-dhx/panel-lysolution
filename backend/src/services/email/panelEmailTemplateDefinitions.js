@@ -383,6 +383,48 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
       + 'n’appartient au projet, et ce message ne porte jamais son apparence.',
     callers: ['Panel/services/finance/providerRevenue/paymentConfirmationAnnouncements.js'],
   },
+
+  /**
+   * LE PONT D'UN PROJET NE CONSOMME PLUS — deux codes, un cycle.
+   *
+   * ── POURQUOI `PANEL` ET NON `PROJECT` ─────────────────────────────────────
+   *
+   * Le fait naît dans un projet, et son constat aussi. Le code reste PANEL
+   * parce que ce qui décide est QUI PARLE À QUI : L.Y Solution prévient ses
+   * propres exploitants d'une panne de sa propre infrastructure de
+   * synchronisation. Le message nomme un curseur, un journal, un rattrapage —
+   * un client n'a ni à le lire, ni à pouvoir l'éditer.
+   *
+   * Même cas d'école que `PLATFORM_INCIDENT_DEV_ALERT` et
+   * `CONTRACT_CANCELLATION_DEV_NOTIFICATION`.
+   *
+   * ── POURQUOI DEUX CODES ET NON UN AVEC UN DRAPEAU ─────────────────────────
+   *
+   * Une alerte et un rétablissement ne se lisent pas au même moment, ne se
+   * filtrent pas ensemble, et n'ont pas la même urgence. Un modèle unique avec
+   * « état : DEGRADED | RECOVERED » obligerait à ouvrir chaque message pour
+   * savoir s'il faut agir.
+   */
+  PROJECT_BRIDGE_DEGRADED_SUPER_ADMIN: {
+    scopes: [P],
+    category: TEMPLATE_CATEGORIES.TECHNICAL,
+    provisionForProjects: false,
+    reason:
+      'Le Panel prévient SES exploitants qu’un projet ne consomme plus ce qu’il lui envoie. '
+      + 'Le contenu nomme des composants internes de synchronisation : il ne porte jamais '
+      + 'l’apparence du client, et le client ne doit jamais le voir.',
+    callers: ['Panel/services/supervision/bridgeAlerting.service.js'],
+  },
+
+  PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN: {
+    scopes: [P],
+    category: TEMPLATE_CATEGORIES.TECHNICAL,
+    provisionForProjects: false,
+    reason:
+      'Referme le cycle ouvert par l’alerte de dégradation. Sans lui, le dernier message '
+      + 'conservé par un exploitant resterait une panne déjà réparée.',
+    callers: ['Panel/services/supervision/bridgeAlerting.service.js'],
+  },
 });
 
 /**

@@ -102,6 +102,31 @@ export type HealthStatus = 'OK' | 'DEGRADED';
 
 export interface PublicProject {
   projectId: string;
+  /**
+   * L’ENTREPRISE CLIENTE À QUI CE PROJET APPARTIENT.
+   *
+   * ══ PRÉSENTE SUR LA FICHE, ABSENTE DE LA LISTE ══════════════════════
+   *
+   * Sa résolution coûte une lecture par projet : la joindre à la liste
+   * transformerait un affichage de parc en balayage. La fiche, elle, n’en
+   * montre qu’un — et c’est là qu’on se demande à qui l’on facture.
+   *
+   * `undefined` = « la liste ne le dit pas » ; `null` = « aucun client
+   * légal rattaché », un ÉTAT qui bloque paiements et signatures.
+   */
+  clientCompany?: {
+    clientCompanyId: string;
+    legalName: string;
+    tradingName: string | null;
+    siren: string | null;
+    status: 'ACTIVE' | 'ARCHIVED';
+    readiness: {
+      state: 'READY' | 'MISSING_COMPANY' | 'MISSING_BILLING_IDENTITY' | 'MISSING_SIGNER';
+      ready: boolean;
+      billing: { ready: boolean; missing: string[] };
+      signing: { ready: boolean; missing: string[] };
+    };
+  } | null;
   projectKey: string;
   /**
    * L'ENVIRONNEMENT DE CETTE INSTANCE — DÉCLARÉ par le projet, ou `null`.

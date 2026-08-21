@@ -61,8 +61,19 @@ section('1. Deux espaces, et le menu reflète la règle');
   // Développeur ferait de la personne qui écrit le code la seule à pouvoir
   // lire le chiffre d'affaires. La liste reste FERMÉE et énumérée : une
   // entrée de plus dans cet espace est une décision, jamais un effet de bord.
+  //
+  // « Clients » entre en Gestion (chantier « entreprise cliente »), et il faut
+  // le distinguer de « Projets clients » qui le précède : un projet est une
+  // INSTANCE technique, une entreprise cliente est une PERSONNE MORALE, et elle
+  // possède souvent plusieurs projets. C'est son identité que porte le
+  // « Facturer à » d'une facture — et faute de cette page, le Panel y écrivait
+  // une référence de contrat.
+  //
+  // Il est placé entre les projets et les finances, dans l'ordre où l'on
+  // descend : le site, à qui il appartient, ce qu'il rapporte.
   const GESTION_ATTENDUE = [
-    'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Finances', 'Mon entreprise',
+    'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Clients', 'Finances',
+    'Mon entreprise',
   ];
   check(`Gestion = ${GESTION_ATTENDUE.join(', ')} — ${gestionLabels.join(', ')}`,
     gestionLabels.join('|') === GESTION_ATTENDUE.join('|'));
@@ -97,7 +108,19 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
    * la suppression EN MASSE est réservée aux DEV, et cette garde-là vit côté
    * serveur, où une URL tapée ne la contourne pas.
    */
-  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company', '/panel'];
+  /**
+   * `/clients` et `/clients/:clientCompanyId` — GESTION, comme les finances.
+   *
+   * Savoir à qui l’on facture est le travail de l’équipe, pas une opération
+   * technique : réserver la LECTURE aux comptes DEV ferait du développeur le
+   * seul à connaître les clients de l’agence.
+   *
+   * L’ÉCRITURE, elle, est réservée aux DEV — et cette garde-là vit côté
+   * serveur (`requirePanelDev` sur les verbes de mutation), où une URL tapée
+   * ne la contourne pas.
+   */
+  const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company',
+    '/clients', '/clients/:clientCompanyId', '/panel'];
 
   /**
    * LES ROUTES D'AUTHENTIFICATION — hors garde par NATURE, et nommées ici.
