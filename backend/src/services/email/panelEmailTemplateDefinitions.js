@@ -302,6 +302,31 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-payment-overdue-critical'],
   },
 
+  /**
+   * LA RELANCE — le message qui manquait entre le premier échec et le dernier.
+   *
+   * ══ POURQUOI UN MODÈLE DE PLUS, ET PAS UN RENVOI DU PREMIER ═════════════
+   *
+   * `CONTRACT_PAYMENT_OVERDUE_ADMIN` annonce une NOUVELLE : « votre paiement
+   * n'a pas abouti ». Le renvoyer à la troisième tentative dirait la même
+   * nouvelle une troisième fois, alors que la situation a changé : le client
+   * SAIT déjà, il n'a rien fait, et l'échéance s'est rapprochée.
+   *
+   * Une relance ne répète pas, elle rappelle ce qui reste de temps. C'est un
+   * texte différent, et le confondre avec le premier avis rendrait l'un des
+   * deux faux.
+   */
+  CONTRACT_PAYMENT_RETRY_FAILED_ADMIN: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: true,
+    reason:
+      'Relance à CHAQUE nouvelle tentative réellement échouée du prestataire de paiement, '
+      + 'entre le premier avis et l’échéance. Le Panel ne couvre pas cet intervalle : il ne '
+      + 'parle qu’une fois le site fermé.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-payment-retry-failed'],
+  },
+
   CONTRACT_PAYMENT_RECOVERED_ADMIN: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.BILLING,

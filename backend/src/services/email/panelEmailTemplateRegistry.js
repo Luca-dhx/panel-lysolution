@@ -1075,6 +1075,95 @@ ${button('Régulariser maintenant', '{{manager.billingUrl}}')}
     },
   },
 
+  /**
+   * LA RELANCE — envoyée à CHAQUE nouvelle tentative réellement échouée.
+   *
+   * ══ CE QUI LA DISTINGUE DU PREMIER AVIS ══════════════════════════════════
+   *
+   * Le premier avis annonce une nouvelle. Celui-ci constate que la nouvelle
+   * est restée sans effet, et compte ce qui reste de temps. Répéter le premier
+   * texte à la troisième tentative dirait au client quelque chose qu'il sait
+   * déjà, sans lui dire ce qui a changé — c'est-à-dire l'urgence.
+   *
+   * ══ LA PHRASE D'ÉCHÉANCE EST RÉDIGÉE PAR LE RÉSOLVEUR ════════════════════
+   *
+   * `incident.deadlineSentence` arrive tout écrit. Un contrat sans politique de
+   * grâce n'a pas de date de fermeture : lui promettre « sans règlement avant
+   * le … » serait une menace inventée. Un modèle n'a ni condition ni
+   * branchement, et lui en demander produirait exactement le mensonge qu'on
+   * cherche à éviter.
+   *
+   * ══ LE LIEN DE PAIEMENT EST CELUI DU PRESTATAIRE, QUAND IL EXISTE ════════
+   *
+   * `incident.paymentUrl` porte la page de facture hébergée par le prestataire
+   * — celle qui permet de payer en trois clics avec une autre carte. À défaut,
+   * le résolveur retombe sur l'espace facturation du Manager. Jamais une URL
+   * fabriquée ici.
+   */
+  CONTRACT_PAYMENT_RETRY_FAILED_ADMIN: {
+    templateId: 'CONTRACT_PAYMENT_RETRY_FAILED_ADMIN',
+    defaultName: 'Impayé — relance après une nouvelle tentative échouée',
+    defaultDescription:
+      "Relance le client à chaque nouvelle tentative de prélèvement réellement refusée, entre le premier avis et l'échéance. Une tentative rejouée par le prestataire ne produit qu'un seul message : le compteur de tentatives fait foi.",
+    defaultSubject: 'Rappel — votre paiement n’est toujours pas régularisé ({{contract.reference}})',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Raison sociale du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.amountDue', label: 'Montant restant dû', description: 'Somme restant à régler (centimes).', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'incident.purposeLabel', label: 'Prestation concernée', description: 'Ce que ce règlement paie — « votre abonnement », « les frais de lancement »…', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.invoiceNumber', label: 'Facture', description: 'Numéro de facture, ou « non communiqué ».', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.originalDueDate', label: 'Échéance d’origine', description: 'Date à laquelle le règlement était attendu.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.attemptCount', label: 'Tentatives', description: 'Nombre de tentatives observées chez le prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.deadlineSentence', label: 'Phrase d’échéance', description: 'Rédigée par le résolveur : annonce la date de suspension, ou son absence.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'incident.paymentUrl', label: 'Lien de règlement', description: 'Page de paiement du prestataire, ou espace facturation du Manager.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom de l’entreprise développeur.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Garage Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'incident.amountDue': { amount: 24900, currency: 'EUR' },
+      'incident.purposeLabel': 'votre abonnement',
+      'incident.invoiceNumber': 'QWSK7ZZY-0002',
+      'incident.originalDueDate': '20 août 2026',
+      'incident.attemptCount': '2',
+      'incident.deadlineSentence':
+        'Sans régularisation avant le 27 août 2026, votre site sera suspendu conformément aux conditions de votre contrat.',
+      'incident.paymentUrl': 'https://facture.exemple.fr/i/test_ABC',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Une nouvelle tentative de prélèvement a été refusée.',
+        heading: 'Votre paiement n’est toujours pas régularisé',
+        bodyHtml: `            <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},<br><br>
+              Nous n’avons toujours pas reçu le règlement de
+              <strong>{{incident.amountDue}}</strong> correspondant à
+              {{incident.purposeLabel}}, dû le {{incident.originalDueDate}}.
+            </p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Contrat', '{{contract.reference}}')}
+${row('Facture concernée', '{{incident.invoiceNumber}}')}
+${row('Montant restant dû', '{{incident.amountDue}}')}
+${row('Échéance d’origine', '{{incident.originalDueDate}}')}
+${row('Tentatives refusées', '{{incident.attemptCount}}')}
+            </table>
+            <p style="margin:20px 0 0;font-size:14px;line-height:1.6;color:${BRAND};">
+              {{incident.deadlineSentence}}
+            </p>
+${button('Régulariser mon paiement', '{{incident.paymentUrl}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              La cause la plus fréquente est une carte expirée ou un plafond atteint.
+              Régler depuis le lien ci-dessus met fin immédiatement à la relance.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
+
   CONTRACT_PAYMENT_RECOVERED_ADMIN: {
     templateId: 'CONTRACT_PAYMENT_RECOVERED_ADMIN',
     defaultName: 'Impayé — régularisation confirmée',

@@ -133,6 +133,11 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     'CONTRACT_PAYMENT_OVERDUE_ADMIN',
     'CONTRACT_PAYMENT_OVERDUE_CRITICAL_ADMIN',
     'CONTRACT_PAYMENT_RECOVERED_ADMIN',
+    // La RELANCE, entre le premier avis et l'échéance. Elle comble le silence
+    // qui séparait l'ouverture de l'impayé de l'annonce de fermeture : le
+    // prestataire de paiement retentait, et le client n'en savait rien.
+    // Portée PROJET, provisionnée : c'est le client d'un projet qui la lit.
+    'CONTRACT_PAYMENT_RETRY_FAILED_ADMIN',
     // Recette métier — l'alerte technique aux développeurs responsables d'un
     // projet, natifs ET fédérés. Portée PANEL : elle nomme des composants
     // internes et ne porte jamais l'apparence du client.
