@@ -948,4 +948,107 @@ n'est pas le cas.
 
 ---
 
-*(Sections suivantes ajoutées au fil des lots.)*
+## RAPPORT FINAL
+
+### État de la bascule
+
+| Condition d'arrêt | État |
+|---|---|
+| OpenSign opérationnel pour SB Auto | **tenu** — recettes réelles à chaque niveau |
+| Toute nouvelle demande part chez OpenSign | **tenu** — `signature.request.open` n'a aucun aiguillage |
+| Yousign retiré du runtime actif | **tenu** — `ACTIVE_RUNTIME: 0` |
+| Contrats historiques relisibles | **tenu** — leur PDF est archivé dans le projet |
+| Déploiement TEST | **partiel** — Panel fait ; SB Auto **bloqué**, voir plus bas |
+| Recette réelle de bout en bout | **tenu** — y compris sur la pile déployée |
+| Nettoyage | **tenu** — 0 document, 0 lien de recette |
+| Chaînes de qualité vertes | **tenu** — Panel 142/142, SB Auto 103 suites, Manager 29 suites + `tsc` |
+
+### Ce qui n'a pas pu être fait, et pourquoi
+
+**Le déploiement de SB Auto TEST.** Le pilote existe et est commité
+(`tools/deploySbAuto.js`) ; il emprunte la seule porte sanctionnée
+(`POST /deploy/stream`), avec son run durable et son verrou de destination.
+
+Il lui manque **deux variables** qui ne sont pas dans l'environnement de ce
+poste : `SEED_DEV_EMAIL` et `SEED_DEV_PASSWORD` — le compte DÉVELOPPEUR de SB
+Auto, distinct de celui du Panel. Le compte existe en base ; son mot de passe
+n'est nulle part ici.
+
+Il n'a **pas** été réinitialisé pour débloquer la situation : fabriquer une
+identité pour se donner accès est exactement ce que la campagne s'interdit, et
+le coût (un mot de passe changé sans que son propriétaire le sache) dépasse le
+bénéfice. La commande, une fois les deux variables disponibles :
+
+```
+cd "SB Auto 06" && node tools/deploySbAuto.js --environment TEST
+```
+
+**Ce que cela laisse en suspens** : la pile TEST de SB Auto sert encore le code
+d'avant la bascule. Mesuré (§11.4), sa charge utile reste **acceptée** par le
+Panel déployé ; ses signatures partent simplement sans adresse de retour, donc
+`autoReturn: false`. Dégradé, correct, et auto-réparé au déploiement.
+
+### Les défauts réels trouvés en chemin
+
+Aucun n'était un effet de la bascule : tous préexistaient, et c'est le
+changement de fournisseur qui les a rendus visibles.
+
+| Où | Ce que ça produisait |
+|---|---|
+| `deriveSignatureState` | l'état retombait à `NONE` pour **toute** demande — l'écran n'a jamais affiché « signature en cours » |
+| `signatureEvent.applier` | le **PDF signé n'était jamais récupéré** à l'achèvement |
+| `projectSync.service` | le Panel voyait « GÉNÉRÉ » sur un contrat en cours de signature |
+| `syncTriggers` | une signature qui progressait ne faisait **rien partir** |
+| `signatureOf` | un défaut de schéma écrasait la valeur héritée — le repli ne repliait rien |
+| `BUSINESS_CRITICAL` | un webhook de SIGNATURE en panne était rapporté en simple `WARNING` |
+| passerelle de capacités | le rejeu d'une opération réussie contournait le schéma de sortie |
+| `monthlyEquivalent` (tests) | trois contrôles rouges depuis un changement de signature, personne ne les avait relus |
+| pilote de déploiement | le port dédié n'était pas passé à l'enfant — il marchait par coïncidence |
+| `signInBrowser.js` | l'importer exécutait une recette entière, et consommait un crédit |
+| `run-all.js` | « 138/141 » sans nommer les fautifs |
+
+### Les faits mesurés qui ont décidé de la conception
+
+| Question | Réponse, et comment |
+|---|---|
+| unité des coordonnées | **point PDF**, origine coin supérieur gauche, pages 1-indexées — quatre chemins indépendants |
+| écart éditeur → encre | **0,41 pt** (0,14 mm), l'arrondi à l'entier |
+| représentation HMAC | **corps brut** — 6 webhooks réels, tous vérifiés |
+| ordre de signature | **imposé** — le client tente, le pavé ne s'ouvre pas, l'état reste `VIEWED` |
+| adresses de retour | **une seule**, au niveau du document, sans paramètre |
+| taille de document | 9,4 Mo accepté, 12 Mo refusé → limite locale à 10 Mio |
+| certificat d'audit | publié à l'**achèvement** seulement, ~112 ko, distinct du contrat |
+| webhook chez l'ancien | **jamais enregistré** — rien à débrancher |
+| demandes vivantes chez l'ancien | **0**, sur les deux bases |
+
+### Preuve
+
+| Artefact | Ce qu'il atteste |
+|---|---|
+| `.campaign/opensign-characterization.json` | le bac à sable réel, lot 1 |
+| `.campaign/opensign-coordinates.json` | l'unité et l'origine, sans navigateur |
+| `.campaign/opensign-placement.json` | l'encre, mesurée dans le PDF signé |
+| `.campaign/opensign-capability-recipe.json` | les capacités, isolation entre projets comprise |
+| `.campaign/opensign-webhook-lifecycle.json` | le cycle de vie des webhooks |
+| `.campaign/opensign-project-contract-recipe.json` | la charge utile de SB Auto chez le vrai fournisseur |
+| `.campaign/opensign-editor-widget-recipe.json` | de l'éditeur à l'encre |
+| `.campaign/opensign-signing-order.json` | l'ordre, éprouvé en tentant de le rompre |
+| `.campaign/opensign-completion-recipe.json` | l'achèvement et la preuve d'audit |
+| `.campaign/opensign-cutover-recipe.json` | la pile **déployée**, 6 événements, 0 rejeté |
+| `.campaign/inventaire-yousign.json` | la matrice finale, 0 bloquant |
+
+### Releases
+
+| | |
+|---|---|
+| Panel TEST | **`fcfc1e7`** — déployé, arbre propre, commit poussé |
+| Panel `HEAD` | `87ca01a` — poussé |
+| SB Auto `HEAD` | `0bbb4b4` — poussé, **non déployé** |
+
+### Sûreté
+
+Aucune donnée réelle n'a servi. Tous les documents sont des PDF générés, toutes
+les identités sont sur `example.com` (RFC 2606), aucun e-mail n'a été envoyé
+(`send_email: false` à chaque ouverture), et chaque recette supprime ses
+documents chez le fournisseur — y compris après échec. Aucun identifiant
+OpenSign n'existe côté projet, et aucun secret n'apparaît dans un artefact.
