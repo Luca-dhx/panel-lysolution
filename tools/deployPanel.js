@@ -137,7 +137,21 @@ try {
   journal('démarrage du backend local…');
   backend = spawn(process.execPath, [path.join(BACKEND, 'src', 'server.js')], {
     cwd: BACKEND,
-    env: { ...process.env },
+    /**
+     * LE PORT DÉDIÉ EST RÉELLEMENT PASSÉ À L'ENFANT.
+     *
+     * Il était déclaré plus haut, et le pilote interrogeait bien 4177 — mais
+     * l'enfant héritait de `process.env` tel quel, donc du port du `.env`. Le
+     * pilote ne fonctionnait que par coïncidence : tant qu'aucun backend de
+     * développement ne tournait, l'un écoutait 4100 pendant que l'autre
+     * attendait sur 4177 — et l'attente expirait sur « pas devenu disponible »,
+     * un message qui décrit tout sauf la cause.
+     *
+     * Avec un backend de développement en cours, il échouait immédiatement sur
+     * « port déjà utilisé » — et la tentation aurait été d'arrêter le backend
+     * de quelqu'un d'autre pour déployer.
+     */
+    env: { ...process.env, PORT: String(PORT) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   backend.stdout.on('data', (d) => {
