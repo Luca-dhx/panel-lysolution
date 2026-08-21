@@ -37,7 +37,7 @@ import PanelProject from '../../models/PanelProject.model.js';
 import ApiError from '../../utils/ApiError.js';
 import config from '../../config/env.js';
 import logger from '../../utils/logger.js';
-import { nowIso } from '../../bridge/bridgeContract.js';
+import { nowIso, stableBridgeId } from '../../bridge/bridgeContract.js';
 import { emitChange } from '../sync/syncCore.service.js';
 import { recordEvent } from '../supervision/timeline.service.js';
 import { EVENT_TYPES } from '../../models/PanelSupervision.model.js';
@@ -745,13 +745,45 @@ export function publishedProfile(fiche) {
   };
 }
 
+/**
+ * L'IDENTIFIANT D'ENTITÉ DU PONT, DÉRIVÉ DE L'IDENTIFIANT MÉTIER.
+ *
+ * ══ LE DÉFAUT QUE CETTE FONCTION FERME ═══════════════════════════════════
+ *
+ * Le contrat impose `entityId: uuid`. `clientCompanyId` n'en est pas un :
+ * c'est un identifiant opaque court, choisi pour être lisible dans une URL
+ * d'écran. Émis tel quel, il faisait REJETER l'écriture à l'arrivée — et un
+ * rejet de lecture est une PERTE DÉFINITIVE : le curseur avance, le Panel ne
+ * relivre pas. Le projet restait donc sans client légal, paiements et
+ * signatures bloqués, sans que rien côté Panel ne paraisse anormal.
+ *
+ * ══ POURQUOI DÉRIVER PLUTÔT QUE STOCKER UN SECOND IDENTIFIANT ════════════
+ *
+ * Un UUID v5 est une FONCTION de l'identifiant métier : même graine, même
+ * résultat, pour toujours. L'idempotence du pont — qui repose sur
+ * `entityId` — est donc préservée sans ajouter un champ à tenir cohérent, et
+ * l'identifiant lisible reste dans la charge utile pour la corrélation.
+ */
+function identiteDePont(clientCompanyId) {
+  return stableBridgeId(`client-company:${clientCompanyId}`);
+}
+
 /** Publie l'identité vers UN projet nommé. Jamais vers le parc. */
 async function publishToProject(projectId, fiche) {
   await emitChange({
     entityType: CLIENT_COMPANY_ENTITY,
-    entityId: fiche.clientCompanyId,
+    entityId: identiteDePont(fiche.clientCompanyId),
     payload: publishedProfile(fiche),
-    modifiedAt: fiche.publishedAt ?? nowIso(),
+    /**
+     * ISO, TOUJOURS — et jamais l'objet Date que rend la lecture Mongo.
+     *
+     * Le contrat exige une chaîne datée. Un objet Date passait jusqu'ici
+     * parce que la sérialisation du tirage le convertissait en chemin ; il
+     * ne franchit plus le contrôle de conformité posé à l'émission, et c'est
+     * tant mieux : deux représentations de la même date sur un même champ
+     * finissent toujours par se comparer mal quelque part.
+     */
+    modifiedAt: fiche.publishedAt ? new Date(fiche.publishedAt).toISOString() : nowIso(),
     /**
      * NOMINATIF, et c'est la différence essentielle avec `DEV_COMPANY`.
      *
@@ -769,7 +801,9 @@ async function publishToProject(projectId, fiche) {
 async function tombstoneOnProject(projectId, clientCompanyId) {
   await emitChange({
     entityType: CLIENT_COMPANY_ENTITY,
-    entityId: clientCompanyId,
+    // MÊME dérivation que la publication : sans quoi le retrait désignerait
+    // une entité que le projet n'a jamais reçue, et n'effacerait rien.
+    entityId: identiteDePont(clientCompanyId),
     deleted: true,
     payload: null,
     modifiedAt: nowIso(),

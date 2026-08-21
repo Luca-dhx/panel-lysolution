@@ -227,6 +227,102 @@ section('3. Le rattachement — une entreprise, plusieurs projets');
   const journal = await PanelSyncJournalEntry.find({ 'change.entityType': 'CLIENT_COMPANY' }).lean();
   check('chaque écriture nomme SON destinataire',
     journal.length > 0 && journal.every((e) => e.audience !== null));
+
+  /**
+   * ── CHAQUE ÉCRITURE EST CONFORME AU CONTRAT — LE CONTRÔLE QUI MANQUAIT ──
+   *
+   * ══ L'INCIDENT ════════════════════════════════════════════════════════
+   *
+   * `entityId` recevait `clientCompanyId` — un identifiant opaque court, pas
+   * un UUID. Le Panel journalisait sans broncher ; le projet, qui valide en
+   * `.strict()`, ÉCARTAIT l'écriture. Or une écriture écartée à la lecture
+   * est une PERTE DÉFINITIVE : le curseur avance, le Panel ne relivre pas.
+   * L'entreprise cliente n'arrivait jamais, paiements et signatures
+   * restaient bloqués, et rien côté Panel ne paraissait anormal.
+   *
+   * ══ POURQUOI CE CONTRÔLE-CI, ET PAS UN ASSERT SUR LA FORME DE L'UUID ══
+   *
+   * Parce qu'il relit la production RÉELLE avec le schéma que le PROJET
+   * applique. Un contrôle sur la forme aurait vérifié ce qu'on croit ; 
+   * celui-ci vérifie ce que l'autre bout exigera.
+   */
+  const { syncChangeSchema } = await import('../backend/src/bridge/bridgeContract.js');
+  const nonConformes = journal
+    .map((e) => ({ e, r: syncChangeSchema.safeParse(e.change) }))
+    .filter((x) => !x.r.success);
+  check('chaque écriture publiée est LISIBLE par un projet conforme',
+    nonConformes.length === 0);
+
+  /**
+   * L'IDENTIFIANT MÉTIER RESTE LISIBLE DANS LA CHARGE UTILE.
+   *
+   * La dérivation ne doit pas rendre la corrélation humaine impossible :
+   * sans `clientCompanyId` dans le payload, plus personne ne saurait relier
+   * une écriture du journal à une fiche du Panel.
+   */
+  check('l’identifiant métier voyage dans la charge utile',
+    journal.filter((e) => !e.change.deleted)
+      .every((e) => typeof e.change.payload?.clientCompanyId === 'string'));
+
+  /**
+   * LE RETRAIT DÉSIGNE LA MÊME ENTITÉ QUE LA PUBLICATION.
+   *
+   * Deux dérivations différentes produiraient un tombstone qui ne désigne
+   * rien : le projet garderait une entreprise que le Panel croit retirée.
+   */
+  const parEntreprise = new Map();
+  for (const e of journal) {
+    if (e.change.deleted) continue;
+    parEntreprise.set(e.change.payload.clientCompanyId, e.change.entityId);
+  }
+  const pierres = journal.filter((e) => e.change.deleted);
+  check('un retrait porte l’identité d’entité de la publication',
+    pierres.every((e) => [...parEntreprise.values()].includes(e.change.entityId)));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('3 bis. L’émission — une écriture non conforme NE NAÎT PAS');
+{
+  /**
+   * La garde vit dans `emitChange`, l'unique naissance d'une écriture. La
+   * placer là la rend valable pour TOUS les types, y compris ceux qui
+   * n'existent pas encore — et un producteur fautif échoue chez lui, tout de
+   * suite, plutôt que des semaines plus tard à l'autre bout.
+   */
+  const { emitChange } = await import('../backend/src/services/sync/syncCore.service.js');
+  const { PanelSyncJournalEntry } = await import('../backend/src/models/PanelSyncState.model.js');
+
+  const avant = await PanelSyncJournalEntry.countDocuments();
+  let refusee = null;
+  try {
+    await emitChange({
+      entityType: 'CLIENT_COMPANY',
+      entityId: 'cc217bdccb550b4514ae7b',   // l'identifiant métier, pas un UUID
+      payload: { clientCompanyId: 'cc217bdccb550b4514ae7b' },
+      audience: 'p-quelconque',
+    });
+  } catch (e) { refusee = e; }
+  const apres = await PanelSyncJournalEntry.countDocuments();
+
+  check('un entityId qui n’est pas un UUID est REFUSÉ', refusee !== null);
+  check('le refus nomme le champ fautif',
+    /entityId/.test(refusee?.message ?? ''));
+  check('le refus explique la conséquence (aucune relivraison)',
+    /relivr/i.test(refusee?.message ?? ''));
+  check('AUCUNE trace n’est laissée dans le journal', apres === avant);
+
+  /**
+   * La dérivation, elle, passe — et elle est STABLE : même graine, même
+   * identifiant, sans quoi l'idempotence du pont ne tiendrait pas d'un
+   * redémarrage à l'autre.
+   */
+  const { stableBridgeId } = await import('../backend/src/bridge/bridgeContract.js');
+  const u1 = stableBridgeId('client-company:cc217bdccb550b4514ae7b');
+  const u2 = stableBridgeId('client-company:cc217bdccb550b4514ae7b');
+  check('la dérivation produit un UUID', /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(u1));
+  check('la dérivation est STABLE', u1 === u2);
+  check('deux entreprises ne partagent pas une identité',
+    u1 !== stableBridgeId('client-company:cc999999999999999999999'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

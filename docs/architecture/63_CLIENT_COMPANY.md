@@ -270,6 +270,31 @@ implémentations divergeraient au premier changement de mention obligatoire.
 L'autorisation est portée par l'**écriture**, jamais par un filtre appliqué à la
 lecture.
 
+## 10 bis. L'identité de l'écriture n'est pas l'identité de la fiche
+
+| | Valeur | Où |
+|---|---|---|
+| identifiant **métier** | `cc217bdccb550b4514ae7b` | la fiche, les URL d'écran, la charge utile |
+| identifiant **d'entité** | UUID v5 dérivé | l'écriture du pont (`entityId`) |
+
+Le contrat impose `entityId: uuid`. L'identifiant métier n'en est pas un :
+il est court et opaque, choisi pour être lisible dans une URL. Émis tel quel,
+il faisait **écarter** l'écriture à l'arrivée — et un rejet de lecture est une
+perte définitive : le curseur avance, le Panel ne relivre pas.
+
+La dérivation est un UUID v5 : `stableBridgeId('client-company:<id>')`. Même
+graine, même identifiant, pour toujours — l'idempotence du pont, qui repose
+sur `entityId`, tient d'un redémarrage à l'autre.
+
+**Le retrait emprunte la MÊME dérivation.** Un tombstone n'a pas de charge
+utile : il ne désigne l'entreprise que par son `entityId`. Deux dérivations
+différentes produiraient un retrait qui ne désigne rien, et le projet
+garderait une entreprise que le Panel croit détachée.
+
+Côté projet, l'identifiant d'écriture est **mémorisé** à l'application du
+profil, jamais rederivé : rederiver dupliquerait un algorithme du Panel, qui
+finirait par diverger.
+
 ## 11. Permissions
 
 ```text

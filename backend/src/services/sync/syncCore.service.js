@@ -24,6 +24,7 @@ import {
   EMITTERS,
   newBridgeId,
   nowIso,
+  syncChangeSchema,
 } from '../../bridge/bridgeContract.js';
 import {
   PanelCounter,
@@ -313,6 +314,50 @@ export async function emitChange({
    * bogue serait découvert côté projet, des semaines plus tard.
    */
   assertNoProviderSecrets(payload, { label: `${entityType}.payload` });
+
+  /**
+   * ── LA SECONDE FRONTIÈRE : LA FORME DE L'ÉCRITURE ELLE-MÊME ─────────────
+   *
+   * ══ L'INCIDENT QUI A RENDU CE CONTRÔLE NÉCESSAIRE ══════════════════════
+   *
+   * Une écriture `CLIENT_COMPANY` a été journalisée avec un `entityId` qui
+   * n'était pas un UUID — l'identifiant métier, émis tel quel. Le Panel l'a
+   * acceptée sans broncher : rien ici ne relisait sa propre production.
+   *
+   * Le projet, lui, valide (`.strict()`), et l'a donc ÉCARTÉE. Or une
+   * écriture écartée à la lecture est une PERTE DÉFINITIVE : le curseur
+   * avance, le Panel ne relivre pas. L'entreprise cliente n'est jamais
+   * arrivée, paiements et signatures sont restés bloqués, et côté Panel tout
+   * paraissait normal — l'écriture était bien partie.
+   *
+   * ══ POURQUOI ICI, ET POURQUOI AVANT `create` ═══════════════════════════
+   *
+   * Ici, parce que c'est l'unique naissance d'une écriture : le contrôle
+   * vaut alors pour TOUS les types, y compris ceux qui n'existent pas
+   * encore. Avant `create`, parce qu'une écriture non conforme ne doit
+   * laisser aucune trace : journalisée, elle serait rejouée à chaque
+   * rattrapage et rejetée à chaque fois.
+   *
+   * ══ ELLE LÈVE, ELLE NE CORRIGE PAS ════════════════════════════════════
+   *
+   * Deviner un identifiant de remplacement produirait une écriture que
+   * personne n'a demandée, et l'idempotence reposerait sur une valeur
+   * inventée. L'appelant doit dériver son identifiant lui-même
+   * (`stableBridgeId`) — et l'échec est immédiat, chez le producteur.
+   */
+  const forme = syncChangeSchema.safeParse({
+    writeId, entityType, entityId, deleted, payload, modifiedAt, emitter,
+  });
+  if (!forme.success) {
+    const motifs = forme.error.issues
+      .map((i) => `${i.path.join('.') || '(racine)'} : ${i.message}`)
+      .join(' ; ');
+    throw new Error(
+      `Écriture ${entityType} non conforme au contrat de pont — ${motifs}. `
+      + 'Elle n’a pas été journalisée : un projet l’aurait écartée à la lecture, '
+      + 'et une écriture écartée n’est jamais relivrée.',
+    );
+  }
 
   const entry = {
     seq: await nextJournalSeq(),

@@ -147,6 +147,43 @@ compteur de séquence. Une relivraison après redémarrage répond donc
 `DUPLICATE` — elle n'est jamais réappliquée. Un curseur de pull reste valide
 de part et d'autre d'un redémarrage.
 
+### 4.1 Une écriture NON CONFORME ne naît pas
+
+`emitChange` est l'unique naissance d'une écriture destinée à un projet.
+Avant d'écrire au journal, elle relit sa propre production avec
+`syncChangeSchema` — le schéma que le PROJET appliquera.
+
+**L'incident qui a rendu ce contrôle nécessaire.** Une écriture
+`CLIENT_COMPANY` a été journalisée avec un `entityId` qui n'était pas un
+UUID : l'identifiant métier, émis tel quel. Le Panel l'a acceptée — rien ne
+relisait sa propre production. Le projet, lui, valide en `.strict()`, et l'a
+donc **écartée**.
+
+```text
+une écriture écartée à la LECTURE est une PERTE DÉFINITIVE
+  le curseur avance, le Panel ne relivre pas
+```
+
+L'entreprise cliente n'est jamais arrivée. Paiements et signatures sont
+restés bloqués. Et côté Panel, tout paraissait normal : l'écriture était
+bien partie.
+
+La garde **lève**, elle ne corrige pas. Deviner un identifiant de
+remplacement produirait une écriture que personne n'a demandée, et
+l'idempotence du pont reposerait sur une valeur inventée. Le producteur
+dérive lui-même son identifiant :
+
+```js
+entityId: stableBridgeId(`client-company:${clientCompanyId}`)   // UUID v5
+```
+
+Même graine, même identifiant, toujours — l'idempotence tient, et
+l'identifiant lisible reste dans la charge utile pour la corrélation humaine.
+
+Elle est posée **avant** `create`, pour la même raison que la garde des
+secrets : une écriture non conforme journalisée serait rejouée à chaque
+rattrapage, et rejetée à chaque fois.
+
 ## 4 bis. Ce que le Panel PUBLIE vers un projet
 
 Le journal des écritures sortantes porte deux natures d'audience, et la

@@ -43,6 +43,7 @@ const { PanelEvent } = await import('../backend/src/models/PanelSupervision.mode
 const { emitChange, resetSyncCore, currentCursor } = await import(
   '../backend/src/services/sync/syncCore.service.js'
 );
+const { stableBridgeId } = await import('../backend/src/bridge/bridgeContract.js');
 const consommation = await import('../backend/src/services/supervision/bridgeConsumption.service.js');
 const alerting = await import('../backend/src/services/supervision/bridgeAlerting.service.js');
 const registre = await import('../backend/src/services/registry/projectRegistry.service.js');
@@ -115,8 +116,14 @@ section('3. L’ÂGE DU RETARD — le seul signal qui distingue les deux cas');
   /* Le Panel publie quelque chose pour CE projet. */
   await emitChange({
     entityType: 'CLIENT_COMPANY',
-    entityId: 'cc-test',
-    payload: { legalName: 'X' },
+    /**
+     * UN VRAI IDENTIFIANT D'ENTITÉ — le contrat impose un UUID, et l'émission
+     * le VÉRIFIE désormais. Une graine lisible mise ici sans dérivation ferait
+     * échouer le test, ce qui est exactement le but : c'est ce défaut-là qui a
+     * empêché une entreprise cliente d'atteindre son projet.
+     */
+    entityId: stableBridgeId('client-company:cc-test'),
+    payload: { clientCompanyId: 'cc-test', legalName: 'X' },
     modifiedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
     audience: PROJET,
   });
