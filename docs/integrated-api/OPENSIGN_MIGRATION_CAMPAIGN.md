@@ -680,4 +680,180 @@ d'appartenance retirés, stockage de recette effacé après l'étape 7.
 
 ---
 
+## LOT 7 — LES ÉCRANS
+
+### 7.1 Aucun écran ne nomme le prestataire
+
+Ni l'ancien, ni le nouveau. Le client n'a jamais eu à connaître celui d'hier :
+la bascule ne doit pas servir de prétexte pour faire entrer un nom là où aucun
+n'était admis.
+
+`ContractTimeline` attribuait les lignes de webhook à « Yousign ». Une timeline
+est un dossier qu'on relit des années plus tard : elle aurait attribué à
+l'ancien des actes du nouveau. Elle dit désormais « Plateforme de signature »,
+ce qui reste vrai des deux côtés de la bascule.
+
+`signatureUx.test.mjs` verrouille l'ensemble — en distinguant le CODE des
+COMMENTAIRES. Un contrôle qui ne ferait pas cette distinction serait satisfait
+en effaçant l'histoire, c'est-à-dire au pire prix.
+
+### 7.2 La preuve d'audit est offerte, et jamais confondue
+
+Un bouton distinct de celui du contrat signé, gardé par `hasCertificate` — un
+contrat signé avant la bascule n'en a pas, et un bouton sans garde répondrait
+404 en faisant croire à une panne. Le nom de fichier proposé ne ment pas :
+« certificat-signature-… », jamais « contrat-… ».
+
+### 7.3 Deux défauts réels dans le pont
+
+| Où | Ce qui était écrit | Ce que ça produisait |
+|---|---|---|
+| `projectSync.service.js` | `contract.yousign` en dur | le Panel voyait `signatureStatus: NONE` et « GÉNÉRÉ » sur tout contrat récent — un contrat au repos pendant qu'une signature était en cours |
+| `syncTriggers.js` | surveillait le même bloc | une signature qui progressait ne faisait **rien partir** — sans erreur, jusqu'au prochain redémarrage |
+
+Le second est le symptôme exact qui avait motivé l'ajout de `document` à cette
+liste en son temps. La règle était écrite ; elle n'a pas suivi le renommage.
+
+---
+
+## LOT 8 — RETRAIT DU RUNTIME
+
+### 8.1 Ce qui a été mesuré avant de supprimer
+
+`tools/opensign/inventaireLiens.mjs`, sur les **deux** bases :
+
+| | TEST | PROD |
+|---|---|---|
+| demandes vivantes chez l'ancien | 0 | 0 |
+| liens antérieurs au champ `provider` | 0 | 0 |
+
+Aucun engagement en cours n'a donc été abandonné. Si ce compte avait été
+différent, le retrait aurait dû attendre — c'est la seule raison pour laquelle
+cet inventaire existe.
+
+### 8.2 Ce qui disparaît, ce qui reste
+
+**Supprimés** : `yousignTransport.js` et `yousignAdapters.js` — les seuls
+endroits du Panel qui parlaient HTTP à ce fournisseur.
+
+**Remplacés par** `retiredSignatureProvider.js`, qui sert les **six** actes par
+un refus lisible, propre à chaque acte, et qui **ne lit aucune credential**.
+
+Pourquoi pas rien du tout : le contrôle d'alignement exige que chaque
+exécutant du domaine serve tous les actes. Une table absente aurait produit,
+sur une demande de 2025, une exception nue — en production, sans message,
+devant quelqu'un qui cherche son contrat.
+
+| Acte | Ce que le refus dit |
+|---|---|
+| `open` | relancez depuis le contrat, chez le fournisseur actif |
+| `retrieve` | l'état enregistré à l'achèvement fait foi |
+| `signer.retrieve` | les liens ont expiré avec lui |
+| `document.download` | **le PDF signé est archivé dans le projet** |
+| `certificate.download` | la preuve vit dans l'espace de son compte |
+| `cancel` | à clore depuis son espace, si elle est encore ouverte |
+
+### 8.3 « Les contrats historiques restent lisibles »
+
+Pas grâce à ce module : grâce au fait qu'un contrat signé est **archivé dans
+le projet** à l'achèvement. Sa lecture ne dépend d'aucun fournisseur — et c'est
+exactement ce qui rend ce retrait possible.
+
+### 8.4 L'inventaire, classé
+
+`tools/opensign/inventaireYousign.mjs` classe chaque occurrence des deux
+dépôts et **sort non nul** tant qu'un chemin d'exécution subsiste.
+
+| Classe | Avant le lot | Après |
+|---|---|---|
+| `ACTIVE_RUNTIME` | 4 | **0** |
+| `À CLASSER` | 12 | **0** |
+| `DEAD` | 0 | 0 |
+| `HISTORICAL_COMPAT` | 13 | 23 |
+
+Les motifs de classement ont été élargis **après avoir regardé chaque
+fichier**, jamais pour vider une colonne : élargir jusqu'à ce que tout passe
+transformerait l'inventaire en tampon.
+
+---
+
+## LOT 9 — RETRAIT DES IDENTIFIANTS ET DU WEBHOOK
+
+### 9.1 Ce que la base gardait
+
+`tools/opensign/peekYousignRecords.mjs` (secrets masqués) :
+
+| Base | Jeux d'identifiants | Liaison de webhook |
+|---|---|---|
+| TEST | 2 — un `VALID` (clé de bac à sable) | 1, `remoteWebhookId: null` |
+| PROD | 2 — **tous deux vides** | 1, `remoteWebhookId: null` |
+
+La liaison TEST portait le message du fournisseur : « *This operation is not
+available in Sandbox* ». Autrement dit **aucun endpoint n'a jamais été
+enregistré chez lui**, ni en bac à sable ni en production.
+
+Conséquence, et elle change tout : il n'y a **rien à débrancher de son
+côté**, donc aucun appel à lui passer — ce qui tombe bien, puisque son
+transport n'existe plus. Le retrait est entièrement local.
+
+La migration **refuse de s'exécuter** si un `remoteWebhookId` non nul
+apparaît : supprimer la liaison effacerait la seule trace de ce qu'il faudrait
+débrancher.
+
+### 9.2 Ce qui a été retiré
+
+- les **rôles de credential** (registre) — il n'y a plus rien à saisir ;
+- les **hôtes d'API** — plus une ligne ne sait où le joindre ;
+- le **validateur** et sa sonde de webhook — un validateur rend le bouton
+  « tester la connexion » actif, donc INVITE à coller une clé ;
+- le **descripteur de webhook** — il annonçait `HMAC_SHA256_BODY` sans secret
+  pour le vérifier, c'est-à-dire une garde qui n'existe plus ;
+- **2 jeux de credentials et 1 liaison par base**, supprimés.
+
+### 9.3 Ce qui reste, et pourquoi
+
+L'entrée de registre, marquée `retired: true` avec sa date. La supprimer aurait
+été plus net, et faux : la résolution répondrait `UNKNOWN_PROVIDER` — un
+message qui envoie chercher une faute de frappe là où il n'y a qu'une page
+d'histoire.
+
+La passerelle **ne résout plus d'identifiants** pour un fournisseur retiré. Le
+faire produirait `CAPABILITY_CREDENTIALS_MISSING`, un message qui envoie
+l'exploitant en saisir — exactement ce que le retrait interdit.
+
+### 9.4 Un défaut réel, révélé par le retrait
+
+`BUSINESS_CRITICAL`, la table de gravité des webhooks, nommait `YOUSIGN` — et
+n'avait **jamais suivi** quand OpenSign a pris le relais. Pendant toute la
+bascule, un webhook de SIGNATURE en panne était rapporté en simple `WARNING` :
+absent du rapport de déploiement, alors que c'est l'événement qui dit « le
+contrat est signé ».
+
+### 9.5 Et un défaut d'outillage
+
+Le récapitulatif de la suite du Panel disait « 138/141 fichiers OK » sans
+nommer les fautifs. Sur 141 fichiers à sortie héritée, retrouver les trois
+demandait de remonter des milliers de lignes entrelacées de journaux — en
+pratique, on relançait tout. Un compteur nu est un résumé qui coûte plus cher
+qu'il ne rapporte. Les échecs sont désormais **nommés**, avec leur code.
+
+---
+
+## LOT 10 — DOCUMENTATION
+
+- **SB Auto** : `docs/SIGNATURE.md` devient l'autorité. Les quatre documents
+  qui décrivaient l'intégration directe portent un bandeau *RAPPORT
+  HISTORIQUE* et restent lisibles — ils expliquent des décisions dont on
+  hérite (les ratios plutôt que les pixels, l'ordre DEV puis client). Les
+  renvois des neuf documents qui les citaient pointent vers le nouveau.
+- **Panel** : ce journal, plus
+  `docs/integrated-api/OPENSIGN_API_AUDIT_AND_FOUNDATION.md` pour l'audit
+  d'API.
+
+Le contrôle `docs-runtime-sync.test.js` vérifie qu'aucun document ACTIF ne
+présente une architecture supprimée comme courante. C'est lui qui a imposé les
+bandeaux plutôt qu'un simple lien.
+
+---
+
 *(Sections suivantes ajoutées au fil des lots.)*
