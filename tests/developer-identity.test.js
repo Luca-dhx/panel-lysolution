@@ -157,7 +157,21 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
   // Backend : le Panel héberge désormais ses médias.
   check('la route d’import existe', /router\.post\('\/image', upload\.single\('file'\)/.test(routes));
   check('…réservée aux DEV', /router\.use\(requirePanelDev\)/.test(routes));
-  check('…limitée en taille', /fileSize: 12 \* 1024 \* 1024/.test(routes));
+  /*
+    LA BORNE EXISTE — et elle ne s'écrit plus dans la route.
+
+    Ce contrôle cherchait le littéral `fileSize: 12 * 1024 * 1024`. Le produit
+    a depuis déplacé la valeur dans la table de politique (`mediaPolicy.js`) et
+    la route l'importe : un nombre écrit à deux endroits finit par diverger, et
+    c'est la route qui aurait gagné en silence.
+
+    On vérifie donc l'invariant, qui est plus fort que le littéral : la route
+    BORNE l'entrée, et la borne vient de la politique.
+  */
+  check('…limitée en taille', /limits: \{ fileSize: MAX_INPUT_BYTES \}/.test(routes));
+  check('…et la borne vient de la POLITIQUE, pas d’un nombre écrit ici',
+    /import \{[^}]*MAX_INPUT_BYTES[^}]*\} from '\.\.\/services\/upload\/mediaPolicy\.js'/.test(routes)
+    && !/fileSize: \d+ \* 1024/.test(routes));
   check('…et aux images', /startsWith\('image\//.test(routes));
   check('le nom de fichier ne peut pas sortir du dossier', /a-z0-9_-/.test(routes));
   check('le fichier est RÉÉCRIT, jamais servi tel quel',
@@ -292,14 +306,46 @@ section('9. Architecture — médias partagés et adresse dérivée, sans régla
   const service = lire('backend/src/services/upload/upload.service.js');
   const companyService = lire('backend/src/services/company/company.service.js');
 
-  // Les médias suivent l'architecture du stockage : shared/ + lien symbolique.
+  /*
+    ══ LES COMMANDES ONT CHANGÉ DE MAISON, PAS D'EXISTENCE ═══════════════════
+
+    Ces trois contrôles cherchaient `mkdir`, `rm -rf` et `ln -sfn` dans
+    `deploy/lib/plan.mjs`. Ce fichier DÉCRIVAIT autrefois les commandes ; il ne
+    les décrit plus, et c'est une décision assumée du moteur :
+
+      « VIDE, ET C'EST EXACT. Les commandes appartiennent au pipeline, qui les
+        compose au moment de l'exécution à partir du transport. En afficher une
+        recopie serait réintroduire la fiction que ce lot a supprimée. »
+
+    Le plan déclare désormais des LIENS (`{from, to}`) ; le pipeline exécute.
+    Chercher un shell dans une description revenait à exiger le retour de la
+    recopie que le produit a retirée.
+
+    Le troisième contrôle était par ailleurs faux en lui-même : deux `indexOf`
+    absents rendent `-1 < -1`, donc `false`, quelle que soit la réalité. Il
+    n'aurait jamais pu passer, même en présence des commandes.
+
+    On vise donc l'exécutant. L'invariant y est plus fort qu'avant : la
+    suppression et la pose du lien tiennent dans UNE SEULE commande, donc leur
+    ordre n'est plus une coïncidence de lecture mais une garantie du shell.
+  */
+  const pipeline = lire('backend/src/deployment-engine/pipeline.js');
+
   check('le dossier partagé est déclaré', deployConfig.includes('sharedUploads: `${siteRoot}/shared/uploads`'));
-  check('…créé s’il manque', deployPlan.includes('mkdir -p ${paths.sharedUploads}'));
+  check('…et le plan déclare le lien à poser',
+    /\{ from: `\$\{topo\.backendDir\}\/uploads`, to: topo\.sharedUploads \}/.test(deployPlan));
+
+  const preparation = pipeline.slice(pipeline.indexOf("commandId: 'release.prepare_dirs'"));
+  check('…créé s’il manque', /mkdir -p [^`]*\$\{sharedUploads\}/.test(preparation.slice(0, 400)));
+
+  const liaison = pipeline.slice(pipeline.indexOf("commandId: 'release.link_shared'"));
+  const commandeLien = liaison.slice(0, 400);
   check('…et le lien refait à CHAQUE release',
-    deployPlan.includes('ln -sfn ${paths.sharedUploads} ${releaseDir}/backend/uploads'));
+    /ln -sfn \$\{sharedUploads\} \$\{backendDir\}\/uploads/.test(commandeLien));
   check('…après suppression, sinon le lien se créerait DANS le dossier',
-    deployPlan.indexOf('rm -rf ${releaseDir}/backend/uploads')
-      < deployPlan.indexOf('ln -sfn ${paths.sharedUploads}'));
+    commandeLien.indexOf('rm -rf ${backendDir}/uploads') !== -1
+    && commandeLien.indexOf('rm -rf ${backendDir}/uploads')
+       < commandeLien.indexOf('ln -sfn ${sharedUploads}'));
   check('le code ne connaît qu’un chemin, le sien',
     /uploads: path\.resolve\(process\.cwd\(\), 'uploads'\)/.test(env));
   check('…et AUCUNE variable d’environnement dédiée aux médias',

@@ -394,6 +394,14 @@ const TESTS = [
   'panel-branding.test.js',
   // LOT F — l'identité visuelle du Panel, avant toute session.
   'panel-public-branding.test.js',
+  // L'IDENTITÉ DÉVELOPPEUR — présente sur le disque depuis sa création, jamais
+  // enregistrée ici. La chaîne annonçait « tous fichiers OK » sans l'exécuter :
+  // un contrôle hors chaîne ne protège rien, et son silence se lit comme un
+  // succès. Elle vérifie que la fiche d'entreprise du Panel porte réellement ce
+  // que TOUS les projets affichent — champs, validation du signataire, éditeur
+  // de références, import de logo — et que les médias suivent l'architecture
+  // partagée du déploiement.
+  'developer-identity.test.js',
   'developer-branding-propagation.test.js',
   'developer-branding-instance-ack-e2e.test.js',
   // Cross-dépôt : un vrai SB Auto, dans son processus, tire et applique.
