@@ -299,25 +299,61 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
     ]),
   }),
 
+  /**
+   * YOUSIGN — RETIRÉ. Il reste au registre pour Être RECONNU, pas pour servir.
+   *
+   * ══ POURQUOI UNE ENTRÉE QUI NE SERT PLUS ══════════════════════════
+   *
+   * La supprimer aurait été plus net, et faux. Des liens d'appartenance écrits
+   * avant la bascule désignent encore ce fournisseur : sans entrée, la
+   * résolution répondrait `UNKNOWN_PROVIDER` — un message qui envoie chercher
+   * une faute de frappe là où il n'y a qu'une page d'histoire.
+   *
+   * Ce qui a disparu, en revanche, est TOUT ce qui permettait de s'en servir :
+   *
+   *   · les rôles de credential  — il n'y a plus rien à saisir, donc plus rien
+   *                                 à stocker, donc plus rien à fuiter ;
+   *   · les hôtes d'API           — aucun code ne peut plus les composer ;
+   *   · la réconciliation de webhook — il n'y a plus de secret pour la signer.
+   *
+   * Les capacités restent déclarées : le contrôle d'alignement exige que chaque
+   * exécutant du domaine serve tous les actes, et `retiredSignatureProvider.js`
+   * les sert — par un refus lisible.
+   *
+   * ══ CE QUI A ÉTÉ MESURÉ AVANT DE RETIRER ═══════════════════════════
+   *
+   * Sur les deux bases (`tools/opensign/peekYousignRecords.mjs`) :
+   *
+   *   TEST  2 jeux de credentials (un valide), 1 liaison de webhook
+   *         `remoteWebhookId: null` — le bac à sable refuse la création par API
+   *   PROD  2 jeux de credentials VIDES, 1 liaison `remoteWebhookId: null`
+   *
+   * Autrement dit : AUCUN webhook n'a jamais été enregistré chez ce
+   * fournisseur, et rien ne reste à débrancher de son côté. Le retrait est
+   * entièrement local — ce qui n'était pas acquis, et qu'il fallait vérifier
+   * avant de supprimer la trace qui l'aurait dit.
+   */
   YOUSIGN: Object.freeze({
     code: 'YOUSIGN',
-    label: 'Yousign',
+    label: 'Yousign (retiré)',
     category: 'SIGNATURE',
     scope: SCOPES.ENVIRONMENT,
     tokenStrategy: TOKEN_STRATEGIES.STATIC_KEY,
-    supportsTest: true,
-    supportsProd: true,
-    supportsWebhookReconciliation: true,
-    webhookSecretReturnedAtCreationOnly: true,
-    documentation: 'https://developers.youtrust.com/docs/webhooks',
-    console: 'https://yousign.app',
     /**
-     * Yousign est devenu Youtrust en juillet 2026 et `developers.yousign.com`
-     * redirige. Les hôtes d'API ci-dessous restent ceux que le code du projet
-     * utilise en production ; ils sont stockés en base et ÉDITABLES, ce qui
-     * contient le risque. Vérification en prérequis de L7 (audit §16, R5).
+     * RETIRÉ — lu par la passerelle, qui n'ira pas chercher de credential pour
+     * un fournisseur qui n'en a plus. Sans ce drapeau, un appel hérité
+     * échouerait sur « identifiants manquants » au lieu de dire la vérité :
+     * ce fournisseur ne sert plus.
      */
-    rebrandWatch: 'Yousign → Youtrust (2026-07) : hôtes d’API à revérifier avant L7.',
+    retired: true,
+    retiredAt: '2026-08-21',
+    retirementNote:
+      'Remplacé par OPENSIGN. Les contrats signés chez lui restent lisibles : '
+      + 'leur PDF est archivé dans le projet.',
+    supportsTest: false,
+    supportsProd: false,
+    supportsWebhookReconciliation: false,
+    documentation: 'https://developers.youtrust.com/docs/webhooks',
     capabilities: Object.freeze([
       'signature.request.open',
       'signature.request.retrieve',
@@ -326,59 +362,8 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       'signature.certificate.download',
       'signature.request.cancel',
     ]),
-    credentialRoles: Object.freeze([
-      role('apiKey', 'Clé API', { secret: true, required: true }),
-      role('webhookSecret', 'Secret de signature webhook', {
-        secret: true,
-        required: false,
-        autoManaged: true,
-        hint: 'Rendu à la création de la souscription (L5).',
-      }),
-      role('webhookSecretPrevious', 'Secret de webhook retiré', {
-        secret: true,
-        required: false,
-        autoManaged: true,
-        internal: true,
-        hint: 'Conservé quelques minutes après une recréation, le temps que les événements en vol se vident.',
-      }),
-      role('baseUrl', 'URL de base de l’API', {
-        secret: false,
-        required: false,
-        // Deux HÔTES distincts : la séparation est imposée par le fournisseur.
-        defaultValue: environmentDefault({
-          TEST: 'https://api-sandbox.yousign.app/v3',
-          PROD: 'https://api.yousign.app/v3',
-        }),
-        /**
-         * L'HÔTE ATTENDU PAR ENVIRONNEMENT — une CONTRAINTE, pas un défaut.
-         *
-         * ══ L'INCIDENT QUI A RENDU CE CHAMP NÉCESSAIRE ═════════════════════
-         *
-         * Le jeu TEST a été enregistré avec `https://api.yousign.app/v3` —
-         * l'hôte de PRODUCTION. La clé de bac à sable était parfaitement
-         * valide ; envoyée à l'hôte de production, elle recevait
-         * `403 You cannot consume this service` sur CHAQUE route. Le Panel a
-         * conclu « clé invalide », et l'opérateur a cherché pendant ce temps
-         * du côté de sa clé.
-         *
-         * Un défaut n'y pouvait rien : c'est une valeur PROPOSÉE, qu'une
-         * saisie remplace. Ce qui manquait était une contrainte — un jeu TEST
-         * ne peut pas pointer vers l'hôte de production, et réciproquement.
-         * La règle vit ici, avec les hôtes, parce que c'est le seul endroit
-         * qui sait qu'ils sont deux.
-         *
-         * ── POURQUOI L'HÔTE ET NON L'URL ENTIÈRE ───────────────────────────
-         *
-         * Un chemin peut légitimement varier (`/v3`, un préfixe de proxy). Ce
-         * qui ne peut pas varier, c'est le MONDE qu'on interroge, et le monde
-         * est porté par l'hôte.
-         */
-        environmentHosts: Object.freeze({
-          TEST: 'api-sandbox.yousign.app',
-          PROD: 'api.yousign.app',
-        }),
-      }),
-    ]),
+    /** Plus aucun rôle : il n'y a plus rien à saisir pour ce fournisseur. */
+    credentialRoles: Object.freeze([]),
   }),
 
   /**

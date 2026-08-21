@@ -45,7 +45,14 @@ await connectTestDatabase();
 const SENTINELLES = Object.freeze({
   STRIPE: forme.stripeTest('STRIPESUPERSECRETSENTINEL000'),
   BREVO: forme.brevoApiKey('BREVOSUPERSECRETSENTINEL0002'),
-  YOUSIGN: 'YOUSIGNSUPERSECRETSENTINEL0003',
+  /**
+   * LA SENTINELLE DE SIGNATURE SUIT LE FOURNISSEUR QUI SERT.
+   *
+   * Elle portait le nom de l'ancien. Il est retiré et n'a plus de rôle : le
+   * coffre refuserait de l'enregistrer, et le contrôle — « aucun secret ne
+   * fuit » — aurait cessé de porter sur la signature, silencieusement.
+   */
+  OPENSIGN: forme.openSignApiToken('OPENSIGNSUPERSECRETSENTINEL003'),
   HOSTINGER: 'HOSTINGERSUPERSECRETSENTINEL0004',
 });
 const TOUTES = Object.values(SENTINELLES);
@@ -91,7 +98,7 @@ section('Les sentinelles sont dans le coffre du Panel');
 {
   await controlPlane.saveCredentialSet('STRIPE', 'TEST', { values: { secretKey: SENTINELLES.STRIPE } }, ACTEUR);
   await controlPlane.saveCredentialSet('BREVO', 'TEST', { values: { apiKey: SENTINELLES.BREVO } }, ACTEUR);
-  await controlPlane.saveCredentialSet('YOUSIGN', 'TEST', { values: { apiKey: SENTINELLES.YOUSIGN } }, ACTEUR);
+  await controlPlane.saveCredentialSet('OPENSIGN', 'TEST', { values: { apiToken: SENTINELLES.OPENSIGN } }, ACTEUR);
   await controlPlane.saveCredentialSet('HOSTINGER', null, { values: { apiToken: SENTINELLES.HOSTINGER } }, ACTEUR);
 
   const brut = await CredentialSet.collection.find({}).toArray();

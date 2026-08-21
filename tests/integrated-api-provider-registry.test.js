@@ -83,7 +83,15 @@ section('Scopes — conformes au classement de l’audit §3');
 
 section('ENVIRONMENT_PROVIDER_REQUIRES_ENVIRONMENT / PANEL_GLOBAL_PROVIDER_HAS_NO_ENVIRONMENT');
 {
-  for (const code of ['STRIPE', 'BREVO', 'YOUSIGN', 'OPENSIGN']) {
+  /**
+   * YOUSIGN A QUITTÉ CETTE BOUCLE avec ses mondes.
+   *
+   * Un fournisseur RETIRÉ ne déclare plus `supportsTest` ni `supportsProd` :
+   * il n'y a plus deux jeux de credentials à tenir, puisqu'il n'y en a plus un
+   * seul. Exiger « deux jeux » de lui reviendrait à exiger qu'on lui garde une
+   * place au coffre.
+   */
+  for (const code of ['STRIPE', 'BREVO', 'OPENSIGN']) {
     const envs = environmentsFor(code);
     check(`${code} : deux jeux, TEST et PROD`,
       envs.length === 2 && envs[0] === 'TEST' && envs[1] === 'PROD');
@@ -104,8 +112,16 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
       .every((r) => roleCodes('STRIPE').includes(r)));
   check('BREVO : apiKey, webhookSecret, baseUrl',
     ['apiKey', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('BREVO').includes(r)));
-  check('YOUSIGN : apiKey, webhookSecret, baseUrl',
-    ['apiKey', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('YOUSIGN').includes(r)));
+  /**
+   * LE FOURNISSEUR RETIRÉ N'A PLUS AUCUN RÔLE — et c'est le contrôle qui compte.
+   *
+   * Ce contrôle exigeait `apiKey, webhookSecret, baseUrl`. Il décrivait ce
+   * qu'il fallait saisir pour s'en servir ; on ne s'en sert plus, et un rôle
+   * qui subsiste, c'est un champ de saisie dans l'interface — donc une
+   * invitation à recoller une clé pour un fournisseur qui ne répond plus.
+   */
+  check('YOUSIGN (retiré) ne déclare AUCUN rôle de credential',
+    roleCodes('YOUSIGN').length === 0);
   check('OPENSIGN : apiToken, webhookSecret, baseUrl',
     ['apiToken', 'webhookSecret', 'baseUrl'].every((r) => roleCodes('OPENSIGN').includes(r)));
   // `apiToken` et non `apiKey` : c'est le nom du fournisseur (`x-api-token`).
@@ -116,7 +132,8 @@ section('Rôles de credentials — les vrais noms des drivers, rien d’inventé
   check('STRIPE requiert secretKey, et lui seul',
     requiredRoleCodes('STRIPE').length === 1 && requiredRoleCodes('STRIPE')[0] === 'secretKey');
   check('BREVO requiert apiKey', requiredRoleCodes('BREVO').join() === 'apiKey');
-  check('YOUSIGN requiert apiKey', requiredRoleCodes('YOUSIGN').join() === 'apiKey');
+  check('YOUSIGN (retiré) n’exige rien — il n’y a plus rien à exiger',
+    requiredRoleCodes('YOUSIGN').length === 0);
   check('OPENSIGN requiert apiToken', requiredRoleCodes('OPENSIGN').join() === 'apiToken');
   check('HOSTINGER requiert apiToken', requiredRoleCodes('HOSTINGER').join() === 'apiToken');
 
@@ -168,20 +185,30 @@ section('Préfixes attendus — le filet contre le copier-coller');
   check('BREVO : préfixe générique, aucune distinction d’environnement',
     brevoKey.prefixHint === 'xkeysib-' && brevoKey.prefixByEnvironment === null);
 
-  const yousignKey = credentialRoles('YOUSIGN').find((r) => r.code === 'apiKey');
-  check('YOUSIGN : aucun préfixe (c’est l’hôte qui porte le monde)',
-    yousignKey.prefixHint === null && yousignKey.prefixByEnvironment === null);
+  /**
+   * LE RÔLE `apiKey` DE YOUSIGN N'EXISTE PLUS — il n'y a donc plus de préfixe
+   * à attendre. Ce qui était éprouvé ici (le monde porté par l'HÔTE et non par
+   * la clé) l'est désormais sur OpenSign, qui a la même topologie.
+   */
+  const openSignJeton = credentialRoles('OPENSIGN').find((r) => r.code === 'apiToken');
+  check('OPENSIGN : aucun préfixe (c’est l’hôte qui porte le monde)',
+    openSignJeton.prefixHint === null && openSignJeton.prefixByEnvironment === null);
 }
 
-section('URLs par défaut — Yousign et OpenSign ont DEUX hôtes, les autres un seul');
+section('URLs par défaut — OpenSign a DEUX hôtes, les autres un seul');
 {
   check('Stripe : même hôte quel que soit l’environnement',
     defaultRoleValue('STRIPE', 'baseUrl', 'TEST') === 'https://api.stripe.com'
     && defaultRoleValue('STRIPE', 'baseUrl', 'PROD') === 'https://api.stripe.com');
-  check('Yousign TEST → sandbox',
-    defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === 'https://api-sandbox.yousign.app/v3');
-  check('Yousign PROD → production',
-    defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === 'https://api.yousign.app/v3');
+  /**
+   * LES HÔTES DE YOUSIGN ONT DISPARU AVEC SON RÔLE `baseUrl`.
+   *
+   * Ils étaient la dernière chose du Panel qui savait où le joindre. Les
+   * vérifier encore reviendrait à exiger qu'on garde l'adresse.
+   */
+  check('YOUSIGN (retiré) ne propose plus aucune URL',
+    defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === null
+    && defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === null);
   check('OpenSign TEST → sandbox',
     defaultRoleValue('OPENSIGN', 'baseUrl', 'TEST') === 'https://sandbox.opensignlabs.com/api/v1.2');
   /**
@@ -217,8 +244,18 @@ section('Webhooks — déclaratif en L1, conforme aux docs officielles');
   check('Brevo : réconciliation possible, mais AUCUNE signature',
     getProviderDefinition('BREVO').supportsWebhookReconciliation === true
     && getProviderDefinition('BREVO').webhookSignature === 'SHARED_SECRET');
-  check('Yousign : réconciliation possible',
-    getProviderDefinition('YOUSIGN').supportsWebhookReconciliation === true);
+  /**
+   * YOUSIGN NE RÉCONCILIE PLUS RIEN — il n'a plus de secret pour signer.
+   *
+   * Un descripteur qui annoncerait encore la réconciliation décrirait une garde
+   * qui n'existe plus : le réconciliateur irait chercher une clé supprimée, et
+   * conclurait « en panne » là où la vérité est « retiré ».
+   */
+  check('Yousign (retiré) : plus aucune réconciliation',
+    getProviderDefinition('YOUSIGN').supportsWebhookReconciliation === false);
+  check('…et il est marqué comme tel, avec sa date',
+    getProviderDefinition('YOUSIGN').retired === true
+    && typeof getProviderDefinition('YOUSIGN').retiredAt === 'string');
   /**
    * OPENSIGN SIGNE, MAIS NE LIVRE PAS SON SECRET — les deux à la fois.
    *
@@ -281,11 +318,28 @@ section('describeProviderDefinition — ce que l’UI rend, sans deviner');
   check('aucune valeur ne ressemble à une clé Stripe complète',
     !/sk_(test|live)_[A-Za-z0-9]{6,}/.test(JSON.stringify(vue)));
 
-  const yousignTest = describeProviderDefinition('YOUSIGN', { environment: 'TEST' });
-  const yousignProd = describeProviderDefinition('YOUSIGN', { environment: 'PROD' });
-  check('la vue Yousign change d’hôte avec l’environnement',
-    yousignTest.credentialRoles.find((r) => r.code === 'baseUrl').defaultValue
-    !== yousignProd.credentialRoles.find((r) => r.code === 'baseUrl').defaultValue);
+  /**
+   * LA VUE D'UN FOURNISSEUR À DEUX HÔTES — éprouvée sur celui qui SERT.
+   *
+   * Ce contrôle portait sur Yousign : il vérifiait que l'écran propose un hôte
+   * différent selon le monde. Le fournisseur est retiré et n'expose plus aucun
+   * rôle ; la règle, elle, vaut toujours, et OpenSign a la même topologie.
+   */
+  const openSignTest = describeProviderDefinition('OPENSIGN', { environment: 'TEST' });
+  const openSignProd = describeProviderDefinition('OPENSIGN', { environment: 'PROD' });
+  check('la vue OpenSign change d’hôte avec l’environnement',
+    openSignTest.credentialRoles.find((r) => r.code === 'baseUrl').defaultValue
+    !== openSignProd.credentialRoles.find((r) => r.code === 'baseUrl').defaultValue);
+
+  /**
+   * ET LA VUE DU RETIRÉ NE PROPOSE PLUS RIEN À SAISIR.
+   *
+   * C'est ce qui empêche l'écran d'afficher un formulaire pour un fournisseur
+   * qui ne répond plus — et donc d'inviter quelqu'un à y coller une clé.
+   */
+  const vueRetire = describeProviderDefinition('YOUSIGN', { environment: 'TEST' });
+  check('la vue du fournisseur retiré est vide de tout champ',
+    vueRetire.credentialRoles.length === 0);
 }
 
 finish();

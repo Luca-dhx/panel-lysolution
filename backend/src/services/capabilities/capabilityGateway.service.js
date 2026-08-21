@@ -61,6 +61,8 @@ import {
   describeContext, partitionKey,
 } from './invocationContext.js';
 import { resolveCredentialsForCapability } from './credentialResolver.js';
+/** Le registre dit, entre autres, si un fournisseur a été RETIRÉ. */
+import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
 import { executeCapability } from './providerAdapters.js';
 import {
   CAPABILITY_OUTCOMES,
@@ -205,7 +207,25 @@ export async function invokeCapability({
     // Les valeurs déchiffrées sont obtenues et consommées dans la même
     // expression : elles ne sont jamais liées à une variable de portée large,
     // jamais journalisées, jamais attachées à une erreur.
-    const resolved = await resolveCredentialsForCapability(context, executed);
+    /**
+     * ══ UN FOURNISSEUR RETIRÉ N'A PLUS D'IDENTIFIANTS À RÉSOUDRE ══════════
+     *
+     * C'est ce qui fait de son retrait un retrait, et non un sursis : ses
+     * rôles de credential ont disparu du registre, et ses jeux ont été
+     * supprimés de la base.
+     *
+     * Lui demander ses identifiants produirait `CAPABILITY_CREDENTIALS_MISSING`
+     * — un message qui envoie l'exploitant en saisir, c'est-à-dire exactement
+     * ce que le retrait interdit, et pour une demande qui ne partira pas.
+     *
+     * On saute donc l'étape et on laisse l'adaptateur répondre. Il refuse en
+     * nommant l'acte et en disant où regarder — la seule information utile à
+     * qui cherche un contrat de l'année dernière.
+     */
+    const fournisseurRetire = Boolean(getProviderDefinition(executed.provider)?.retired);
+    const resolved = fournisseurRetire
+      ? { values: null, environment: null, credentialSetId: null }
+      : await resolveCredentialsForCapability(context, executed);
 
     /**
      * ── 6. RÉSERVER L'OPÉRATION — LE DERNIER GESTE AVANT LE FOURNISSEUR ─────

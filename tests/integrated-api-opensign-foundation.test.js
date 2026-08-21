@@ -565,7 +565,7 @@ section('16 · Le descripteur webhook dit la vérité sur OpenSign');
   check('OpenSign n’a pas de champ description', cap.supportsDescription === false);
   check('les autres fournisseurs, eux, en ont un',
     webhookRegistry.webhookCapability('STRIPE').supportsDescription === true
-    && webhookRegistry.webhookCapability('YOUSIGN').supportsDescription === true);
+    && webhookRegistry.webhookCapability('BREVO').supportsDescription === true);
 }
 
 section('17 · La signature réelle d’OpenSign est vérifiable par le moteur générique');
@@ -919,19 +919,24 @@ section('20 · LA BASCULE — OpenSign sert, Yousign reste lisible');
     check(`« ${code} » est exécutée par OPENSIGN`,
       capabilityRegistry.getCapabilityDefinition(code)?.provider === 'OPENSIGN');
   }
-  check('OPENSIGN sert bien les cinq capacités de signature',
-    capabilityRegistry.capabilitiesForProvider('OPENSIGN').length === 5);
+  check('OPENSIGN sert bien les six capacités de signature',
+    capabilityRegistry.capabilitiesForProvider('OPENSIGN').length === 6);
 
   /**
-   * YOUSIGN N'A RIEN PERDU DE CE QU'IL SAIT FAIRE.
+   * YOUSIGN DÉCLARE ENCORE LES SIX CODES — ET NE LES SERT PLUS QUE PAR REFUS.
    *
-   * Le registre des capacités ne lui confie plus rien par DÉFAUT — mais le
-   * registre des fournisseurs continue de déclarer les cinq codes, et sa table
-   * d'adaptateurs continue de les servir. C'est ce qui rend un contrat signé
-   * l'an dernier encore relisible aujourd'hui.
+   * Ce contrôle disait « il n'a rien perdu de ce qu'il sait faire ». C'était
+   * vrai pendant la bascule ; il ne l'est plus depuis son retrait. Ce qui reste
+   * vrai, et qui compte, c'est que le domaine est COMPLET : chaque exécutant
+   * déclare tous les actes, sinon une demande historique lèverait une exception
+   * nue au lieu d'obtenir une phrase.
+   *
+   * Ce qu'il sert désormais, c'est un refus — éprouvé par
+   * `signature-provider-retirement.test.js`.
    */
-  check('YOUSIGN déclare toujours les cinq codes de signature',
-    getProviderDefinition('YOUSIGN').capabilities.length === 5);
+  check('YOUSIGN déclare toujours les six codes de signature',
+    getProviderDefinition('YOUSIGN').capabilities.length === 6);
+  check('…et il est marqué RETIRÉ', getProviderDefinition('YOUSIGN').retired === true);
   check('…et le registre ne lui en confie plus par défaut',
     capabilityRegistry.capabilitiesForProvider('YOUSIGN').length === 0);
 
@@ -960,11 +965,18 @@ section('20 · LA BASCULE — OpenSign sert, Yousign reste lisible');
 
   check('le registre des capacités reste cohérent',
     capabilityRegistry.assertRegistryAlignment().length === 0);
-  check('les hôtes Yousign n’ont pas bougé',
-    defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === 'https://api-sandbox.yousign.app/v3'
-    && defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === 'https://api.yousign.app/v3');
-  check('les deux fournisseurs ont des segments de callback DISTINCTS',
-    webhookRegistry.webhookCapability('YOUSIGN').callbackSlug !== webhookRegistry.webhookCapability('OPENSIGN').callbackSlug);
+  /**
+   * LES HÔTES DE YOUSIGN ONT DISPARU — c'était le but.
+   *
+   * Ce contrôle vérifiait qu'ajouter OpenSign n'avait rien déplacé chez
+   * l'autre. La cohabitation est finie : ce qu'on vérifie désormais, c'est que
+   * plus rien du Panel ne sait où le joindre.
+   */
+  check('plus aucune URL proposée pour le fournisseur retiré',
+    defaultRoleValue('YOUSIGN', 'baseUrl', 'TEST') === null
+    && defaultRoleValue('YOUSIGN', 'baseUrl', 'PROD') === null);
+  check('…et plus aucun webhook à réconcilier chez lui',
+    webhookRegistry.webhookCapability('YOUSIGN').supported === false);
 }
 
 section('21 · Aucun identifiant OpenSign ne vit hors du coffre du Panel');

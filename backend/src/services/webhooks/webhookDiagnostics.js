@@ -189,12 +189,23 @@ export const WEBHOOK_SEVERITY = Object.freeze({
 /**
  * Gravité d'un état, PAR FOURNISSEUR.
  *
- * Stripe et Yousign portent un état métier (un paiement encaissé, un contrat
- * signé) : un événement perdu laisse une incohérence qu'un humain devra
- * rattraper. Brevo ne porte que de la délivrabilité : le perdre dégrade le
- * suivi, jamais un état métier.
+ * Stripe et le fournisseur de SIGNATURE portent un état métier (un paiement
+ * encaissé, un contrat signé) : un événement perdu laisse une incohérence
+ * qu'un humain devra rattraper. Brevo ne porte que de la délivrabilité : le
+ * perdre dégrade le suivi, jamais un état métier.
+ *
+ * ══ UN DÉFAUT RÉVÉLÉ PAR LE RETRAIT ═══════════════════════════════
+ *
+ * Cette liste nommait `YOUSIGN` — et n'a pas suivi quand OpenSign a pris le
+ * relais. Pendant toute la bascule, un webhook de SIGNATURE en panne était donc
+ * rapporté en simple `WARNING` : le rapport de déploiement ne le montrait plus,
+ * alors que c'est l'événement qui dit « le contrat est signé ».
+ *
+ * `YOUSIGN` y reste : un état hérité en panne mérite la même visibilité, et
+ * l'entrée ne coûte rien — son webhook est désormais `UNSUPPORTED`, donc
+ * classé `INFO` avant même d'arriver ici.
  */
-const BUSINESS_CRITICAL = Object.freeze(new Set(['STRIPE', 'YOUSIGN']));
+const BUSINESS_CRITICAL = Object.freeze(new Set(['STRIPE', 'OPENSIGN', 'YOUSIGN']));
 
 export function severityFor(provider, status) {
   if (status === WEBHOOK_STATUS.READY || status === WEBHOOK_STATUS.UNSUPPORTED) {

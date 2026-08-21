@@ -249,8 +249,9 @@ section('1 · Le registre webhook est code-first et ADOSSÉ au registre fourniss
   check('Brevo : jeton posé par nous, pas de HMAC',
     WEBHOOK_CAPABILITIES.BREVO.secretDelivery === SECRET_DELIVERY.CALLER_SUPPLIED
     && WEBHOOK_CAPABILITIES.BREVO.signatureScheme === SIGNATURE_SCHEMES.SHARED_SECRET_BEARER);
-  check('Yousign : deux mondes distincts chez le fournisseur',
-    WEBHOOK_CAPABILITIES.YOUSIGN.environmentAware === true);
+  /** OpenSign a repris ce rôle : deux jetons, deux hôtes, deux comptes. */
+  check('OpenSign : deux mondes distincts chez le fournisseur',
+    WEBHOOK_CAPABILITIES.OPENSIGN.environmentAware === true);
   check('aucun fournisseur ne prétend relire son secret',
     listManagedWebhookCapabilities().every((c) => c.supportsSecretReadback === false));
   check('le plafond Stripe de 16 est DÉCLARÉ, pas découvert à l’usage',
@@ -918,7 +919,7 @@ section('L5.1 · Le rôle « secret retiré » vit dans le coffre, jamais dans u
   const { describeProviderDefinition, credentialRoles, secretRoleCodes: codesSecrets, administrableRoles } =
     await import('../backend/src/services/integratedApi/providerRegistry.js');
 
-  for (const provider of ['STRIPE', 'BREVO', 'YOUSIGN']) {
+  for (const provider of ['STRIPE', 'BREVO', 'OPENSIGN']) {
     const codes = credentialRoles(provider).map((r) => r.code);
     check(`${provider} : le rôle de secret retiré existe au registre`,
       codes.includes('webhookSecretPrevious'));
@@ -962,8 +963,8 @@ section('L5.1 · Rotation Stripe — recréer sans laisser tomber les appels en 
   check('Stripe : la fenêtre accepte aussi deux secrets', deux.length === 1 || deux.length === 2);
   check('Stripe déclare le même rôle de secret retiré',
     webhookCapability('STRIPE').secretPreviousRole === 'webhookSecretPrevious');
-  check('Yousign aussi — le mécanisme est générique, pas brevo-spécifique',
-    webhookCapability('YOUSIGN').secretPreviousRole === 'webhookSecretPrevious');
+  check('OpenSign aussi — le mécanisme est générique, pas brevo-spécifique',
+    webhookCapability('OPENSIGN').secretPreviousRole === 'webhookSecretPrevious');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -1096,8 +1097,18 @@ section('16-18 · Recevoir : prouvé, unique, et routé par le plan de contrôle
   check('une signature PÉRIMÉE est refusée (anti-rejeu)', rejoue.outcome === INGEST_OUTCOME.REJECTED);
 
   // 17 — le binding est la condition du routage.
-  const inconnu = await ingestProviderEvent({ slug: 'yousign', rawBody: corps, headers: entetes });
+  const inconnu = await ingestProviderEvent({ slug: 'opensign', rawBody: corps, headers: entetes });
   check('un fournisseur SANS binding est refusé', inconnu.outcome === INGEST_OUTCOME.NO_BINDING);
+  /**
+   * ET LE SEGMENT DU FOURNISSEUR RETIRÉ NE DÉSIGNE PLUS PERSONNE.
+   *
+   * Il ne rend pas « pas de binding » — qui laisserait croire qu'un endpoint
+   * pourrait être rebranché — mais « fournisseur inconnu » : la porte n'existe
+   * plus. C'est ce qui compte si quelque chose frappe encore à cette adresse.
+   */
+  const retireIngest = await ingestProviderEvent({ slug: 'yousign', rawBody: corps, headers: entetes });
+  check('le segment du fournisseur retiré ne désigne personne',
+    retireIngest.outcome === INGEST_OUTCOME.UNKNOWN_PROVIDER);
   const segmentInconnu = await ingestProviderEvent({ slug: 'mailchimp', rawBody: corps, headers: entetes });
   check('un segment inconnu ne désigne personne', segmentInconnu.outcome === INGEST_OUTCOME.UNKNOWN_PROVIDER);
   const hostinger = await ingestProviderEvent({ slug: 'hostinger', rawBody: corps, headers: entetes });
@@ -1273,137 +1284,28 @@ section('19-21 · Redémarrage, plafond, et politique d’échec');
   check('UN WEBHOOK NE BLOQUE JAMAIS UN DÉPLOIEMENT', blocksDeployment() === false);
   check('Stripe en panne → DEPLOYED_WITH_WARNING',
     severityFor('STRIPE', WEBHOOK_STATUS.ERROR) === 'DEPLOYED_WITH_WARNING');
-  check('Yousign en panne → DEPLOYED_WITH_WARNING',
-    severityFor('YOUSIGN', WEBHOOK_STATUS.ERROR) === 'DEPLOYED_WITH_WARNING');
+  check('OpenSign en panne → DEPLOYED_WITH_WARNING',
+    severityFor('OPENSIGN', WEBHOOK_STATUS.ERROR) === 'DEPLOYED_WITH_WARNING');
   check('Brevo en panne → simple avertissement',
     severityFor('BREVO', WEBHOOK_STATUS.ERROR) === 'WARNING');
   check('un webhook READY n’alerte personne', severityFor('STRIPE', WEBHOOK_STATUS.READY) === 'INFO');
 }
 
-section('19c · YOUSIGN — une clé posée suffit, le webhook se provisionne SEUL');
-{
-  /**
-   * ══ CE QUE CETTE SECTION FERME ═════════════════════════════════════════════
-   *
-   * L'exploitation a rapporté un `PENDING — WEBHOOK_CREDENTIALS_MISSING
-   * [DEPLOYED_WITH_WARNING]` sur Yousign, lu comme une panne de plomberie. Ce
-   * n'en est pas une : c'est l'état EXACT d'un fournisseur dont la clé API n'a
-   * jamais été saisie, et la section 19b le distingue déjà d'une vraie panne.
-   *
-   * Mais rien ne prouvait la MOITIÉ QUI RASSURE : qu'une fois la clé posée, tout
-   * le reste — hôte d'API, souscription distante, secret de signature — se règle
-   * SANS que l'exploitant touche à quoi que ce soit, et que l'avertissement
-   * disparaît. Stripe et Brevo avaient chacun leur compte simulé ; Yousign, non.
-   * On ne pouvait donc pas répondre « oui, ça se répare tout seul » autrement
-   * que par la lecture du registre.
-   */
-  await resetWebhookState();
-  await CredentialSet.deleteOne({ provider: 'YOUSIGN', environment: 'TEST' });
-
-  const YS_KEY = ['ys', 'test', 'L5SENTINEL00000000000000'].join('_');
-  const YS_SECRET = ['yswhsec', 'L5SENTINEL00000000000000'].join('_');
-
-  /** Compte Yousign SIMULÉ — il conserve ses souscriptions entre les appels. */
-  const compte = { subscriptions: [], calls: [], nextId: 1 };
-  compte.fetchImpl = async (url, options = {}) => {
-    const method = options.method ?? 'GET';
-    compte.calls.push({ method, url });
-    if (method === 'GET') return reply(200, { data: compte.subscriptions });
-    if (method === 'POST') {
-      const corps = JSON.parse(options.body);
-      const abonnement = {
-        id: `wh_${compte.nextId++}`,
-        endpoint: corps.endpoint,
-        subscribed_events: corps.subscribed_events,
-        description: corps.description,
-        enabled: true,
-        sandbox: corps.sandbox,
-      };
-      compte.subscriptions.push(abonnement);
-      // `secret_key` n'est rendue QU'À LA CRÉATION — comme le vrai fournisseur.
-      return reply(201, { ...abonnement, secret_key: YS_SECRET });
-    }
-    return reply(200, {});
-  };
-
-  /* ── SANS CLÉ : PENDING, et AUCUN appel distant ────────────────────────── */
-  const sansCle = await reconcileProviderWebhook({ provider: 'YOUSIGN', fetchImpl: compte.fetchImpl });
-  check('sans clé API, Yousign est PENDING — pas ERROR',
-    sansCle.status === WEBHOOK_STATUS.PENDING
-    && sansCle.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_CREDENTIALS_MISSING);
-  check('…et AUCUN appel n’est parti chez le fournisseur', compte.calls.length === 0);
-
-  /* ── L'EXPLOITANT NE SAISIT QUE LA CLÉ ─────────────────────────────────── */
-  const { describeProviderDefinition, credentialRoles } =
-    await import('../backend/src/services/integratedApi/providerRegistry.js');
-  const formulaire = describeProviderDefinition('YOUSIGN', { environment: 'TEST' }).credentialRoles;
-  check('le formulaire ne réclame QUE la clé API',
-    formulaire.filter((r) => r.required).map((r) => r.code).join(',') === 'apiKey');
-  check('…le secret de signature n’y est jamais demandé',
-    !formulaire.some((r) => r.code === 'webhookSecret' && r.required)
-    && credentialRoles('YOUSIGN').find((r) => r.code === 'webhookSecret')?.autoManaged === true);
-
-  await saveCredentialSet('YOUSIGN', 'TEST', { values: { apiKey: YS_KEY } }, { userId: 'recette' });
-
-  /* ── ET TOUT LE RESTE SE FAIT SEUL ─────────────────────────────────────── */
-  const apres = await reconcileProviderWebhook({ provider: 'YOUSIGN', fetchImpl: compte.fetchImpl });
-  check(`la réconciliation aboutit — READY (${apres.status}/${apres.code ?? '—'})`,
-    apres.status === WEBHOOK_STATUS.READY);
-  check('…une souscription a été CRÉÉE chez le fournisseur', compte.subscriptions.length === 1);
-
-  const abonnement = compte.subscriptions[0];
-  check('…sur l’adresse publique du Panel, dérivée — jamais codée en dur',
-    abonnement.endpoint === `${PANEL_URL}/api/webhooks/yousign`
-    || abonnement.endpoint.startsWith(PANEL_URL));
-  check('…avec exactement les événements déclarés au registre',
-    abonnement.subscribed_events.join(',') === webhookCapability('YOUSIGN').desiredEvents.join(','));
-  check('…et le bac à sable suit le monde servi (TEST)', abonnement.sandbox === true);
-
-  /**
-   * L'HÔTE D'API N'A JAMAIS ÉTÉ SAISI — il vient du défaut d'environnement du
-   * registre. C'est le point qui rendait le diagnostic ambigu : une `baseUrl`
-   * non résolue produit EXACTEMENT le même code que l'absence de clé.
-   */
-  const versLeFournisseur = compte.calls.filter((c) => !c.url.startsWith(PANEL_URL));
-  check('l’hôte d’API vient du défaut TEST du registre, sans saisie',
-    versLeFournisseur.length > 0
-    && versLeFournisseur.every((c) => c.url.startsWith('https://api-sandbox.yousign.app/v3')));
-  check('…et la joignabilité de NOTRE adresse est vérifiée, pas supposée',
-    compte.calls.some((c) => c.url.startsWith(`${PANEL_URL}/webhooks/providers/yousign`)));
-
-  /* ── LE SECRET EST CAPTÉ ET RANGÉ, SANS PASSER PAR UN ÉCRAN ────────────── */
-  const coffre = await CredentialSet.findOne({ provider: 'YOUSIGN', environment: 'TEST' }).lean();
-  check('le secret rendu à la création est PERSISTÉ dans le coffre',
-    Boolean(coffre?.credentialsEncrypted?.webhookSecret?.encrypted));
-  const vue = await describeWebhookState('YOUSIGN');
-  check('…et il ne ressort par AUCUNE vue', !JSON.stringify(vue).includes(YS_SECRET));
-  check('…ni la clé API', !JSON.stringify(vue).includes(YS_KEY));
-
-  /* ── IDEMPOTENCE : RIEN N'EST RECRÉÉ ───────────────────────────────────── */
-  const encore = await reconcileProviderWebhook({ provider: 'YOUSIGN', fetchImpl: compte.fetchImpl });
-  check('une seconde réconciliation ne recrée rien',
-    encore.status === WEBHOOK_STATUS.READY && compte.subscriptions.length === 1);
-
-  /* ── ET L'AVERTISSEMENT DE DÉPLOIEMENT DISPARAÎT ───────────────────────── */
-  const rapport = await reconcileAllProviderWebhooks({ fetchImpl: compte.fetchImpl });
-  const ligne = rapport.results.find((r) => r.provider === 'YOUSIGN');
-  check('le balayage complet voit Yousign READY', ligne.status === WEBHOOK_STATUS.READY);
-  check('…et il ne figure plus parmi les avertissements',
-    !rapport.warnings.some((w) => w.provider === 'YOUSIGN'));
-  check('un webhook n’a JAMAIS bloqué un déploiement, avant comme après',
-    rapport.blocking === false);
-
-  /**
-   * ON REMET LE MONDE COMME ON L'A TROUVÉ.
-   *
-   * La section suivante éprouve précisément le cas « fournisseur SANS clé » :
-   * lui laisser la clé posée ici la ferait échouer pour une raison qui n'a rien
-   * à voir avec ce qu'elle garde. Une recette qui pollue la suivante transforme
-   * un ordre d'exécution en dépendance cachée.
-   */
-  await CredentialSet.deleteOne({ provider: 'YOUSIGN', environment: 'TEST' });
-  await resetWebhookState();
-}
+/*
+ * LA SECTION 19c A ÉTÉ RETIRÉE AVEC SON FOURNISSEUR.
+ *
+ * Elle montait un compte Yousign SIMULÉ pour prouver la moitié qui rassure :
+ * une fois la clé posée, l'hôte, la souscription distante et le secret de
+ * signature se règlent seuls, et l'avertissement disparaît.
+ *
+ * Ce fournisseur est retiré : il n'a plus de rôle de credential, donc plus de
+ * clé à poser, donc plus rien à provisionner. Garder la section aurait exigé
+ * de lui rendre ses rôles — c'est-à-dire de défaire le retrait pour satisfaire
+ * un test.
+ *
+ * Le MÉCANISME, lui, reste éprouvé : Stripe et Brevo ont chacun leur compte
+ * simulé et leur section, et c'est d'eux que le patron venait.
+ */
 
 section('19b · Le balayage complet ne lève jamais, et rend un rapport');
 {
@@ -1418,12 +1320,23 @@ section('19b · Le balayage complet ne lève jamais, et rend un rapport');
   check('aucun secret dans le rapport', !JSON.stringify(rapport).includes(SK_TEST));
 
   // LA DISTINCTION QUI COMPTE : « pas encore configuré » n'est pas « en panne ».
-  // Yousign n'a jamais reçu de clé dans cette recette ; Stripe en a une, et
+  // OpenSign n'a jamais reçu de clé dans cette recette ; Stripe en a une, et
   // c'est le réseau qui est coupé. Les confondre enverrait un exploitant
   // régénérer une clé qui n'avait rien.
-  const yousign = rapport.results.find((r) => r.provider === 'YOUSIGN');
+  const sansCle = rapport.results.find((r) => r.provider === 'OPENSIGN');
   check('un fournisseur sans clé est PENDING, pas ERROR',
-    yousign.status === WEBHOOK_STATUS.PENDING && yousign.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_CREDENTIALS_MISSING);
+    sansCle.status === WEBHOOK_STATUS.PENDING
+    && sansCle.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_CREDENTIALS_MISSING);
+  /**
+   * ET LE FOURNISSEUR RETIRÉ FIGURE COMME NON SUPPORTÉ — comme Hostinger.
+   *
+   * Ce n'est pas un détail de présentation : `UNSUPPORTED` dit « il n'y a rien
+   * à réconcilier ici », quand `PENDING` dirait « il manque une clé » et
+   * enverrait quelqu'un en chercher une.
+   */
+  const retire = rapport.results.find((r) => r.provider === 'YOUSIGN');
+  check('le fournisseur retiré est UNSUPPORTED, jamais PENDING',
+    retire.status === WEBHOOK_STATUS.UNSUPPORTED);
   const stripe = rapport.results.find((r) => r.provider === 'STRIPE');
   check('un fournisseur configuré mais injoignable est ERROR',
     stripe.status === WEBHOOK_STATUS.ERROR && stripe.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_UNREACHABLE);

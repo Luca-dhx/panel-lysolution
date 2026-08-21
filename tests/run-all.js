@@ -231,6 +231,7 @@ const TESTS = [
   // LOT 2 — les cinq capacités de signature, servies par OpenSign, et
   // l'aiguillage qui garde les demandes historiques chez leur détenteur.
   'opensign-capability-adapter.test.js',
+  'signature-provider-retirement.test.js',
   // LOT 3 — le chemin retour : signature du corps brut, idempotence sans
   // identifiant d'événement, appartenance, et la poignée de signataire qui
   // traverse à la place d'une adresse.

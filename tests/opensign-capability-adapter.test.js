@@ -444,21 +444,23 @@ section('8 · LA PREUVE D’AUDIT — une pièce à part, servie séparément');
   check('…plutôt qu’un fichier vide qu’on archiverait comme certificat',
     refus?.code !== undefined && !('contentBase64' in (refus?.details ?? {})));
 
-  /* ── LE FOURNISSEUR HISTORIQUE RÉPOND, ET IL RÉPOND NON ─────────────── */
+  /* ── LE FOURNISSEUR RETIRÉ RÉPOND, ET IL RÉPOND NON ───────────────── */
 
-  const { YOUSIGN_ADAPTERS } = await import('../backend/src/services/integratedApi/yousign/yousignAdapters.js');
-  check('l’ancien fournisseur sert le MÊME code',
-    typeof YOUSIGN_ADAPTERS['signature.certificate.download'] === 'function');
+  const { RETIRED_SIGNATURE_ADAPTERS } = await import(
+    '../backend/src/services/integratedApi/signature/retiredSignatureProvider.js'
+  );
+  check('le fournisseur retiré sert le MÊME code',
+    typeof RETIRED_SIGNATURE_ADAPTERS['signature.certificate.download'] === 'function');
   let refusHistorique = null;
   try {
-    await YOUSIGN_ADAPTERS['signature.certificate.download']({
+    await RETIRED_SIGNATURE_ADAPTERS['signature.certificate.download']({
       definition, context: contexte, credentials: {}, input: { signatureRequestId: 'ancienne-000001' },
     });
   } catch (e) { refusHistorique = e; }
   check('…par un refus lisible, pas par un plantage',
-    refusHistorique?.details?.reason === 'CERTIFICATE_NOT_SERVED_BY_LEGACY_PROVIDER');
-  check('…qui dit que le contrat signé, lui, reste téléchargeable',
-    /téléchargeable/.test(String(refusHistorique?.message ?? '')));
+    refusHistorique?.details?.reason === 'SIGNATURE_PROVIDER_RETIRED');
+  check('…qui dit où la preuve se trouve désormais',
+    /espace de son compte/i.test(String(refusHistorique?.message ?? '')));
 
   await Binding.deleteMany({});
 }

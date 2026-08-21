@@ -304,13 +304,17 @@ const STRIPE_EVENTS = Object.freeze([
   'customer.subscription.deleted',
 ]);
 
-const YOUSIGN_EVENTS = Object.freeze([
-  'signer.done',
-  'signature_request.done',
-  'signature_request.declined',
-  'signature_request.expired',
-  'signature_request.canceled',
-]);
+/*
+ * `YOUSIGN_EVENTS` A ÉTÉ RETIRÉ.
+ *
+ * Cette liste était la SOUSCRIPTION demandée à l'ancien fournisseur. Son
+ * descripteur ne demande plus rien : la garder aurait laissé croire qu'une
+ * souscription existe quelque part, et le prochain lecteur aurait cherché où.
+ *
+ * Le vocabulaire lui-même n'est pas perdu : la TRADUCTION de ces événements
+ * vers les faits métier vit dans `signatureEventDispatch.js`, où elle sert
+ * encore à relire un événement reçu autrefois.
+ */
 
 /**
  * ÉVÉNEMENTS OPENSIGN — les cinq que le fournisseur émet, et il les émet TOUS.
@@ -492,22 +496,37 @@ export const WEBHOOK_CAPABILITIES = Object.freeze({
     secretRotationWindowMs: BREVO_WEBHOOK_FACTS.rotationWindowMs,
   }),
 
+  /**
+   * YOUSIGN — RETIRÉ. Plus de webhook, et plus de secret pour en vérifier un.
+   *
+   * ══ CE QU'IL Y AVAIT ICI, ET POURQUOI IL N'Y EST PLUS ════════════════
+   *
+   * Un descripteur complet : schéma de signature, en-tête, rôles de secret,
+   * cinq événements souscrits. Il décrivait un endpoint à réconcilier.
+   *
+   * Il n'y a plus rien à réconcilier : les rôles de credential ont disparu du
+   * registre avec le fournisseur, donc le secret aussi — et un descripteur qui
+   * annonce `HMAC_SHA256_BODY` sans secret pour le vérifier décrit une garde
+   * qui n'existe plus. Le contrôle de cohérence entre les deux registres l'a
+   * dit immédiatement, et il avait raison.
+   *
+   * ══ MESURÉ AVANT DE RETIRER ══════════════════════════════════
+   *
+   * Sur les deux bases, la liaison portait `remoteWebhookId: null` : AUCUN
+   * endpoint n'a jamais été créé chez ce fournisseur — son bac à sable refuse
+   * la création par API, et la production n'a jamais eu de clé. Il n'y a donc
+   * rien à débrancher de son côté, et le retrait est entièrement local.
+   *
+   * `supported: false` reste un état de PREMIÈRE CLASSE : il dit « pas de
+   * webhook ici » là où une absence d'entrée dirait « fournisseur inconnu ».
+   */
   YOUSIGN: capability('YOUSIGN', {
-    supported: true,
-    callbackSlug: 'yousign',
-    signatureScheme: SIGNATURE_SCHEMES.HMAC_SHA256_BODY,
-    signatureHeader: 'x-yousign-signature',
-    secretDelivery: SECRET_DELIVERY.AT_CREATION_ONLY,
-    secretRole: 'webhookSecret',
-    apiCredentialRole: 'apiKey',
-    // Le drapeau `sandbox` existe sur la SOUSCRIPTION, mais les hôtes d'API et
-    // les clés sont distincts : la séparation reste imposée par le fournisseur.
-    environmentAware: true,
-    eventIdStrategy: EVENT_ID_STRATEGIES.PROVIDER_FIELD,
-    eventIdFields: ['event_id', 'id'],
-    eventTypeFields: ['event_name', 'event'],
-    desiredEvents: YOUSIGN_EVENTS,
-    remoteEndpointLimit: null,
+    supported: false,
+    unsupportedReason:
+      'Fournisseur retiré (2026-08). Aucun endpoint n’a jamais été enregistré '
+      + 'chez lui, et il n’a plus de secret : il n’y a rien à réconcilier ni à '
+      + 'vérifier. Les événements de signature arrivent désormais du fournisseur '
+      + 'actif.',
   }),
 
   /**

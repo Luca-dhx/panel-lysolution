@@ -34,7 +34,15 @@ import {
 } from '../integratedApi/brevo/brevoTransport.js';
 import { HOSTINGER_ADAPTERS } from '../integratedApi/hostinger/hostingerAdapters.js';
 import { STRIPE_ADAPTERS } from '../integratedApi/stripe/stripeAdapters.js';
-import { YOUSIGN_ADAPTERS } from '../integratedApi/yousign/yousignAdapters.js';
+/**
+ * L'ANCIEN FOURNISSEUR NE SERT PLUS — il répond, et il répond non.
+ *
+ * `yousignAdapters.js` et son transport ont été SUPPRIMÉS : plus une ligne du
+ * Panel ne parle HTTP à ce fournisseur. La table qui le remplace refuse chaque
+ * acte avec une phrase qui dit où regarder — sans quoi une demande de 2025
+ * lèverait une exception nue au moment où quelqu'un cherche son contrat.
+ */
+import { RETIRED_SIGNATURE_ADAPTERS } from '../integratedApi/signature/retiredSignatureProvider.js';
 import { OPENSIGN_ADAPTERS } from '../integratedApi/opensign/openSignAdapters.js';
 import { brevoSendTemplate } from './brevoSendAdapter.js';
 import {
@@ -214,7 +222,7 @@ const ADAPTERS = Object.freeze({
  */
 function signatureAdapters() {
   const parFournisseur = Object.freeze({
-    YOUSIGN: YOUSIGN_ADAPTERS,
+    YOUSIGN: RETIRED_SIGNATURE_ADAPTERS,
     OPENSIGN: OPENSIGN_ADAPTERS,
   });
 

@@ -134,16 +134,27 @@ section('Masquage — un secret ne rend que son empreinte et ses 4 derniers');
 
 section('Déchiffrement — la seule porte, et elle complète avec les défauts');
 {
+  /**
+   * LE TÉMOIN A CHANGÉ DE FOURNISSEUR, PAS DE RÈGLE.
+   *
+   * Ce bloc utilisait Yousign : il fallait un fournisseur à DEUX hôtes pour
+   * éprouver que le défaut de `baseUrl` suit le monde demandé. Yousign est
+   * retiré et n'a plus de rôle — le coffre refuserait d'y chiffrer quoi que ce
+   * soit, et c'est le comportement voulu.
+   *
+   * OpenSign a la même topologie : deux jetons, deux hôtes, imposés par le
+   * fournisseur. La règle reste donc éprouvée, sur celui qui sert.
+   */
   const { stored } = vault.encryptCredentialValues({
-    provider: 'YOUSIGN', values: { apiKey: SENTINEL_TOKEN }, environment: 'TEST',
+    provider: 'OPENSIGN', values: { apiToken: SENTINEL_TOKEN }, environment: 'TEST',
   });
-  const clair = vault.decryptCredentialSet('YOUSIGN', stored, { environment: 'TEST' });
-  check('la valeur revient intacte', clair.apiKey === SENTINEL_TOKEN);
+  const clair = vault.decryptCredentialSet('OPENSIGN', stored, { environment: 'TEST' });
+  check('la valeur revient intacte', clair.apiToken === SENTINEL_TOKEN);
   check('la baseUrl non saisie prend le défaut du mode',
-    clair.baseUrl === 'https://api-sandbox.yousign.app/v3');
-  const clairProd = vault.decryptCredentialSet('YOUSIGN', stored, { environment: 'PROD' });
+    clair.baseUrl === 'https://sandbox.opensignlabs.com/api/v1.2');
+  const clairProd = vault.decryptCredentialSet('OPENSIGN', stored, { environment: 'PROD' });
   check('…et le défaut suit l’environnement demandé',
-    clairProd.baseUrl === 'https://api.yousign.app/v3');
+    clairProd.baseUrl === 'https://app.opensignlabs.com/api/v1.2');
 }
 
 section('État — configuré, et empreinte de fraîcheur');

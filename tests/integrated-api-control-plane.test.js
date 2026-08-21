@@ -49,7 +49,8 @@ section('Seed — idempotent, et il ne copie RIEN');
 {
   const premier = await seedIntegratedApiCredentialSets();
   // 4 fournisseurs par environnement × 2 environnements + 1 global = 9.
-  // (Stripe, Brevo, Yousign, OpenSign) × (TEST, PROD) + Hostinger.
+  // (Stripe, Brevo, OpenSign) × (TEST, PROD) + Hostinger. Yousign est retiré :
+  // il ne déclare plus de monde, donc plus de jeu à semer.
   check('9 jeux amorcés au premier passage', premier.created === 9 && premier.existing === 0);
 
   const second = await seedIntegratedApiCredentialSets();
@@ -183,8 +184,18 @@ section('Enregistrement — le webhook géré se réconcilie sur le monde servi'
     horsMonde.length === 0);
 
   const autoManaged = [];
-  await controlPlane.saveCredentialSet('YOUSIGN', 'TEST', {
-    values: { webhookSecret: forme.stripeWebhook('AUTOMANAGEDCONTROLPLANE0001') },
+  /**
+   * LE TÉMOIN DOIT PORTER UN RÔLE RÉELLEMENT AUTO-GÉRÉ.
+   *
+   * Yousign le portait ; il est retiré. OpenSign N'EST PAS un remplaçant
+   * valable ici : son `webhookSecret` se saisit à la main (le fournisseur ne le
+   * rend jamais par API), donc l'enregistrer DOIT déclencher la réconciliation.
+   * L'utiliser comme témoin aurait éprouvé le contraire de la règle.
+   *
+   * Brevo garde un rôle auto-géré : c'est lui qui convient.
+   */
+  await controlPlane.saveCredentialSet('BREVO', 'TEST', {
+    values: { webhookSecretPrevious: forme.stripeWebhook('AUTOMANAGEDCONTROLPLANE0001') },
     reconcileWebhook: async (args) => {
       autoManaged.push(args);
       return { status: 'READY' };
@@ -304,32 +315,39 @@ section('Validation — impossible sans identifiants, et ce n’est pas une pann
 {
   // Le seed a créé ce jeu VIDE : son existence ne prouve rien. Le refus se
   // fonde sur les rôles requis, pas sur la présence d'un document.
+  /**
+   * LE TÉMOIN EST PASSÉ À OPENSIGN — Yousign n'a plus de rôle à exiger.
+   *
+   * Ce qui est éprouvé n'a pas changé : un jeu incomplet refuse le test SANS
+   * appeler le fournisseur, et reste EMPTY plutôt que de passer en ERROR — une
+   * clé qu'on n'a pas saisie n'est pas une clé qui a échoué.
+   */
   check('un jeu jamais renseigné refuse le test',
-    await rejects(() => controlPlane.validateCredentialSet('YOUSIGN', 'PROD', {}),
+    await rejects(() => controlPlane.validateCredentialSet('OPENSIGN', 'PROD', {}),
       'PANEL_INTEGRATED_API_NOT_CONFIGURED'));
 
-  await controlPlane.saveCredentialSet('YOUSIGN', 'TEST', {
+  await controlPlane.saveCredentialSet('OPENSIGN', 'PROD', {
     values: { webhookSecret: 'secret-sans-cle' },
   }, { userId: 'dev-1' });
   check('un jeu à moitié rempli refuse aussi — sans appeler le fournisseur',
-    await rejects(() => controlPlane.validateCredentialSet('YOUSIGN', 'TEST', {
+    await rejects(() => controlPlane.validateCredentialSet('OPENSIGN', 'PROD', {
       fetchImpl: async () => { throw new Error('le fournisseur ne doit PAS être appelé'); },
     }), 'PANEL_INTEGRATED_API_NOT_CONFIGURED'));
 
-  const yousign = await controlPlane.getCredentialSet('YOUSIGN', 'TEST');
+  const incomplet = await controlPlane.getCredentialSet('OPENSIGN', 'PROD');
   check('…et il reste EMPTY, jamais ERROR',
-    yousign.status === CREDENTIAL_SET_STATUS.EMPTY);
+    incomplet.status === CREDENTIAL_SET_STATUS.EMPTY);
 
   // La garde de la fonction pure demeure, en défense en profondeur.
   const { validateCredentials } = await import(
     '../backend/src/services/integratedApi/providerValidation.js'
   );
   const nu = await validateCredentials({
-    provider: 'YOUSIGN', environment: 'TEST', credentialsEncrypted: {},
+    provider: 'OPENSIGN', environment: 'TEST', credentialsEncrypted: {},
     fetchImpl: async () => { throw new Error('jamais appelé'); },
   });
   check('validateCredentials seul nomme ce qui manque',
-    nu.code === VALIDATION_CODES.MISSING_CREDENTIALS && nu.details.missing.join() === 'apiKey');
+    nu.code === VALIDATION_CODES.MISSING_CREDENTIALS && nu.details.missing.join() === 'apiToken');
 }
 
 section('Disponibilité — la question que posera la passerelle de capacités');

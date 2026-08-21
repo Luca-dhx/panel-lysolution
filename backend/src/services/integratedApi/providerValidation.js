@@ -80,7 +80,7 @@ export const VALIDATION_CODES = Object.freeze({
   WEBHOOK_MANAGEMENT_FORBIDDEN: 'WEBHOOK_MANAGEMENT_FORBIDDEN',
 });
 
-/** État d'une capacité sondée À CÔTÉ du credential. Voir `validateYousign`. */
+/** État d'une capacité sondée À CÔTÉ du credential. Voir `validateOpenSign`. */
 export const CAPABILITY_STATE = Object.freeze({
   GRANTED: 'GRANTED',
   FORBIDDEN: 'FORBIDDEN',
@@ -230,151 +230,37 @@ async function validateBrevo(values, { fetchImpl }) {
   };
 }
 
-/** Yousign : `GET {base}/users?limit=1`. Lit l'organisation, ne signe rien. */
-/**
- * YOUSIGN — VALIDATION EN DEUX NIVEAUX, ET LA SEPARATION EST TOUT L'ENJEU.
+/*
+ * `validateYousign` A ÉTÉ RETIRÉE.
  *
- * == CE QUI ETAIT SONDE, ET POURQUOI C'ETAIT LE MAUVAIS ENDROIT =============
+ * Elle sondait deux niveaux : « cette clé est-elle authentique ? » puis
+ * « permet-elle en plus de gérer les souscriptions webhook ? ». Les deux
+ * questions supposaient une clé — le fournisseur est retiré, son entrée de
+ * registre ne déclare plus aucun rôle de credential, et ses jeux ont été
+ * supprimés des deux bases.
  *
- * Le validateur appelait `GET /users` -- l'annuaire des utilisateurs de
- * l'ORGANISATION. C'est l'une des surfaces les plus privilegiees de l'API, et
- * ce n'est pas celle que le Panel utilise : nos capacites sont toutes des
- * `signature.*`. Une cle parfaitement legitime, restreinte a un workspace ou
- * en lecture seule, y repond 403 -- et le Panel concluait « cle invalide ».
+ * Un validateur sans credential à valider n'est pas inoffensif : il rend le
+ * bouton « tester la connexion » actif dans l'interface, donc il INVITE à
+ * saisir une clé pour un fournisseur qui ne sert plus. C'est exactement le
+ * chemin par lequel un secret revient en base.
  *
- * On valide desormais sur l'USAGE NOMINAL : `GET /signature_requests?limit=1`.
- * Une cle qui peut lire les demandes de signature peut faire le travail ; une
- * cle qui ne le peut pas ne le peut vraiment pas. Le sondage dit exactement ce
- * qu'on a besoin de savoir, ni plus ni moins.
- *
- * == NIVEAU 1 -- LE CREDENTIAL ==============================================
- *
- *   « cette cle est-elle utilisable par l'API Yousign DANS CET ENVIRONNEMENT ? »
- *
- * L'hote est verifie AVANT le reseau : une cle de bac a sable envoyee a l'hote
- * de production recoit un 403 sur toutes les routes, indiscernable d'une cle
- * morte. Refuser sans appeler donne le bon diagnostic tout de suite, et
- * n'expose pas la cle a un hote qui n'est pas le sien.
- *
- * == NIVEAU 2 -- LA CAPACITE ================================================
- *
- *   « cette cle permet-elle EN PLUS de gerer les souscriptions webhook ? »
- *
- * Sondee separement (`GET /webhooks`), et son echec ne degrade JAMAIS le
- * verdict du credential. Une cle qui signe sans pouvoir gerer les webhooks est
- * authentifiee, capable du metier, et incapable d'une operation
- * d'administration -- trois faits vrais en meme temps, que « cle invalide »
- * ecrasait en un seul mensonge.
+ * La leçon qu'elle portait, elle, a survécu : la séparation TEST/PROD par
+ * HÔTE, et le refus d'envoyer une clé à l'hôte d'un autre monde. Elle vit
+ * désormais dans `environmentHosts`, côté registre, pour tous les
+ * fournisseurs qui en ont deux.
  */
-async function validateYousign(values, { fetchImpl, environment = null }) {
-  const base = stripSlash(values.baseUrl);
-  const details = {
-    baseUrl: base,
-    // Chez Yousign, c'est l'HOTE qui porte le monde, pas la cle.
-    hostEnvironment: /sandbox/.test(base) ? 'sandbox' : 'production',
-    probe: 'GET /signature_requests',
-  };
 
-  /* -- NIVEAU 0 : LE MONDE, AVANT MEME D'APPELER -------------------------- */
-  const hote = checkHostForEnvironment('YOUSIGN', 'baseUrl', environment, base);
-  if (hote) {
-    return {
-      status: VALIDATION_STATUS.INVALID,
-      code: VALIDATION_CODES.WRONG_ENVIRONMENT,
-      message: hote.reason === 'OTHER_ENVIRONMENT'
-        ? `L\u2019URL de base vise « ${hote.actual} », l\u2019h\u00f4te ${hote.otherEnvironment} de Yousign, `
-          + `alors que ce jeu est ${environment}. La cl\u00e9 n\u2019est pas en cause : Yousign refuse `
-          + `toute cl\u00e9 pr\u00e9sent\u00e9e au mauvais h\u00f4te avec un 403 qui ressemble \u00e0 une cl\u00e9 `
-          + `invalide. Attendu : ${hote.expected}.`
-        : `L\u2019URL de base doit viser « ${hote.expected} » en ${environment}.`,
-      details: { ...details, expectedHost: hote.expected, actualHost: hote.actual },
-      durationMs: 0,
-    };
-  }
-
-  /* -- NIVEAU 1 : L'USAGE NOMINAL ----------------------------------------- */
-  const { response, durationMs } = await timedFetch(
-    `${base}/signature_requests?limit=1`,
-    { headers: { Authorization: `Bearer ${values.apiKey}`, accept: 'application/json' } },
-    fetchImpl,
-  );
-  const json = await readJson(response);
-  details.httpStatus = response.status;
-  details.durationMs = durationMs;
-
-  if (!response.ok) {
-    details.providerMessage = safeMessage(json?.detail ?? json?.message ?? json?.title);
-    details.providerType = safeMessage(json?.type);
-
-    if (response.status === 403) {
-      return {
-        status: VALIDATION_STATUS.INVALID,
-        code: VALIDATION_CODES.INSUFFICIENT_PERMISSION,
-        message: 'Yousign authentifie la cl\u00e9 mais refuse la lecture des demandes de '
-          + 'signature (403). V\u00e9rifiez le p\u00e9rim\u00e8tre de la cl\u00e9 \u2014 organisation ou '
-          + 'workspace \u2014 et ses permissions.',
-        details,
-        durationMs,
-      };
-    }
-    return {
-      ...classifyHttp(response.status),
-      message: response.status === 401
-        ? 'Yousign a refus\u00e9 la cl\u00e9 (401) : elle est inconnue de cet environnement.'
-        : `Yousign a r\u00e9pondu ${response.status}.`,
-      details,
-      durationMs,
-    };
-  }
-
-  const demandes = Array.isArray(json?.data) ? json.data : [];
-  details.signatureRequestsVisible = demandes.length;
-
-  /* -- NIVEAU 2 : LA CAPACITE D'ADMINISTRER LES WEBHOOKS ------------------- */
-  details.capabilities = {
-    webhookManagement: await probeYousignWebhookManagement(base, values.apiKey, fetchImpl),
-  };
-
-  return {
-    status: VALIDATION_STATUS.VALID,
-    code: VALIDATION_CODES.OK,
-    message: details.capabilities.webhookManagement === CAPABILITY_STATE.FORBIDDEN
-      ? `Yousign reconna\u00eet la cl\u00e9 (${details.hostEnvironment}), mais elle n\u2019est pas autoris\u00e9e `
-        + '\u00e0 g\u00e9rer les souscriptions webhook : la r\u00e9conciliation restera en erreur.'
-      : `Yousign reconna\u00eet la cl\u00e9 (${details.hostEnvironment}).`,
-    details,
-    durationMs,
-  };
-}
-
-/**
- * LA CAPACITE WEBHOOK, SONDEE EN LECTURE SEULE.
+/*
+ * `probeYousignWebhookManagement` A ÉTÉ RETIRÉE avec son validateur.
  *
- * `GET /webhooks` ne cree rien et ne modifie rien. Son echec ne peut pas
- * invalider le credential : il RENSEIGNE une capacite, et c'est la
- * reconciliation qui en tirera son propre etat.
+ * Elle sondait `GET /webhooks` en lecture seule pour dire si une clé pouvait,
+ * EN PLUS de signer, administrer les souscriptions. Plus aucun appelant : le
+ * fournisseur qu'elle sondait est retiré, et sa clé n'existe plus.
  *
- * -- AUCUN CORPS N'EST CONSERVE, ET CE N'EST PAS DE LA PRUDENCE DE PRINCIPE --
- *
- * La reponse de cette route contient le `secret_key` EN CLAIR de chaque
- * souscription existante. On ne lit donc que le STATUT -- jamais le corps,
- * jamais un extrait, jamais un message d'erreur qui pourrait en contenir un.
+ * Le patron, lui, a été repris tel quel pour OpenSign
+ * (`probeOpenSignWebhookManagement`) : une capacité sondée À CÔTÉ du
+ * credential, dont l'échec ne dégrade jamais le verdict de la clé.
  */
-async function probeYousignWebhookManagement(base, apiKey, fetchImpl) {
-  try {
-    const { response } = await timedFetch(
-      `${base}/webhooks`,
-      { headers: { Authorization: `Bearer ${apiKey}`, accept: 'application/json' } },
-      fetchImpl,
-    );
-    if (response.ok) return CAPABILITY_STATE.GRANTED;
-    if (response.status === 401 || response.status === 403) return CAPABILITY_STATE.FORBIDDEN;
-    return CAPABILITY_STATE.UNKNOWN;
-  } catch {
-    // Une panne reseau n'est pas un refus : « je n'ai pas pu demander ».
-    return CAPABILITY_STATE.UNKNOWN;
-  }
-}
 
 /* -------------------------------------------------------------------------- */
 /*  OPENSIGN                                                                  */
@@ -624,7 +510,6 @@ async function validateHostinger(values, { fetchImpl }) {
 const VALIDATORS = Object.freeze({
   STRIPE: validateStripe,
   BREVO: validateBrevo,
-  YOUSIGN: validateYousign,
   OPENSIGN: validateOpenSign,
   HOSTINGER: validateHostinger,
 });
