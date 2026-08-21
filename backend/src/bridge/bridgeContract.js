@@ -1134,6 +1134,33 @@ export function newBridgeId() {
   return crypto.randomUUID();
 }
 
+/** Espace de noms du pont — figé : le changer réécrirait toutes les identités. */
+const BRIDGE_NAMESPACE = '6ba7b812-9dad-11d1-80b4-00c04fd430c8';
+
+/**
+ * UN IDENTIFIANT MÉTIER LISIBLE → UN UUID STABLE.
+ *
+ * ══ LE PROBLÈME QU'IL RÈGLE ═════════════════════════════════════════════════
+ *
+ * Le contrat de pont impose `entityId: uuid`. Beaucoup d'identités métier n'en
+ * sont pas : `panel-template-test-<uuid>`, `pay-ok-<id>-<n>`… Les émettre telles
+ * quelles faisait rejeter la page ENTIÈRE côté projet, et le rattrapage
+ * s'arrêtait là — définitivement, sans erreur visible.
+ *
+ * Cette dérivation est un UUID v5 : même graine, même identifiant, toujours.
+ * L'idempotence du pont — qui repose sur `entityId` — est donc préservée, et
+ * l'identité lisible reste dans la charge utile pour la corrélation humaine.
+ */
+export function stableBridgeId(seed) {
+  const ns = Buffer.from(String(BRIDGE_NAMESPACE).replace(/-/g, ''), 'hex');
+  const hash = crypto.createHash('sha1').update(Buffer.concat([ns, Buffer.from(String(seed), 'utf8')])).digest();
+  const octets = Buffer.from(hash.subarray(0, 16));
+  octets[6] = (octets[6] & 0x0f) | 0x50; // version 5
+  octets[8] = (octets[8] & 0x3f) | 0x80; // variante RFC 4122
+  const hex = octets.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function nowIso() {
   return new Date().toISOString();
 }

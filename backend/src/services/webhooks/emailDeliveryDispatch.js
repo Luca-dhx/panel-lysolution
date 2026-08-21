@@ -27,6 +27,7 @@
 // justifier.
 import logger from '../../utils/logger.js';
 import { emitChange } from '../sync/syncCore.service.js';
+import { stableBridgeId } from '../../bridge/bridgeContract.js';
 import { findByProviderMessageId } from '../capabilities/operationRegistry.js';
 import { PANEL_SELF_SCOPE } from '../capabilities/invocationContext.js';
 import { applyDeliveryEvent } from '../email/panelEmailSenderTest.service.js';
@@ -164,15 +165,32 @@ export async function dispatchDeliveryEvent({ provider, environment, payload, ev
      * ══ ET C'EST AUSSI LE BON IDENTIFIANT ═════════════════════════════════
      *
      * L'entité dont on parle est la LIVRAISON, pas le message du fournisseur.
-     * `operationId` est le `deliveryId` du projet : il est un UUID, il existe
-     * AVANT l'envoi, et le projet le connaît sans avoir eu besoin de recevoir
-     * la réponse d'émission. C'est précisément ce qui rend la course
-     * « webhook avant réponse » sans effet.
+     * `operationId` est le `deliveryId` du projet : il existe AVANT l'envoi, et
+     * le projet le connaît sans avoir eu besoin de recevoir la réponse
+     * d'émission. C'est précisément ce qui rend la course « webhook avant
+     * réponse » sans effet.
+     *
+     * Il n'est en revanche PAS toujours un UUID — cette ligne l'affirmait, et
+     * c'est cette affirmation qui a coûté le rattrapage. Voir ci-dessous.
      *
      * `providerMessageId` reste dans la charge utile : il sert de repli de
      * corrélation, jamais d'identité.
      */
-    entityId: operation.operationId,
+    /**
+     * …ET L'OPÉRATION EST DÉRIVÉE EN UUID, parce que toutes n'en sont pas.
+     *
+     * Le correctif précédent a remplacé l'identifiant de message du
+     * fournisseur par l'identifiant d'opération — mais celui-ci n'est pas
+     * toujours un UUID nu : un envoi de test porte `panel-template-test-<uuid>`.
+     * Trois écritures de cette forme ont suffi à faire rejeter la page entière
+     * côté projet et à arrêter le rattrapage pendant des semaines.
+     *
+     * La dérivation est déterministe : même opération, même `entityId`, donc
+     * l'idempotence du pont est intacte. L'identifiant lisible reste dans la
+     * charge utile, où il sert la corrélation humaine sans contraindre le
+     * contrat.
+     */
+    entityId: stableBridgeId(operation.operationId),
     /**
      * CHARGE UTILE MINIMALE. Ni adresse, ni sujet, ni contenu : le projet les
      * détient déjà, et les recopier ferait du journal durable du Panel un

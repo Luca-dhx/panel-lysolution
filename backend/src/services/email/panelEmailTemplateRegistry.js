@@ -1121,7 +1121,7 @@ ${button('Régulariser maintenant', '{{manager.billingUrl}}')}
       { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support.', type: VARIABLE_TYPE.EMAIL, required: true },
     ],
     sampleVariables: {
-      'company.name': 'Garage Démonstration',
+      'company.name': 'Entreprise Démonstration',
       'contract.reference': 'CTR-2026-0042',
       'incident.amountDue': { amount: 24900, currency: 'EUR' },
       'incident.purposeLabel': 'votre abonnement',
