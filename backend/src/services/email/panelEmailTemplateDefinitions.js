@@ -229,15 +229,56 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
   // le premier encaissement d'un projet neuf échouerait en
   // `EMAIL_TEMPLATE_NOT_CONFIGURED` — c'est-à-dire au pire moment.
 
+  /**
+   * REMPLACÉ PAR `PAYMENT_CONFIRMED_ADMIN` (L12) — conservé, jamais supprimé.
+   *
+   * ── POURQUOI IL RESTE AU REGISTRE ────────────────────────────────────────
+   *
+   * Un `templateCode` voyage dans les journaux d'envoi pour toujours, et les
+   * instances que les projets en ont reçues portent leur contenu et leurs
+   * versions. Le retirer du code rendrait illisible tout l'historique qui le
+   * nomme, et ferait échouer la relecture d'un envoi passé.
+   *
+   * `callers` est vide, et c'est le SIGNAL : plus aucun chemin métier ne
+   * l'appelle. Les projets cessent de le déclarer à leur prochain démarrage,
+   * il quitte leur vue active, son historique reste. Voir docs/PROTOCOL.md
+   * § « RETIRER un modèle d'un projet ».
+   *
+   * `provisionForProjects` repasse à FAUX : un projet neuf n'a aucune raison
+   * de recevoir d'office une instance d'un modèle que personne n'envoie plus.
+   */
   CONTRACT_PAYMENT_RECEIVED_ADMIN: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: false,
+    retired: true,
+    reason:
+      'RETIRÉ (L12) au profit de PAYMENT_CONFIRMED_ADMIN, qui couvre tous les types de '
+      + 'règlement et porte le lien de facture. Conservé pour la lisibilité des envois passés '
+      + 'et des instances déjà posées.',
+    callers: [],
+  },
+
+  /**
+   * LA CONFIRMATION D'ENCAISSEMENT AU CLIENT — un seul modèle, tous les types.
+   *
+   * PROJECT sans hésitation : l'émetteur est le projet, le destinataire est SON
+   * client, le message porte SON identité et SON apparence. Le Panel n'est ici
+   * que le transporteur, exactement comme pour la réinitialisation de mot de
+   * passe.
+   */
+  PAYMENT_CONFIRMED_ADMIN: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.BILLING,
     provisionForProjects: true,
     reason:
-      'Le projet confirme un encaissement à SON client, sous SON identité. Le reçu du '
-      + 'prestataire de paiement prouve un débit ; celui-ci dit ce qui a été acheté et où '
-      + 'retrouver son contrat.',
-    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-launch-fee-paid'],
+      'Le projet confirme un encaissement à SON client, sous SON identité, et lui donne sa '
+      + 'facture. Un seul modèle pour les frais de lancement, l’abonnement et toute prestation '
+      + 'à venir : la seule différence entre eux tient dans deux variables.',
+    callers: [
+      'PROJECT/utils/domainEventActionRegistry.js#notify-admins-launch-fee-paid',
+      'PROJECT/utils/domainEventActionRegistry.js#notify-admins-subscription-paid',
+    ],
   },
 
   CONTRACT_PAYMENT_OVERDUE_ADMIN: {
@@ -292,6 +333,30 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
       + 'projet — natifs et fédérés. Nomme des composants internes : elle ne porte jamais '
       + 'l’apparence du client.',
     callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-devs-platform-incident'],
+  },
+
+  /**
+   * UN PROJET DU PARC A PAYÉ — communication de L.Y Solution à L.Y Solution.
+   *
+   * ── POURQUOI `provisionForProjects: false`, ET POURQUOI ÇA COMPTE ────────
+   *
+   * Poser une instance de ce modèle chez chaque projet donnerait à chaque
+   * client le droit d'éditer un message qui parle de LUI à quelqu'un d'AUTRE.
+   * Ce n'est pas une commodité qu'on refuse : c'est une confusion de propriété
+   * qu'on interdit. Une garde de recette le vérifie.
+   *
+   * Son unique appelant vit dans le Panel, sur le fait financier PROJETÉ — pas
+   * sur un retour de navigateur, pas sur un événement du projet.
+   */
+  PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN: {
+    scopes: [P],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: false,
+    reason:
+      'Le Panel prévient SES exploitants qu’un client du parc a réglé. Le destinataire est '
+      + 'un SUPER_ADMIN de L.Y Solution, le contenu nomme un client : rien de tout cela '
+      + 'n’appartient au projet, et ce message ne porte jamais son apparence.',
+    callers: ['Panel/services/finance/providerRevenue/paymentConfirmationAnnouncements.js'],
   },
 });
 
@@ -400,8 +465,35 @@ export function validateOwnershipClassification() {
       problems.push(`${code} : provisionForProjects sans portée PROJECT.`);
     }
     if (!ownership.reason) problems.push(`${code} : classification sans motif écrit.`);
-    if (!Array.isArray(ownership.callers) || ownership.callers.length === 0) {
+
+    /**
+     * ══ UN CODE SANS APPELANT : FAUTE, OU RETRAIT DÉCLARÉ ? ═════════════════
+     *
+     * L'invariant d'origine était bon et le reste : une classification sans
+     * appelant recensé n'est fondée sur RIEN — au mieux sur le nom du code, ce
+     * que tout ce module existe pour interdire.
+     *
+     * Mais il rendait le RETRAIT impossible à exprimer. Un code remplacé garde
+     * sa définition — son historique appartient aux projets qui l'ont utilisé,
+     * et un envoi passé doit rester relisible — tout en n'ayant plus aucun
+     * appelant. Sans marqueur, il ne restait que deux mauvaises issues :
+     * supprimer la définition (et rendre l'historique illisible), ou inscrire
+     * un appelant imaginaire pour faire taire le contrôle.
+     *
+     * `retired: true` est donc une DÉCLARATION, pas une exemption : elle exige
+     * son propre motif, et elle interdit le provisionnement — un code retiré
+     * qu'on poserait encore sur les projets neufs ne serait pas retiré.
+     */
+    const retire = ownership.retired === true;
+    if (!Array.isArray(ownership.callers)
+      || (ownership.callers.length === 0 && !retire)) {
       problems.push(`${code} : classification sans appelant recensé — elle serait fondée sur le nom.`);
+    }
+    if (retire && ownership.callers.length > 0) {
+      problems.push(`${code} : déclaré retiré, mais des appelants sont recensés. L’un des deux ment.`);
+    }
+    if (retire && ownership.provisionForProjects) {
+      problems.push(`${code} : déclaré retiré, et pourtant provisionné d’office. Un code retiré ne se pose plus.`);
     }
   }
 
@@ -421,6 +513,8 @@ export function describeOwnership() {
     provisionForProjects: definition.provisionForProjects,
     reason: definition.ownershipReason,
     callers: definition.callers,
+    /** Conservé pour l'historique, plus appelé par personne. Voir le validateur. */
+    retired: TEMPLATE_OWNERSHIP[definition.templateCode]?.retired === true,
     allowedVariables: definition.allowedVariables,
     requiredVariables: definition.requiredVariables,
   }));

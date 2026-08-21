@@ -31,6 +31,9 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { archiveInvoiceForFact, backfillMissingInvoiceArchives } from './invoiceArchival.service.js';
+import { announcePaymentConfirmed } from './paymentConfirmationAnnouncements.js';
+
 import logger from '../../../utils/logger.js';
 import { nowIso } from '../../../bridge/bridgeContract.js';
 import PanelProviderRevenueFact, {
@@ -157,7 +160,7 @@ export async function recordStripeRevenueEvent({
     }
 
     const enregistre = await upsertFact({ fact, eventType, providerEventId });
-    const projete = await projectFact(enregistre.factId);
+    const projete = await projectAndSettle(enregistre.factId);
     return {
       recorded: true,
       factId: enregistre.factId,
@@ -571,6 +574,115 @@ export async function projectFact(factId) {
   );
 
   return { status: PROJECTION_STATUS.PROJECTED, reason: null, transactionId, projectId };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  L12 — CE QUI SUIT UN ENCAISSEMENT PROUVÉ                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * DONNE SES SUITES À UN FAIT QUI VIENT DE DEVENIR PROJETÉ.
+ *
+ * ══ POURQUOI CETTE FONCTION EST ICI ET NON DANS `projectFact` ═══════════════
+ *
+ * Parce que `projectFact` ne parle à personne, et que l'en-tête de ce module
+ * en fait une promesse : « pas un `fetch`, pas un client, pas une lecture
+ * d'API ». Archiver une facture EST un téléchargement, et annoncer un
+ * encaissement EST un appel de capacité. Les glisser dans la projection aurait
+ * rendu l'en-tête faux — or c'est lui qu'on relit pour savoir ce qu'un
+ * mouvement a pu déclencher.
+ *
+ * La projection décide donc, et cette fonction agit. La frontière est nette :
+ * en amont, rien ne sort du Panel ; en aval, rien ne touche au registre.
+ *
+ * ══ CE QUI EST GARANTI INDÉPENDANT DU NAVIGATEUR ════════════════════════════
+ *
+ * Tout. L'appelant est un webhook signé ou une convergence de serveur ; aucune
+ * redirection, aucun `session_id`, aucun retour d'onglet n'y participe. Fermer
+ * la page Stripe avant le retour ne change rien à ce qui suit.
+ *
+ * ══ L'ORDRE N'EST PAS ARBITRAIRE ════════════════════════════════════════════
+ *
+ * La FACTURE d'abord, l'ANNONCE ensuite. Le message invite à ouvrir un
+ * mouvement dont la pièce se télécharge : l'expédier avant l'archivage
+ * enverrait le destinataire vers un justificatif absent, à l'instant précis où
+ * on lui dit d'aller le voir.
+ *
+ * Un archivage en échec n'empêche PAS l'annonce. Le mouvement existe, il est
+ * lisible, et le rattrapage posera la pièce ; retenir la notification jusqu'à
+ * la réparation d'un PDF ferait dépendre une information financière de la
+ * disponibilité d'un serveur de documents.
+ *
+ * ══ NE LÈVE JAMAIS ══════════════════════════════════════════════════════════
+ *
+ * Ni l'une ni l'autre des deux suites ne peut défaire un revenu écrit. Le
+ * chemin qui mène ici part d'un webhook, et une exception y produirait une 500
+ * — donc un rejeu du fournisseur en boucle sur un paiement parfaitement
+ * encaissé.
+ */
+export async function settleProjectedFact(factId) {
+  const rien = { archived: null, announced: null };
+  try {
+    const fait = await PanelProviderRevenueFact.findOne({ factId }).lean();
+    if (!fait || fait.projectionStatus !== PROJECTION_STATUS.PROJECTED || !fait.transactionId) {
+      return rien;
+    }
+
+    /**
+     * UN REMBOURSEMENT N'A NI FACTURE NI ANNONCE D'ENCAISSEMENT.
+     *
+     * Le fournisseur n'émet aucun document propre à un `re_…` — c'est la
+     * doctrine documentaire de L10.4 — et annoncer « un projet a payé » sur une
+     * sortie d'argent serait exactement faux.
+     */
+    if (fait.kind === FACT_KIND.REFUND) return rien;
+
+    const archived = await archiveInvoiceForFact(factId).catch((err) => {
+      logger.warn(
+        `[finance] facture non archivée pour ${maskResourceId(fait.objectId)} `
+        + `(${fait.environment}) — ${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+      );
+      return null;
+    });
+
+    const mouvement = await PanelFinancialTransaction
+      .findOne({ transactionId: fait.transactionId })
+      .select('transactionId projectId label amountCents currency effectiveDate projectNameSnapshot')
+      .lean()
+      .catch(() => null);
+
+    const announced = await announcePaymentConfirmed({ fait, transaction: mouvement })
+      .catch((err) => {
+        logger.warn(
+          `[finance] encaissement non annoncé pour ${maskResourceId(fait.objectId)} `
+          + `(${fait.environment}) — ${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+        );
+        return null;
+      });
+
+    return { archived, announced };
+  } catch (err) {
+    logger.warn(
+      `[finance] suites d'encaissement non données pour ${factId} — `
+      + `${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+    );
+    return rien;
+  }
+}
+
+/**
+ * PROJETTE, PUIS DONNE LES SUITES. Le geste complet, en un seul appel.
+ *
+ * Toutes les portes qui font entrer un fait — réception d'un webhook,
+ * convergence ciblée, convergence générale — passent par ici plutôt que par
+ * `projectFact` seul. Sans quoi la facture et l'annonce ne suivraient que le
+ * chemin du webhook, et un paiement rattrapé par convergence — c'est-à-dire
+ * précisément celui qui a mal tourné — resterait sans pièce et sans message.
+ */
+async function projectAndSettle(factId) {
+  const projete = await projectFact(factId);
+  if (projete?.status === PROJECTION_STATUS.PROJECTED) await settleProjectedFact(factId);
+  return projete;
 }
 
 /**
@@ -1282,7 +1394,7 @@ export async function convergePendingFactsFor({ environment, resourceType, resou
 
   let projected = 0;
   for (const { factId } of enAttente) {
-    const res = await projectFact(factId).catch((err) => {
+    const res = await projectAndSettle(factId).catch((err) => {
       logger.warn(`[finance] convergence impossible pour ${factId} — ${err.message}`);
       return null;
     });
@@ -1333,12 +1445,34 @@ export async function convergePendingRevenue({ limit = 200 } = {}) {
 
   let projected = 0;
   for (const { factId } of enAttente) {
-    const res = await projectFact(factId).catch(() => null);
+    const res = await projectAndSettle(factId).catch(() => null);
     if (res?.status === PROJECTION_STATUS.PROJECTED) projected += 1;
   }
 
   const adoptes = await adoptMissingPaymentIntents({ limit });
-  return { examined: enAttente.length, projected, adoptedPaymentIntents: adoptes };
+
+  /**
+   * L12 — LES FACTURES QUI MANQUENT À DES MOUVEMENTS DÉJÀ PROJETÉS.
+   *
+   * ══ POURQUOI ICI, AVEC LE RESTE DE LA CONVERGENCE ═══════════════════════
+   *
+   * Parce que c'est le même genre de retard, et qu'il se rattrape au même
+   * rythme. Un Panel redémarré entre la projection et l'archivage, un PDF que
+   * le fournisseur n'avait pas encore produit, un téléchargement expiré :
+   * chacun laisse exactement le même état — un encaissement sans pièce — et
+   * chacun se répare en repassant.
+   *
+   * Bornée bien plus bas que le reste : chaque unité est un téléchargement, et
+   * une lecture d'écran ne doit pas déclencher cinquante requêtes sortantes.
+   */
+  const factures = await backfillMissingInvoiceArchives({ limit: 10 }).catch(() => null);
+
+  return {
+    examined: enAttente.length,
+    projected,
+    adoptedPaymentIntents: adoptes,
+    invoicesArchived: factures?.archived ?? 0,
+  };
 }
 
 /**
@@ -1466,6 +1600,7 @@ export default {
   recordStripeRefundEvent,
   recordStripeRefundResponse,
   projectFact,
+  settleProjectedFact,
   convergePendingFactsFor,
   convergePendingRevenue,
   adoptMissingPaymentIntents,

@@ -1204,6 +1204,197 @@ ${button('Ouvrir le journal des événements', '{{manager.eventsUrl}}')}
       });
     },
   },
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     L12 — LA CONFIRMATION D'UN PAIEMENT, QUEL QU'IL SOIT.
+
+     ══ POURQUOI UN SEUL MODÈLE POUR TOUS LES TYPES DE RÈGLEMENT ══════════
+
+     Frais de lancement, abonnement, prestation ponctuelle : trois occasions, un
+     seul message. La différence entre elles tient dans DEUX phrases — ce qui a
+     été payé, et pour quelle période — et un modèle par type aurait produit trois
+     textes à maintenir, trois relectures, trois occasions de diverger sur la
+     même phrase de bas de page.
+
+     `payment.kind` et `payment.period` portent cette différence. Le reste est
+     rigoureusement identique, et c'est précisément ce qui justifie l'unicité.
+
+     ══ POURQUOI `payment.invoiceUrl` EST OBLIGATOIRE ═══════════════════
+
+     Parce qu'un bouton « Voir ma facture » qui ne mène nulle part est pire que
+     pas de bouton du tout : le client clique, tombe sur une page vide, et doute
+     du paiement qu'on vient de lui confirmer. En le déclarant OBLIGATOIRE, le
+     contrat de variables refuse le message tant que le lien n'existe pas — le
+     défaut devient un envoi manquant, visible et rejouable, jamais un envoi
+     trompeur.
+
+     Le lien pointe vers l'espace de facturation DU PROJET, jamais vers une
+     adresse du prestataire de paiement : celles-ci sont signées et expirables,
+     et le client les rouvrirait des mois plus tard sur une erreur.
+
+     ══ CE MODÈLE REMPLACE `CONTRACT_PAYMENT_RECEIVED_ADMIN` ═════════════
+
+     Lequel ne couvrait que les frais de lancement et ne portait aucun lien de
+     facture. Il n'est pas supprimé — un code ne se supprime pas, son historique
+     appartient aux projets qui l'ont utilisé — il cesse d'être déclaré par les
+     projets. Voir docs/PROTOCOL.md § « RETIRER un modèle ».
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  PAYMENT_CONFIRMED_ADMIN: {
+    templateId: 'PAYMENT_CONFIRMED_ADMIN',
+    defaultName: 'Paiement confirmé — au client du projet',
+    defaultDescription:
+      "Confirme au client d'un projet qu'un règlement a été encaissé, quel qu'en soit le type (frais de lancement, abonnement, prestation), et lui donne accès à sa facture. Distinct du reçu du prestataire de paiement, qui prouve un débit sans dire ce qui a été acheté.",
+    defaultSubject: 'Paiement reçu — {{payment.kind}} — {{contract.reference}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.reference', label: 'Référence', description: 'Référence du contrat (CTR-AAAA-NNNN).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'contract.name', label: 'Nom du contrat', description: 'Nom donné au contrat.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'payment.kind', label: 'Type de paiement', description: "Ce qui a été réglé, en une expression : « Frais de lancement », « Abonnement ».", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.label', label: 'Objet du paiement', description: 'Libellé complet de la ligne réglée.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.amountIncludingTax', label: 'Montant TTC', description: 'Montant encaissé, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'payment.paidOn', label: 'Payé le', description: "Date et heure de l'encaissement constaté.", type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'payment.period', label: 'Période couverte', description: "Période facturée, ou « paiement unique » lorsqu'il n'y en a pas.", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.invoiceUrl', label: 'Lien facture', description: "Espace de facturation du client. OBLIGATOIRE : aucun message ne part sans facture consultable.", type: VARIABLE_TYPE.URL, required: true },
+      { key: 'manager.contractUrl', label: 'Lien contrat', description: 'Lien vers le contrat dans le Manager du projet.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'contract.reference': 'CTR-2026-0042',
+      'contract.name': 'Contrat de démonstration 2026',
+      'payment.kind': 'Abonnement',
+      'payment.label': 'Abonnement mensuel — maintenance et hébergement',
+      'payment.amountIncludingTax': { amount: 9599, currency: 'EUR' },
+      'payment.paidOn': '2026-08-21T10:32:01.000Z',
+      'payment.period': 'du 21 août 2026 au 21 septembre 2026',
+      'payment.invoiceUrl': 'https://manager.exemple.fr/factures',
+      'manager.contractUrl': 'https://manager.exemple.fr/contrat',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre règlement a bien été encaissé — votre facture est disponible.',
+        heading: 'Votre paiement est bien reçu',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Nous confirmons l'encaissement de votre règlement. Aucune action
+              n'est attendue de votre part.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Type', '{{payment.kind}}')}
+${row('Objet', '{{payment.label}}')}
+${row('Période', '{{payment.period}}')}
+${row('Contrat', '{{contract.reference}}')}
+${row('Intitulé', '{{contract.name}}')}
+${row('Montant TTC', '{{payment.amountIncludingTax}}')}
+${row('Payé le', '{{payment.paidOn}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Voir ma facture', '{{payment.invoiceUrl}}')}
+            <p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Vous retrouvez l'ensemble de votre dossier depuis
+              <a href="{{manager.contractUrl}}" style="color:${BRAND};">votre contrat</a>.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     L12 — UN PROJET DU PARC A PAYÉ. De L.Y Solution à L.Y Solution.
+
+     ══ POURQUOI PORTÉE `PANEL`, ET JAMAIS PROVISIONNÉ CHEZ UN PROJET ═══════
+
+     Le critère est « QUI PARLE À QUI », et il ne souffre aucune ambiguïté ici :
+     l'émetteur est le Panel, le destinataire est un exploitant de L.Y Solution,
+     et le contenu nomme un CLIENT. En provisionner une instance chez chaque
+     projet donnerait à chaque client le pouvoir d'éditer un message qui parle
+     de lui à quelqu'un d'autre — et, accessoirement, autant de copies à
+     maintenir que le parc compte de projets.
+
+     ══ CE QU'IL DIT QUE LE LIVRET NE DIT PAS ════════════════════════
+
+     Le registre financier montre l'encaissement à qui va le consulter. Ce
+     message le PORTE : il arrive sans qu'on l'ait demandé, au moment où il se
+     produit. C'est la seule façon d'apprendre qu'un client a payé sans ouvrir
+     un écran toutes les heures.
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN: {
+    templateId: 'PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN',
+    defaultName: 'Encaissement — un projet du parc a payé',
+    defaultDescription:
+      "Prévient les SUPER_ADMIN du Panel qu'un règlement d'un projet du parc a été encaissé et projeté au registre financier. Porte le projet, le montant, le type de paiement et le lien vers le mouvement.",
+    defaultSubject: '[{{payment.environment}}] {{project.name}} a payé {{payment.amountIncludingTax}} — {{payment.kind}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'project.name', label: 'Projet', description: 'Nom du projet qui a payé.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'project.id', label: 'Identifiant projet', description: 'Identifiant du projet au registre du Panel.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.kind', label: 'Type de paiement', description: "« Frais de lancement », « Abonnement », « Prestation »…", type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.label', label: 'Libellé', description: 'Libellé du mouvement au registre financier.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'payment.amountIncludingTax', label: 'Montant', description: 'Montant encaissé, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'payment.paidOn', label: 'Encaissé le', description: 'Date et heure du règlement chez le fournisseur.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'payment.environment', label: 'Monde', description: 'TEST ou PROD — celui du runtime, jamais celui du corps reçu.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'transaction.id', label: 'Mouvement', description: 'Identifiant du mouvement au registre financier.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'transaction.url', label: 'Lien mouvement', description: "Lien vers le mouvement dans le Panel, d'où la facture se télécharge.", type: VARIABLE_TYPE.URL, required: true },
+      { key: 'invoice.reference', label: 'Facture', description: "Numéro de la facture du fournisseur, ou « aucune » lorsqu'il n'en produit pas.", type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      'project.name': 'Projet de démonstration',
+      'project.id': 'e43de003-c6ef-41ed-8ac7-72197f6abe59',
+      'payment.kind': 'Abonnement',
+      'payment.label': 'Abonnement — CTR-2026-0042',
+      'payment.amountIncludingTax': { amount: 9599, currency: 'EUR' },
+      'payment.paidOn': '2026-08-21T10:32:01.000Z',
+      'payment.environment': 'TEST',
+      'transaction.id': 'f4a800db-76bf-4e1d-8408-9c87830dab40',
+      'transaction.url': 'https://panel.exemple.fr/finances',
+      'invoice.reference': 'QWSK7ZZY-0004',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Un projet du parc vient de payer.',
+        heading: 'Encaissement confirmé',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              <strong>{{project.name}}</strong> a réglé {{payment.amountIncludingTax}}.
+              Le mouvement est inscrit au registre financier.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Projet', '{{project.name}}')}
+${row('Type', '{{payment.kind}}')}
+${row('Libellé', '{{payment.label}}')}
+${row('Montant', '{{payment.amountIncludingTax}}')}
+${row('Encaissé le', '{{payment.paidOn}}')}
+${row('Monde', '{{payment.environment}}')}
+${row('Facture', '{{invoice.reference}}')}
+${row('Mouvement', '{{transaction.id}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+${button('Ouvrir le mouvement', '{{transaction.url}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Ce message est émis lorsque le fait fournisseur a été PROJETÉ au
+              registre — jamais sur un retour de navigateur.
+            </p>`,
+        footerHtml: '            Notification interne L.Y Solution — {{project.id}}.',
+      });
+    },
+  },
 });
 
 

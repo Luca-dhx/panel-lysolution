@@ -260,8 +260,20 @@ section('2 · Chaque code déclare qui possède sa communication');
   check(`la classification est complète et cohérente (${problemes.join(' | ') || 'aucun problème'})`,
     problemes.length === 0);
 
-  check('chaque classification cite ses appelants RÉELS',
-    definitions.describeOwnership().every((row) => row.callers.length > 0));
+  /**
+   * L'INVARIANT PORTE SUR LES CODES VIVANTS, et il n'est pas affaibli.
+   *
+   * Un code RETIRÉ — conservé pour la lisibilité des envois passés, plus appelé
+   * par personne — n'a légitimement aucun appelant. C'est un état DÉCLARÉ, que
+   * le validateur exige de justifier et qui interdit le provisionnement ; ce
+   * n'est pas une échappatoire, et la ligne suivante le vérifie.
+   */
+  const classification = definitions.describeOwnership();
+  check('chaque classification VIVANTE cite ses appelants RÉELS',
+    classification.filter((row) => !row.retired).every((row) => row.callers.length > 0));
+  check('un code retiré ne cite aucun appelant, et n’est plus provisionné',
+    classification.filter((row) => row.retired)
+      .every((row) => row.callers.length === 0 && row.provisionForProjects === false));
 
   const reset = definitions.templateDefinition('PASSWORD_RESET_REQUEST');
   check('PASSWORD_RESET_REQUEST vit dans DEUX portées — c’est le cœur du lot',

@@ -787,3 +787,176 @@ existe pour éviter.
 `convergePendingFactsFor()` retrouve désormais un fait par sa **corroboration**
 autant que par sa ressource désignée : le fait qui a le plus besoin d'être
 repris est précisément celui qui n'a pas pu remplir la colonne `ownershipResource*`.
+
+---
+
+## CONVERGENCE D'UN PAIEMENT — la redirection n'est jamais une preuve
+
+### La doctrine, en une ligne
+
+> **Un paiement est acquis quand le fournisseur l'a annoncé par un événement
+> signé, jamais quand un navigateur est revenu.**
+
+Le retour du navigateur sert à trois choses, et à trois seulement : afficher
+immédiatement un résultat, accélérer une relecture, guider l'utilisateur. Fermer
+l'onglet du prestataire de paiement avant la redirection ne change **rien** à ce
+qui suit.
+
+```text
+Checkout / Billing
+      ↓  événement SIGNÉ
+Panel — webhook
+      ↓  appartenance PROUVÉE par le registre de liens
+fait fournisseur normalisé
+      ↓
+transaction au registre financier            ← « PROJETÉ »
+      ↓                          ↘
+facture archivée (Media)          annonce aux SUPER_ADMIN
+      ↓
+projection vers le projet → contrat payé / abonnement actif
+      ↓
+confirmation au client, avec sa facture
+```
+
+Aucune flèche de ce schéma ne part d'une URL de retour. Une garde de recette
+vérifie qu'aucun applicateur de paiement du projet ne lit `req.query`,
+`searchParams` ni `session_id`.
+
+### L'ordre des livraisons n'est pas garanti — et il ment
+
+Le fournisseur ne garantit aucun ordre, et chaque événement transporte un
+**instantané** de l'objet, pris au moment où l'événement a été produit. Constaté
+sur la recette TEST du 21 août 2026 :
+
+```text
+10:32:03.370  invoice.paid                   → abonnement ACTIF
+10:32:03.504  customer.subscription.updated
+10:32:03.563  customer.subscription.created  → « incomplete »
+```
+
+Le dernier ARRIVÉ est le plus ANCIEN : `customer.subscription.created` décrit
+l'abonnement à sa naissance, avant le règlement de sa première facture. Il
+écrasait `ACTIVE`, et le parcours client se bloquait sur « Paiement à
+confirmer » — sans qu'aucun webhook ultérieur ne vienne le défaire.
+
+Deux gardes se superposent côté projet :
+
+| garde | portée | ce qu'elle départage |
+|---|---|---|
+| `statusObservedAt` | générale | une observation plus ancienne n'écrit ni statut, ni période, ni résiliation |
+| « incomplete ne défait pas une facture encaissée » | décisive | les annonces tombées dans la MÊME seconde, que l'horloge ne peut pas trancher |
+
+Les **identités** (`subscriptionId`, `latestInvoiceId`, `customerId`) sont
+écrites dans tous les cas : elles nomment des objets, elles ne décrivent pas un
+état qui régresse. Une lecture DIRECTE de l'abonnement — la réconciliation — est
+horodatée « maintenant » et prime donc toujours : c'est ce qui rend la
+réparation possible.
+
+### « Vérifier le paiement » — ce que ce bouton est, et n'est pas
+
+```text
+IL FAIT           relire l'autorité, appliquer l'état déjà prouvé, rendre l'état
+IL NE FAIT PAS    repayer · recréer une session · créer une transaction
+                  croire un paramètre d'URL
+```
+
+Idempotent, appelable après F5, après fermeture de l'onglet, dix minutes plus
+tard. Depuis la convergence automatique, il n'est plus **nécessaire** — il reste
+comme relecture manuelle et comme filet de récupération.
+
+Quand l'autorité ne répond pas, il rend `authorityReached: false`. L'écran dit
+alors « nous n'avons pas pu joindre le service de paiement », jamais « état
+vérifié » : annoncer une vérification qui n'a pas eu lieu, puis réclamer à
+nouveau un paiement déjà fait, est le plus sûr moyen de faire croire à un échec.
+
+### La facture : une copie détenue, pas une adresse
+
+Une adresse `invoice_pdf` est **signée et périssable**. Une facture est une
+pièce comptable qui se conserve des années. Le Panel télécharge donc le PDF dès
+que le fait est projeté et le range dans son protocole Media — **au même endroit
+que les justificatifs déposés à la main**, servi par la même route contrôlée :
+
+```text
+GET /api/finances/transactions/:id/receipt     401 sans authentification
+                                               200 application/pdf avec
+```
+
+Conservés sur le fait : `providerInvoiceId`, `number`, `hostedUrl`, `pdfUrl`,
+`mediaId`, `sha256`, `mime`, `bytes`, `downloadedAt`.
+
+```text
+un rejeu de webhook       → la copie existe, rien n'est retéléchargé
+une pièce déposée à la main → JAMAIS écrasée ; l'archivage se retire
+aucune facture chez le fournisseur → un ÉTAT nommé, jamais un faux PDF fabriqué
+un téléchargement en échec → le revenu reste écrit, le rattrapage reprendra
+```
+
+**Le rattrapage n'est pas une migration.** `convergePendingRevenue()` reprend à
+chaque lecture financière les encaissements projetés sans pièce — qu'ils datent
+d'avant le lot, d'un Panel redémarré entre la projection et l'archivage, ou d'un
+PDF que le fournisseur n'avait pas encore produit. Les trois laissent le même
+état, et se réparent au même endroit.
+
+### Les deux messages d'un encaissement
+
+| message | émetteur | portée | destinataire | déclencheur |
+|---|---|---|---|---|
+| `PAYMENT_CONFIRMED_ADMIN` | le PROJET | PROJECT | ses administrateurs | `launch_fee.paid` · `subscription.paid` |
+| `PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN` | le PANEL | PANEL | ses SUPER_ADMIN | fait fournisseur PROJETÉ |
+
+Ils ne se recouvrent pas : l'un dit à un client que son règlement est encaissé,
+l'autre apprend à L.Y Solution qu'un client du parc a payé. Le second n'est
+**jamais** provisionné chez un projet — il nomme un client à quelqu'un d'autre,
+et une garde de recette le vérifie.
+
+`PAYMENT_CONFIRMED_ADMIN` est **générique** : frais de lancement, abonnement,
+prestation. Ce qui les distingue tient dans deux variables (`payment.kind`,
+`payment.period`). Il remplace `CONTRACT_PAYMENT_RECEIVED_ADMIN`, qui reste au
+registre — marqué `retired: true` — pour la lisibilité des envois déjà partis.
+
+### Le lien de facture est OBLIGATOIRE, et il se fait attendre
+
+Le fournisseur annonce l'encaissement **avant** d'avoir fini d'émettre la
+facture : environ quatre secondes sur le parcours réel. Un bouton « Voir ma
+facture » qui mène à une liste vide est pire que pas de bouton — le client
+vient d'être débité, on lui confirme, il clique, il ne trouve rien, il doute.
+
+`payment.invoiceUrl` est donc une variable **obligatoire**, et son résolveur
+lève un refus **rejouable** tant que la facture n'est pas parvenue. L'exécution
+repasse à 30 s, 2 min, 10 min ; au-delà elle part en `DEAD_LETTER`, visible et
+rejouable à la main. **Un trou qu'on voit vaut mieux qu'un lien mort.**
+
+### Exactement une fois
+
+```text
+un fait fournisseur       index unique {provider, environment, objectType, objectId}
+une transaction par fait  index unique partiel sur provenance.*
+un envoi Panel            PanelCapabilityOperation (projectId, capability, operationId)
+un envoi projet           idempotencyKey de l'événement + EmailDelivery
+une copie de facture      invoiceArchive.mediaId, puis receipt.mediaId, puis l'empreinte
+```
+
+Aucune de ces clés ne contient d'horloge. Un `Date.now()` produirait un acte
+neuf à chaque passage, et le premier rattrapage réexpédierait tout le parc.
+
+### Incident — « Paiement à confirmer » sur un contrat qui a payé
+
+```text
+1. le Panel a-t-il la transaction ?      écran Finances → le mouvement existe ?
+2. si OUI  → le projet n'a pas convergé  → « Vérifier le paiement » (idempotent)
+                                          ou attendre la convergence serveur
+3. si NON  → le fait est-il retenu ?     /api/finances/provider-revenue/unprojected
+4. l'ordre des webhooks                  panelproviderwebhookevents, par receivedAt
+```
+
+Ne JAMAIS marquer un paiement payé à la main : c'est précisément ce que toute
+cette chaîne existe pour rendre inutile.
+
+### Incident — un mouvement sans facture
+
+```text
+1. le fournisseur en a-t-il émis une ?   fait → invoiceDocument.pdfUrl
+2. si NON  → normal pour un paiement unique sans `invoice_creation`
+3. si OUI  → fait → invoiceArchive.attempts / lastError
+4. réparer → une lecture de l'écran Finances suffit (convergence)
+```

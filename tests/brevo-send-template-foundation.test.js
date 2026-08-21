@@ -137,6 +137,15 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     // projet, natifs ET fédérés. Portée PANEL : elle nomme des composants
     // internes et ne porte jamais l'apparence du client.
     'PLATFORM_INCIDENT_DEV_ALERT',
+    // L12 — la confirmation d'encaissement au client, TOUS types de règlement
+    // confondus, avec son lien de facture. Elle remplace
+    // `CONTRACT_PAYMENT_RECEIVED_ADMIN`, qui reste au registre pour la
+    // lisibilité des envois déjà partis mais n'a plus d'appelant.
+    'PAYMENT_CONFIRMED_ADMIN',
+    // L12 — l'encaissement d'un projet du parc, annoncé aux SUPER_ADMIN du
+    // Panel. Portée PANEL : elle nomme un client à quelqu'un d'autre, et n'est
+    // jamais provisionnée chez un projet.
+    'PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN',
   ];
 
   const codes = templates.listTemplateCodes();

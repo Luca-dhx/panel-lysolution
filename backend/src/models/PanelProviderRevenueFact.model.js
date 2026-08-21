@@ -162,6 +162,54 @@ const providerRevenueFactSchema = new mongoose.Schema(
     },
 
     /**
+     * L12 — LA COPIE QUE NOUS DÉTENONS, par opposition aux adresses ci-dessus.
+     *
+     * ══ POURQUOI UNE COPIE, ALORS QU'ON A DÉJÀ DEUX LIENS ═══════════════════
+     *
+     * Parce que `pdfUrl` et `hostedUrl` sont des adresses SIGNÉES chez le
+     * fournisseur. Elles sont valides aujourd'hui ; rien ne les garantit dans
+     * trois ans, et une facture est une pièce comptable dont la durée de
+     * conservation se compte en années. Un justificatif qui repose sur la
+     * disponibilité d'un tiers n'est pas un justificatif.
+     *
+     * ══ CE QUE CE BLOC N'EST PAS ════════════════════════════════════════════
+     *
+     * Ce n'est pas un second stockage. Le fichier vit dans `PanelMedia`, sous
+     * le même protocole que les justificatifs déposés à la main, et il est
+     * rattaché au mouvement par `PanelFinancialTransaction.receipt.mediaId` —
+     * lequel reste la SEULE relation. Ce bloc dit ce qui a été téléchargé,
+     * QUAND, et depuis QUELLE adresse : c'est la traçabilité de l'acte, pas
+     * une seconde vérité sur le document.
+     *
+     * ══ POURQUOI L'EMPREINTE EST RECOPIÉE ICI ═══════════════════════════════
+     *
+     * Elle vit aussi sur le média, et c'est bien elle qui fait foi. Celle-ci
+     * répond à une autre question : « la copie que nous avons archivée pour
+     * CETTE facture est-elle toujours celle-là ? ». Elle rend l'idempotence
+     * VÉRIFIABLE sans avoir à relire le fichier — un rejeu qui retrouve la
+     * même empreinte n'écrit rien, et le prouve.
+     */
+    invoiceArchive: {
+      mediaId: { type: String, default: null },
+      sha256: { type: String, default: null },
+      mime: { type: String, default: null },
+      bytes: { type: Number, default: null },
+      /** L'adresse d'où la copie vient — utile le jour où elle ne répond plus. */
+      sourceUrl: { type: String, default: null },
+      downloadedAt: { type: Date, default: null },
+      /**
+       * POURQUOI LA DERNIÈRE TENTATIVE A ÉCHOUÉ, ET COMBIEN IL Y EN A EU.
+       *
+       * Un archivage qui échoue ne remet JAMAIS en cause le revenu : l'argent
+       * est encaissé, la transaction est écrite, seul le document manque. Sans
+       * ces deux champs, ce manque serait muet — et un justificatif absent
+       * qu'on ne sait pas absent est le pire des deux mondes.
+       */
+      attempts: { type: Number, default: 0 },
+      lastError: { type: String, default: null },
+    },
+
+    /**
      * L10.4 — LE REÇU STRIPE DE LA CHARGE.
      *
      * Il ne vit pas dans `invoiceDocument` parce qu'il n'est pas une facture :
@@ -250,6 +298,19 @@ providerRevenueFactSchema.index(
 providerRevenueFactSchema.index(
   { projectionStatus: 1, ownershipResourceType: 1, ownershipResourceId: 1 },
   { name: 'pending_by_owner_resource' },
+);
+
+/**
+ * L12 — LA FILE D'ARCHIVAGE : « quelles factures projetées n'ont pas de copie ? ».
+ *
+ * C'est la question que pose le rattrapage à chaque passage, et elle porte sur
+ * l'ensemble de la collection. Sans index, le balayage serait linéaire à chaque
+ * démarrage — et il grossit avec le chiffre d'affaires, c'est-à-dire au pire
+ * moment.
+ */
+providerRevenueFactSchema.index(
+  { projectionStatus: 1, 'invoiceArchive.mediaId': 1, 'invoiceDocument.pdfUrl': 1 },
+  { name: 'invoice_archive_backlog' },
 );
 
 /** Diagnostic : « qu'a-t-on reçu pour ce projet, et dans quel état ? ». */

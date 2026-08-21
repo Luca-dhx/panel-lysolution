@@ -26,6 +26,13 @@ const TESTS = [
   // Le bruit d'une fausse alerte se paie sur l'attention accordée à la
   // suivante.
   'secret-hygiene.test.js',
+  // AUCUN IDENTIFIANT NON DÉCLARÉ — statique, et placée aussi haut que
+  // l'hygiène des secrets, pour la même raison : une `ReferenceError` sur un
+  // chemin de webhook produit une 500, donc un rejeu du fournisseur en boucle,
+  // sur un paiement réel. Le code se charge parfaitement ; il ne casse qu'à
+  // l'exécution de la ligne fautive, et aucune suite fonctionnelle ne l'attrape
+  // si elle n'exerce pas précisément ce chemin.
+  'undefined-identifier.test.js',
   // DISPONIBILITÉ DU SERVICE — « vivant » n'est pas « prêt ». Le port s'ouvre
   // avant l'amorçage ; les sondes répondent tout de suite ; les routes métier
   // refusent en 503 + code stable tant que les dépendances manquent. Placée
@@ -148,6 +155,9 @@ const TESTS = [
   // le désordre de livraison (facture avant adoption), la suppression suivie
   // d'un rejeu, et le parcours réel depuis un webhook signé.
   'finance-stripe-revenue.test.js',
+  // L12 — L'ARCHIVAGE DE LA FACTURE ET L'ANNONCE D'ENCAISSEMENT : les deux
+  // suites d'un fait financier PROJETÉ, et leur idempotence.
+  'stripe-invoice-archival.test.js',
   /**
    * L10.7 — L'APPARTENANCE D'UN REVENU SE RÉSOUT SUR LE GRAPHE INTERNE.
    *
