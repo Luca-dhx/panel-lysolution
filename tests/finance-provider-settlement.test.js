@@ -679,9 +679,17 @@ section('11. Le remboursement : ce que le fournisseur rend, et ce qu’il garde'
   });
   check('le remboursement est porté au registre', recu.status === 'PROJECTED');
 
+  /**
+   * SES SUITES SONT DONNÉES SANS QU'ON LES DEMANDE.
+   *
+   * Un remboursement n'a ni facture à archiver ni encaissement à annoncer, et
+   * sa projection court-circuitait donc les suites. Il a pourtant une écriture
+   * de solde — la recette déployée l'a montré en laissant un remboursement réel
+   * sans observation. Les deux portes d'entrée d'un `re_…` passent désormais
+   * par le geste complet.
+   */
   const fait = await factOf('re_l13');
-  await projection.settleProjectedFact(fait.factId);
-  const solde = await factOf('re_l13');
+  const solde = fait;
 
   check('un remboursement a SA PROPRE écriture de solde',
     solde.settlement.status === 'SETTLED'

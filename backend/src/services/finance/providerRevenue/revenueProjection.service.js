@@ -201,7 +201,7 @@ export async function recordStripeRefundEvent({
     const resultats = [];
     for (const fact of facts) {
       const enregistre = await upsertFact({ fact, eventType, providerEventId });
-      const projete = await projectFact(enregistre.factId);
+      const projete = await projectAndSettle(enregistre.factId);
       resultats.push({ factId: enregistre.factId, status: projete.status, reason: projete.reason });
     }
     /**
@@ -243,7 +243,7 @@ export async function recordStripeRefundResponse({
     if (!fact) return { ...rien, reason };
 
     const enregistre = await upsertFact({ fact, eventType: 'api.refunds.create', providerEventId: null });
-    const projete = await projectFact(enregistre.factId);
+    const projete = await projectAndSettle(enregistre.factId);
     return {
       recorded: true,
       factId: enregistre.factId,
