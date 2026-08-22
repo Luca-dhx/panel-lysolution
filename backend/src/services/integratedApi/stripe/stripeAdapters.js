@@ -1836,6 +1836,7 @@ async function settlementRetrieve({ definition, credentials, input, fetchImpl })
     availableOn: null,
     occurredAt: null,
     chargeId: extra.chargeId ?? null,
+    paymentIntentId: extra.paymentIntentId ?? paymentIntentId ?? null,
     exchangeRate: null,
     feeDetails: [],
   });
@@ -1854,6 +1855,8 @@ async function settlementRetrieve({ definition, credentials, input, fetchImpl })
     availableOn: secondes(settlement.availableOn),
     occurredAt: secondes(settlement.occurredAt),
     chargeId: settlement.chargeId ?? settlement.sourceId ?? null,
+    /** Découverte par la relecture, quand l'entrée était une facture. */
+    paymentIntentId: paymentIntentId ?? null,
     exchangeRate: settlement.exchangeRate,
     feeDetails: settlement.feeDetails,
   });

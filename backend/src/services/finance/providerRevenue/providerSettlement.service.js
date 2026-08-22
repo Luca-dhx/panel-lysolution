@@ -536,6 +536,43 @@ export async function captureSettlementForFact(factId, { fetchImpl } = {}) {
       return { ...rien, outcome: SETTLEMENT_OUTCOME.UNUSABLE, reason: SETTLEMENT_REASON.CURRENCY_UNSUPPORTED };
     }
 
+    /**
+     * ── LE FAIT APPREND CE QUE LA RELECTURE A DÉCOUVERT ──────────────────────
+     *
+     * ══ CE DÉFAUT-LÀ N'EST PAS CELUI DE CE LOT, ET LE CORRIGER EST GRATUIT ══
+     *
+     * Un `invoice.paid` récent ne porte plus d'intention de paiement (voir
+     * `settlementReferenceOf`). Ce n'est pas seulement la capture des frais qui
+     * en souffrait : le REMBOURSEMENT de L10.4 exige cette intention, et la
+     * recette déployée a répondu `PANEL_REFUND_NO_PAYMENT_INTENT` sur un
+     * paiement parfaitement encaissé. Le Panel ne pouvait plus rendre l'argent.
+     *
+     * La capture, elle, vient précisément de la retrouver. L'inscrire sur le
+     * fait répare le remboursement sans toucher une ligne de L10.4 : le fait
+     * gagne simplement l'identité qui lui manquait, et tous ses lecteurs en
+     * profitent.
+     *
+     * ══ POURQUOI C'EST LÉGITIME AU REGARD DE LA DOCTRINE ════════════════════
+     *
+     * L10.3 range les IDENTITÉS parmi les champs « enrichissables », par
+     * opposition aux MONTANTS, figés à la première annonce. Une identité
+     * absente qui apparaît est une convergence ; un montant qui change serait
+     * une réécriture. On n'écrase donc jamais une valeur existante — on ne
+     * remplit qu'un vide.
+     */
+    if (vue.paymentIntentId && !fait.corroboration?.paymentIntentId) {
+      await PanelProviderRevenueFact.updateOne(
+        { factId, 'corroboration.paymentIntentId': null },
+        { $set: { 'corroboration.paymentIntentId': vue.paymentIntentId } },
+      ).catch(() => null);
+    }
+    if (vue.chargeId && !fait.corroboration?.chargeId) {
+      await PanelProviderRevenueFact.updateOne(
+        { factId, 'corroboration.chargeId': null },
+        { $set: { 'corroboration.chargeId': vue.chargeId } },
+      ).catch(() => null);
+    }
+
     const revenu = await PanelFinancialTransaction
       .findOne({ transactionId: fait.transactionId })
       .select('transactionId projectId projectNameSnapshot clientCompanyId label effectiveDate currency')

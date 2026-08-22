@@ -850,12 +850,27 @@ section('16. Le webhook ne dit rien du règlement — la facture, elle, le dit')
   check('le revenu est porté au registre malgré un webhook muet',
     recu.status === 'PROJECTED');
 
-  const fait = await factOf('in_l13_webhook_muet');
-  check('le fait ne porte AUCUNE référence de règlement — c’est le fait observé',
-    !fait.corroboration?.paymentIntentId && !fait.corroboration?.chargeId);
+  /**
+   * LE FAIT TEL QUE LE WEBHOOK LE PRODUIT — avant toute relecture.
+   *
+   * On l'observe sur le NORMALISATEUR, qui est pur : la projection, elle,
+   * enchaîne déjà ses suites, et le fait persisté a donc appris entre-temps ce
+   * que la relecture lui a rendu. Les deux sont vrais, à deux instants
+   * différents, et c'est le premier qui décrit le défaut.
+   */
+  const brut = normalizer.normalizeStripeRevenueEvent({
+    eventType: 'invoice.paid',
+    payload: evenement('invoice.paid', nue),
+    environment: 'TEST',
+  }).fact;
+  check('le fait NÉ du webhook ne porte AUCUNE référence de règlement',
+    !brut.corroboration.paymentIntentId && !brut.corroboration.chargeId);
   check('…et la résolution repart alors de l’objet CANONIQUE',
-    reglement.settlementReferenceOf(fait).invoiceId === 'in_l13_webhook_muet');
+    reglement.settlementReferenceOf({
+      kind: 'REVENUE', objectType: 'INVOICE', objectId: brut.objectId, corroboration: brut.corroboration,
+    }).invoiceId === 'in_l13_webhook_muet');
 
+  const fait = await factOf('in_l13_webhook_muet');
   await projection.settleProjectedFact(fait.factId);
   const solde = await factOf('in_l13_webhook_muet');
   check('la commission est retrouvée par relecture de la facture',
@@ -866,6 +881,26 @@ section('16. Le webhook ne dit rien du règlement — la facture, elle, le dit')
     (await txOf(solde.settlement.feeTransactionId))?.amountCents === 205);
   check('brut − frais = net, sur les chiffres du fournisseur',
     solde.settlement.grossCents - solde.settlement.providerFeeCents === solde.settlement.netCents);
+
+  /**
+   * ── ET LE FAIT APPREND CE QU'IL NE SAVAIT PAS ─────────────────────────────
+   *
+   * Le défaut ne touchait pas que les frais : le REMBOURSEMENT de L10.4 exige
+   * l'intention de paiement, et la recette déployée a répondu
+   * `PANEL_REFUND_NO_PAYMENT_INTENT` sur un encaissement parfaitement réel — le
+   * Panel ne pouvait plus rendre l'argent d'un client.
+   *
+   * La capture vient de retrouver cette intention. L'inscrire sur le fait
+   * répare le remboursement sans toucher une ligne de L10.4.
+   */
+  check('le fait APPREND l’intention que le webhook ne portait pas',
+    solde.corroboration.paymentIntentId === 'pi_l13_muet');
+  check('…et le débit avec elle', solde.corroboration.chargeId === 'ch_l13_muet');
+
+  /** On ne remplit qu'un VIDE : une identité déjà connue n'est jamais réécrite. */
+  const dejaConnu = await factOf('in_l13_presta');
+  check('une identité déjà présente n’est pas réécrite',
+    dejaConnu.corroboration.paymentIntentId === 'pi_l13_presta');
 
   /**
    * UNE FACTURE SOLDÉE SANS RÈGLEMENT — avoir, ou solde client. Aucun euro n'a

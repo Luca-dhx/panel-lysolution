@@ -464,6 +464,16 @@ const settlementView = z.object({
   availableOn: z.number().int().nullable(),
   occurredAt: z.number().int().nullable(),
   chargeId: z.string().nullable(),
+  /**
+   * L'INTENTION RÉELLEMENT SUIVIE — rendue parce qu'elle a pu être DÉCOUVERTE.
+   *
+   * Quand la référence d'entrée était une facture, ce verbe a dû relire le
+   * document pour retrouver son règlement. L'appelant ne le savait pas ; il le
+   * saura. C'est la seule information de ce contrat qui n'était pas déjà connue
+   * de lui, et elle vaut : le remboursement, un lot plus tôt, l'exige et ne
+   * l'obtenait plus des webhooks récents.
+   */
+  paymentIntentId: z.string().nullable(),
   exchangeRate: z.number().nullable(),
   feeDetails: z.array(feeDetailView),
 }).strict();
