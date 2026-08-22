@@ -109,10 +109,67 @@ function Ligne({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function IncidentCard({ entry }: { entry: PaymentDefaultEntry }) {
+function IncidentCard({ entry, onRetried }: {
+  entry: PaymentDefaultEntry;
+  onRetried: () => void;
+}) {
   const { incident, display } = entry;
   const { payment, grace, cause, site, policy } = display;
   const [details, setDetails] = useState(false);
+  const [tentative, setTentative] = useState<'REPOS' | 'EN_COURS'>('REPOS');
+  const [message, setMessage] = useState<{ ton: 'ok' | 'attention'; texte: string } | null>(null);
+
+  /**
+   * ── DEMANDER UNE NOUVELLE TENTATIVE ───────────────────────────────────────
+   *
+   * ══ LA CONFIRMATION EST LÉGÈRE, ET ELLE EST NÉCESSAIRE ══════════════════
+   *
+   * C’est un prélèvement sur la carte d’un client. Pas de dialogue modal — le
+   * geste est réversible dans ses conséquences (une tentative refusée ne coûte
+   * rien) — mais pas de déclenchement au survol non plus.
+   *
+   * ══ LE DOUBLE CLIC EST ARRÊTÉ ICI *ET* AU SERVEUR ══════════════════════
+   *
+   * Ce drapeau est du confort : il évite une seconde requête. Il ne PROTÈGE
+   * rien — un rechargement le remet à zéro. La vraie garantie est l’identité
+   * d’acte, dérivée de la facture ET de son nombre de tentatives : deux clics
+   * sur le même état produisent le même acte, donc une seule tentative.
+   */
+  async function demanderTentative() {
+    if (tentative === 'EN_COURS') return;
+    const montant = formatCents(payment.amountDueCents);
+    if (!window.confirm(`Relancer maintenant une tentative de paiement de ${montant} ?`)) return;
+
+    setTentative('EN_COURS');
+    setMessage(null);
+    try {
+      const r = await finances.retryPaymentDefault(display.technical.paymentDefaultId);
+      /**
+       * On n’annonce PAS « payé ». Stripe a reçu la demande ; l’issue viendra
+       * par le webhook, et l’écran la lira au prochain rafraîchissement.
+       */
+      setMessage({
+        ton: 'ok',
+        texte: r.invoice?.paid
+          ? 'Nouvelle tentative demandée — la facture est réglée.'
+          : 'Nouvelle tentative demandée. Le résultat arrivera de Stripe.',
+      });
+      onRetried();
+    } catch (e) {
+      /**
+       * UN REFUS ATTENDU N’EST PAS UNE PANNE. On affiche le message métier tel
+       * que le serveur l’a formulé — il nomme la situation. Le générique n’est
+       * gardé que pour ce qui n’en a réellement aucun.
+       */
+      const err = e as { message?: string };
+      setMessage({
+        ton: 'attention',
+        texte: err?.message || 'La nouvelle tentative n’a pas pu être demandée.',
+      });
+    } finally {
+      setTentative('REPOS');
+    }
+  }
 
   return (
     <div className="finance-default-card">
@@ -263,6 +320,40 @@ function IncidentCard({ entry }: { entry: PaymentDefaultEntry }) {
 
       {/* ── DÉTAILS TECHNIQUES ───────────────────────────────────────────── */}
       {/*
+        ── LA NOUVELLE TENTATIVE — un geste, pas un réglage ─────────────────
+
+        Le bouton n’apparaît que si le serveur dit qu’il servira : incident
+        ouvert ou grâce expirée, facture fournisseur présente, montant encore
+        dû. L’écran ne recalcule aucune de ces conditions — il les lit.
+
+        Il ne marque jamais « payé ». Il RÉCLAME ; c’est le webhook de Stripe
+        qui CONSTATE, par le même chemin que les tentatives automatiques.
+      */}
+      {display.retry?.retryable ? (
+        <div className="finance-default-retry">
+          <button
+            type="button"
+            className="btn btn-small"
+            disabled={tentative === 'EN_COURS'}
+            onClick={() => void demanderTentative()}
+          >
+            {tentative === 'EN_COURS' ? 'Envoi…' : 'Nouvelle tentative'}
+          </button>
+          {/*
+            Le retour est DISTINCT selon sa nature : un refus métier se lit,
+            une indisponibilité de fournisseur se réessaie. Les fondre en un
+            « erreur serveur » ferait chercher une panne là où il n’y a qu’un
+            état.
+          */}
+          {message ? (
+            <p className={message.ton === 'ok' ? 'finance-default-ok' : 'finance-default-warn'}>
+              {message.texte}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/*
         LES IDENTIFIANTS SONT DERRIÈRE « DÉTAILS », et le cahier des charges
         l'exige : un identifiant de fournisseur sert au support, pas à la
         lecture courante. Aucun secret n'y figure — ce sont des références
@@ -373,7 +464,7 @@ export function PaymentDefaultPanel({ projectId }: { projectId: string }) {
         />
       ) : (
         <>
-          {actif ? <IncidentCard entry={actif} /> : null}
+          {actif ? <IncidentCard entry={actif} onRetried={() => { void recharger(); }} /> : null}
 
           {/*
             ══ L'HISTORIQUE RESTE CONSULTABLE ═══════════════════════════════
@@ -398,7 +489,7 @@ export function PaymentDefaultPanel({ projectId }: { projectId: string }) {
               {historique ? (
                 <div className="finance-default-list">
                   {passes.map((entry) => (
-                    <IncidentCard key={entry.incident.paymentDefaultId} entry={entry} />
+                    <IncidentCard key={entry.incident.paymentDefaultId} entry={entry} onRetried={() => { void recharger(); }} />
                   ))}
                 </div>
               ) : null}

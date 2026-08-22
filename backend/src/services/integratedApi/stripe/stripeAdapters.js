@@ -56,6 +56,7 @@ import {
   cancelSubscriptionNow,
   retrievePaymentIntent,
   retrieveInvoice,
+  payInvoice,
   listInvoices,
   createBillingPortalSession,
   listRefunds,
@@ -74,6 +75,9 @@ import {
   assertOwnedResource,
   maskResourceId,
 } from './stripeResourceBinding.js';
+import {
+  assertInvoiceRetryable, retryOperationId, vueTentative,
+} from './stripeInvoiceRetryAuthority.js';
 import {
   CheckoutAuthorityError,
   deriveIdempotencyKey,
@@ -1345,6 +1349,70 @@ const PAYMENT_INTENT = STRIPE_RESOURCE_TYPES.PAYMENT_INTENT;
  * remboursements partiels concurrents produisent donc au pire un refus propre,
  * jamais un excédent.
  */
+/**
+ * RETENTER LE PAIEMENT D’UNE FACTURE IMPAYÉE — l’ordre des barrières.
+ *
+ *   appartenance  →  état RELU  →  tentative
+ *
+ * ══ POURQUOI ON RELIT LA FACTURE AVANT DE DÉCIDER ══════════════════════════
+ *
+ * L’incident du Panel reflète le dernier webhook reçu. Entre-temps, Stripe a
+ * pu retenter et réussir. Déclencher sur la foi d’un incident périmé
+ * produirait le double débit que toute la doctrine évite. La source de vérité
+ * est la facture, relue à l’instant du clic.
+ *
+ * ══ CE QUE CET ADAPTATEUR NE FAIT JAMAIS ═══════════════════════════════════
+ *
+ * Il ne crée ni facture, ni abonnement, ni session de paiement, ni client. Il
+ * n’écrit RIEN dans le registre de liens : la facture y est déjà, sinon la
+ * première barrière l’aurait refusée. Une tentative n’est pas une ressource.
+ *
+ * Il ne marque jamais « payé » non plus : c’est Stripe qui l’établit, et c’est
+ * le webhook qui l’apprend au Panel. Cet adaptateur RÉCLAME, il ne CONSTATE
+ * pas.
+ */
+/** Le type de ressource visé — la facture, jamais le client ni la session. */
+const INVOICE = STRIPE_RESOURCE_TYPES.INVOICE;
+
+async function invoiceRetry({ definition, context, credentials, input, fetchImpl }) {
+  const { projectId, environment } = context;
+  const { invoiceId } = input;
+
+  // ── BARRIÈRE 0 : L’APPARTENANCE, AVANT TOUT CONTACT ──────────────────────
+  await guard(definition, () => assertOwnedResource({
+    projectId, environment, resourceType: INVOICE, resourceId: invoiceId,
+  }));
+
+  // ── BARRIÈRE 1 : L’ÉTAT RÉEL, LU CHEZ LE FOURNISSEUR ────────────────────
+  const relu = await guard(definition, () => retrieveInvoice({
+    credentials, invoiceId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const { attemptCount } = assertInvoiceRetryable(relu.invoice);
+
+  /**
+   * ── BARRIÈRE 2 : LA CLÉ, DÉRIVÉE DE L’ÉTAT ────────────────────────────
+   *
+   * Elle porte le nombre de tentatives DÉJÀ faites. Deux clics sur le même
+   * état rendent donc la même clé — Stripe déduplique, une seule tentative
+   * part. Après un nouvel échec, le compteur a bougé : c’est un autre acte.
+   */
+  const idempotencyKey = deriveIdempotencyKey({
+    environment, projectId, capability: definition.code,
+    operationId: retryOperationId({ environment, projectId, invoiceId, attemptCount }),
+  });
+
+  const tentee = await guard(definition, () => payInvoice({
+    credentials, invoiceId, idempotencyKey, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
+  logger.info(
+    `[stripe] nouvelle tentative demandée sur ${maskResourceId(invoiceId)} `
+    + `(${projectId}, ${environment}) — tentatives connues : ${attemptCount ?? '?'}.`,
+  );
+
+  return vueTentative(tentee.invoice);
+}
+
 async function refundCreate({ definition, context, credentials, input, fetchImpl }) {
   const { projectId, environment } = context;
   const { paymentIntentId, amountCents, reason, operationId } = input;
@@ -1764,6 +1832,7 @@ export const STRIPE_ADAPTERS = Object.freeze({
    * seule dont aucun code projet n'a jamais existé. Elle ne migre rien : elle
    * naît dans le plan de contrôle, appelée par le Panel pour un projet.
    */
+  'billing.invoice.retry': invoiceRetry,
   'billing.refund': refundCreate,
 });
 

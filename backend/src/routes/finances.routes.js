@@ -66,6 +66,7 @@ import {
   addPaymentRequest,
   cancelPayment,
   paymentDefaults,
+  retryPaymentDefaultAction,
   paymentRequest,
   paymentRequests,
   recurringCost,
@@ -217,17 +218,35 @@ router.post('/payment-requests/:paymentRequestId/cancel', asyncHandler(cancelPay
    dans le bénéfice, et le résultat du mois aurait bougé parce qu'une carte a
    été refusée.
 
-   ══ EN LECTURE, ET SANS AUCUN VERBE ═════════════════════════════════════════
+   ══ LA LECTURE, ET UN SEUL GESTE ════════════════════════════════════════════
 
-   Une seule route, un seul verbe, aucun `POST`. Il n'y a rien à déclencher
-   ici : le Panel ne retente aucun prélèvement — Stripe est l'unique
-   ordonnanceur — et l'expiration d'une grâce appartient à l'ordonnanceur
-   financier, pas à qui ouvre un écran.
+   Cette surface a longtemps été en lecture pure, avec cette justification :
+   « le Panel ne retente aucun prélèvement — Stripe est l'unique ordonnanceur ».
+   La première moitié était trop large, la seconde reste vraie.
 
-   Aucun appel fournisseur, aucun e-mail, aucune écriture. La règle de
-   l'en-tête de ce fichier tient sans exception pour cette surface.
+   Stripe demeure l'unique ORDONNANCEUR : rien ici ne programme de tentative,
+   n'en planifie, n'en configure la cadence. Deux calendriers sur une même
+   facture produiraient le double débit, et ce refus n'a pas bougé.
+
+   Mais un exploitant sait parfois quelque chose que Stripe ignore — le client
+   vient d'appeler pour dire que sa carte est réapprovisionnée. Attendre la
+   prochaine tentative programmée dans quatre jours n'aide personne. D'où UN
+   verbe, et un seul : déclencher UNE tentative sur la créance existante.
+
+   L'expiration d'une grâce, elle, appartient toujours à l'ordonnanceur
+   financier et jamais à qui ouvre un écran.
    ══════════════════════════════════════════════════════════════════════════ */
 router.get('/payment-defaults', asyncHandler(paymentDefaults));
+/**
+ * RETENTER LA COLLECTE D’UN IMPAYÉ — un geste d’exploitant, pas un réglage.
+ *
+ * `POST` et non `PUT` : ce n’est pas l’état d’une ressource qu’on pose, c’est
+ * un acte qu’on déclenche. Et il n’est pas idempotent au sens HTTP — deux
+ * appels espacés d’un jour sont deux tentatives légitimes. L’idempotence qui
+ * compte, celle du double clic, est portée par l’identité d’acte, dérivée de
+ * la facture ET de son nombre de tentatives.
+ */
+router.post('/payment-defaults/:paymentDefaultId/retry', asyncHandler(retryPaymentDefaultAction));
 
 /* ══════════════════════════════════════════════════════════════════════════
    COÛTS RÉCURRENTS (L10.2) — les RÈGLES.

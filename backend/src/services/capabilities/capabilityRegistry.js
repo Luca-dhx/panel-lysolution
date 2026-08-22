@@ -898,6 +898,39 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
    * contact fournisseur (`refundOperationId`). Deux clics rejouent la même
    * demande ; deux demandes sont deux actes.
    */
+  /**
+   * LA NOUVELLE TENTATIVE — identité d’acte DÉRIVÉE, comme les `ensure`.
+   *
+   * Elle rejoint le petit groupe des capacités dont l’acte n’est pas nommé
+   * par l’appelant, et pour la même raison : « retenter cette facture dans
+   * l’état où elle est » n’a qu’une réponse correcte. Laisser nommer l’acte
+   * permettrait deux tentatives simultanées sur la même créance.
+   *
+   * La dérivation inclut le NOMBRE DE TENTATIVES : c’est ce qui rend un
+   * second essai possible APRÈS un nouvel échec, sans rendre possible un
+   * double clic. L’état a changé, l’acte est différent.
+   */
+  'billing.invoice.retry': capability('billing.invoice.retry', {
+    provider: 'STRIPE',
+    label: 'Retenter le paiement d’une facture',
+    inputSchema: STRIPE_CAPABILITIES['billing.invoice.retry'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.invoice.retry'].outputSchema,
+    timeoutMs: 25_000,
+    idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
+    requiredPermissions: [PERMISSIONS.BILLING_WRITE],
+    correlationField: 'invoiceId',
+    deriveOperationId: async (context, input) => {
+      const { retryOperationId } = await import(
+        '../integratedApi/stripe/stripeInvoiceRetryAuthority.js'
+      );
+      return retryOperationId({
+        environment: context.environment,
+        projectId: context.projectId,
+        invoiceId: input.invoiceId,
+      });
+    },
+  }),
+
   'billing.refund': capability('billing.refund', {
     provider: 'STRIPE',
     label: 'Rembourser',

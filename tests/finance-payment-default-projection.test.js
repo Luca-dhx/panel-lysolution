@@ -691,8 +691,12 @@ section('GARDE-FOUS STATIQUES — aucun ordonnanceur local, aucun secret');
   );
   check('la surface des impayés est montée en lecture',
     /router\.get\(\s*'\/payment-defaults'/.test(routes));
-  check('…et n’expose AUCUN verbe d’écriture',
-    !/router\.(post|patch|delete|put)\([^)]*payment-defaults/.test(routes));
+  const verbes = [...routes.matchAll(/router\.(post|patch|delete|put)\(\s*'([^']*payment-defaults[^']*)'/g)]
+    .map((m) => `${m[1]} ${m[2]}`);
+  check('…et n’expose QUE la nouvelle tentative',
+    verbes.length === 1 && verbes[0] === 'post /payment-defaults/:paymentDefaultId/retry');
+  check('…aucune route ne modifie l’incident lui-même',
+    !/router\.(patch|delete|put)\([^)]*payment-defaults/.test(routes));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

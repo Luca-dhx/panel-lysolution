@@ -1264,3 +1264,122 @@ tests/finance-refunds.test.js    120 contrôles — double clic, réponse perdue
 tests/finance-ui.test.js         187 contrôles — interface, dont les 5 états dégénérés du graphique
 tests/media-first-deployment.test.js  + 10 contrôles — un média privé n'est jamais publié
 ```
+
+## LE DÉLAI DE GRÂCE ET LES NOUVELLES TENTATIVES
+
+### Qui programme les tentatives
+
+**Stripe, et lui seul.** Cette plateforme n’en programme aucune, n’en
+configure aucune cadence, et ne porte aucun champ `retryInterval`.
+
+La raison est mécanique : deux calendriers sur une même facture produisent le
+double débit. Un `POST /v1/invoices/{id}/pay` déclenché par notre propre
+boucle entrerait en course avec la tentative que Stripe a déjà planifiée.
+
+Le Panel **observe** — `nextPaymentAttemptAt` et `attemptCount` sont RECOPIÉS
+de la facture, jamais calculés.
+
+### La cadence réelle
+
+Celle configurée sur le compte Stripe (relances automatiques). Elle n’est ni
+quotidienne ni fixe : Stripe choisit ses dates. C’est pourquoi l’écran de
+configuration du délai de grâce dit **« suivent la politique de relance
+configurée chez Stripe »** et non « une tentative par jour ».
+
+Annoncer une cadence que personne n’applique ferait attendre un prélèvement
+au mauvais moment. La seule date fiable est celle que Stripe publie, et elle
+est affichée telle quelle.
+
+### Grâce ACTIVÉE
+
+```text
+tentatives automatiques   → politique Stripe
+relances par e-mail       → aux seuils du Panel
+échéance de suspension    → premier refus + N jours
+à l’échéance              → le Panel CONSTATE, le projet décide de fermer
+```
+
+### Grâce DÉSACTIVÉE (`paymentGraceDays = null`)
+
+Ce n’est **pas** « suspendre immédiatement ». C’est « aucune politique de
+fermeture automatique ».
+
+| | Grâce désactivée |
+|---|---|
+| la dette est suivie | **oui** — l’incident existe, avec son montant et son historique |
+| l’état impayé est enregistré | **oui** |
+| les e-mails financiers s’appliquent | **oui** |
+| la régularisation reste possible | **oui** |
+| les factures et la convergence Stripe continuent | **oui** |
+| une campagne quotidienne de tentatives « de grâce » | **non** — elle n’existe nulle part, grâce ou pas |
+| une échéance de suspension calculée | **non** |
+| une suspension automatique déclenchée | **non** |
+
+La suspension reste alors une décision humaine. Transformer « pas de grâce »
+en « coupure immédiate » serait un durcissement contractuel que personne n’a
+décidé.
+
+### La tentative MANUELLE
+
+`POST /api/finances/payment-defaults/:id/retry` — le seul verbe de cette
+surface.
+
+Elle ne contredit pas « Stripe ordonnance » : elle ne PROGRAMME rien. C’est
+une tentative unique, déclenchée par un exploitant qui sait quelque chose que
+Stripe ignore — le client vient d’appeler pour dire que sa carte est
+réapprovisionnée. La différence est celle entre un réveil et un coup d’œil à
+sa montre.
+
+**Ce qu’elle ne fait jamais :**
+
+```text
+❌ créer une facture       ❌ créer un abonnement
+❌ créer un Checkout       ❌ dupliquer la transaction
+❌ marquer « payé »
+```
+
+Elle réutilise la facture existante. L’issue vient du **webhook**, par le même
+chemin que les tentatives automatiques : même projection de revenu, même
+résolution d’incident, mêmes e-mails. Écrire l’issue au retour de l’appel
+créerait une seconde autorité sur l’état de la créance.
+
+**L’idempotence du double clic** est portée par l’identité d’acte :
+
+```text
+stripe-invoice-retry:<monde>:<projet>:<facture>:<tentatives déjà faites>
+```
+
+Deux clics sur le même état → même acte → une seule tentative. Après un
+nouvel échec, le compteur a bougé : c’est un autre acte, et un second essai
+est permis. Une clé fixe aurait interdit tout second essai ; une clé aléatoire
+aurait rendu le double clic coûteux.
+
+**Trois barrières**, dans cet ordre : appartenance de la facture → état RELU
+chez Stripe → clé d’idempotence. La relecture n’est pas une précaution de
+style : l’incident du Panel reflète le dernier webhook reçu, et Stripe a pu
+retenter et réussir entre-temps.
+
+## LES REFUS MÉTIER ET LEUR STATUT HTTP
+
+Un refus **attendu** n’est pas une panne. La distinction décide si l’on montre
+un message à un humain, si l’on journalise une alerte, et si l’appelant a le
+droit de réessayer.
+
+| Statut | Quand | Exemples |
+|---|---|---|
+| **409** | l’état courant interdit l’action ; rien à corriger dans la requête | `MISSING_COMPANY`, `MISSING_BILLING_IDENTITY`, `MISSING_SIGNER`, entreprise archivée, `PAYMENT_NOT_RETRYABLE`, `PAYMENT_ALREADY_PAID`, acte déjà en vol |
+| **403** | la ressource n’appartient pas à ce projet | appartenance Stripe refusée |
+| **422** | charge utile valide en JSON, invalide au contrat métier | un projet envoie un champ hors contrat |
+| **503** | fournisseur ou plan de contrôle indisponible | Stripe muet, Panel injoignable, délai dépassé |
+| **500** | bogue interne inattendu, et rien d’autre | |
+
+Le corps porte **deux niveaux** : `code` dit la NATURE du refus, `reason` dit
+POURQUOI.
+
+```json
+{ "code": "CAPABILITY_NOT_AVAILABLE", "reason": "CLIENT_COMPANY_NOT_READY",
+  "message": "L’entreprise cliente rattachée à ce projet est incomplète : SIREN." }
+```
+
+Le premier pilote la reprise, le second est ce qu’on affiche. Un contrat
+d’erreur qui exige trois niveaux de navigation n’est pas lu : il est contourné.

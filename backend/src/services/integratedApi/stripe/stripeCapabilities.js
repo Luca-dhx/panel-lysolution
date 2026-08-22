@@ -551,6 +551,28 @@ const customerEnsureOutput = z.object({
  * toujours pas : les lignes de facture, le moyen de paiement, l'adresse de
  * facturation, le solde du client — rien de tout cela n'est écrit côté projet.
  */
+/**
+ * L’entrée d’une nouvelle tentative : LA FACTURE, et rien d’autre.
+ *
+ * Ni montant — il est porté par la facture —, ni moyen de paiement — il est
+ * porté par le client —, ni `operationId` : le laisser nommer permettrait
+ * d’obtenir deux tentatives sur le même état, c’est-à-dire le double débit.
+ */
+const invoiceRetryInput = z.object({
+  invoiceId: z.string().trim().regex(/^in_[A-Za-z0-9_]+$/, 'Identifiant de facture invalide.'),
+}).strict();
+
+/** Ce que l’exploitant lit après la tentative — l’état RELU, jamais déduit. */
+const invoiceRetryOutput = z.object({
+  invoiceId: z.string(),
+  status: z.string().nullable(),
+  paid: z.boolean(),
+  attemptCount: z.number().nullable(),
+  amountRemaining: z.number().nullable(),
+  nextPaymentAttemptAt: z.number().nullable(),
+  hostedInvoiceUrl: z.string().nullable(),
+}).strict();
+
 const invoiceView = z.object({
   invoiceId: z.string(),
   number: z.string().nullable(),
@@ -733,6 +755,14 @@ const BINDABLE_KINDS = Object.freeze([
    * posé là, jamais sur un identifiant présenté par un navigateur.
    */
   STRIPE_RESOURCE_KINDS.PAYMENT_INTENT,
+  /**
+   * LA FACTURE — liée depuis la projection du revenu (L10.3), comme
+   * l’intention de paiement et par la même filiation : elle découle d’une
+   * session ou d’un abonnement déjà possédé, et c’est un webhook signé qui la
+   * désigne. Elle entre dans cette liste parce qu’une capacité l’exige enfin —
+   * retenter la collecte d’une créance impayée.
+   */
+  STRIPE_RESOURCE_KINDS.INVOICE,
 ]);
 
 /**
@@ -743,6 +773,14 @@ const BINDABLE_KINDS = Object.freeze([
  */
 const DERIVED_OPERATION_IDENTITY = Object.freeze([
   'billing.customer.ensure',
+  /**
+   * LA NOUVELLE TENTATIVE — son identité porte le NOMBRE de tentatives déjà
+   * faites. C’est ce qui rend un double clic inoffensif (même état, même acte,
+   * une seule tentative) sans interdire un second essai après un nouvel échec
+   * (le compteur a bougé, c’est un autre acte). Laisser le projet la nommer
+   * permettrait deux prélèvements simultanés sur la même créance.
+   */
+  'billing.invoice.retry',
   'billing.price.ensure',
   /**
    * L6.2G — une résiliation est TERMINALE : elle n'a pas de seconde tentative
@@ -1063,6 +1101,36 @@ export const STRIPE_CAPABILITIES = Object.freeze({
    * il ne demande rien. Un pont projet qui appellerait cette capacité serait
    * refusé faute d'octroi, et c'est le comportement voulu.
    */
+  /**
+   * ── RETENTER LA COLLECTE D’UNE FACTURE IMPAYÉE ──────────────────────────
+   *
+   * ══ POURQUOI ELLE NE CONTREDIT PAS « STRIPE ORDONNANCE » ══════════════
+   *
+   * La doctrine interdit de PROGRAMMER des tentatives — pas d’en déclencher
+   * une, à la main, quand un exploitant sait quelque chose que Stripe ignore :
+   * le client vient d’appeler pour dire que sa carte est réapprovisionnée.
+   *
+   * Elle ne crée rien : ni facture, ni abonnement, ni session. La créance
+   * existe déjà ; seule la tentative est nouvelle.
+   *
+   * ══ L’ACTE EST NOMMÉ PAR L’ÉTAT DE LA FACTURE ════════════════════════
+   *
+   * `operationId` n’est pas fourni : il est DÉRIVÉ de la facture et de son
+   * nombre de tentatives. Deux clics sur le même état rejouent donc le même
+   * acte — une seule tentative part. Après un nouvel échec, le compteur a
+   * bougé : c’est un acte différent, et une nouvelle tentative est permise.
+   */
+  'billing.invoice.retry': capability('billing.invoice.retry', {
+    label: 'Retenter le paiement d’une facture impayée',
+    inputSchema: invoiceRetryInput,
+    outputSchema: invoiceRetryOutput,
+    timeoutMs: 25_000,
+    idempotency: 'PROVIDER_IDEMPOTENT',
+    requiredPermissions: ['billing:write'],
+    financial: true,
+    resourceKind: STRIPE_RESOURCE_KINDS.INVOICE,
+  }),
+
   'billing.refund': capability('billing.refund', {
     label: 'Rembourser un paiement',
     inputSchema: refundInput,

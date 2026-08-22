@@ -460,6 +460,58 @@ export async function retrieveInvoice({ credentials, invoiceId, timeoutMs, fetch
 }
 
 /**
+ * `POST /v1/invoices/{id}/pay` — RETENTER LA COLLECTE D’UNE FACTURE EXISTANTE.
+ *
+ * ══ CE QUE CE VERBE FAIT, ET SURTOUT CE QU’IL NE FAIT PAS ══════════════════
+ *
+ * Il demande à Stripe de tenter MAINTENANT le prélèvement de la facture déjà
+ * émise, avec le moyen de paiement déjà attaché au client. Il ne crée ni
+ * facture, ni abonnement, ni session de paiement : la créance existe, seule
+ * la tentative est nouvelle.
+ *
+ * ══ POURQUOI IL N’EXISTAIT PAS JUSQU’ICI ═══════════════════════════════════
+ *
+ * Parce que STRIPE EST L’ORDONNANCEUR des tentatives automatiques, et que
+ * ce parc s’interdit d’en programmer. Ce verbe ne rompt pas cette règle : il
+ * ne PROGRAMME rien. C’est une tentative UNIQUE, déclenchée par un humain qui
+ * a une raison de croire que le moyen de paiement fonctionne à nouveau —
+ * typiquement parce que le client vient de l’appeler.
+ *
+ * ══ L’IDEMPOTENCE EST INDISPENSABLE ICI ════════════════════════════════════
+ *
+ * Deux clics sur un bouton « Nouvelle tentative » ne doivent pas produire
+ * deux prélèvements. La clé est fournie par l’appelant et dérivée de l’état
+ * de la facture : même état, même clé, une seule tentative.
+ */
+export async function payInvoice({ credentials, invoiceId, idempotencyKey, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials,
+    method: 'POST',
+    path: `/v1/invoices/${encodeURIComponent(invoiceId)}/pay`,
+    /**
+     * AUCUN paramètre. Ni montant, ni moyen de paiement, ni devise : tout est
+     * déjà porté par la facture et par le client. En envoyer relancerait le
+     * débat sur « combien » au moment le plus mauvais.
+     */
+    body: {},
+    idempotencyKey,
+    timeoutMs,
+    fetchImpl,
+    /**
+     * AUCUN RÉESSAI DE TRANSPORT. Une tentative de collecte qui n’a pas
+     * répondu a PEUT-ÊTRE abouti : la rejouer d’office risquerait le double
+     * débit que toute cette doctrine existe pour empêcher. L’issue
+     * indéterminée est rendue telle quelle.
+     */
+    retries: 0,
+  });
+  return {
+    outcome: OUTCOMES.DONE, invoice: res.json,
+    requestId: res.requestId, durationMs: res.durationMs,
+  };
+}
+
+/**
  * `POST /v1/billing_portal/sessions` — LE PORTAIL CLIENT (L6.3B).
  *
  * ══ POURQUOI AUCUNE CLÉ D'IDEMPOTENCE ══════════════════════════════════════

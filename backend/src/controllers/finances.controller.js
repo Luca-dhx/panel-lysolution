@@ -252,6 +252,23 @@ export async function cancelPayment(req, res) {
  * l'expiration et signale une cause. Cette surface est donc en lecture, sans
  * exception.
  */
+/**
+ * UNE NOUVELLE TENTATIVE, DEMANDÉE PAR UN EXPLOITANT.
+ *
+ * Le contrôleur ne décide rien : il nomme l’incident et transmet l’acteur.
+ * Toute la doctrine — état retentable, relecture de la facture, identité
+ * d’acte — vit dans le service et dans l’autorité Stripe.
+ */
+export async function retryPaymentDefaultAction(req, res) {
+  const { retryPaymentDefault } = await import(
+    '../services/finance/paymentDefaults/paymentRetry.service.js'
+  );
+  return ok(res, await retryPaymentDefault({
+    paymentDefaultId: req.params.paymentDefaultId,
+    actor: actorOf(req),
+  }));
+}
+
 export async function paymentDefaults(req, res) {
   const projectId = req.query?.projectId ?? null;
   if (!projectId) {

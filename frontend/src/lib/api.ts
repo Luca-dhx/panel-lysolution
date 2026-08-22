@@ -62,7 +62,7 @@ import type {
   FinanceScope, FinanceSummary, FinancialTransaction, ManualTransactionInput,
   ProviderFact, RecurringCost, RecurringCostInput, RecurringCostPatch, RecurringStopMode,
   RefundEligibility, RefundOutcome, RefundRequest, StripeRefundReason,
-  PaymentRequest, PaymentRequestInput, PaymentDefaultsView,
+  PaymentRequest, PaymentRequestInput, PaymentDefaultsView, PaymentDefaultRetryResult,
 } from '@/types.finance';
 
 const TOKEN_KEY = 'panel_token';
@@ -1754,6 +1754,20 @@ export const finances = {
   paymentDefaults: (projectId: string) =>
     request<PaymentDefaultsView>(
       `/api/finances/payment-defaults?projectId=${encodeURIComponent(projectId)}`,
+    ),
+
+  /**
+   * RETENTER LA COLLECTE D’UN IMPAYÉ — le seul verbe de cette surface.
+   *
+   * Il ne crée ni facture, ni abonnement, ni session : la créance existe
+   * déjà, seule la tentative est nouvelle. Et il ne marque jamais « payé » —
+   * c’est le webhook de Stripe qui l’établira, par le même chemin que les
+   * tentatives que Stripe programme lui-même.
+   */
+  retryPaymentDefault: (paymentDefaultId: string) =>
+    request<PaymentDefaultRetryResult>(
+      `/api/finances/payment-defaults/${encodeURIComponent(paymentDefaultId)}/retry`,
+      { method: 'POST' },
     ),
 
   /** ANNULE — la demande RESTE, avec son histoire et son motif. */

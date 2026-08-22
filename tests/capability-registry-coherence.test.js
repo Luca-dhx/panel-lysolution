@@ -240,8 +240,8 @@ section('5. INVENTAIRE — 23 actions, toutes servies');
    * capacité qui apparaît sans que personne l’ait voulue est exactement ce que
    * ce contrôle existe pour attraper.
    */
-  check('23 actions déclarées', definitions.length === 23);
-  check('…et 23 exécutants', adapters.listAdaptedCapabilities().length === 23);
+  check('24 actions déclarées', definitions.length === 24);
+  check('…et 24 exécutants', adapters.listAdaptedCapabilities().length === 24);
   check('billing.subscription.reconcile n’est plus déclarée',
     !registry.isKnownCapability('billing.subscription.reconcile'));
   /**

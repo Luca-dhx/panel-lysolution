@@ -558,6 +558,12 @@ export interface PaymentDefaultDisplay {
   reasonLabel: string;
   /** Une phrase, PAS un verdict : les quatre dimensions restent affichées. */
   headline: string;
+  /**
+   * PEUT-ON RETENTER ? — verdict du serveur, jamais recalculé ici.
+   * Facultatif : un Panel plus ancien ne le porte pas, et l’écran n’affiche
+   * alors simplement aucun bouton.
+   */
+  retry?: PaymentDefaultRetryEligibility;
   payment: {
     state: PaymentDimensionState;
     label: string;
@@ -641,3 +647,35 @@ export interface PaymentDefaultsView {
   siteStatusKnown: boolean;
   contractPaymentGraceDays: number | null;
 }
+
+/**
+ * PEUT-ON RETENTER CET IMPAYÉ ? — le verdict que le serveur rend à l’écran.
+ *
+ * `retryable: false` s’accompagne TOUJOURS d’un motif : un bouton absent
+ * sans explication se lit comme une panne.
+ */
+export type PaymentDefaultRetryEligibility = {
+  retryable: boolean;
+  reason: string | null;
+};
+
+/**
+ * CE QUE REND UNE TENTATIVE DEMANDÉE.
+ *
+ * `invoice` est l’état RELU chez Stripe, jamais une déduction. `incidentStatus`
+ * est l’incident tel qu’il est ENCORE : inchangé, et c’est normal — la
+ * résolution viendra du webhook, pas de cette réponse.
+ */
+export type PaymentDefaultRetryResult = {
+  requested: boolean;
+  invoice: {
+    invoiceId: string;
+    status: string | null;
+    paid: boolean;
+    attemptCount: number | null;
+    amountRemaining: number | null;
+    nextPaymentAttemptAt: number | null;
+    hostedInvoiceUrl: string | null;
+  } | null;
+  incidentStatus: string;
+};

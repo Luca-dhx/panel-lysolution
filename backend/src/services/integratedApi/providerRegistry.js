@@ -193,6 +193,10 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       // L6.2G — la coupure immédiate, contractualisée pour la première fois.
       'billing.subscription.cancel_now',
       'billing.invoice.list',
+      // Retenter la collecte d’une créance impayée — une tentative UNIQUE,
+      // déclenchée par un exploitant. Elle ne programme rien : Stripe reste
+      // l’ordonnanceur des tentatives automatiques.
+      'billing.invoice.retry',
       'billing.refund',
       // L6.3A — administrer l'endpoint webhook d'un projet. Le seul verbe
       // Stripe qui ne touche pas à l'argent : il garantit le chemin par lequel

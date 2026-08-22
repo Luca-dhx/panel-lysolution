@@ -361,6 +361,15 @@ export function describeIncidentForDisplay(incident, {
     site,
     policy,
     /**
+     * PEUT-ON RETENTER ? — ce que l’écran a besoin de savoir pour décider
+     * s’il affiche le bouton, et pourquoi il ne l’affiche pas.
+     *
+     * Ce n’est PAS la garde : celle-ci vit dans le service, et surtout dans
+     * l’autorité Stripe qui relit la facture à l’instant du clic. Un écran
+     * décide de ce qu’il montre ; il ne décide jamais de ce qui est permis.
+     */
+    retry: describeRetryEligibility(incident),
+    /**
      * RÉFÉRENCES TECHNIQUES — derrière « Détails », jamais dans la lecture
      * courante. Un identifiant de fournisseur sert au support, pas au client.
      */
@@ -385,4 +394,5 @@ export default {
   GRACE_STATE,
   CAUSE_STATE,
   SITE_STATE,
-};
+};import { describeRetryEligibility } from './paymentRetry.service.js';
+

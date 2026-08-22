@@ -163,6 +163,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
      * n'en remplace aucun : son appelant est le Panel lui-même, en source
      * `PANEL_INTERNAL`, depuis l'onglet Finances d'un projet.
      */
+    'billing.invoice.retry',
     'billing.refund',
     /**
      * L6.3A — LE PROVISIONNEMENT DE L'ENDPOINT WEBHOOK DU PROJET.
@@ -240,7 +241,7 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * `billing.subscription.retrieve`.
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE');
-  check('douze capacités Stripe sont servies', stripeServies.length === 12);
+  check('treize capacités Stripe sont servies', stripeServies.length === 13);
   /**
    * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
    * par la même filiation : l'intention de paiement est adoptée à la projection
@@ -256,7 +257,12 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * deux, c'est-à-dire de couper deux fois ce qui ne se coupe qu'une.
    */
   const derivees = registry.listCapabilityDefinitions().filter((c) => c.deriveOperationId);
-  check('quatre capacités dérivent leur identité d’acte', derivees.length === 4);
+  /**
+   * CINQ depuis la nouvelle tentative : son identité porte le nombre de
+   * tentatives déjà faites, ce qui rend le double clic inoffensif sans
+   * interdire un second essai après un nouvel échec.
+   */
+  check('cinq capacités dérivent leur identité d’acte', derivees.length === 5);
   check('…le client d’un contrat', derivees.some((c) => c.code === 'billing.customer.ensure'));
   check('…et son tarif', derivees.some((c) => c.code === 'billing.price.ensure'));
   const client = derivees.find((c) => c.code === 'billing.customer.ensure');

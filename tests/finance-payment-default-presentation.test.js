@@ -387,9 +387,30 @@ section('Garde-fous — l’écran affiche, il ne décide pas');
   // 5 — l'accessibilité n'est jamais recalculée
   check('5 · aucune formule d’accessibilité',
     !/!technical\s*&&|technical\s*\|\|\s*contract/.test(presentation));
-  // 6 + 7 — aucune relance
-  check('6 · aucune écriture de relance', !/retryInterval|setInterval|retryNow/.test(presentation));
-  check('7 · aucun bouton de relance', !/retenter|Retenter|retry/i.test(presentation));
+  /**
+   * ── 6 + 7 : LA RELANCE — CE QUI RESTE INTERDIT, ET CE QUI NE L’EST PLUS ──
+   *
+   * L’invariant disait « aucune mention de relance ». Il visait juste tant
+   * qu’aucune relance n’existait : la présentation ne devait ni en programmer,
+   * ni en déclencher, ni laisser croire qu’elle le ferait.
+   *
+   * Une tentative MANUELLE existe désormais, déclenchée par un exploitant. La
+   * présentation doit pouvoir dire si elle est possible — sinon l’écran
+   * afficherait un bouton qui échoue, ou le cacherait quand il servirait.
+   *
+   * Ce qui reste interdit, et qui est le vrai danger :
+   *   · PROGRAMMER une cadence — deux calendriers sur une facture, c’est le
+   *     double débit ;
+   *   · DÉCLENCHER quoi que ce soit depuis une fonction d’affichage.
+   *
+   * Décrire une éligibilité n’est ni l’un ni l’autre.
+   */
+  check('6 · aucune cadence, aucun minuteur',
+    !/retryInterval|setInterval|setTimeout|nextRetryAt/.test(presentation));
+  check('7 · aucun déclenchement depuis l’affichage',
+    !/retryPaymentDefault|invokeCapability|payInvoice/.test(presentation));
+  check('7 bis · l’éligibilité est DÉCRITE, pas décidée',
+    /describeRetryEligibility/.test(presentation));
   // 10 — une lecture n'envoie rien
   check('10 · aucune notification déclenchée par une lecture',
     !/announce|sendTemplate|invokeCapability|email\.send/.test(presentation));

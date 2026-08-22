@@ -468,11 +468,13 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
   const exigeantes = capabilities.STRIPE_CAPABILITY_CODES
     .filter((c) => capabilities.STRIPE_CAPABILITIES[c].requiresResourceOwnership);
   /**
-   * HUIT depuis L6.3B, qui en ajoute trois sur la famille CLIENT : lister les
-   * factures, en lire une, ouvrir le portail. Toutes trois remontent au client
-   * par le lien de L6.2D — aucune n'accepte d'identifiant Stripe.
+   * NEUF depuis la nouvelle tentative, qui rejoint la famille FACTURE.
+   *
+   * Elle accepte, elle, un identifiant de facture — et c’est précisément
+   * pourquoi elle exige un lien : l’identifiant n’est pas une preuve, il est
+   * un filtre. Sans lien, on retenterait la collecte de la facture d’un autre.
    */
-  check('huit capacités exigent une ressource préexistante', exigeantes.length === 8);
+  check('neuf capacités exigent une ressource préexistante', exigeantes.length === 9);
   /**
    * L6.2C en sert UNE : la lecture de session. Elle le peut parce que le Panel
    * crée et lie lui-même des sessions depuis L6.2B — l'appartenance est donc
@@ -483,7 +485,9 @@ section('12. LE CONTRAT L6.1 S’APPUIE SUR LE REGISTRE');
   // Figurer au catalogue EST la déclaration de service : le filtre sur
   // `migrated` a disparu avec le booléen.
   const servies = [...exigeantes];
-  check('toutes les huit sont servies', servies.length === 8);
+  check('toutes les neuf sont servies', servies.length === 9);
+  check('…dont la nouvelle tentative sur une facture',
+    servies.includes('billing.invoice.retry'));
   check('…la lecture de session', servies.includes('billing.checkout.retrieve'));
   check('…celle d’un abonnement (L6.2F)', servies.includes('billing.subscription.retrieve'));
   /**
