@@ -529,6 +529,23 @@ section('5. Deux contrats du MÊME client → UN SEUL client Stripe');
   check('…toujours aucune création', creations().length === avant);
 
   /**
+   * ── LE DOUBLON QUE L’ENVIRONNEMENT DÉPLOYÉ A RÉVÉLÉ ────────────────────
+   *
+   * L’adoption d’un lien hérité ne se déclenchait QUE si l’appelant
+   * fournissait une référence de contrat. Une prestation n’en fournit jamais :
+   * elle ne trouvait donc aucun lien à adopter et faisait CRÉER un second
+   * client pour une personne morale qui en avait déjà un.
+   *
+   * Constaté en TEST déployé : trois liens CUSTOMER pour un seul projet. La
+   * clé héritée se dérive désormais du contrat COURANT du projet, que
+   * l’appelant en nomme un ou non.
+   */
+  const liensApres = await PanelStripeResourceBinding.find({
+    projectId: idA, environment: 'TEST', resourceType: 'CUSTOMER', revokedAt: null,
+  }).lean();
+  check('une prestation ne crée AUCUN client de plus', liensApres.length === 1);
+
+  /**
    * La garde d’appartenance du contrat n’a PAS été percée au passage : une
    * référence qui n’est pas celle du projet reste refusée.
    */

@@ -2,29 +2,51 @@
 //
 // docs/architecture/STRIPE_L6_2D_CUSTOMER_OWNERSHIP_REPORT.md.
 //
-// ══ LA DÉCOUVERTE QUI DÉTERMINE TOUT LE LOT ═════════════════════════════════
+// ══ LA CARDINALITÉ — ELLE A CHANGÉ, ET VOICI POURQUOI ═══════════════════════
 //
-// Le client Stripe n'est PAS global au projet. L'audit du parc le prouve
-// mécaniquement, par trois faits indépendants :
+// ── CE QUE L'AUDIT L6.2D AVAIT ÉTABLI ──────────────────────────────────────
 //
-//   · la clé d'idempotence historique est `customer-<contractId>-<mode>` —
-//     elle porte le contrat, pas le projet ;
-//   · `Contract.stripe.customerId` est un champ du CONTRAT, sans index unique ;
-//   · la facturation fait la lecture inverse `Contract.findOne({'stripe.
-//     customerId': …})` — elle suppose donc au plus UN contrat par client.
+// Un client Stripe par CONTRAT. Trois faits l'établissaient : la clé
+// d'idempotence historique `customer-<contractId>-<mode>`, le stockage sur
+// `Contract.stripe.customerId`, et la lecture inverse de la facturation.
 //
-// Un projet ayant eu trois contrats a donc trois clients Stripe, et c'est
-// correct : chaque contrat porte son propre engagement, ses propres factures,
-// et souvent son propre signataire.
+// C'était une description FIDÈLE d'un système où l'acheteur n'existait pas
+// comme entité : le contrat était le seul porteur disponible.
 //
-//       Projet A                        et NON pas :      Projet A
-//        ├── Contrat 1 → cus_111                           └── cus_unique
-//        ├── Contrat 2 → cus_222
-//        └── Contrat 3 → cus_333
+// ── CE QUE CETTE CARDINALITÉ COÛTAIT ───────────────────────────────────────
 //
-// Écrire `projectId → customerId` fusionnerait les historiques de facturation
-// de contrats distincts — au mieux des factures mélangées, au pire un
-// prélèvement rattaché au mauvais engagement.
+//   · deux contrats successifs du même client → deux clients Stripe, et
+//     l'historique de facturation d'une seule personne morale coupé en deux ;
+//   · une prestation ponctuelle, qui n'a PAS de contrat → AUCUN client, donc
+//     une facture sans destinataire juridique.
+//
+// Le second cas n'était pas théorique : le verbe n'était pas appelé du tout,
+// et une session réellement ouverte portait `customer: null`.
+//
+// ── LA CARDINALITÉ COURANTE ────────────────────────────────────────────────
+//
+//       Entreprise cliente ── (dans un monde) ──▶ UN client Stripe
+//         ├── Contrat 1  ─┐
+//         ├── Contrat 2  ─┼──▶ le MÊME cus_…
+//         └── Prestation ─┘
+//
+// On facture une PERSONNE MORALE. C'est le seul niveau où « Facturer à » a un
+// sens : ni un engagement, ni une instance technique.
+//
+// ── ET DEUX PROJETS DU MÊME CLIENT ? ───────────────────────────────────────
+//
+// Ils ont chacun leur client Stripe, et ce n'est pas un compromis : le
+// registre d'appartenance impose qu'une ressource ait EXACTEMENT UN projet
+// propriétaire. Partager un `cus_…` la rendrait possédée par deux projets, et
+// chacun lirait les factures de l'autre. Aller plus loin exigerait de
+// remplacer le propriétaire par un ensemble de lecteurs autorisés — un autre
+// modèle de sécurité, pas un réglage.
+//
+// ── L'ANCIEN N'EST NI RÉÉCRIT NI SUPPRIMÉ ──────────────────────────────────
+//
+// Les liens existants sont ADOPTÉS sous la nouvelle clé : même ressource,
+// même propriétaire, autorité mise à jour. L'abonnement en cours continue de
+// fonctionner, aucune facture n'est retouchée.
 //
 // ══ POURQUOI L'IDENTITÉ DE L'ACTE EST DÉRIVÉE, ET NON FOURNIE ═══════════════
 //
@@ -118,28 +140,14 @@ export class CustomerAuthorityError extends Error {
 /* -------------------------------------------------------------------------- */
 
 /**
- * L'IDENTITÉ DE L'ACTE — `(environnement, contrat)`, et rien d'autre.
- *
- * Le projet n'y figure pas : il est déjà porté par la clé du registre
- * d'opérations `(projectId, capability, operationId)`, et par le filtre du
- * registre de liens. L'y ajouter une seconde fois ne protégerait de rien et
- * laisserait croire qu'un même contrat pourrait appartenir à deux projets.
- *
- * L'ENTREPRISE CLIENTE N'Y FIGURE PAS NON PLUS, et c'est important : un projet
- * qui change de client ne doit PAS obtenir un second client Stripe pour le même
- * contrat. Le contrat en cours garde son client et son historique de
- * facturation ; c'est le PROCHAIN contrat qui portera la nouvelle identité.
- * Faire entrer l'entreprise dans la clé aurait scindé l'historique d'un même
- * engagement en deux, sur un simple geste de rattachement.
- *
- * Le MONDE, lui, en fait partie : `TEST` et `PROD` sont deux comptes Stripe,
- * donc deux clients distincts pour un même contrat métier. Les confondre ferait
- * converger la recette vers le client de production.
- *
- * Forme lisible et non hachée : cette valeur ne part pas chez le fournisseur —
+ * Forme LISIBLE et non hachée : cette valeur ne part pas chez le fournisseur —
  * c'est la clé d'idempotence Stripe, dérivée d'elle, qui voyage. Ici, la
  * lisibilité vaut plus que l'opacité : c'est ce qu'un opérateur lira dans le
  * registre d'opérations le jour où il cherchera pourquoi un client manque.
+ *
+ * Le PROJET n'y figure pas : il est déjà porté par la clé du registre
+ * d'opérations `(projectId, capability, operationId)`, et par le filtre du
+ * registre de liens. L'y ajouter une seconde fois ne protégerait de rien.
  */
 /**
  * ── LA CLÉ A CHANGÉ DE PORTEUR : DU CONTRAT À L’ENTREPRISE CLIENTE ────────
@@ -234,11 +242,10 @@ export async function resolveCustomerIntent({
    * Ce qui n’a PAS changé : on ne facture jamais sans identité légale.
    */
   const contractRef = String(input.contractRef ?? '').trim();
-  let projection = null;
+  const projection = await lookupContract(projectId);
   let contractId = null;
 
   if (contractRef) {
-    projection = await lookupContract(projectId);
     contractId = projection?.sourceContractId ?? null;
     if (!projection || !contractId || contractId !== contractRef) {
       throw new CustomerAuthorityError(
@@ -247,6 +254,32 @@ export async function resolveCustomerIntent({
       );
     }
   }
+
+  /**
+   * ── LA CLÉ HÉRITÉE SE CHERCHE MÊME SANS CONTRAT DEMANDÉ ──────────────────
+   *
+   * ══ LE DÉFAUT QUE CES DEUX LIGNES FERMENT ═══════════════════════════════
+   *
+   * L'adoption ne se déclenchait que si l'appelant fournissait `contractRef`.
+   * Une prestation ponctuelle n'en fournit jamais : elle ne trouvait donc aucun
+   * lien hérité, et faisait CRÉER un second client Stripe pour une personne
+   * morale qui en avait déjà un.
+   *
+   * C'est exactement la duplication que ce lot supprime — réintroduite par le
+   * chemin même qu'il devait réparer. Constaté sur l'environnement déployé :
+   * trois liens `CUSTOMER` pour un seul projet.
+   *
+   * ══ POURQUOI LE CONTRAT COURANT, ET PAS « UN » CONTRAT ══════════════════
+   *
+   * La projection ne porte qu'UN contrat par projet : le courant. C'est celui
+   * dont le client Stripe porte l'abonnement vivant et l'historique de
+   * facturation. Adopter le sien est donc à la fois déterministe et juste.
+   *
+   * Le contrat n'entre PAS dans l'intention pour autant : `contractId` reste
+   * `null`, les métadonnées restent muettes, et rien ne laisse croire que cette
+   * prestation appartient à un engagement.
+   */
+  const contratCourant = projection?.sourceContractId ?? null;
 
   /**
    * ── LA GARDE D'IDENTITÉ LÉGALE — AVANT TOUT CONTACT FOURNISSEUR ──────────
@@ -299,15 +332,20 @@ export async function resolveCustomerIntent({
     clientCompanyId,
     operationId: customerOperationId({ environment, clientCompanyId }),
     /**
-     * L’ANCIENNE CLÉ VOYAGE AVEC L’INTENTION, quand un contrat est en jeu.
+     * L’ANCIENNE CLÉ VOYAGE AVEC L’INTENTION, dès qu’un contrat existe.
      *
      * C’est ce qui permet à l’adaptateur d’ADOPTER un client créé avant ce
-     * lot au lieu d’en créer un second pour la même personne morale. Elle
-     * est `null` pour une prestation : il n’y a jamais eu de client à
-     * adopter, puisqu’il n’y en avait jamais eu du tout.
+     * lot au lieu d’en créer un second pour la même personne morale.
+     *
+     * Elle est dérivée du contrat COURANT du projet, et non de celui que
+     * l’appelant a nommé : une prestation ponctuelle n’en nomme aucun, et
+     * c’est précisément elle qui, sans cela, créait le doublon.
+     *
+     * `null` seulement quand le projet n’a jamais eu de contrat : il n’y a
+     * alors rien à adopter, et la création est légitime.
      */
-    legacyOperationId: contractId
-      ? legacyCustomerOperationId({ environment, contractId })
+    legacyOperationId: contratCourant
+      ? legacyCustomerOperationId({ environment, contractId: contratCourant })
       : null,
     clientCompany: company,
     params: buildParams({ projectId, environment, contractId, projection, company }),
