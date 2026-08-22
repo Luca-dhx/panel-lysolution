@@ -440,7 +440,12 @@ section('Exclusivité architecturale : chaque axe réseau a UN client, et un seu
         // PARAMÈTRES D'INVOCATION dans l'environnement (jamais dans argv,
         // qui exposerait le mot de passe SSH à `ps aux`). Sa configuration,
         // elle, passe bien par config/env.js. Voir architecture.test.js.
-        const isEntryPoint = full.endsWith(path.join('scripts', 'deploy-worker.js'));
+        // `deploy-drive.js` relève du MÊME cas : point d'entrée console qui
+        // pilote le moteur officiel, et dont le seul `process.env` lu est le
+        // mot de passe SSH d'invocation. Le jumeau de ce contrôle
+        // (architecture.test.js) l'a déjà admis ; celui-ci ne l'avait pas suivi.
+        const isEntryPoint = full.endsWith(path.join('scripts', 'deploy-worker.js'))
+          || full.endsWith(path.join('scripts', 'deploy-drive.js'));
         if (/process\.env[.[]/.test(content)
           && !full.endsWith(path.join('config', 'env.js'))
           && !isEntryPoint) {

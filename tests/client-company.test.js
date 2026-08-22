@@ -464,6 +464,152 @@ section('6. La ventilation fiscale — lue, vérifiée, jamais devinée');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+section('6 bis. Les DEUX lignes du contrat mènent à un paiement — pas seulement une');
+{
+  /**
+   * ── LE DÉFAUT QUE CETTE SECTION VERROUILLE ────────────────────────────────
+   *
+   * La ventilation fiscale était éprouvée sur les frais de lancement, et sur
+   * eux SEULS. L'abonnement emprunte un AUTRE module — `stripePriceAuthority`
+   * plutôt que `stripeCheckoutAuthority` — et personne n'avait vérifié qu'il
+   * lisait la même ventilation.
+   *
+   * En recette réelle, les deux ont échoué ensemble : le projet ne publiait
+   * pas `amountExcludingTax`, et NI les frais de lancement NI l'abonnement
+   * n'étaient encaissables. Une seule des deux branches était gardée ; elle
+   * n'aurait de toute façon rien dit de l'autre.
+   */
+  const CONTRAT = 'ct-fiscal-deux-lignes';
+  const LANCEMENT = { net: 29000, tva: 5800, ttc: 34800 };
+  const ABONNEMENT = { net: 83988, tva: 16798, ttc: 100786 };
+
+  const projeter = async (pricing) => {
+    await PanelProjectContract.updateOne(
+      { projectId: PROJET_A },
+      {
+        $set: {
+          projectId: PROJET_A, hasCurrent: true, sourceContractId: CONTRAT, status: 'ACTIVE',
+          reference: 'CTR-FISCAL', taxRate: 20,
+          pricing,
+          sourceModifiedAt: new Date().toISOString(),
+          receivedAt: new Date().toISOString(),
+        },
+      },
+      { upsert: true },
+    );
+  };
+
+  const COMPLET = {
+    launchFee: {
+      amountIncludingTax: LANCEMENT.ttc, amountExcludingTax: LANCEMENT.net,
+      taxAmount: LANCEMENT.tva, taxRate: 20, currency: 'EUR',
+    },
+    subscription: {
+      amountIncludingTax: ABONNEMENT.ttc, amountExcludingTax: ABONNEMENT.net,
+      taxAmount: ABONNEMENT.tva, taxRate: 20, currency: 'EUR',
+      recurrence: { unit: 'YEAR', interval: 1 }, interval: 'YEAR',
+    },
+  };
+
+  const priceAuthority = await import('../backend/src/services/integratedApi/stripe/stripePriceAuthority.js');
+  const entreeLancement = (operationId) => ({
+    paymentType: 'LAUNCH_FEE', contractRef: CONTRAT,
+    successUrl: 'https://x.test/ok', cancelUrl: 'https://x.test/ko',
+    operationId,
+  });
+  const refuse = async (fn) => { try { await fn(); return null; } catch (e) { return e; } };
+
+  await projeter(COMPLET);
+
+  /* ── A. FRAIS DE LANCEMENT ─────────────────────────────────────────────── */
+  const frais = await checkoutAuthority.resolveCheckoutIntent({
+    projectId: PROJET_A, environment: 'TEST', input: entreeLancement('op-fiscal-lancement-000001'),
+  });
+  const paramsFrais = frais.paramsFor({ taxRateId: 'txr_fiscal' });
+  check('frais de lancement : Stripe reçoit le HORS TAXE',
+    paramsFrais.line_items[0].price_data.unit_amount === LANCEMENT.net);
+  check('frais de lancement : un taux EXCLUSIF accompagne le montant',
+    paramsFrais.line_items[0].tax_rates?.[0] === 'txr_fiscal');
+  check('frais de lancement : le total débité reste le TTC du contrat',
+    frais.amountIncludingTax === LANCEMENT.ttc);
+  check('frais de lancement : HT + TVA = TTC',
+    frais.fiscal.netCents + frais.fiscal.taxCents === frais.fiscal.grossCents);
+  check('frais de lancement : aucune double TVA — le TTC n’est jamais envoyé comme HT',
+    paramsFrais.line_items[0].price_data.unit_amount !== LANCEMENT.ttc);
+
+  /* ── B. ABONNEMENT ─────────────────────────────────────────────────────── */
+  const abo = await priceAuthority.resolvePriceIntent({
+    projectId: PROJET_A, environment: 'TEST', contractRef: CONTRAT,
+  });
+  check('abonnement : le Price porte le HORS TAXE', abo.amount === ABONNEMENT.net);
+  check('abonnement : HT + TVA = TTC',
+    abo.fiscal.netCents + abo.fiscal.taxCents === abo.fiscal.grossCents
+    && abo.fiscal.grossCents === ABONNEMENT.ttc);
+  check('abonnement : le taux est celui du contrat, jamais supposé', abo.fiscal.taxRate === 20);
+  check('abonnement : la TVA correspond au taux annoncé',
+    abo.fiscal.taxCents === Math.round((abo.fiscal.netCents * abo.fiscal.taxRate) / 100));
+  const paramsPrice = abo.priceParamsFor('prod_test');
+  check('abonnement : le Price déclare son montant EXCLUSIF de taxe',
+    paramsPrice.unit_amount === ABONNEMENT.net && paramsPrice.tax_behavior === 'exclusive');
+  check('abonnement : aucune double TVA — le TTC n’entre pas dans le tarif',
+    paramsPrice.unit_amount !== ABONNEMENT.ttc);
+
+  /* ── C. LE DÉFAUT LUI-MÊME, SUR LES DEUX LIGNES ────────────────────────── */
+  /**
+   * La forme EXACTE que le projet publiait avant ce lot : un TTC, un taux de
+   * contrat, et rien d'autre. Les deux branches doivent refuser — et refuser en
+   * NOMMANT la ventilation absente, jamais en supposant un taux.
+   */
+  await projeter({
+    launchFee: { amountIncludingTax: LANCEMENT.ttc, currency: 'EUR' },
+    subscription: {
+      amountIncludingTax: ABONNEMENT.ttc, currency: 'EUR',
+      recurrence: { unit: 'YEAR', interval: 1 }, interval: 'YEAR',
+    },
+  });
+
+  const refusFrais = await refuse(() => checkoutAuthority.resolveCheckoutIntent({
+    projectId: PROJET_A, environment: 'TEST', input: entreeLancement('op-fiscal-absent-000001'),
+  }));
+  check('sans ventilation, les frais de lancement sont REFUSÉS', Boolean(refusFrais));
+  check('…en nommant la ventilation absente',
+    /ventilation fiscale/i.test(refusFrais?.message ?? ''));
+
+  const refusAbo = await refuse(() => priceAuthority.resolvePriceIntent({
+    projectId: PROJET_A, environment: 'TEST', contractRef: CONTRAT,
+  }));
+  check('…et l’abonnement AUSSI', Boolean(refusAbo));
+  check('…en nommant la ventilation, jamais en supposant un taux',
+    /ventilation fiscale/i.test(refusAbo?.message ?? ''));
+
+  /**
+   * ── AUCUN REPLI FISCAL IMPLICITE ──────────────────────────────────────────
+   *
+   * Le contrat porte pourtant `taxRate: 20`. La tentation était d'en déduire le
+   * HT (`TTC / 1,2`) : la formule est juste, et son résultat peut différer d'un
+   * centime de ce que le contrat a calculé — le contrat part du HT et arrondit
+   * la TVA, la déduction part du TTC et arrondit le HT. Un écart d'un centime
+   * entre le contrat SIGNÉ et la facture ÉMISE est indéfendable.
+   */
+  check('un taux disponible ne suffit PAS à fabriquer un HT',
+    Boolean(refusFrais) && Boolean(refusAbo));
+
+  /* ── D. UNE INCOHÉRENCE RESTE BLOQUANTE ────────────────────────────────── */
+  await projeter({
+    launchFee: {
+      amountIncludingTax: LANCEMENT.ttc, amountExcludingTax: LANCEMENT.net,
+      taxAmount: 999, taxRate: 20, currency: 'EUR',
+    },
+    subscription: null,
+  });
+  const refusIncoherent = await refuse(() => checkoutAuthority.resolveCheckoutIntent({
+    projectId: PROJET_A, environment: 'TEST', input: entreeLancement('op-fiscal-incoherent-0001'),
+  }));
+  check('une ligne qui ne s’additionne pas ne devient JAMAIS une facture',
+    Boolean(refusIncoherent));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 section('7. L’instantané légal — l’histoire ne se réécrit pas');
 {
   const fiche = await call('GET', `/api/client-companies/${clientId}`, {
