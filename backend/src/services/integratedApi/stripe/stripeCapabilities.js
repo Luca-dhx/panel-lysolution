@@ -133,6 +133,25 @@ const portalSessionView = z.object({
   url: z.string(),
   /** Quand cette URL cessera de fonctionner — le projet peut le dire au client. */
   expiresAt: z.number().nullable(),
+  /**
+   * ── CE QUE CE PORTAIL PERMET, DIT AU PROJET ───────────────────────────────
+   *
+   * Le projet affichait « modifiez le moyen de paiement » en le SUPPOSANT. La
+   * configuration appliquée n'était pourtant pas décidée par le Panel : Stripe
+   * retombait sur celle du compte, qui autorisait aussi l'édition des données
+   * légales. Le Manager promettait donc une chose et le portail en offrait une
+   * autre — dans le mauvais sens.
+   *
+   * Le Panel désigne désormais SA configuration, et il en publie le contrat :
+   * un écran n'a plus à deviner, ni à se désynchroniser d'un réglage distant.
+   */
+  configurationId: z.string(),
+  /** L'identité juridique appartient à la fiche client. TOUJOURS `false`. */
+  canUpdateLegalIdentity: z.literal(false),
+  canUpdatePaymentMethod: z.boolean(),
+  canCancelSubscription: z.boolean(),
+  /** `END_OF_PERIOD` : la période en cours est payée, elle est servie. */
+  cancellationMode: z.enum(['END_OF_PERIOD', 'IMMEDIATE']),
 }).strict();
 
 const subscriptionRetrieveInput = z.object({ subscriptionId, operationId }).strict();

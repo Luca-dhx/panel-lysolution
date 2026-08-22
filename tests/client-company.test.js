@@ -25,9 +25,11 @@
  * Plus l'immuabilité : modifier une fiche ne réécrit jamais un instantané déjà
  * figé, sans quoi une facture de mars afficherait l'adresse de septembre.
  */
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   check, connectTestDatabase, finish, section, setTestEnv,
@@ -38,6 +40,7 @@ setTestEnv();
 await startMemoryMongo();
 await connectTestDatabase();
 
+const RACINE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { config } = await import('../backend/src/config/env.js');
 
 /**
@@ -863,6 +866,129 @@ section('11. LA MATRICE DE DISPONIBILITÉ — cinq états, deux verdicts');
     sansSignataire.signing.missing.length > 0 && sansSiren.billing.missing.length > 0);
   check('…sans jamais accuser l’autre acte',
     sansSignataire.billing.missing.length === 0 && sansSiren.signing.missing.length === 0);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('12. LE SENS DE LA FLÈCHE — Stripe n’écrit JAMAIS l’identité légale');
+{
+  /**
+   * ── L'INVARIANT QUE CETTE SECTION REND STRUCTUREL ─────────────────────────
+   *
+   *     PanelClientCompany  ──▶  Stripe Customer
+   *
+   * Jamais l'inverse. Le client Stripe est une PROJECTION de la fiche légale ;
+   * en faire une source réécrirait la raison sociale, le SIREN ou l'adresse de
+   * facturation d'après ce qu'un client aurait tapé dans un portail.
+   *
+   * Le portail vient d'être fermé en écriture sur ces champs (voir
+   * `stripePortalAuthority.js`). Ce contrôle ferme l'autre moitié : même si
+   * Stripe annonçait une modification, RIEN dans le Panel ne saurait
+   * l'appliquer à la fiche.
+   */
+  const source = (rel) => fs.readFileSync(path.join(RACINE, rel), 'utf8');
+
+  /**
+   * `customer.updated` N'EST PAS SOUSCRIT — et c'est la garantie la plus forte.
+   *
+   * Une garde qui filtrerait l'événement pourrait être contournée par un ajout
+   * distrait. Ne pas le recevoir du tout ne se contourne pas : il faudrait
+   * l'ajouter à la souscription, ce que ce contrôle refuse.
+   */
+  const registreWebhooks = source('backend/src/services/webhooks/webhookRegistry.js');
+  const evenements = /const STRIPE_EVENTS = Object\.freeze\(\[([\s\S]*?)\]\)/.exec(registreWebhooks)?.[1] ?? '';
+  check('`customer.updated` n’est pas souscrit par le Panel',
+    !/customer\.updated/.test(evenements));
+  check('…et les trois événements d’abonnement le sont, eux',
+    /customer\.subscription\.created/.test(evenements)
+    && /customer\.subscription\.updated/.test(evenements)
+    && /customer\.subscription\.deleted/.test(evenements));
+
+  /**
+   * AUCUN CHEMIN DE RÉCEPTION N'ÉCRIT LA FICHE.
+   *
+   * On balaie les modules qui traitent ce qui ARRIVE du fournisseur. Le seul
+   * usage légitime de la fiche y serait une LECTURE — et il n'y en a aucune :
+   * ces modules n'ont pas à la connaître.
+   */
+  const receptions = [
+    'backend/src/services/webhooks/stripeEventRouting.js',
+    'backend/src/services/webhooks/webhookIngest.js',
+    'backend/src/services/webhooks/providerWebhookAdapters.js',
+    'backend/src/services/finance/providerRevenue/revenueProjection.service.js',
+    'backend/src/services/finance/providerRevenue/stripeRevenueNormalizer.js',
+    'backend/src/services/finance/providerRevenue/providerSettlement.service.js',
+  ];
+  const ecrivains = receptions.filter((rel) => {
+    const contenu = source(rel);
+    return /PanelClientCompany|clientCompany\.service|updateClientCompany/.test(contenu);
+  });
+  check(`aucun chemin de réception Stripe n’atteint la fiche cliente${ecrivains.length ? ` — ${ecrivains.join(', ')}` : ''}`,
+    ecrivains.length === 0);
+
+  /**
+   * LE PORTAIL LUI-MÊME REFUSE L'ÉDITION — au niveau de la configuration.
+   *
+   * C'est la moitié amont : Stripe n'annoncera même pas la modification, parce
+   * que l'écran ne la proposera pas.
+   */
+  const autorite = await import('../backend/src/services/integratedApi/stripe/stripePortalAuthority.js');
+  const cible = autorite.portalConfigurationParams();
+  check('le portail n’autorise AUCUNE modification de l’identité client',
+    cible.features.customer_update.enabled === false
+    && cible.features.customer_update.allowed_updates.length === 0);
+  check('…ni aucun changement d’offre', cible.features.subscription_update.enabled === false);
+  check('…mais bien le moyen de paiement', cible.features.payment_method_update.enabled === true);
+  check('…et la résiliation, à l’échéance',
+    cible.features.subscription_cancel.enabled === true
+    && cible.features.subscription_cancel.mode === 'at_period_end');
+
+  /**
+   * UNE CONFIGURATION QUI AUTORISERAIT L'ÉDITION EST DÉTECTÉE COMME UNE DÉRIVE.
+   *
+   * C'est ce qui rend la garantie DURABLE : un réglage repris à la main dans le
+   * tableau de bord ne reste pas en place, et le motif nomme le champ ouvert.
+   */
+  const derive = autorite.portalConfigurationDrift({
+    features: {
+      customer_update: { enabled: true, allowed_updates: ['name', 'address'] },
+      payment_method_update: { enabled: true },
+      invoice_history: { enabled: true },
+      subscription_cancel: { enabled: true, mode: 'at_period_end' },
+      subscription_update: { enabled: false },
+    },
+  });
+  check('une configuration qui rouvre l’identité légale est signalée', derive.length === 1);
+  check('…et le motif NOMME les champs ouverts',
+    /customer_update/.test(derive[0]) && /name, address/.test(derive[0]));
+
+  const conforme = autorite.portalConfigurationDrift({
+    features: {
+      customer_update: { enabled: false, allowed_updates: [] },
+      payment_method_update: { enabled: true },
+      invoice_history: { enabled: true },
+      subscription_cancel: { enabled: true, mode: 'at_period_end' },
+      subscription_update: { enabled: false },
+    },
+  });
+  check('la cible, elle, ne dérive de rien', conforme.length === 0);
+
+  /**
+   * UNE RÉSILIATION IMMÉDIATE PAR DÉFAUT EST AUSSI UNE DÉRIVE.
+   *
+   * Elle retirerait un service déjà payé et poserait la question du prorata —
+   * une décision commerciale qu'aucun clic de portail ne doit prendre.
+   */
+  const immediate = autorite.portalConfigurationDrift({
+    features: {
+      customer_update: { enabled: false, allowed_updates: [] },
+      payment_method_update: { enabled: true },
+      invoice_history: { enabled: true },
+      subscription_cancel: { enabled: true, mode: 'immediately' },
+      subscription_update: { enabled: false },
+    },
+  });
+  check('un mode de résiliation IMMÉDIAT est signalé', immediate.length === 1);
+  check('…en disant que la période en cours est payée', /payée/.test(immediate[0]));
 }
 
 await close();

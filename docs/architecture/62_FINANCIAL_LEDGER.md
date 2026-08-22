@@ -1495,6 +1495,133 @@ recalcul rétroactif des frais d'un paiement déjà soldé — un `SETTLED` est 
 
 ---
 
+## 13 octies. LE PORTAIL CLIENT — SELF-SERVICE FINANCIER, JAMAIS AUTORITÉ LÉGALE
+
+### Le défaut trouvé, et il ne se voyait dans aucun code
+
+Le Panel ouvrait ses sessions de portail **sans désigner de configuration**.
+Stripe applique alors celle qui est **par défaut sur le compte** — réglée un jour
+dans le tableau de bord, jamais relue, jamais testée. Mesure faite sur le compte
+de recette avant ce lot :
+
+```
+bpc_1U6uxIGlI6vEcGH1hHPbSrM2   (défaut du compte)
+  customer_update : ACTIVÉ · name, email, address, phone
+```
+
+Le client pouvait donc réécrire, depuis le portail, **sa raison sociale, son
+adresse et son e-mail de facturation**. Ces quatre champs appartiennent à
+`PanelClientCompany`, dont le client Stripe n'est que la PROJECTION. Le portail
+était devenu une seconde autorité, **en écriture, sur des données légales**, et
+la divergence ne se serait vue que sur une facture.
+
+Aucune ligne de code ne le disait : le réglage vivait ailleurs.
+
+### Les autorités, figées
+
+```
+PanelClientCompany   raison sociale · nom commercial · SIREN · SIRET · TVA
+                     adresse légale · adresse de facturation · e-mail de
+                     facturation · téléphone · signataire contractuel
+                            │
+                            ▼  (projection, sens unique)
+Stripe Customer      identité de facturation chez le fournisseur
+Stripe PaymentMethod moyen de paiement — autorité TECHNIQUE
+Stripe Subscription  état réel de la souscription — autorité PROVIDER
+Contract SB Auto     état contractuel, convergent avec Stripe
+```
+
+**La flèche ne s'inverse jamais.** Ce lot n'ajoute aucune synchronisation retour :
+il RETIRE au portail le pouvoir d'écrire. Refléter les modifications du portail
+vers la fiche légale aurait fait du client l'éditeur de son propre SIREN.
+
+### Ce que le portail permet, et ce qu'il perd
+
+| PEUT | NE PEUT PAS |
+|---|---|
+| changer / ajouter un moyen de paiement | modifier nom, adresse, e-mail, téléphone |
+| consulter et télécharger ses factures | modifier un Tax ID / numéro de TVA |
+| payer une facture impayée | changer de Price, de plan, de quantité, de périodicité |
+| résilier, **à l'échéance** | appliquer un code promo |
+
+Le contrat signé porte déjà HT, TVA, TTC, récurrence et conditions. Laisser le
+client changer de Price depuis un portail créerait **un avenant que personne n'a
+signé**, et le Panel facturerait un montant qui ne figure dans aucun document.
+
+La résiliation, elle, est un droit : la refuser au portail obligerait le client à
+écrire un courrier pour exercer un droit qu'il a. Elle est donc ouverte — mais
+`at_period_end` : la période est PAYÉE, et l'interrompre poserait la question du
+remboursement du prorata, une décision commerciale qu'aucun clic ne doit prendre.
+
+### Le Panel garantit SA configuration — il ne s'approprie pas celle du compte
+
+Un compte peut porter plusieurs configurations. Le Panel reconnaît la sienne par
+ses métadonnées (`managedBy: PANEL_CONTROL_PLANE`, `role:
+PROJECT_BILLING_SELF_SERVICE`), la crée si elle manque, et **ne touche à aucune
+autre** — pas même celle qui est par défaut. Choisir « celle du compte »
+reviendrait à écraser un réglage qui appartient peut-être à quelqu'un d'autre.
+
+La garantie est **convergente sur l'état**, comme l'endpoint webhook (L6.3A) : à
+chaque ouverture, le Panel vérifie que la configuration dit encore ce qu'elle
+doit dire, et la réaligne sinon — en NOMMANT ce qui avait dérivé. Un réglage
+repris à la main dans le tableau de bord ne reste donc pas en place.
+
+L'ordre est celui de partout ailleurs : **d'abord la ressource, ensuite la
+session**. Corriger après l'ouverture laisserait une fenêtre — courte, réelle —
+pendant laquelle un client édite ses données légales.
+
+#### La clé d'idempotence du réalignement varie avec la dérive
+
+Le transport refuse toute écriture sans clé. Une clé STABLE aurait pourtant
+produit l'inverse d'une protection : la fenêtre d'idempotence de Stripe est de
+24 h, et sous la même clé il rejoue sa réponse **sans rien appliquer**. Un
+exploitant qui rouvre `customer_update` deux fois dans la journée aurait vu le
+second réalignement ne rien faire, en silence. La clé porte donc l'empreinte de
+la **dérive observée** : deux dérives sont deux actes, la même dérive rejouée
+reste un seul acte — et son rejeu est alors sûr, l'état visé étant déjà atteint.
+
+### `customer.updated` n'est pas souscrit
+
+C'est la garantie la plus forte, et elle ne se contourne pas : le Panel ne
+**reçoit** pas cet événement. Une garde qui le filtrerait pourrait être levée par
+un ajout distrait ; ne pas le recevoir exigerait de l'ajouter à la souscription,
+ce qu'un contrôle d'architecture refuse. Le même contrôle vérifie qu'aucun chemin
+de réception Stripe — routage, ingestion, projection de revenu, capture de frais
+— n'atteint `PanelClientCompany`.
+
+### Ce que la capacité rend désormais au projet
+
+`billing.portal.create` publie le contrat du portail plutôt que de le laisser
+supposer :
+
+```
+configurationId          la configuration RÉELLEMENT appliquée
+canUpdateLegalIdentity   toujours false
+canUpdatePaymentMethod   true
+canCancelSubscription    true
+cancellationMode         END_OF_PERIOD
+```
+
+Le Manager annonçait « Modifier le moyen de paiement » sur un portail qui ouvrait
+aussi la résiliation, et qui autorisait l'édition des données légales. Il promet
+désormais exactement ce que la configuration accorde.
+
+### `cancel_at_period_end = true` **≠** contrat terminé
+
+Le registre financier n'en est pas affecté — une résiliation programmée
+n'encaisse ni ne rend rien — mais la doctrine vaut d'être écrite ici aussi :
+
+```
+cancel_at_period_end = true      →  contrat CANCEL_AT_PERIOD_END, site SERVI
+customer.subscription.deleted    →  contrat ENDED, entitlement retiré
+```
+
+Voir `SB Auto 06/docs/STRIPE_SUBSCRIPTION_FLOW.md` §11 pour la machine d'état
+complète et la convergence.
+
+
+---
+
 ## 14. Ce que ces lots n'ont PAS fait
 
 **Aucun second stockage de fichiers** : le protocole Media existant a été étendu, pas
@@ -1548,6 +1675,8 @@ services/finance/recurringCosts.service.js      matérialisation, révisions, ar
 services/finance/recurringCostScheduler.js      commodité horaire — jamais la garantie
 services/integratedApi/stripe/stripeSettlementAuthority.js   PUR — ce qu'une balance transaction affirme
 services/finance/providerRevenue/providerSettlement.service.js  la charge fournisseur, sa convergence, son read-model
+services/integratedApi/stripe/stripePortalAuthority.js         PUR — ce que le portail a le droit de faire
+services/integratedApi/stripe/stripePortalConfiguration.service.js  la garantie convergente de cette configuration
 services/finance/receipts.service.js            rattachement et autorisation d'une pièce
 services/upload/documentValidation.js           signatures d'octets, noms de fichiers
 services/upload/privateMedia.service.js         le média PRIVÉ — extension du protocole

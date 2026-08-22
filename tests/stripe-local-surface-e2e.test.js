@@ -67,6 +67,72 @@ const lireCorps = (req) => new Promise((resolve) => {
 const tauxTva = new Map();
 /** Table d'idempotence PROPRE aux taux : elle ne doit pas polluer celle des sessions. */
 const tauxParCle = new Map();
+/**
+ * LE COMPTE DE RECETTE, TEL QU'IL ÉTAIT AVANT CE LOT.
+ *
+ * Une seule configuration, celle par DÉFAUT, avec `customer_update` ACTIVÉ sur
+ * `name, email, address, phone`. Ce n'est pas une invention : c'est la mesure
+ * faite sur le vrai compte Stripe TEST. Le Panel ouvrait ses sessions sans
+ * désigner de configuration, Stripe appliquait donc celle-ci, et le client
+ * pouvait réécrire depuis le portail la raison sociale et l'adresse que
+ * `PanelClientCompany` détient.
+ *
+ * Elle est là pour prouver deux choses à la fois : que le Panel ne s'en sert
+ * plus, et qu'il ne la MODIFIE pas — elle ne lui appartient pas.
+ */
+const configurationsPortail = new Map([
+  ['bpc_compte_defaut', {
+    id: 'bpc_compte_defaut',
+    object: 'billing_portal.configuration',
+    is_default: true,
+    active: true,
+    created: 1_700_000_000,
+    metadata: {},
+    features: {
+      customer_update: { enabled: true, allowed_updates: ['name', 'email', 'address', 'phone'] },
+      payment_method_update: { enabled: true },
+      invoice_history: { enabled: true },
+      subscription_cancel: { enabled: true, mode: 'at_period_end', proration_behavior: 'none' },
+      subscription_update: { enabled: false },
+    },
+  }],
+]);
+
+/** Traduit le formulaire Stripe reçu en objet de configuration. */
+function configurationDepuisForm(id, corps, { is_default = false } = {}) {
+  const p = new URLSearchParams(corps);
+  const bool = (cle) => p.get(cle) === 'true';
+  const champs = [];
+  for (const [cle, valeur] of p.entries()) {
+    if (/^features\[customer_update\]\[allowed_updates\]/.test(cle)) champs.push(valeur);
+  }
+  return {
+    id,
+    object: 'billing_portal.configuration',
+    is_default,
+    active: p.get('active') ? bool('active') : true,
+    created: 1_800_000_000,
+    metadata: {
+      managedBy: p.get('metadata[managedBy]') ?? undefined,
+      role: p.get('metadata[role]') ?? undefined,
+    },
+    features: {
+      customer_update: {
+        enabled: bool('features[customer_update][enabled]'),
+        allowed_updates: champs,
+      },
+      payment_method_update: { enabled: bool('features[payment_method_update][enabled]') },
+      invoice_history: { enabled: bool('features[invoice_history][enabled]') },
+      subscription_cancel: {
+        enabled: bool('features[subscription_cancel][enabled]'),
+        mode: p.get('features[subscription_cancel][mode]'),
+        proration_behavior: p.get('features[subscription_cancel][proration_behavior]'),
+      },
+      subscription_update: { enabled: bool('features[subscription_update][enabled]') },
+    },
+  };
+}
+
 const fauxStripe = http.createServer(async (req, res) => {
   const auth = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
   const corps = req.method !== 'GET' ? await lireCorps(req) : '';
@@ -105,6 +171,34 @@ const fauxStripe = http.createServer(async (req, res) => {
     return objet ? repondre(200, objet) : repondre(404, { error: { code: 'resource_missing' } });
   }
 
+  /*
+    LES CONFIGURATIONS DE PORTAIL — l'inventaire du compte.
+
+    Le faux compte porte au départ UNE configuration, celle par DÉFAUT, réglée
+    comme l'était réellement le compte de recette avant ce lot :
+    `customer_update` ACTIVÉ sur name/email/address/phone. C'est elle qui rendait
+    le portail éditeur de l'identité juridique, et c'est elle que le Panel ne
+    doit JAMAIS s'approprier — elle n'est pas la sienne.
+  */
+  if (req.method === 'GET' && (req.url ?? '').startsWith('/v1/billing_portal/configurations')) {
+    return repondre(200, { object: 'list', data: [...configurationsPortail.values()], has_more: false });
+  }
+  if (req.method === 'POST' && req.url === '/v1/billing_portal/configurations') {
+    sequence += 1;
+    const cfg = configurationDepuisForm(`bpc_test_${sequence}`, corps, { is_default: false });
+    configurationsPortail.set(cfg.id, cfg);
+    return repondre(200, cfg);
+  }
+  const majConfiguration = /^\/v1\/billing_portal\/configurations\/([^/?]+)$/.exec(req.url ?? '');
+  if (req.method === 'POST' && majConfiguration) {
+    const id = decodeURIComponent(majConfiguration[1]);
+    const avant = configurationsPortail.get(id);
+    if (!avant) return repondre(404, { error: { code: 'resource_missing' } });
+    const cfg = configurationDepuisForm(id, corps, { is_default: avant.is_default });
+    configurationsPortail.set(id, cfg);
+    return repondre(200, cfg);
+  }
+
   if (req.method === 'POST' && req.url === '/v1/billing_portal/sessions') {
     const p = new URLSearchParams(corps);
     sequence += 1;
@@ -113,6 +207,7 @@ const fauxStripe = http.createServer(async (req, res) => {
       url: `https://billing.stripe.test/session/${sequence}`,
       customer: p.get('customer'),
       return_url: p.get('return_url'),
+      configuration: p.get('configuration'),
       expires_at: 1_790_000_000,
     });
   }
@@ -180,6 +275,12 @@ const fauxStripe = http.createServer(async (req, res) => {
 });
 
 const portails = () => appels.filter((a) => a.method === 'POST' && a.url === '/v1/billing_portal/sessions');
+const configurationsCreees = () => appels.filter(
+  (a) => a.method === 'POST' && a.url === '/v1/billing_portal/configurations',
+);
+const configurationsAlignees = () => appels.filter(
+  (a) => a.method === 'POST' && /^\/v1\/billing_portal\/configurations\/.+/.test(a.url ?? ''),
+);
 const listes = () => appels.filter((a) => a.method === 'GET' && (a.url ?? '').startsWith('/v1/invoices?'));
 const lectures = () => appels.filter((a) => a.method === 'GET' && /^\/v1\/invoices\/[^?]+$/.test(a.url ?? ''));
 const contactsStripe = () => appels.filter((a) => a.url !== '/v1/account').length;
@@ -350,6 +451,102 @@ section('A. Le portail s’ouvre sur LE client du contrat');
   });
   check('une seconde ouverture rend une session DIFFÉRENTE',
     r2.ok === true && r2.data.result.url !== r.data.result.url);
+
+  /* ══════════════════════════════════════════════════════════════════════
+     LA GOUVERNANCE DU PORTAIL — ce qu'il autorise, et à qui il appartient.
+     ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * LE DÉFAUT QUE CETTE SECTION VERROUILLE.
+   *
+   * La session ne désignait AUCUNE configuration. Stripe appliquait celle du
+   * compte, qui autorisait `customer_update` sur name/email/address/phone : le
+   * client pouvait réécrire, depuis le portail, l'identité juridique que
+   * `PanelClientCompany` détient. Une seconde autorité, en écriture, sur des
+   * données légales — et invisible, puisque aucune ligne de code ne la nommait.
+   */
+  const envoyeeConfig = new URLSearchParams(portails().at(-1).corps).get('configuration');
+  check('la session DÉSIGNE une configuration — jamais celle du compte par défaut',
+    Boolean(envoyeeConfig) && envoyeeConfig !== 'bpc_compte_defaut');
+
+  const notre = configurationsPortail.get(envoyeeConfig);
+  check('…et cette configuration porte la marque du Panel',
+    notre?.metadata?.managedBy === 'PANEL_CONTROL_PLANE'
+    && notre?.metadata?.role === 'PROJECT_BILLING_SELF_SERVICE');
+
+  /* ── CE QUE LE PORTAIL REFUSE ─────────────────────────────────────────── */
+  check('IDENTITÉ LÉGALE : non modifiable dans le portail',
+    notre.features.customer_update.enabled === false);
+  check('…et aucun champ ne reste autorisé derrière la désactivation',
+    notre.features.customer_update.allowed_updates.length === 0);
+  check('OFFRE : non modifiable — un avenant ne se signe pas dans un portail',
+    notre.features.subscription_update.enabled === false);
+
+  /* ── CE QUE LE PORTAIL PERMET ─────────────────────────────────────────── */
+  check('MOYEN DE PAIEMENT : modifiable', notre.features.payment_method_update.enabled === true);
+  check('FACTURES : consultables', notre.features.invoice_history.enabled === true);
+  check('RÉSILIATION : permise', notre.features.subscription_cancel.enabled === true);
+  check('…et à L’ÉCHÉANCE — la période en cours est payée',
+    notre.features.subscription_cancel.mode === 'at_period_end');
+
+  /**
+   * LE PANEL NE S'APPROPRIE PAS LA CONFIGURATION DU COMPTE.
+   *
+   * Modifier « celle qui est par défaut » reviendrait à écraser un réglage qui
+   * appartient peut-être à quelqu'un d'autre. On crée la nôtre, et on ne touche
+   * à aucune autre.
+   */
+  const defaut = configurationsPortail.get('bpc_compte_defaut');
+  check('la configuration PAR DÉFAUT du compte n’a PAS été modifiée',
+    defaut.features.customer_update.enabled === true
+    && defaut.features.customer_update.allowed_updates.length === 4);
+  check('…et aucune mise à jour ne l’a visée',
+    !configurationsAlignees().some((a) => a.url.includes('bpc_compte_defaut')));
+
+  /**
+   * CONVERGENTE : deux ouvertures ne créent qu'UNE configuration.
+   *
+   * Elle est durable, contrairement à la session : en créer une seconde ferait
+   * perdre au Panel la réponse à « laquelle est la mienne ».
+   */
+  check('deux ouvertures n’ont créé qu’UNE configuration', configurationsCreees().length === 1);
+
+  /* ── LE CONTRAT RENDU AU PROJET ───────────────────────────────────────── */
+  check('le projet apprend ce que le portail permet, au lieu de le supposer',
+    r2.data.result.canUpdateLegalIdentity === false
+    && r2.data.result.canUpdatePaymentMethod === true
+    && r2.data.result.canCancelSubscription === true
+    && r2.data.result.cancellationMode === 'END_OF_PERIOD');
+}
+
+section('A bis. Une configuration qui DÉRIVE est remise à sa cible');
+{
+  /**
+   * Un exploitant réactive `customer_update` depuis le tableau de bord — le
+   * geste qui a créé le défaut d'origine, et que rien n'empêche de refaire.
+   * La prochaine ouverture doit le retirer, et le DIRE.
+   */
+  const notre = [...configurationsPortail.values()].find((c) => c.metadata?.managedBy === 'PANEL_CONTROL_PLANE');
+  notre.features.customer_update = { enabled: true, allowed_updates: ['name', 'address'] };
+  notre.features.subscription_update = { enabled: true, default_allowed_updates: ['price'] };
+
+  const avantMaj = configurationsAlignees().length;
+  const avantCreation = configurationsCreees().length;
+
+  const r = await projetA.invokeCapability({
+    code: PORTAL,
+    input: { contractRef: CONTRAT_A, returnUrl: 'https://manager.test/abonnement', operationId: OP('portal-3') },
+  });
+  check('l’ouverture aboutit malgré la dérive', r.ok === true);
+
+  const relue = configurationsPortail.get(notre.id);
+  check('l’identité légale est REDEVENUE non modifiable',
+    relue.features.customer_update.enabled === false
+    && relue.features.customer_update.allowed_updates.length === 0);
+  check('…et l’offre aussi', relue.features.subscription_update.enabled === false);
+  check('la configuration a été RÉALIGNÉE, pas recréée',
+    configurationsAlignees().length === avantMaj + 1
+    && configurationsCreees().length === avantCreation);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

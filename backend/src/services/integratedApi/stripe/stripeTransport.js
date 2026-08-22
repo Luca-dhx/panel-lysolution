@@ -532,17 +532,110 @@ export async function payInvoice({ credentials, invoiceId, idempotencyKey, timeo
  * Stripe, par mode. Sans cela Stripe refuse la création, et l'erreur est
  * remontée telle quelle plutôt que masquée.
  */
-export async function createBillingPortalSession({ credentials, customer, returnUrl, timeoutMs, fetchImpl }) {
+export async function createBillingPortalSession({
+  credentials, customer, returnUrl, configuration, timeoutMs, fetchImpl,
+}) {
   if (!customer) {
     throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Client requis pour ouvrir le portail.');
   }
   const res = await stripeFetch({
     credentials, method: 'POST', path: '/v1/billing_portal/sessions',
-    body: { customer, ...(returnUrl ? { return_url: returnUrl } : {}) },
+    body: {
+      customer,
+      ...(returnUrl ? { return_url: returnUrl } : {}),
+      /**
+       * LA CONFIGURATION EST DÉSIGNÉE, JAMAIS LAISSÉE AU COMPTE.
+       *
+       * Sans ce champ, Stripe applique la configuration PAR DÉFAUT du compte —
+       * celle qu'un exploitant a réglée un jour dans le tableau de bord, que
+       * personne ne relit, et qui change sans qu'aucun code ne bouge. Sur le
+       * compte de recette, elle autorisait le client à réécrire sa raison
+       * sociale et son adresse : le portail devenait une seconde autorité sur
+       * l'identité juridique.
+       *
+       * On nomme donc CELLE DU PANEL. Voir `stripePortalConfiguration.service.js`.
+       */
+      ...(configuration ? { configuration } : {}),
+    },
     nonDurableWrite: true,
     timeoutMs, fetchImpl,
   });
   return { outcome: OUTCOMES.DONE, session: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/* ── LA CONFIGURATION DU PORTAIL — ce qu'il autorise, et à qui ───────────── */
+
+/**
+ * `GET /v1/billing_portal/configurations` — l'inventaire du compte.
+ *
+ * On liste plutôt qu'on ne devine : un compte peut porter plusieurs
+ * configurations — une par marque, une héritée d'un essai, une créée à la main.
+ * Le Panel retrouve LA SIENNE par ses métadonnées et ne touche à aucune autre.
+ */
+export async function listPortalConfigurations({ credentials, limit = 100, timeoutMs, fetchImpl }) {
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: '/v1/billing_portal/configurations',
+    query: { limit: Math.min(limit, 100) },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  const data = Array.isArray(res.json?.data) ? res.json.data : [];
+  return {
+    configurations: data,
+    truncated: res.json?.has_more === true,
+    requestId: res.requestId,
+    durationMs: res.durationMs,
+  };
+}
+
+/**
+ * `POST /v1/billing_portal/configurations` — créer la nôtre.
+ *
+ * ══ POURQUOI UNE CLÉ D'IDEMPOTENCE ICI, ET PAS SUR LA SESSION ══════════════
+ *
+ * Une configuration est un objet DURABLE : deux créations en produiraient deux,
+ * et le Panel n'aurait plus de réponse à « laquelle est la mienne ». Une
+ * session, elle, est éphémère et à usage unique — la rejouer coûte un appel.
+ *
+ * La clé est FOURNIE par l'appelant, comme partout : la générer ici la rendrait
+ * différente à chaque tentative, ce qui est exactement la façon d'en créer deux.
+ */
+export async function createPortalConfiguration({
+  credentials, params, idempotencyKey, timeoutMs, fetchImpl,
+}) {
+  const res = await stripeFetch({
+    credentials, method: 'POST', path: '/v1/billing_portal/configurations',
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] configuration de portail créée — ${res.json?.id ?? '(sans id)'} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, configuration: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `POST /v1/billing_portal/configurations/{id}` — la remettre à sa cible.
+ *
+ * ══ CONVERGENTE PAR L'ÉTAT, DONC REJOUABLE SANS CLÉ ════════════════════════
+ *
+ * Poser deux fois le même état produit le même objet : c'est la même doctrine
+ * que la résiliation d'abonnement (L6.2G) et que l'endpoint webhook (L6.3A).
+ * Aucun doublon n'est possible — il n'y a rien à créer.
+ *
+ * L'appelant envoie l'état COMPLET, jamais un fragment : un champ omis conserve
+ * sa valeur précédente, et une correction partielle laisserait intact
+ * précisément ce qu'on venait retirer.
+ */
+export async function updatePortalConfiguration({
+  credentials, configurationId, params, idempotencyKey, timeoutMs, fetchImpl,
+}) {
+  if (!configurationId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de configuration manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'POST',
+    path: `/v1/billing_portal/configurations/${encodeURIComponent(configurationId)}`,
+    body: params, idempotencyKey, timeoutMs, fetchImpl,
+  });
+  logger.info(`[stripe] configuration de portail alignée — ${configurationId} (req ${res.requestId ?? '—'})`);
+  return { outcome: OUTCOMES.DONE, configuration: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
 /**

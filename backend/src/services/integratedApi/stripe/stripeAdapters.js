@@ -69,6 +69,7 @@ import {
   TRANSPORT_CODES,
   OUTCOMES,
 } from './stripeTransport.js';
+import { ensurePortalConfiguration } from './stripePortalConfiguration.service.js';
 import {
   SETTLEMENT_STATUS,
   SETTLEMENT_REASON,
@@ -1760,14 +1761,39 @@ async function invoiceRetrieve({ definition, context, credentials, input, fetchI
  * `billing.portal.create` — la porte du client, ouverte pour SON client.
  *
  * Stripe héberge l'écran : aucune donnée bancaire n'approche ni le projet ni le
- * Panel. Ce que ce verbe décide, et la seule chose qu'il décide, est DE QUI on
- * ouvre le dossier.
+ * Panel. Ce verbe décide DE QUI l'on ouvre le dossier — et, depuis ce lot, CE
+ * QUE le dossier permet de faire.
+ *
+ * ══ DEUX DÉCISIONS, ET LA SECONDE MANQUAIT ══════════════════════════════════
+ *
+ * La session ne désignait aucune configuration. Stripe appliquait donc celle qui
+ * est PAR DÉFAUT SUR LE COMPTE, et sur le compte de recette celle-ci autorisait
+ * `customer_update` sur `name, email, address, phone` : le client pouvait
+ * réécrire, depuis le portail, la raison sociale et l'adresse que
+ * `PanelClientCompany` détient. Le portail devenait une seconde autorité sur
+ * l'identité juridique, en écriture, sans qu'aucune ligne de code ne le dise.
+ *
+ * ══ LA CONFIGURATION EST GARANTIE AVANT LA SESSION ══════════════════════════
+ *
+ * L'ordre n'est pas négociable, et c'est le même que partout ailleurs :
+ * « d'abord les ressources, ensuite la session ». Ouvrir d'abord puis corriger
+ * ensuite laisserait une fenêtre — courte, réelle — pendant laquelle un client
+ * édite ses données légales.
+ *
+ * La garantie est CONVERGENTE : elle ne crée qu'une fois, et se contente de
+ * vérifier ensuite. Voir `stripePortalConfiguration.service.js`.
  */
 async function portalCreate({ definition, context, credentials, input, fetchImpl }) {
   const { customerId } = await ownedCustomerOfContract({ definition, context, input });
 
+  const portail = await guard(definition, () => ensurePortalConfiguration({
+    credentials, environment: context.environment,
+    timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+
   const res = await guard(definition, () => createBillingPortalSession({
     credentials, customer: customerId, returnUrl: input.returnUrl,
+    configuration: portail.configurationId,
     timeoutMs: definition.timeoutMs, fetchImpl,
   }));
 
@@ -1782,6 +1808,16 @@ async function portalCreate({ definition, context, credentials, input, fetchImpl
   return {
     url: String(session.url),
     expiresAt: Number.isFinite(session.expires_at) ? session.expires_at : null,
+    /**
+     * CE QUE LE PORTAIL PERMET — rendu au projet, pour qu'il n'ait pas à le
+     * supposer. Un écran qui promet « modifiez vos informations » sur un
+     * portail qui les refuse envoie le client se heurter à une porte fermée.
+     */
+    configurationId: portail.configurationId,
+    canUpdateLegalIdentity: false,
+    canUpdatePaymentMethod: true,
+    canCancelSubscription: true,
+    cancellationMode: 'END_OF_PERIOD',
   };
 }
 
