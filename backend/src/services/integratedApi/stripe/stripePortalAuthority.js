@@ -140,11 +140,23 @@ export function portalConfigurationParams(marque = {}) {
         mode: PORTAL_TARGET.subscriptionCancelMode,
         proration_behavior: PORTAL_TARGET.subscriptionCancelProration,
         /**
-         * Aucune enquête de départ. Le portail n'est pas un formulaire
-         * marketing, et une question posée au moment d'une résiliation se lit
-         * comme un obstacle.
+         * AUCUNE ENQUÊTE DE DÉPART.
+         *
+         * Le portail n'est pas un formulaire marketing, et une question posée
+         * au moment d'une résiliation se lit comme un obstacle.
+         *
+         * ══ POURQUOI `options` EST QUAND MÊME ÉNUMÉRÉ ═════════════════════
+         *
+         * Stripe l'exige, même désactivé — mesuré : `Missing required param:
+         * features[subscription_cancel][cancellation_reason][options]`. Le
+         * champ décrit la FORME du questionnaire ; `enabled: false` décide
+         * qu'il ne s'affiche pas. On fournit donc la liste minimale que
+         * l'API accepte, et personne ne la voit.
          */
-        cancellation_reason: { enabled: false },
+        cancellation_reason: {
+          enabled: false,
+          options: ['too_expensive', 'missing_features', 'unused', 'other'],
+        },
       },
       subscription_update: { enabled: false },
     },
