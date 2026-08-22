@@ -421,6 +421,34 @@ export async function retrieveCheckoutSession({ credentials, sessionId, timeoutM
   return { session: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
+/**
+ * `GET /v1/events/{id}` — RELIRE UN ÉVÉNEMENT CHEZ SON ÉMETTEUR.
+ *
+ * ── POURQUOI NOUS N'AVONS PAS LE CORPS CHEZ NOUS ────────────────────────────
+ *
+ * `PanelProviderWebhookEvent` ne conserve qu'une EMPREINTE : le corps d'un
+ * webhook porte des identités, des adresses et des montants, et le garder
+ * exigerait une durée de rétention et une politique d'effacement que nous
+ * n'avons pas. Cette décision tient toujours — et elle a un corollaire : une
+ * reprise ne peut pas rejouer depuis nos archives.
+ *
+ * Elle rejoue donc depuis la SOURCE. Stripe conserve ses événements 30 jours,
+ * et nous en avons gardé l'identifiant. C'est la lecture la plus honnête
+ * possible : l'événement rejoué est celui que Stripe a réellement émis, pas une
+ * reconstitution.
+ *
+ * Au-delà de 30 jours, Stripe répond 404 — un cas terminal, et le dire est
+ * plus juste que réessayer indéfiniment un événement qui n'existe plus.
+ */
+export async function retrieveEvent({ credentials, eventId, timeoutMs, fetchImpl }) {
+  if (!eventId) throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant d’événement manquant.');
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/events/${encodeURIComponent(eventId)}`,
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { event: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
 /** `GET /v1/subscriptions/{id}` — lecture. */
 export async function retrieveSubscription({ credentials, subscriptionId, timeoutMs, fetchImpl }) {
   if (!subscriptionId) throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant d’abonnement manquant.');

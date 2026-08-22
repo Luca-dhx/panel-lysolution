@@ -21,6 +21,7 @@ import {
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
+import { recoverAbandonedWebhookEvents } from './services/webhooks/webhookRecovery.js';
 import {
   startRecurringCostScheduler, stopRecurringCostScheduler,
 } from './services/finance/recurringCostScheduler.js';
@@ -343,6 +344,36 @@ async function start() {
   await migrateParticipants().catch((err) => {
     logger.warn(`Migration des participants impossible : ${err.message}`);
   });
+
+  /**
+   * ══ REPRISE DES WEBHOOKS ABANDONNÉS — AVANT LES WORKERS, ET C'EST LE LOT ══
+   *
+   * Un processus tué entre l'enregistrement d'un événement et son application
+   * laisse un travail en suspens. Le rejeu du fournisseur en rattrape la
+   * plupart — depuis le bail, il REPREND au lieu d'être refusé comme doublon —
+   * mais pas ceux pour lesquels nous avions déjà répondu 200.
+   *
+   * ── POURQUOI ICI, ET PAS APRÈS ─────────────────────────────────────────
+   *
+   * `startRecurringCostScheduler()` juste en dessous matérialise des coûts et
+   * lit le registre financier. Le laisser partir avant la reprise lui ferait
+   * calculer des totaux sur un livret dont il manque des revenus — et ce
+   * calcul-là ne se refait pas tout seul.
+   *
+   * Non bloquante : un rattrapage impossible (Stripe injoignable au démarrage)
+   * ne doit pas empêcher un backend de servir. Il est journalisé et supervisé,
+   * et le passage suivant le reprendra.
+   */
+  const webhooksRepris = await recoverAbandonedWebhookEvents().catch((err) => {
+    logger.warn(`Reprise des webhooks abandonnés impossible : ${err.message}`);
+    return null;
+  });
+  if (webhooksRepris?.scanned) {
+    logger.warn(
+      `Webhooks abandonnés : ${webhooksRepris.scanned} examiné(s), `
+      + `${webhooksRepris.recovered} réappliqué(s), ${webhooksRepris.failed} en échec.`,
+    );
+  }
 
   // ÉCHÉANCES : un événement devient « à confirmer » même si personne n'a le
   // Panel ouvert. La détection est donc ici, pas dans un navigateur.

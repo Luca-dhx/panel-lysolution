@@ -302,6 +302,31 @@ export const EVENT_TYPES = Object.freeze({
    * en a le plus besoin.
    */
   PLATFORM_INCIDENT_RAISED: 'PLATFORM_INCIDENT_RAISED',
+
+  /**
+   * ══ UN ÉVÉNEMENT FOURNISSEUR QUI NE S'APPLIQUE PAS ═══════════════════════
+   *
+   * `WEBHOOK_PROCESSING_FAILED` — une tentative a échoué. Reprenable : le
+   * prochain rejeu ou le prochain démarrage la reprendra. C'est un avertissement,
+   * pas une perte.
+   *
+   * `WEBHOOK_PROCESSING_STUCK` — on a RENONCÉ (`DEAD_LETTER`) : erreur
+   * terminale, ou plafond de tentatives atteint. Il n'y aura pas de reprise
+   * automatique, et quelqu'un doit regarder.
+   *
+   * ── POURQUOI DEUX TYPES, ET PAS UN SEUL AVEC DEUX SÉVÉRITÉS ──────────────
+   *
+   * Parce qu'on ne les relit pas pour la même raison. Le premier documente une
+   * turbulence — utile en forensic, sans action. Le second est une file de
+   * travail humaine, et devoir la reconstituer en filtrant sur une sévérité
+   * revient à ne pas l'avoir.
+   *
+   * NI CORPS, NI SECRET : identifiant, type, tentatives, âge, motif tronqué.
+   * Le corps d'un événement Stripe porte des identités et des montants ; une
+   * chronologie de supervision n'a aucune raison de les conserver.
+   */
+  WEBHOOK_PROCESSING_FAILED: 'WEBHOOK_PROCESSING_FAILED',
+  WEBHOOK_PROCESSING_STUCK: 'WEBHOOK_PROCESSING_STUCK',
   PROJECT_BRIDGE_DEGRADED: 'PROJECT_BRIDGE_DEGRADED',
   PROJECT_BRIDGE_RECOVERED: 'PROJECT_BRIDGE_RECOVERED',
 });

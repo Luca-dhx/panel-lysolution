@@ -284,10 +284,13 @@ personne : ce serait le chemin par lequel un tiers ferait router ses événement
 vers le projet de son choix. Le routage vient du **binding**, c'est-à-dire d'un
 enregistrement que le Panel a écrit lui-même en réconciliant.
 
-**L'idempotence est portée par l'index unique**, pas par un `findOne`
-préalable : deux livraisons concurrentes du même événement passeraient toutes
-deux un test d'existence. Seule la contrainte `(provider, environment,
-providerEventId)` tranche, et son refus **est** la preuve du doublon.
+**L'unicité est portée par l'index**, pas par un `findOne` préalable : deux
+livraisons concurrentes du même événement passeraient toutes deux un test
+d'existence. Seule la contrainte `(provider, environment, providerEventId)`
+tranche, et son refus **est** la preuve du doublon.
+
+Mais l'unicité n'est pas l'idempotence, et les confondre a coûté cher — voir
+§9 bis.
 
 Un doublon répond **200**. Le fournisseur a fait son travail, nous aussi ;
 répondre autre chose déclencherait un rejeu en boucle.
@@ -295,6 +298,212 @@ répondre autre chose déclencherait un rejeu en boucle.
 **Aucun corps d'événement n'est conservé** — seulement son empreinte. Un
 webhook porte des données personnelles ; les garder exigerait une durée de
 rétention, une politique d'effacement et une raison. Nous n'en avons pas.
+
+---
+
+## 9 bis. UNE LIGNE QUI EXISTE N'EST PAS UN TRAVAIL FAIT
+
+### Le défaut, et il ne se voyait nulle part
+
+La ligne était écrite **avant** les effets métier, et son refus en `E11000`
+valait « doublon ». La séquence tenait alors en cinq flèches :
+
+```
+webhook  →  ligne RECEIVED écrite  →  CRASH du process
+         →  Stripe rejoue          →  E11000  →  « doublon », HTTP 200
+         →  l'effet métier n'existera JAMAIS
+```
+
+La ligne prouvait qu'on avait **vu** l'événement, pas qu'on l'avait
+**appliqué**. Et le rejeu du fournisseur — la seule réparation qui existe, et
+elle est gratuite — était refusé au nom d'une idempotence qui ne protégeait
+plus rien. Pire : refusé **en silence**, avec un 200.
+
+    ROW EXISTS  ≠  EVENT PROCESSED
+
+### La machine d'état
+
+```
+             ┌──────────── réclamation atomique ────────────┐
+             ▼                                              │
+RECEIVED ──────────▶ PROCESSING (sous bail) ──────▶ PROCESSED    terminal
+ (hérité)                    │              ──────▶ IGNORED      terminal
+                             │              ──────▶ FAILED       reprenable
+                             │              ──────▶ DEAD_LETTER  terminal, supervisé
+                             │
+                             └── bail EXPIRÉ ──▶ reprenable
+```
+
+Une ligne **naît `PROCESSING`** : il n'existe aucune fenêtre où elle existe sans
+bail. `RECEIVED` ne subsiste que pour les documents antérieurs à ce lot, et le
+balayage les traite comme abandonnés dès qu'ils ont vieilli.
+
+| état | un rejeu fait quoi ? |
+|---|---|
+| `PROCESSED` | rien — **le seul doublon terminal** |
+| `IGNORED` | rien — il n'y avait rien à faire |
+| `DEAD_LETTER` | rien — on a renoncé, et on l'a dit |
+| `PROCESSING`, bail **valide** | rien — quelqu'un travaille (`IN_FLIGHT`) |
+| `PROCESSING`, bail **expiré** | **reprend** |
+| `RECEIVED` ancien | **reprend** |
+| `FAILED` reprenable | **reprend** |
+
+`IN_FLIGHT` et « déjà traité » se ressemblent en HTTP et ne se ressemblent pas
+du tout dans un incident : le premier peut encore échouer. Les deux sont donc
+nommés séparément.
+
+### Le bail
+
+```
+leaseOwner          hôte:pid:NONCE-DE-DÉMARRAGE
+processingStartedAt depuis quand
+leaseExpiresAt      au-delà, le travail est réputé ABANDONNÉ
+processingAttempts  nombre de RÉCLAMATIONS, jamais de livraisons
+lastError           code · message tronqué · retryable · instant
+```
+
+Le **nonce de démarrage** est la seule partie sérieuse de l'identité : un
+processus redémarré peut réutiliser un pid sur le même hôte, et se croirait
+alors titulaire d'un bail qu'il a perdu en mourant.
+
+**Aucun verrou mémoire.** Un `Set` de clés en cours n'aurait protégé qu'à
+l'intérieur d'un processus, tout en donnant l'illusion d'une garantie
+multi-processus. Le Panel tourne derrière une API, un ordonnanceur et un worker
+détaché : la réclamation est une écriture conditionnelle en base, et rien
+d'autre.
+
+### La réclamation est atomique
+
+```js
+create({...clé, status: PROCESSING, bail, attempts: 1})   // E11000 → c'est un rejeu
+findOneAndUpdate(                                          // …alors on tente la REPRISE
+  {...clé, $or: [RECEIVED ancien, FAILED reprenable, PROCESSING bail expiré]},
+  {$set: {status: PROCESSING, bail}, $inc: {attempts: 1}},
+)
+```
+
+Deux écritures, pas un `upsert` : un `upsert` ne peut pas porter un filtre
+d'état — le filtre doit aussi décrire le document à créer — et aurait donc
+écrasé le bail d'un processus au travail. La seconde écriture ne coûte que sur
+le chemin du rejeu.
+
+Si le `findOneAndUpdate` ne rend rien, **c'est la décision** : l'événement est
+conclu, ou un bail court. La lecture qui suit ne sert qu'à dire *lequel des
+deux*, pour le diagnostic — jamais à décider.
+
+La conclusion est gardée par `leaseOwner` : un traitement qui a dépassé son bail
+et dont l'événement a été repris ailleurs **n'écrit rien**. Sans ce garde, il
+effacerait le travail de son successeur et rendrait terminal un événement que
+personne n'a fini.
+
+### Les seuils, et pourquoi ceux-là
+
+| réglage | défaut | variable |
+|---|---|---|
+| durée du bail | 120 s | `WEBHOOK_LEASE_TTL_MS` |
+| âge d'un `RECEIVED` réputé abandonné | 120 s | `WEBHOOK_STALE_RECEIVED_MS` |
+| tentatives avant `DEAD_LETTER` | 5 | `WEBHOOK_MAX_ATTEMPTS` |
+
+Mesure des traitements légitimes : un `invoice.paid` enchaîne appartenance,
+adoption éventuelle, normalisation, un aller-retour Stripe pour la
+`balance_transaction` (les frais réels, jamais calculés), l'écriture du fait
+puis celle du mouvement. Les invocations de capacité mesurées en base tiennent
+entre **150 et 250 ms** ; le pire cas plausible reste sous la seconde.
+
+120 s, c'est donc environ **deux ordres de grandeur** au-dessus du pire cas
+observé, et bien en dessous du premier rejeu utile de Stripe. Les deux bornes
+comptent :
+
+- **trop court** → on reprend un travail qui tourne encore ; l'idempotence
+  métier tiendrait, mais on l'aurait sollicitée pour rien ;
+- **trop long** → un `subscription.deleted` abandonné reste invisible des
+  minutes durant : un site servi alors que le contrat est fini.
+
+### Reprenable ou terminal
+
+Une seule question : **une nouvelle tentative a-t-elle une chance de donner un
+résultat différent ?**
+
+| REPRENABLE | TERMINAL |
+|---|---|
+| panne de base, dépendance injoignable | corps illisible, schéma incompatible |
+| délai dépassé, redémarrage | signature refusée |
+| erreur de transport marquée `retryable` | appartenance définitivement impossible |
+| **erreur inconnue** (défaut) | événement purgé chez le fournisseur (404) |
+
+Le défaut est « reprenable », et c'est délibéré : une erreur inconnue est plus
+souvent une panne qu'un vice de forme. Se tromper vers la reprise coûte quelques
+tentatives et finit en `DEAD_LETTER` supervisé ; se tromper vers le terminal
+perd un fait financier en silence. Les deux erreurs n'ont pas le même prix.
+
+### Ce qui a échoué n'est plus absorbé
+
+Les effets métier restent **best-effort vis-à-vis d'HTTP** — répondre 500 à
+Stripe déclencherait une tempête de rejeux, et c'est toujours vrai. Mais « ne
+pas répondre 500 » ne veut pas dire « oublier » : les échecs étaient absorbés
+dans un `.catch` qui rendait `null`, et l'événement finissait comme s'il avait
+été traité. Ils sont désormais **retenus**, et l'événement se conclut en
+`FAILED` — donc reprenable, au prochain rejeu comme au prochain démarrage.
+
+### La reprise au démarrage, et d'où vient le corps
+
+Deux filets, et il en faut deux :
+
+1. **le rejeu du fournisseur** — un processus tué n'a répondu à personne, Stripe
+   voit un échec et rejoue. C'est le filet principal, il est gratuit, il apporte
+   le corps, et il couvre le cas nominal du crash ;
+2. **le balayage d'amorçage** — il couvre ce que le rejeu ne couvre pas : les
+   événements pour lesquels nous avions déjà répondu 200 avant de perdre
+   l'effet. Stripe ne les rejouera jamais.
+
+Le corps n'étant pas conservé, la reprise **relit l'événement à la source**
+(`GET /v1/events/{id}`, conservé 30 jours par Stripe). Ce qui est rejoué est ce
+que Stripe a émis, pas une reconstitution à partir de nos notes — et la
+décision de ne rien conserver reste intacte. Au-delà de 30 jours, la réponse est
+un 404 : c'est **terminal**, et le dire vaut mieux que réessayer un identifiant
+qui ne reviendra jamais.
+
+Le balayage tourne **avant les ordonnanceurs de fond**. `startRecurringCostScheduler()`
+lit le registre financier : le laisser partir avant la reprise lui ferait
+calculer des totaux sur un livret dont il manque des revenus, et ce calcul-là ne
+se refait pas tout seul.
+
+**Un seul parcours métier.** `applyProviderEventEffects` est la fonction que la
+réception appelle *aussi*. Une seconde implémentation « pour la reprise » aurait
+divergé en silence, et c'est celle qu'on ne relit jamais qui aurait vieilli.
+
+### La barrière finale reste l'idempotence métier
+
+Le bail réduit les retraitements ; il ne les supprime pas. Une reprise rejoue
+par construction ce qui a peut-être déjà été appliqué. La dernière ligne de
+défense n'est donc pas l'ordonnancement, c'est **l'identité canonique contrainte
+en base** :
+
+```
+PanelProviderRevenueFact     uniq(provider, environment, objectType, objectId)
+PanelFinancialTransaction    uniq(provenance.provider, .environment,
+                                  .externalKind, .externalId)
+```
+
+Un même objet Stripe ne peut produire qu'un fait et qu'un mouvement, quel que
+soit le nombre d'événements qui l'annoncent, de rejeux, de processus concurrents
+ou de redémarrages. Le second écrivain reçoit un `E11000`, et ce refus **est**
+la garantie.
+
+### La supervision, parce qu'un abandon silencieux est le même défaut
+
+| type | quand | sévérité |
+|---|---|---|
+| `WEBHOOK_PROCESSING_FAILED` | une tentative a échoué, une reprise viendra | WARNING |
+| `WEBHOOK_PROCESSING_STUCK` | `DEAD_LETTER` — on a renoncé | ERROR |
+
+Deux types plutôt qu'un seul avec deux sévérités : on ne les relit pas pour la
+même raison. Le premier documente une turbulence ; le second est une **file de
+travail humaine**, et devoir la reconstituer en filtrant sur une sévérité
+revient à ne pas l'avoir.
+
+Ni corps, ni secret : identifiant, type, tentatives, âge, motif tronqué — de
+quoi agir, rien de plus.
 
 ---
 
@@ -365,6 +574,9 @@ n'a aucune raison de rester en base. Voir §12.
 | `services/webhooks/webhookSignature.js` | vérification par schéma, identité d'événement |
 | `services/webhooks/webhookReconciler.js` | désiré vs observé, dérive, convergence |
 | `services/webhooks/webhookIngest.js` | réception, idempotence |
+services/webhooks/webhookLease.js                le BAIL — réclamation atomique, classification, plafond
+services/webhooks/webhookRecovery.js             la REPRISE — relit l’événement à la source, rejoue les mêmes effets
+services/webhooks/webhookSupervision.js          ce qu’on DIT quand un événement ne s’applique pas
 | `services/webhooks/webhookDiagnostics.js` | états, codes, gravité, masquage |
 | `models/PanelIntegratedApiWebhookBinding.model.js` | état du webhook, index unique `(provider, environment)` |
 | `models/PanelProviderWebhookEvent.model.js` | registre de réception, index unique d'idempotence |

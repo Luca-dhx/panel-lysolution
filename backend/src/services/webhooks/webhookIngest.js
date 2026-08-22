@@ -39,6 +39,11 @@ import PanelIntegratedApiWebhookBinding, {
 import PanelProviderWebhookEvent, {
   WEBHOOK_EVENT_STATUS,
 } from '../../models/PanelProviderWebhookEvent.model.js';
+import {
+  claimWebhookEvent, settleWebhookEvent, classifyWebhookError,
+  statusAfterFailure, CLAIM_OUTCOME,
+} from './webhookLease.js';
+import { reportWebhookProcessingFailure } from './webhookSupervision.js';
 import { runtimeEnvironment } from '../integratedApi/environment.js';
 import { capabilityByCallbackSlug } from './webhookRegistry.js';
 import { loadVerificationSecrets } from './webhookSecrets.js';
@@ -64,6 +69,173 @@ export const INGEST_OUTCOME = Object.freeze({
   NO_BINDING: 'NO_BINDING',
   REJECTED: 'REJECTED',
 });
+
+/**
+ * ══ LES EFFETS MÉTIER D'UN ÉVÉNEMENT — UN SEUL ENDROIT ══════════════════════
+ *
+ * Extraits de la réception pour que la REPRISE les rejoue à l'identique. Deux
+ * implémentations du même parcours auraient divergé en silence, et c'est celle
+ * qu'on ne relit jamais — la reprise — qui aurait vieilli.
+ *
+ * NE LÈVE PAS. Chaque étape retient son échec ; l'appelant décide de l'état
+ * durable (`PROCESSED` ou `FAILED`) et du statut HTTP.
+ *
+ * @returns {Promise<{echecs: object[], appartenance: object|null, verdictAppartenance: object, dispatch: object}>}
+ */
+export async function applyProviderEventEffects({
+  provider, environment, eventType, providerEventId, payload,
+} = {}) {
+  /**
+   * ══ CE QUI A ÉCHOUÉ EST RETENU, PLUS ABSORBÉ ═══════════════════════
+   *
+   * Chaque étape reste BEST-EFFORT vis-à-vis d'HTTP — répondre 500 à Stripe
+   * déclencherait une tempête de rejeux, et c'est toujours vrai.
+   *
+   * Mais « ne pas répondre 500 » ne veut pas dire « oublier ». Les échecs étaient
+   * absorbés dans un `.catch` qui rendait `null` : l'événement finissait quand
+   * même comme s'il avait été traité, et l'effet manquant n'existait plus nulle
+   * part. Ils sont désormais RETENUS, et l'événement se conclut en `FAILED` —
+   * donc REPRENABLE, au prochain rejeu comme au prochain démarrage.
+   */
+  const echecs = [];
+  const retenir = (etape) => (err) => {
+    logger.error(`[webhooks] ${etape} — ${err?.message ?? 'erreur inconnue'}.`);
+    echecs.push({ etape, err });
+    return null;
+  };
+
+  /**
+   * ── À QUI EST-IL ? (L6.2C) ──────────────────────────────────────────
+   *
+   * Résolu APRÈS la signature et APRÈS la réclamation, et ENREGISTRÉ sur
+   * l'événement — y compris quand la réponse est « à personne ». Un événement non
+   * attribué qu'on ne consigne pas est un événement perdu, et une perte
+   * silencieuse est la pire des issues sur un flux financier.
+   */
+  const appartenance = await resolveStripeEventOwnership({
+    provider, environment, eventType, payload,
+  }).catch(retenir('appartenance non résolue'));
+
+  /**
+   * ── ADOPTION DE L'ABONNEMENT (L6.2F) ────────────────────────────────────
+   *
+   * APRÈS que l'appartenance de la SESSION a été établie, et jamais avant :
+   * c'est elle qui fournit la filiation. Un abonnement ne doit à aucun moment
+   * être routé vers un projet dont on n'aurait pas d'abord prouvé qu'il possède
+   * la session qui l'a produit.
+   *
+   * L'adoption est donc ici, entre la résolution et l'enregistrement — et elle
+   * est BEST-EFFORT : un endpoint public qui lève produit une 500, et une 500
+   * fait rejouer le fournisseur en boucle.
+   */
+  let adoption = null;
+  if (appartenance?.ownership === EVENT_OWNERSHIP.OWNED
+    && appartenance.resourceType === 'CHECKOUT_SESSION') {
+    adoption = await adoptSubscriptionFromSession({
+      environment,
+      session: payload?.data?.object ?? null,
+      source: 'LEARNED_FROM_WEBHOOK',
+    }).catch(retenir('adoption d’abonnement impossible'));
+  }
+
+  /**
+   * ── PROJECTION FINANCIÈRE (L10.3) ───────────────────────────────────────
+   *
+   * L'événement est vérifié, unique, et son appartenance est résolue. S'il
+   * porte de l'argent RÉELLEMENT encaissé, il devient un fait financier
+   * normalisé, puis une transaction du registre — le même registre que les
+   * revenus manuels et les coûts, jamais un second.
+   *
+   * ── POURQUOI ICI, ET PAS DANS UNE ROUTE D'ÉCRAN ─────────────────────────
+   * Le CDC demande que le Panel converge sans action manuelle. Une projection
+   * déclenchée par l'ouverture d'une page ferait dépendre l'existence d'un
+   * revenu du fait que quelqu'un la regarde.
+   *
+   * ── APRÈS L'IDEMPOTENCE, ET APRÈS L'ADOPTION ────────────────────────────
+   * Après l'idempotence : un rejeu n'arrive pas jusqu'ici, donc il ne peut pas
+   * produire un second exemplaire du même euro. Après l'adoption : c'est elle
+   * qui vient, peut-être, de rendre l'abonnement possédé — et donc de rendre
+   * projetable une facture reçue plus tôt.
+   *
+   * ── BEST-EFFORT ASSUMÉ ──────────────────────────────────────────────────
+   * Une projection qui échoue ne doit pas faire répondre 500 à Stripe, qui
+   * rejouerait en boucle. Le fait est retenu et la convergence le reprendra ;
+   * le service ne lève d'ailleurs jamais.
+   */
+  {
+    await recordStripeRevenueEvent({
+      environment,
+      eventType,
+      payload,
+      providerEventId,
+    }).catch(retenir('projection financière impossible'));
+
+    /**
+     * L'ADOPTION VIENT DE CRÉER UN LIEN : les faits qui l'attendaient peuvent
+     * enfin trouver leur projet. C'est le cas d'une facture arrivée AVANT la
+     * session qui l'a produite — Stripe n'ordonne pas ses livraisons.
+     */
+    if (adoption?.subscriptionId) {
+      await convergePendingFactsFor({
+        environment,
+        resourceType: 'SUBSCRIPTION',
+        resourceId: adoption.subscriptionId,
+      }).catch(retenir('convergence financière impossible'));
+    }
+  }
+
+  const verdictAppartenance = appartenance && appartenance.ownership !== EVENT_OWNERSHIP.NOT_ROUTABLE
+    ? {
+      projectId: appartenance.projectId,
+      ownership: appartenance.ownership,
+      claimMismatch: appartenance.claimMismatch,
+    }
+    : {};
+
+  // ── ACHEMINEMENT MÉTIER (L8.4) ──────────────────────────────────────────
+  //
+  // L'événement est vérifié, unique et daté. Il peut donc partir vers le
+  // projet qui a demandé l'envoi — retrouvé par l'identifiant de message que
+  // NOUS avons persisté à l'émission, jamais par le corps du webhook.
+  //
+  // APRÈS l'idempotence, et c'est l'ordre qui compte : un rejeu du fournisseur
+  // n'arrive pas jusqu'ici, donc le journal durable du projet ne peut pas
+  // recevoir deux fois le même fait.
+  //
+  // Best-effort ASSUMÉ : un acheminement qui échoue ne doit pas faire répondre
+  // 500 à Brevo, qui rejouerait en boucle. L'événement est enregistré, il est
+  // rattrapable ; le perdre coûterait moins cher qu'une tempête de rejeux.
+  let dispatch = { dispatched: false, reason: null };
+  {
+    /**
+     * DEUX ACHEMINEMENTS, ET CHACUN NE RECONNAÎT QUE LES SIENS.
+     *
+     * L'aiguillage porte sur le DOMAINE, pas sur le nom d'un fournisseur : la
+     * signature d'un côté, la délivrabilité de l'autre. Un `=== 'YOUSIGN'`
+     * suffisait tant qu'un domaine n'avait qu'un fournisseur ; il aurait fallu
+     * l'allonger à chaque migration, et il aurait fini par porter la logique
+     * qu'il était censé router.
+     *
+     * Chaque acheminement refuse poliment ce qui n'est pas de son ressort, et
+     * la liste des fournisseurs de signature vit dans le module qui les
+     * traduit — pas ici.
+     */
+    const acheminer = SIGNATURE_PROVIDERS.has(String(provider).toUpperCase())
+      ? dispatchSignatureEvent
+      : dispatchDeliveryEvent;
+    dispatch = await acheminer({
+      provider,
+      environment,
+      payload,
+      eventType,
+    }).catch((err) => {
+      retenir('acheminement impossible')(err);
+      return { dispatched: false, reason: 'DISPATCH_FAILED' };
+    });
+  }
+  return { echecs, appartenance, verdictAppartenance, dispatch };
+}
+
 
 /**
  * Traite un appel entrant.
@@ -160,36 +332,62 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   const parsed = parseJsonBody(rawBody);
   const identity = extractEventIdentity(capability, { rawBody, parsed, environment });
 
-  // ── IDEMPOTENCE — c'est l'INDEX qui tranche ─────────────────────────────
-  // Un `findOne` préalable laisserait passer deux livraisons concurrentes du
-  // même événement : toutes deux le trouveraient absent. Seule la contrainte
-  // unique arbitre, et son refus EST la preuve du doublon.
-  let duplicate = false;
+  /**
+   * ── IDEMPOTENCE — L'ÉTAT TRANCHE, PAS LA SEULE EXISTENCE ────────────────
+   *
+   * Ici se trouvait le défaut que ce lot ferme. La ligne était créée, son
+   * refus en E11000 valait « doublon », et c'était tout. Un crash entre cette
+   * écriture et les effets métier plus bas rendait l'événement définitivement
+   * inapplicable : Stripe rejouait, nous répondions « déjà vu », et le fait
+   * financier n'existait jamais.
+   *
+   * La réclamation est atomique et conditionnée à l'ÉTAT (`webhookLease.js`).
+   * Un rejeu d'événement conclu reste un doublon ; un rejeu d'événement
+   * ABANDONNÉ est une reprise, et c'est exactement la réparation gratuite que
+   * le fournisseur nous offrait et que nous refusions.
+   */
+  const cle = { provider, environment, providerEventId: identity.providerEventId };
+  let reclamation;
   try {
-    await PanelProviderWebhookEvent.create({
-      provider,
-      environment,
-      providerEventId: identity.providerEventId,
-      bindingId: binding.bindingId,
-      eventType: identity.eventType,
-      payloadHash: identity.payloadHash,
-      signatureVerified: signature.proven,
-      status: WEBHOOK_EVENT_STATUS.RECEIVED,
-      receivedAt: nowIso(),
+    reclamation = await claimWebhookEvent({
+      Model: PanelProviderWebhookEvent,
+      key: cle,
+      seed: {
+        bindingId: binding.bindingId,
+        eventType: identity.eventType,
+        payloadHash: identity.payloadHash,
+        signatureVerified: signature.proven,
+        receivedAt: nowIso(),
+      },
     });
   } catch (err) {
-    if (err?.code === 11000) duplicate = true;
-    else {
-      // Une panne de persistance n'est pas un refus : on ne peut pas garantir
-      // l'unicité, donc on ne confirme pas. Le fournisseur rejouera.
-      logger.error(`[webhooks] ${provider}/${environment} : enregistrement impossible — ${err?.message ?? 'erreur inconnue'}.`);
-      return {
-        outcome: INGEST_OUTCOME.REJECTED,
-        provider,
-        duplicate: false,
-        code: WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_ERROR,
-      };
-    }
+    // Une panne de persistance n'est pas un refus : on ne peut pas garantir
+    // l'unicité, donc on ne confirme pas. Le fournisseur rejouera.
+    logger.error(`[webhooks] ${provider}/${environment} : enregistrement impossible — ${err?.message ?? 'erreur inconnue'}.`);
+    return {
+      outcome: INGEST_OUTCOME.REJECTED,
+      provider,
+      duplicate: false,
+      code: WEBHOOK_DIAGNOSTIC.WEBHOOK_REMOTE_ERROR,
+    };
+  }
+
+  /**
+   * `duplicate` ne signifie plus « la ligne existait ». Il signifie « il n'y a
+   * rien à faire » — soit parce que l'événement est conclu, soit parce qu'un
+   * autre processus le tient sous un bail valide.
+   *
+   * Le second cas mérite son propre mot dans le diagnostic : « déjà traité » et
+   * « en cours de traitement ailleurs » se ressemblent en HTTP et ne se
+   * ressemblent pas du tout dans un incident.
+   */
+  const duplicate = reclamation.outcome === CLAIM_OUTCOME.TERMINAL
+    || reclamation.outcome === CLAIM_OUTCOME.IN_FLIGHT;
+  if (reclamation.outcome === CLAIM_OUTCOME.RECLAIMED) {
+    logger.warn(
+      `[webhooks] ${provider}/${environment} : ${identity.providerEventId} REPRIS `
+      + `(tentative ${reclamation.attempts}) — un traitement précédent ne s'est jamais achevé.`,
+    );
   }
 
   await PanelIntegratedApiWebhookBinding.updateOne(
@@ -205,161 +403,67 @@ export async function ingestProviderEvent({ slug, rawBody, headers, environment 
   );
 
   /**
-   * ── À QUI EST-IL ? (L6.2C) ──────────────────────────────────────────────
-   *
-   * Résolu APRÈS la signature et APRÈS l'idempotence, et ENREGISTRÉ sur
-   * l'événement — y compris quand la réponse est « à personne ». Un événement
-   * non attribué qu'on ne consigne pas est un événement perdu, et une perte
-   * silencieuse est la pire des issues sur un flux financier.
-   *
-   * Aucune mutation métier n'en découle dans ce lot : pendant la coexistence,
-   * le projet reçoit les mêmes événements sur son propre endpoint. Appliquer
-   * ici le même fait une seconde fois le doublerait.
-   *
-   * SAUTÉ SUR UN REJEU, comme l'acheminement plus bas. Un doublon a déjà été
-   * résolu à son premier passage, et son verdict est en base : le recalculer
-   * réécrirait les mêmes champs pour rien, et surtout cela romprait la règle
-   * que tout ce fichier applique — après l'idempotence, un rejeu ne produit
-   * plus aucun effet, pas même un effet inoffensif.
+   * Les effets métier vivent dans `applyProviderEventEffects` — la MÊME
+   * fonction que la reprise appelle. C'est ce qui garantit qu'un événement
+   * repris au démarrage produit exactement ce qu'il aurait produit à l'heure.
    */
-  const appartenance = duplicate ? null : await resolveStripeEventOwnership({
-    provider, environment, eventType: identity.eventType, payload: parsed,
-  }).catch((err) => {
-    logger.error(`[webhooks] appartenance non résolue — ${err?.message ?? 'erreur inconnue'}.`);
-    return null;
-  });
-
-  /**
-   * ── ADOPTION DE L'ABONNEMENT (L6.2F) ────────────────────────────────────
-   *
-   * APRÈS que l'appartenance de la SESSION a été établie, et jamais avant :
-   * c'est elle qui fournit la filiation. Un abonnement ne doit à aucun moment
-   * être routé vers un projet dont on n'aurait pas d'abord prouvé qu'il possède
-   * la session qui l'a produit.
-   *
-   * L'adoption est donc ici, entre la résolution et l'enregistrement — et elle
-   * est BEST-EFFORT : un endpoint public qui lève produit une 500, et une 500
-   * fait rejouer le fournisseur en boucle.
-   */
-  let adoption = null;
-  if (appartenance?.ownership === EVENT_OWNERSHIP.OWNED
-    && appartenance.resourceType === 'CHECKOUT_SESSION') {
-    adoption = await adoptSubscriptionFromSession({
-      environment,
-      session: parsed?.data?.object ?? null,
-      source: 'LEARNED_FROM_WEBHOOK',
-    }).catch((err) => {
-      logger.error(`[webhooks] adoption d’abonnement impossible — ${err?.message ?? 'erreur inconnue'}.`);
-      return null;
-    });
-  }
-
-  /**
-   * ── PROJECTION FINANCIÈRE (L10.3) ───────────────────────────────────────
-   *
-   * L'événement est vérifié, unique, et son appartenance est résolue. S'il
-   * porte de l'argent RÉELLEMENT encaissé, il devient un fait financier
-   * normalisé, puis une transaction du registre — le même registre que les
-   * revenus manuels et les coûts, jamais un second.
-   *
-   * ── POURQUOI ICI, ET PAS DANS UNE ROUTE D'ÉCRAN ─────────────────────────
-   * Le CDC demande que le Panel converge sans action manuelle. Une projection
-   * déclenchée par l'ouverture d'une page ferait dépendre l'existence d'un
-   * revenu du fait que quelqu'un la regarde.
-   *
-   * ── APRÈS L'IDEMPOTENCE, ET APRÈS L'ADOPTION ────────────────────────────
-   * Après l'idempotence : un rejeu n'arrive pas jusqu'ici, donc il ne peut pas
-   * produire un second exemplaire du même euro. Après l'adoption : c'est elle
-   * qui vient, peut-être, de rendre l'abonnement possédé — et donc de rendre
-   * projetable une facture reçue plus tôt.
-   *
-   * ── BEST-EFFORT ASSUMÉ ──────────────────────────────────────────────────
-   * Une projection qui échoue ne doit pas faire répondre 500 à Stripe, qui
-   * rejouerait en boucle. Le fait est retenu et la convergence le reprendra ;
-   * le service ne lève d'ailleurs jamais.
-   */
-  if (!duplicate) {
-    await recordStripeRevenueEvent({
+  const effets = duplicate
+    ? { echecs: [], appartenance: null, verdictAppartenance: {}, dispatch: { dispatched: false, reason: 'DUPLICATE' } }
+    : await applyProviderEventEffects({
+      provider,
       environment,
       eventType: identity.eventType,
-      payload: parsed,
       providerEventId: identity.providerEventId,
-    }).catch((err) => {
-      logger.error(`[webhooks] projection financière impossible — ${err?.message ?? 'erreur inconnue'}.`);
-      return null;
+      payload: parsed,
     });
+  const { echecs, appartenance, verdictAppartenance, dispatch } = effets;
 
-    /**
-     * L'ADOPTION VIENT DE CRÉER UN LIEN : les faits qui l'attendaient peuvent
-     * enfin trouver leur projet. C'est le cas d'une facture arrivée AVANT la
-     * session qui l'a produite — Stripe n'ordonne pas ses livraisons.
-     */
-    if (adoption?.subscriptionId) {
-      await convergePendingFactsFor({
-        environment,
-        resourceType: 'SUBSCRIPTION',
-        resourceId: adoption.subscriptionId,
-      }).catch((err) => {
-        logger.error(`[webhooks] convergence financière impossible — ${err?.message ?? 'erreur inconnue'}.`);
-        return null;
+  /**
+   * ══ CONCLURE — ET NE JAMAIS DIRE « FAIT » QUAND ÇA NE L'EST PAS ═════════
+   *
+   * C'est la ligne qui rend le bail utile. Tant qu'elle n'est pas écrite, le
+   * bail court ; s'il expire, l'événement redevient reprenable. Un processus
+   * tué juste avant elle laisse donc un `PROCESSING` périmé — récupérable — et
+   * non un `PROCESSED` mensonger.
+   *
+   * `settleWebhookEvent` n'écrit que si le bail est ENCORE le nôtre : un
+   * traitement qui a dépassé sa durée et dont l'événement a été repris ailleurs
+   * ne vient pas effacer le travail de son successeur.
+   */
+  if (!duplicate) {
+    if (echecs.length === 0) {
+      await settleWebhookEvent({
+        Model: PanelProviderWebhookEvent,
+        key: cle,
+        status: WEBHOOK_EVENT_STATUS.PROCESSED,
+        patch: verdictAppartenance,
+      }).catch(() => null);
+    } else {
+      const cause = classifyWebhookError(echecs[0].err);
+      const statut = statusAfterFailure({
+        retryable: cause.retryable,
+        attempts: reclamation.attempts,
       });
+      await settleWebhookEvent({
+        Model: PanelProviderWebhookEvent,
+        key: cle,
+        status: statut,
+        patch: verdictAppartenance,
+        error: { ...cause, message: `${echecs[0].etape} : ${cause.message}` },
+      }).catch(() => null);
+      await reportWebhookProcessingFailure({
+        provider,
+        environment,
+        providerEventId: identity.providerEventId,
+        eventType: identity.eventType,
+        projectId: appartenance?.projectId ?? null,
+        attempts: reclamation.attempts,
+        status: statut,
+        cause,
+      }).catch(() => null);
     }
   }
 
-  if (appartenance && appartenance.ownership !== EVENT_OWNERSHIP.NOT_ROUTABLE) {
-    await PanelProviderWebhookEvent.updateOne(
-      { provider, environment, providerEventId: identity.providerEventId },
-      {
-        $set: {
-          projectId: appartenance.projectId,
-          ownership: appartenance.ownership,
-          claimMismatch: appartenance.claimMismatch,
-        },
-      },
-    ).catch(() => {});
-  }
-
-  // ── ACHEMINEMENT MÉTIER (L8.4) ──────────────────────────────────────────
-  //
-  // L'événement est vérifié, unique et daté. Il peut donc partir vers le
-  // projet qui a demandé l'envoi — retrouvé par l'identifiant de message que
-  // NOUS avons persisté à l'émission, jamais par le corps du webhook.
-  //
-  // APRÈS l'idempotence, et c'est l'ordre qui compte : un rejeu du fournisseur
-  // n'arrive pas jusqu'ici, donc le journal durable du projet ne peut pas
-  // recevoir deux fois le même fait.
-  //
-  // Best-effort ASSUMÉ : un acheminement qui échoue ne doit pas faire répondre
-  // 500 à Brevo, qui rejouerait en boucle. L'événement est enregistré, il est
-  // rattrapable ; le perdre coûterait moins cher qu'une tempête de rejeux.
-  let dispatch = { dispatched: false, reason: 'DUPLICATE' };
-  if (!duplicate) {
-    /**
-     * DEUX ACHEMINEMENTS, ET CHACUN NE RECONNAÎT QUE LES SIENS.
-     *
-     * L'aiguillage porte sur le DOMAINE, pas sur le nom d'un fournisseur : la
-     * signature d'un côté, la délivrabilité de l'autre. Un `=== 'YOUSIGN'`
-     * suffisait tant qu'un domaine n'avait qu'un fournisseur ; il aurait fallu
-     * l'allonger à chaque migration, et il aurait fini par porter la logique
-     * qu'il était censé router.
-     *
-     * Chaque acheminement refuse poliment ce qui n'est pas de son ressort, et
-     * la liste des fournisseurs de signature vit dans le module qui les
-     * traduit — pas ici.
-     */
-    const acheminer = SIGNATURE_PROVIDERS.has(String(provider).toUpperCase())
-      ? dispatchSignatureEvent
-      : dispatchDeliveryEvent;
-    dispatch = await acheminer({
-      provider,
-      environment,
-      payload: parsed,
-      eventType: identity.eventType,
-    }).catch((err) => {
-      logger.error(`[webhooks] acheminement impossible — ${err?.message ?? 'erreur inconnue'}.`);
-      return { dispatched: false, reason: 'DISPATCH_FAILED' };
-    });
-  }
   return {
     outcome: duplicate ? INGEST_OUTCOME.DUPLICATE : INGEST_OUTCOME.ACCEPTED,
     provider,
