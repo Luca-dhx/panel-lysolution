@@ -98,6 +98,7 @@ export const tokenStore = {
  *   SERVER_ERROR         le serveur a répondu, et sa réponse est un bogue ;
  *   NETWORK_ERROR        aucune réponse n'est jamais arrivée ;
  *   TIMEOUT             la réponse n'est pas arrivée à temps ;
+ *   RATE_LIMITED         la demande était valable, mais trop fréquente ;
  *   CLIENT_ERROR         la demande était mal formée ou refusée sur le fond.
  *
  * Aucune de ces familles, sauf la première, ne peut déconnecter qui que ce soit.
@@ -109,6 +110,7 @@ export type ApiFailureKind =
   | 'SERVER_ERROR'
   | 'NETWORK_ERROR'
   | 'TIMEOUT'
+  | 'RATE_LIMITED'
   | 'CLIENT_ERROR';
 
 /**
@@ -198,6 +200,16 @@ function classifyFailure(status: number, code?: string): ApiFailureKind {
   if (status === 502 || status === 503) return 'SERVICE_UNAVAILABLE';
   if (status === 403) return 'FORBIDDEN';
   if (status >= 500) return 'SERVER_ERROR';
+  /**
+   * 429 N'EST PAS UN REFUS SUR LE FOND.
+   *
+   * La demande était recevable ; c'est sa FRÉQUENCE qui a été refusée. La
+   * ranger dans CLIENT_ERROR ferait dire aux écrans « votre demande est
+   * invalide » là où la bonne phrase est « réessayez plus tard » — et, sur
+   * un écran de connexion, cela reviendrait à accuser un mot de passe qui
+   * était peut-être le bon.
+   */
+  if (status === 429) return 'RATE_LIMITED';
   return 'CLIENT_ERROR';
 }
 
@@ -212,6 +224,47 @@ export function isOffline(err: unknown): boolean {
  */
 export function isServiceUnavailable(err: unknown): boolean {
   return err instanceof ApiError && err.kind === 'SERVICE_UNAVAILABLE';
+}
+
+/**
+ * Vrai si le serveur a refusé pour cause de FRÉQUENCE, pas de contenu.
+ *
+ * Volontairement NON `retryable` : le réessai automatique de `request()`
+ * relancerait la requête dans la seconde, ce qui ne peut qu'échouer — et
+ * surtout consommerait une tentative de plus dans le seau. Attendre est le
+ * geste de l'utilisateur, pas celui du client HTTP.
+ */
+export function isRateLimited(err: unknown): boolean {
+  return err instanceof ApiError && err.kind === 'RATE_LIMITED';
+}
+
+/**
+ * Le délai annoncé par le serveur, en secondes, ou `null` s'il n'en a annoncé
+ * aucun. Lu dans `details` — jamais deviné côté client : un client qui
+ * invente une durée finit toujours par la sous-estimer.
+ */
+export function retryAfterSeconds(err: unknown): number | null {
+  if (!(err instanceof ApiError)) return null;
+  const details = err.details as { retryAfterSeconds?: unknown } | null | undefined;
+  const valeur = Number(details?.retryAfterSeconds);
+  return Number.isFinite(valeur) && valeur > 0 ? valeur : null;
+}
+
+/**
+ * ── TROP DE TENTATIVES : LE DIRE, ET DIRE COMBIEN DE TEMPS ────────────────
+ *
+ * La durée est arrondie à la minute SUPÉRIEURE. Annoncer « dans 47 secondes »
+ * invite à compter, et un compte à rebours à la seconde est exactement ce
+ * qu'un script automatise ; pour un humain, la minute suffit.
+ *
+ * Cette phrase n'apprend RIEN sur le compte : ni s'il existe, ni combien de
+ * tentatives restent, ni si le mot de passe était proche.
+ */
+export function messageTropDeTentatives(secondes: number | null): string {
+  const base = 'Trop de tentatives. Votre compte n’est pas bloqué.';
+  if (!secondes) return base + ' Réessayez dans quelques minutes.';
+  const minutes = Math.max(1, Math.ceil(secondes / 60));
+  return base + ' Réessayez dans ' + minutes + ' minute' + (minutes > 1 ? 's' : '') + '.';
 }
 
 /** Vrai si l'erreur PROUVE que la session est invalide. Rien d'autre ne le prouve. */

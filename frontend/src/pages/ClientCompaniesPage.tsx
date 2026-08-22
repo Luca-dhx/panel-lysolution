@@ -38,7 +38,7 @@ import { useToast } from '@/components/ToastProvider';
 import { useIsDev } from '@/auth/RequireDev';
 import { clientCompanies, errorMessage } from '@/lib/api';
 import { useLiveQuery } from '@/lib/useLiveQuery';
-import type { ClientCompanyRow, DuplicateSiren } from '@/types.clientCompany';
+import type { DuplicateSiren } from '@/types.clientCompany';
 import {
   ClientCompanyForm,
   corpsPour,
@@ -53,11 +53,48 @@ import {
  * facturation, et la recopier ici produirait une seconde implémentation qui
  * divergerait au premier changement de mention obligatoire.
  */
-function EtatBadge({ row }: { row: ClientCompanyRow }) {
-  if (row.status === 'ARCHIVED') return <span className="badge badge-muted">Archivée</span>;
-  if (row.readiness.ready) return <span className="badge badge-ok">Prête</span>;
-  if (!row.readiness.billing.ready) return <span className="badge badge-danger">Facturation incomplète</span>;
-  return <span className="badge badge-warn">Signataire manquant</span>;
+/**
+ * ── UNE COLONNE PAR MÉTIER, PARCE QUE CE SONT DEUX VERDICTS ───────────────
+ *
+ * ══ CE QUE CETTE COLONNE DISAIT AVANT ════════════════════════════════════
+ *
+ * Un seul mot — « Prête », « Facturation incomplète », « Signataire
+ * manquant » — pour DEUX états indépendants. Une entreprise parfaitement
+ * facturable dont le gérant vient de partir s'affichait « Signataire
+ * manquant », ce qui est vrai, mais faisait croire qu'elle ne pouvait plus
+ * rien : ses échéances passaient parfaitement.
+ *
+ * Et l'inverse, plus grave : une fiche à qui il manquait À LA FOIS l'adresse
+ * de facturation ET le signataire n'affichait QUE la première. On corrigeait
+ * l'adresse, on revenait, et un second manque apparaissait — découvert
+ * seulement après coup.
+ *
+ * Les deux verdicts viennent du BACKEND, qui est la même autorité que celle
+ * qui refusera le paiement ou la demande de signature.
+ */
+function VerdictBadge({
+  archived,
+  pret,
+  manquants,
+  titre,
+}: {
+  archived: boolean;
+  pret: boolean;
+  manquants: string[];
+  titre: string;
+}) {
+  if (archived) return <span className="badge badge-muted">Archivée</span>;
+  if (pret) return <span className="badge badge-ok">Possibles</span>;
+  /**
+   * Le détail des manques passe par `title` : la liste sert à BALAYER un
+   * parc, et y déplier sept libellés par ligne la rendrait illisible. La
+   * fiche, elle, les écrit en clair.
+   */
+  return (
+    <span className="badge badge-danger" title={`${titre} : il manque ${manquants.join(', ')}.`}>
+      Bloqués
+    </span>
+  );
 }
 
 export function ClientCompaniesPage() {
@@ -202,8 +239,12 @@ export function ClientCompaniesPage() {
                   <th>Entreprise</th>
                   <th>SIREN</th>
                   <th>Projets</th>
-                  <th>État</th>
-                  <th>Contact</th>
+                  <th>Paiements</th>
+                  <th>Signatures</th>
+                  {/* Ce champ EST l'e-mail de facturation — l'intitulé
+                      « Contact » laissait croire à un contact administratif,
+                      qui est un autre champ de la fiche. */}
+                  <th>E-mail de facturation</th>
                 </tr>
               </thead>
               <tbody>
@@ -222,7 +263,22 @@ export function ClientCompaniesPage() {
                     </td>
                     <td>{row.siren ?? <span className="muted">—</span>}</td>
                     <td>{row.projectCount}</td>
-                    <td><EtatBadge row={row} /></td>
+                    <td>
+                      <VerdictBadge
+                        archived={row.status === 'ARCHIVED'}
+                        pret={row.readiness.billing.ready}
+                        manquants={row.readiness.billing.missing}
+                        titre="Paiements"
+                      />
+                    </td>
+                    <td>
+                      <VerdictBadge
+                        archived={row.status === 'ARCHIVED'}
+                        pret={row.readiness.signing.ready}
+                        manquants={row.readiness.signing.missing}
+                        titre="Signatures"
+                      />
+                    </td>
                     <td>{row.billingEmail ?? <span className="muted">—</span>}</td>
                   </tr>
                 ))}

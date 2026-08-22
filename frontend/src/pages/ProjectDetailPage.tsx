@@ -28,6 +28,7 @@ import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
 import { FreshnessBanner } from '@/components/FreshnessBanner';
+import { ProjectClientCompanyCard } from '@/components/company/ProjectClientCompanyCard';
 import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
@@ -78,7 +79,7 @@ export function ProjectDetailPage() {
    * silencieux — l'onglet actif, le défilement et les états locaux ci-dessous
    * survivent, puisque le composant n'est jamais démonté entre deux réponses.
    */
-  const { project, isInitialLoading, isRefreshing, error } = useProject(projectId);
+  const { project, isInitialLoading, isRefreshing, error, reload } = useProject(projectId);
   /**
    * L'ONGLET VIT DANS L'URL — et pas dans un état de composant.
    *
@@ -253,7 +254,8 @@ export function ProjectDetailPage() {
       </div>
 
       {tab === 'overview' ? (
-        <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur} />
+        <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur}
+          onClientCompanyChanged={reload} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
       {/*
@@ -282,12 +284,15 @@ function OverviewTab({
   since,
   link,
   fraicheur,
+  onClientCompanyChanged,
 }: {
   project: PublicProject;
   url: string | null;
   since: string | null;
   link: { label: string; tone: 'ok' | 'warn' | 'error' | 'neutral' };
   fraicheur: ReturnType<typeof getProjectDataFreshness>;
+  /** Recharge la fiche après un rattachement : le verdict en dépend. */
+  onClientCompanyChanged: () => void;
 }) {
   // `useIsDev()` a disparu d'ici avec la carte d'ouverture commerciale : elle
   // était le seul geste de cette section réservé aux comptes DEV.
@@ -330,44 +335,7 @@ function OverviewTab({
         L’identité elle-même n’est pas recopiée ici : un lien vers la fiche
         « Clients » vaut mieux qu’une copie qui vieillirait.
       */}
-      <Card title="Client">
-        {project.clientCompany ? (
-          <dl className="detail-list">
-            <div>
-              <dt>Entreprise cliente</dt>
-              <dd>
-                <Link to={`/clients/${project.clientCompany.clientCompanyId}`}>
-                  {project.clientCompany.legalName}
-                </Link>
-                {project.clientCompany.status === 'ARCHIVED' ? (
-                  <span className="badge badge-muted">Archivée</span>
-                ) : null}
-              </dd>
-            </div>
-            {project.clientCompany.siren ? (
-              <div><dt>SIREN</dt><dd>{project.clientCompany.siren}</dd></div>
-            ) : null}
-            <div>
-              <dt>Paiements et signatures</dt>
-              <dd>
-                {project.clientCompany.readiness.ready ? (
-                  <span className="badge badge-ok">Possibles</span>
-                ) : (
-                  <span className="badge badge-danger">
-                    Bloqués — fiche cliente incomplète
-                  </span>
-                )}
-              </dd>
-            </div>
-          </dl>
-        ) : (
-          <p className="muted">
-            Aucune entreprise cliente n’est rattachée à ce projet : il ne peut ni
-            encaisser un paiement, ni faire signer un contrat. Rattachez-le depuis
-            la fiche du client, dans <Link to="/clients">Clients</Link>.
-          </p>
-        )}
-      </Card>
+      <ProjectClientCompanyCard project={project} onChanged={onClientCompanyChanged} />
 
       <Card title="Le site">
         <dl className="detail-list">

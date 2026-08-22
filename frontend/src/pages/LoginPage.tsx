@@ -3,7 +3,7 @@ import { usePanelBranding, panelTitleFor } from '@/lib/usePanelBranding';
 import type { FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
-import { errorMessage } from '@/lib/api';
+import { errorMessage, isRateLimited, messageTropDeTentatives, retryAfterSeconds } from '@/lib/api';
 
 interface LocationState {
   from?: { pathname?: string; search?: string };
@@ -56,7 +56,18 @@ export function LoginPage() {
       await login(email, password);
       navigate(from, { replace: true });
     } catch (err) {
-      setError(errorMessage(err, 'Connexion impossible. Réessayez.'));
+      /**
+       * UN 429 NE SE LIT PAS COMME UN REFUS D'IDENTIFIANTS.
+       *
+       * Afficher le message générique enverrait changer un mot de passe qui
+       * fonctionne peut-être. On dit la vraie raison, et la durée quand le
+       * serveur l'a précisée.
+       */
+      if (isRateLimited(err)) {
+        setError(messageTropDeTentatives(retryAfterSeconds(err)));
+      } else {
+        setError(errorMessage(err, 'Connexion impossible. Réessayez.'));
+      }
     } finally {
       setSubmitting(false);
     }

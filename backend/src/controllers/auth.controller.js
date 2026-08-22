@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import ApiError from '../utils/ApiError.js';
+import { oublierTentatives } from '../middlewares/authRateLimit.middleware.js';
 import { ok } from '../utils/apiResponse.js';
 import { authenticate, authenticateForSession } from '../services/auth/panelUsers.service.js';
 import { issueUserToken } from '../services/auth/panelToken.service.js';
@@ -39,6 +40,19 @@ export async function login(req, res) {
   if (!user) {
     throw ApiError.unauthorized('PANEL_INVALID_CREDENTIALS', 'Identifiants invalides.');
   }
+  /**
+   * ── LA RÉUSSITE EFFACE LE SEAU D’IDENTITÉ ───────────────────────────────
+   *
+   * Quelqu’un qui retrouve son mot de passe au sixième essai ne doit pas
+   * rester à deux tentatives du blocage pour le quart d’heure suivant. Le
+   * seau d’IP, lui, n’est PAS effacé : il protège contre un balayage de
+   * comptes, et une réussite sur l’un d’eux ne dit rien des autres.
+   *
+   * Best-effort : ne pas savoir effacer un compteur ne doit pas faire échouer
+   * une connexion déjà valide.
+   */
+  await oublierTentatives('panel-login', parsed.data.email).catch(() => null);
+
   const { tokenVersion, ...publicUser } = user;
   return ok(res, { token: issueUserToken(user), user: publicUser });
 }
