@@ -607,6 +607,7 @@ section('9. Le read-model : brut, frais, net — et jamais « frais du frais »'
 
   const attente = liste.items.find((t) => t.provenance?.externalId === 'in_l13_differee');
   check('un encaissement soldé le dit', attente.settlement.status === 'SETTLED');
+  check('un encaissement porte la direction ENTRANTE', revenu.settlement.direction === 'IN');
 
   /** Le montant affiché de la ligne reste le brut : c'est lui qui fait le CA. */
   check('le montant du mouvement n’est jamais remplacé par le net',
@@ -702,6 +703,20 @@ section('11. Le remboursement : ce que le fournisseur rend, et ce qu’il garde'
   const rembourse = await txOf(solde.transactionId);
   check('le remboursement lui-même reste POSITIF et de catégorie REFUND',
     rembourse.amountCents === 12_000 && rembourse.category === 'REFUND' && rembourse.flow === 'OUTFLOW');
+
+  /**
+   * ── LE SENS DÉCIDE DE L'OPÉRATION, PAS SEULEMENT DES MOTS ────────────────
+   *
+   * Sur un encaissement, le fournisseur RETIENT : le compte reçoit
+   * `brut − frais`. Sur un remboursement, il PRÉLÈVE EN PLUS : le compte perd
+   * `rendu + frais`. Appliquer la soustraction dans les deux cas sous-évaluait
+   * ce qui a réellement quitté le compte — invisible tant que le frais est nul,
+   * faux dès qu'il ne l'est plus.
+   */
+  const vue = await transactions.getTransaction(solde.transactionId);
+  check('un remboursement porte la direction SORTANTE', vue.settlement.direction === 'OUT');
+  check('…et son résultat AJOUTE le frais au montant rendu',
+    vue.settlement.netCents === vue.settlement.grossCents + vue.settlement.providerCostCents);
 
   const resume = await agregat.summarize({ scope: 'project', projectId: PROJET, period: 'ALL' });
   check('un remboursement ne devient JAMAIS un coût d’exploitation',

@@ -763,6 +763,34 @@ section('L13. L’encaissement net se lit dans la liste, pas seulement au détai
 
   check('aucun champ « stripe… » ne traverse l’écran',
     !/stripeFee|stripeCost|fraisStripe/i.test(codeDecompte));
+
+  /**
+   * ── UNE DÉCOMPOSITION QUI NE DÉCOMPOSE RIEN N'EST PAS AFFICHÉE ────────────
+   *
+   * « Brut 120 · Frais −0,00 € · Net 120 » ajoute trois lignes qui ne disent
+   * rien — et ce « −0,00 € » est exactement le zéro que le lot interdit
+   * d'écrire, parce qu'il est indiscernable d'un frais qu'on n'aurait pas su
+   * lire. La recette déployée l'a montré sur un remboursement réel.
+   */
+  check('un frais NUL n’affiche aucune décomposition',
+    /if \(frais === 0\) return null;/.test(codeDecompte));
+
+  /**
+   * ── ET LES MOTS SUIVENT LE SENS ──────────────────────────────────────────
+   *
+   * « Net 120,00 € » sur une sortie d'argent se lit comme une recette. Sur un
+   * remboursement, le fournisseur PRÉLÈVE EN PLUS : ce qui sort du compte est
+   * `rendu + frais`, jamais `rendu − frais`.
+   */
+  check('les libellés dépendent du sens du mouvement',
+    /IN: \{ montant: 'Brut'/.test(codeDecompte)
+    && /OUT: \{ montant: 'Rendu'/.test(codeDecompte));
+  check('…et le signe du frais avec eux',
+    /direction === 'OUT' \? '\+' : '−'/.test(codeDecompte));
+  check('le titre du détail suit le sens, lui aussi',
+    /Résultat du remboursement/.test(detail) && /Résultat de l’encaissement/.test(detail));
+  check('un frais connu et NUL se dit dans le détail',
+    /Aucun frais retenu par le fournisseur/.test(detail));
 }
 
 section('L13. Les cartes disent que la commission est un COÛT, pas un revenu');

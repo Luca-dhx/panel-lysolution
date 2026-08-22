@@ -257,8 +257,34 @@ export function TransactionDetail({
       */}
       {transaction.settlement ? (
         <div className="finance-detail-block">
-          <h3>Résultat de l’encaissement</h3>
+          {/*
+            LE TITRE SUIT LE SENS DU MOUVEMENT.
+
+            « Résultat de l'encaissement » sur un remboursement était faux : rien
+            n'a été encaissé, de l'argent est sorti. La recette déployée l'a
+            montré sur un remboursement réel, et un titre qui ment sur la nature
+            d'un mouvement financier est plus grave qu'un chiffre absent.
+          */}
+          <h3>
+            {transaction.settlement.direction === 'OUT'
+              ? 'Résultat du remboursement'
+              : 'Résultat de l’encaissement'}
+          </h3>
           <SettlementBreakdown settlement={transaction.settlement} />
+          {/*
+            UN FRAIS CONNU ET NUL SE DIT — ici, et pas dans la liste.
+
+            Le décompte ne s'affiche pas quand il n'y a rien à décomposer. Mais
+            « le fournisseur n'a rien prélevé » est une information, et c'est
+            même la réponse à la question qu'on vient poser sur un remboursement.
+            La taire laisserait croire que le frais n'a pas été cherché.
+          */}
+          {transaction.settlement.status === 'SETTLED'
+            && transaction.settlement.providerCostCents === 0 ? (
+              <p className="field-hint muted">
+                Aucun frais retenu par le fournisseur sur ce mouvement.
+              </p>
+            ) : null}
           <div className="finance-detail-list">
             <Ligne label="Fournisseur de paiement">
               {transaction.settlement.provider}

@@ -1436,6 +1436,30 @@ Le modèle couvre les trois cas :
 Une commission rendue n'est **jamais** un `REVENUE` : aucun client ne l'a payée, et la
 ranger là gonflerait le chiffre d'affaires d'une somme jamais facturée.
 
+### Le sens décide de l'opération, pas seulement des mots
+
+Troisième défaut trouvé par la recette déployée, et le plus discret :
+
+```
+ENCAISSEMENT   le fournisseur RETIENT      le compte reçoit  brut − frais
+REMBOURSEMENT  le fournisseur PRÉLÈVE EN PLUS  le compte perd  rendu + frais
+```
+
+L'écran affichait « Brut 120,00 € · Frais −0,00 € · **Net 120,00 €** » sur une sortie
+d'argent. Deux fautes en une ligne : « Net » se lit comme une recette, et la soustraction
+sous-évaluait ce qui a réellement quitté le compte — invisible tant que le frais est nul,
+faux dès qu'il ne l'est plus.
+
+Le read-model porte donc une `direction` (`IN` / `OUT`), calculée à partir du `flow` du
+mouvement — jamais du signe rendu par le fournisseur, conformément à la doctrine L10.1.
+Les libellés suivent : « Brut / Frais / Net » sur une entrée, « Rendu / Frais / Sorti du
+compte » sur une sortie, et le titre du détail avec eux.
+
+Et surtout : **une décomposition qui ne décompose rien n'est pas affichée.** Un frais nul
+n'a pas trois lignes à écrire, et ce « −0,00 € » était précisément le zéro que le lot
+interdit — indiscernable d'un frais qu'on n'aurait pas su lire. Le détail, lui, le dit en
+toutes lettres : « aucun frais retenu par le fournisseur ».
+
 ### Prêt pour Pennylane — sans Pennylane
 
 Ce lot **n'intègre pas** Pennylane et n'écrit aucune ligne vers un système comptable. Il

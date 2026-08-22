@@ -142,6 +142,16 @@ export interface TransactionSettlement {
   reason: string | null;
   /** `STRIPE` aujourd'hui. Une valeur, jamais une clé de champ. */
   provider: string;
+  /**
+   * LE SENS DU MOUVEMENT — il décide de l'opération, pas seulement des mots.
+   *
+   * `IN` : le fournisseur RETIENT sa commission, le compte reçoit `brut − frais`.
+   * `OUT` : il la PRÉLÈVE EN PLUS, le compte perd `rendu + frais`.
+   *
+   * Facultatif : un Panel plus ancien ne le porte pas, et l'écran retombe alors
+   * sur l'encaissement, qui est le cas de loin le plus fréquent.
+   */
+  direction?: 'IN' | 'OUT';
   /** Ce que le REGISTRE a inscrit — l'autorité du montant encaissé. */
   grossCents: number;
   /** Ce que le fournisseur a prélevé. `null` tant qu'il ne l'a pas dit. */

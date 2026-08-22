@@ -45,6 +45,23 @@ function attente(settlement: TransactionSettlement): string {
   return 'Frais non communiqués par le fournisseur';
 }
 
+/**
+ * LES TROIS LIBELLÉS DÉPENDENT DU SENS, ET C'EST TOUT SAUF COSMÉTIQUE.
+ *
+ * Sur un ENCAISSEMENT, le fournisseur RETIENT sa commission : le compte reçoit
+ * `brut − frais`. Sur un REMBOURSEMENT, il la PRÉLÈVE EN PLUS de la somme
+ * rendue : le compte perd `rendu + frais`.
+ *
+ * Écrire « Brut / Frais / Net » sur une sortie d'argent était doublement faux :
+ * « Net 120,00 € » se lit comme une recette, et la soustraction sous-évaluait
+ * ce qui a réellement quitté le compte. La recette déployée l'a montré sur un
+ * remboursement réel.
+ */
+const LIBELLES = {
+  IN: { montant: 'Brut', frais: 'Frais', resultat: 'Net' },
+  OUT: { montant: 'Rendu', frais: 'Frais', resultat: 'Sorti du compte' },
+} as const;
+
 export function SettlementBreakdown({
   settlement,
   compact = false,
@@ -64,14 +81,29 @@ export function SettlementBreakdown({
 
   const frais = settlement.providerCostCents as number;
 
+  /**
+   * UNE DÉCOMPOSITION QUI NE DÉCOMPOSE RIEN N'EST PAS UNE INFORMATION.
+   *
+   * Frais nul : le montant du mouvement, déjà affiché juste au-dessus, dit tout.
+   * Répéter « Brut 120 · Frais −0,00 € · Net 120 » ajoute trois lignes qui ne
+   * disent rien — et surtout, ce « −0,00 € » est exactement le zéro que la
+   * doctrine du lot interdit d'écrire, parce qu'il est indiscernable d'un frais
+   * qu'on n'aurait pas su lire.
+   *
+   * Le fait qu'il soit CONNU et nul se lit, lui, dans le détail du mouvement.
+   */
+  if (frais === 0) return null;
+
+  const mots = LIBELLES[settlement.direction ?? 'IN'];
+
   return (
     <div className={compact ? 'finance-settlement finance-settlement-compact' : 'finance-settlement'}>
       <span className="finance-settlement-line">
-        <span className="finance-settlement-label">Brut</span>
+        <span className="finance-settlement-label">{mots.montant}</span>
         <span className="finance-settlement-value">{formatCents(settlement.grossCents)}</span>
       </span>
       <span className="finance-settlement-line">
-        <span className="finance-settlement-label">Frais</span>
+        <span className="finance-settlement-label">{mots.frais}</span>
         {/*
           LE SIGNE EST ÉCRIT ICI, ET SEULEMENT ICI.
 
@@ -82,11 +114,11 @@ export function SettlementBreakdown({
           addition. Le moins typographique (U+2212) s'aligne sur les chiffres.
         */}
         <span className="finance-settlement-value finance-amount-outflow">
-          {`−${formatCents(frais)}`}
+          {`${settlement.direction === 'OUT' ? '+' : '−'}${formatCents(frais)}`}
         </span>
       </span>
       <span className="finance-settlement-line finance-settlement-net">
-        <span className="finance-settlement-label">Net</span>
+        <span className="finance-settlement-label">{mots.resultat}</span>
         <span className="finance-settlement-value">{formatCents(settlement.netCents)}</span>
       </span>
     </div>

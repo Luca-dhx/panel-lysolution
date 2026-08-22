@@ -605,7 +605,7 @@ export async function captureSettlementForFact(factId, { fetchImpl } = {}) {
 
     const revenu = await PanelFinancialTransaction
       .findOne({ transactionId: fait.transactionId })
-      .select('transactionId projectId projectNameSnapshot clientCompanyId label effectiveDate currency')
+      .select('transactionId projectId projectNameSnapshot clientCompanyId label effectiveDate currency flow')
       .lean();
     if (!revenu) {
       return { ...rien, outcome: SETTLEMENT_OUTCOME.NOT_PROJECTED, reason: 'TRANSACTION_MISSING' };
@@ -820,7 +820,7 @@ export async function withSettlement(transactions = []) {
 
   /** La clé complète — un identifiant de recette et son homonyme de production
    * sont deux faits distincts, et jamais l'un ne doit répondre pour l'autre. */
-  const clef = (environment, objectType, objectId) => `${environment} ${objectType} ${objectId}`;
+  const clef = (environment, objectType, objectId) => `${environment} ${objectType} ${objectId}`;
   const par = new Map(faits.map((f) => [clef(f.environment, f.objectType, f.objectId), f]));
 
   return transactions.map((t) => {
@@ -851,16 +851,37 @@ function publicSettlement(fait, transaction) {
   const solde = status === SETTLEMENT_STATUS.SETTLED;
   const frais = solde && Number.isInteger(s.providerFeeCents) ? Math.abs(s.providerFeeCents) : null;
 
+  /**
+   * LE SENS DÉCIDE DE L'OPÉRATION, ET C'EST TOUT SAUF UN DÉTAIL.
+   *
+   * Sur un ENCAISSEMENT, le fournisseur RETIENT sa commission : le compte reçoit
+   * `brut − frais`.
+   *
+   * Sur un REMBOURSEMENT, il la PRÉLÈVE EN PLUS de la somme rendue : le compte
+   * perd `rendu + frais`. Appliquer la même soustraction aurait affiché un coût
+   * inférieur à la somme réellement sortie — et le seul cas où l'erreur se voit
+   * est celui où le fournisseur facture un remboursement, c'est-à-dire le cas
+   * qu'on ne rencontre jamais en recette et toujours en production.
+   *
+   * Le sens vient du MOUVEMENT, pas du signe rendu par le fournisseur : c'est la
+   * doctrine du registre depuis L10.1, et elle vaut ici comme ailleurs.
+   */
+  const entree = transaction.flow === FLOWS.INFLOW;
+
   return {
     status,
     reason: s.reason ?? null,
     provider: s.provider ?? PROVIDER,
-    /** Ce que le registre a inscrit — l'autorité du montant encaissé. */
+    /** `IN` : le fournisseur retient. `OUT` : il prélève en plus. */
+    direction: entree ? 'IN' : 'OUT',
+    /** Ce que le registre a inscrit — l'autorité du montant du mouvement. */
     grossCents: transaction.amountCents,
     /** Ce que le fournisseur a prélevé. `null` tant qu'il ne l'a pas dit. */
     providerCostCents: frais,
     /** DÉRIVÉ, jamais stocké : c'est la définition du net, pas une valeur. */
-    netCents: frais === null ? null : transaction.amountCents - frais,
+    netCents: frais === null
+      ? null
+      : (entree ? transaction.amountCents - frais : transaction.amountCents + frais),
     currency: s.currency ?? transaction.currency,
     /** La preuve, pour qui veut rapprocher du tableau de bord fournisseur. */
     balanceTransactionId: s.balanceTransactionId ?? null,
