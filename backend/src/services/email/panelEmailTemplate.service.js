@@ -52,6 +52,7 @@ import {
   EMAIL_TEMPLATE_IDS,
   getTemplateDefinition,
   isKnownTemplateId,
+  sampleVariablesFor,
   variablesFor,
 } from './panelEmailTemplateRegistry.js';
 import {
@@ -68,6 +69,7 @@ import {
   scopeColumns,
   scopeFilter,
 } from './panelEmailTemplateScope.js';
+import { variableContractFingerprint } from './panelEmailTemplateContract.js';
 import { validateTemplate } from './panelEmailTemplateValidator.js';
 import { renderTemplate, EmailRenderError } from './panelEmailTemplateRenderer.js';
 import { EMAIL_TEMPLATE_ERROR_CODES as E, MAX_TEMPLATE_VERSION_HISTORY } from '../../utils/panelEmailTemplateConstants.js';
@@ -220,6 +222,7 @@ export async function provisionProjectTemplates(projectId, {
 
   const created = [];
   const existing = [];
+  const restored = [];
   const refused = [];
 
   for (const templateCode of wanted) {
@@ -262,7 +265,9 @@ export async function provisionProjectTemplates(projectId, {
       origin: 'BOOTSTRAP',
       actor,
     });
-    (posed.created ? created : existing).push(templateCode);
+    if (posed.created) created.push(templateCode);
+    else if (posed.restoredFromArchive) restored.push(templateCode);
+    else existing.push(templateCode);
   }
 
   if (created.length) {
@@ -270,7 +275,7 @@ export async function provisionProjectTemplates(projectId, {
       `[email] ${created.length} modèle(s) posé(s) en portée ${describeScope(scope)} : ${created.join(', ')}.`,
     );
   }
-  return { scope: describeScope(scope), created, existing, refused };
+  return { scope: describeScope(scope), created, existing, restored, refused };
 }
 
 /**
@@ -283,6 +288,27 @@ export async function provisionProjectTemplates(projectId, {
 async function ensureInstance({ templateCode, scope, content, origin, actor }) {
   const filter = { templateCode, ...scopeFilter(scope) };
   const present = await PanelEmailTemplate.findOne(filter).lean();
+
+  /**
+   * UNE INSTANCE ARCHIVÉE QUI REDEVIENT DÉCLARÉE SE RÉVEILLE — elle ne se
+   * refait pas (L12.1).
+   *
+   * La reposer depuis les défauts du registre effacerait le contenu qu'un
+   * exploitant avait écrit, au seul motif que le projet avait cessé un temps
+   * de déclarer ce code. L'archive existe précisément pour éviter cette perte.
+   */
+  if (present?.archivedAt) {
+    await PanelEmailTemplate.updateOne(
+      { _id: present._id },
+      { $set: { archivedAt: null, archivedReason: '', updatedAt: nowIso() } },
+    );
+    logger.info(
+      `[email] instance ${templateCode} (${describeScope(scope)}) DÉSARCHIVÉE : `
+      + 'le projet la déclare de nouveau.',
+    );
+    return { created: false, restoredFromArchive: true };
+  }
+
   if (present) return { created: false };
 
   const at = nowIso();
@@ -424,7 +450,7 @@ export async function backfillScopeTypes() {
  *
  * @param {string} projectId
  * @param {string[]} templateCodes  ce que le projet déclare utiliser
- * @returns {Promise<{accepted, provisioned, existing, unknown, forbidden, removed}>}
+ * @returns {Promise<{accepted, provisioned, existing, restored, unknown, forbidden, archived}>}
  */
 export async function reconcileDeclaredProjectEmailTemplates(projectId, templateCodes = [], {
   actor = {},
@@ -451,37 +477,64 @@ export async function reconcileDeclaredProjectEmailTemplates(projectId, template
 
   const pose = accepted.length
     ? await provisionProjectTemplates(projectId, { codes: accepted, actor })
-    : { created: [], existing: [], refused: [] };
+    : { created: [], existing: [], restored: [], refused: [] };
 
   /**
-   * CE QUI N'EST PLUS DÉCLARÉ — constaté, jamais supprimé.
+   * ── LA CONVERGENCE, ET CE QU'ELLE A REMPLACÉ (L12.1) ────────────────────────
    *
-   * On lit les instances existantes pour dire lesquelles sortent de la vue
-   * active. C'est une INFORMATION rendue à l'appelant et aux écrans ; aucune
-   * écriture n'en découle.
+   * Cette réconciliation se contentait auparavant de RECENSER les instances hors
+   * déclaration dans un champ `removed` — sans jamais rien retirer. Le nom
+   * décrivait donc un acte qui n'avait pas lieu : l'instance restait active,
+   * éditable dans le Panel, et présentée comme si elle partait encore. Le parc
+   * de TEST en portait deux, silencieusement, depuis des semaines.
+   *
+   * Elle ARCHIVE désormais. Ni suppression (l'historique d'un contenu réellement
+   * expédié est la seule trace exploitable d'une enquête), ni désactivation
+   * (`enabled: false` prêterait à un exploitant une décision qu'il n'a pas
+   * prise). L'instance sort des listes actives, l'envoi la refuse, la raison est
+   * écrite, et une nouvelle déclaration la réveille intacte.
    */
   const instances = await PanelEmailTemplate
-    .find(scopeFilter(scope)).select('templateCode').lean();
-  const removed = instances
+    .find(scopeFilter(scope)).select('templateCode archivedAt').lean();
+
+  const aArchiver = instances
+    .filter((d) => !d.archivedAt && !accepted.includes(d.templateCode))
     .map((d) => d.templateCode)
-    .filter((code) => !accepted.includes(code))
     .sort();
+
+  if (aArchiver.length) {
+    await PanelEmailTemplate.updateMany(
+      { ...scopeFilter(scope), templateCode: { $in: aArchiver }, archivedAt: null },
+      {
+        $set: {
+          archivedAt: nowIso(),
+          archivedReason: 'Le projet ne déclare plus consommer ce modèle.',
+        },
+      },
+    );
+    logger.info(
+      `[email] ${describeScope(scope)} — ${aArchiver.length} instance(s) archivée(s) : ${aArchiver.join(', ')}.`,
+    );
+  }
 
   const rapport = {
     scope: describeScope(scope),
     accepted,
     provisioned: pose.created,
     existing: pose.existing,
+    restored: pose.restored ?? [],
     unknown,
     forbidden,
-    removed,
+    archived: aArchiver,
   };
 
-  if (pose.created.length || unknown.length || forbidden.length) {
+  if (pose.created.length || unknown.length || forbidden.length || aArchiver.length
+    || (pose.restored ?? []).length) {
     logger.info(
       `[email] ${describeScope(scope)} — ${pose.created.length} posé(s), `
-      + `${pose.existing.length} déjà là, ${unknown.length} inconnu(s), `
-      + `${forbidden.length} interdit(s), ${removed.length} hors déclaration.`,
+      + `${pose.existing.length} déjà là, ${(pose.restored ?? []).length} désarchivé(s), `
+      + `${unknown.length} inconnu(s), ${forbidden.length} interdit(s), `
+      + `${aArchiver.length} archivé(s).`,
     );
   }
   return rapport;
@@ -510,7 +563,7 @@ export async function reconcileProjectTemplates({ actor = {} } = {}) {
     .find({}).select('projectId templateCodes').lean();
 
   const rapport = {
-    projects: 0, created: 0, existing: 0, unknown: 0, forbidden: 0, byProject: [],
+    projects: 0, created: 0, existing: 0, unknown: 0, forbidden: 0, archived: 0, byProject: [],
   };
 
   for (const declaration of declarations) {
@@ -524,14 +577,16 @@ export async function reconcileProjectTemplates({ actor = {} } = {}) {
     rapport.existing += r.existing.length;
     rapport.unknown += r.unknown.length;
     rapport.forbidden += r.forbidden.length;
-    if (r.provisioned.length || r.unknown.length || r.forbidden.length) {
+    rapport.archived += r.archived.length;
+    if (r.provisioned.length || r.unknown.length || r.forbidden.length || r.archived.length) {
       rapport.byProject.push({ projectId: declaration.projectId, ...r });
     }
   }
 
-  if (rapport.created) {
+  if (rapport.created || rapport.archived) {
     logger.info(
-      `[email] réconciliation au démarrage : ${rapport.created} instance(s) posée(s) `
+      `[email] réconciliation au démarrage : ${rapport.created} instance(s) posée(s), `
+      + `${rapport.archived} archivée(s) `
       + `sur ${rapport.byProject.length} projet(s) déclarant `
       + `(${rapport.projects} déclaration(s) lue(s)).`,
     );
@@ -593,12 +648,25 @@ export async function declaredCodesForProject(projectId) {
  *
  * @throws {ApiError} `EMAIL_TEMPLATE_NOT_CONFIGURED` — portée PROJECT sans instance.
  */
+/**
+ * L'INSTANCE ACTIVE d'une portée — jamais une archive (L12.1).
+ *
+ * Toute lecture qui décide d'un ENVOI ou d'un AFFICHAGE passe par ici. Une
+ * instance archivée existe encore (son historique est la seule trace de ce qui
+ * est réellement parti), mais elle n'est plus une réponse à « quel modèle sert
+ * ce projet ? ». La confondre avec une instance vivante ferait repartir un
+ * contenu que le projet a cessé de déclarer.
+ */
+function activeInstanceFilter(templateCode, scope) {
+  return { templateCode, ...scopeFilter(scope), archivedAt: null };
+}
+
 export async function resolveTemplate(templateCode, scope) {
   const definition = assertKnownTemplate(templateCode);
   assertScopeAllowedForCode(templateCode, scope);
 
   const stored = await PanelEmailTemplate
-    .findOne({ templateCode, ...scopeFilter(scope) }).lean();
+    .findOne(activeInstanceFilter(templateCode, scope)).lean();
 
   if (stored) {
     return {
@@ -653,6 +721,150 @@ export async function resolveTemplate(templateCode, scope) {
 }
 
 /**
+ * LA RÉSOLUTION D'ENVOI, RENDUE OBSERVABLE — même chemin, sans exception (L12.1).
+ *
+ * ── LE PROBLÈME QU'ELLE RÈGLE ───────────────────────────────────────────────
+ *
+ * Un écran de consultation doit montrer CE QUI PARTIRAIT. Jusqu'ici il n'avait
+ * le choix qu'entre deux mauvaises réponses : appeler `resolveTemplate` et se
+ * prendre une exception (donc n'afficher RIEN, alors que le diagnostic est
+ * précisément ce qu'on cherche), ou appeler `draftTemplate` et afficher le
+ * défaut du registre — un contenu qui ne partirait JAMAIS pour une portée
+ * PROJECT, puisque l'envoi refuse justement de le servir.
+ *
+ * La seconde était la pire : elle donnait à un aperçu l'apparence d'une vérité.
+ * Un exploitant y lisait un modèle « configuré » qui, à l'envoi, produisait
+ * EMAIL_TEMPLATE_NOT_CONFIGURED.
+ *
+ * ── CE QU'ELLE FAIT, ET CE QU'ELLE NE FAIT PAS ──────────────────────────────
+ *
+ * Elle appelle la MÊME primitive que l'envoi et se contente de transformer son
+ * refus en constat : `usable: false` + la raison. Elle n'invente aucun contenu
+ * de repli. Un modèle non configuré ne rend donc ni sujet ni HTML — parce qu'il
+ * n'y en a pas, et qu'en fabriquer un serait exactement le mensonge qu'on
+ * supprime.
+ *
+ * `draftTemplate`, lui, reste réservé à l'ÉDITEUR du Panel : là, proposer un
+ * point de départ est le service rendu, et l'écran dit « pas encore configuré ».
+ */
+export const TEMPLATE_UNUSABLE = Object.freeze({
+  NOT_CONFIGURED: EMAIL_TEMPLATE_NOT_CONFIGURED,
+  NOT_DECLARED: EMAIL_TEMPLATE_NOT_DECLARED,
+  DISABLED: 'PANEL_EMAIL_TEMPLATE_DISABLED',
+  FORBIDDEN_SCOPE: 'PANEL_EMAIL_TEMPLATE_SCOPE_FORBIDDEN_FOR_CODE',
+  UNKNOWN: 'PANEL_EMAIL_TEMPLATE_UNKNOWN',
+});
+
+export async function resolveForProjection(templateCode, scope, { declaredCodes = null } = {}) {
+  const base = {
+    templateCode,
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+    usable: false,
+    configured: false,
+    source: null,
+    name: '',
+    description: '',
+    subject: '',
+    html: '',
+    enabled: false,
+    version: 0,
+    updatedAt: null,
+    unusableReason: null,
+    unusableMessage: '',
+  };
+
+  // La déclaration d'abord : c'est le refus que `renderForSend` oppose EN
+  // PREMIER, et l'ordre doit être le même — sans quoi l'écran nommerait une
+  // cause que l'envoi ne retiendrait pas.
+  if (scope.scopeType === SCOPE_TYPES.PROJECT && Array.isArray(declaredCodes)
+    && !declaredCodes.includes(templateCode)) {
+    return {
+      ...base,
+      unusableReason: TEMPLATE_UNUSABLE.NOT_DECLARED,
+      unusableMessage: `Ce projet ne déclare pas consommer « ${templateCode} » : aucun envoi n’est possible.`,
+    };
+  }
+
+  let resolved;
+  try {
+    resolved = await resolveTemplate(templateCode, scope);
+  } catch (error) {
+    return {
+      ...base,
+      unusableReason: error?.code ?? TEMPLATE_UNUSABLE.NOT_CONFIGURED,
+      unusableMessage: error?.message ?? 'Ce modèle ne peut pas être résolu pour cette portée.',
+    };
+  }
+
+  return {
+    ...base,
+    ...resolved,
+    usable: resolved.enabled !== false,
+    ...(resolved.enabled === false
+      ? {
+        unusableReason: TEMPLATE_UNUSABLE.DISABLED,
+        unusableMessage: `Le modèle « ${templateCode} » est désactivé : aucun envoi n’est effectué.`,
+      }
+      : {}),
+  };
+}
+
+/**
+ * LA PROJECTION AUTORITATIVE D'UNE PORTÉE — ce que le pont sert au projet.
+ *
+ * Un seul producteur pour les trois consommateurs : l'écran du Manager, son
+ * aperçu, et le contrôle de compatibilité. Trois résolveurs auraient fini par
+ * répondre trois choses différentes à la même question ; c'est précisément
+ * l'écart que l'audit avait relevé.
+ */
+export async function describeProjectionForScope(scope) {
+  assertScopeCoherent(scope);
+  const declaredCodes = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? await declaredCodesForProject(scope.scopeId)
+    : null;
+
+  // Une portée PROJECT ne présente QUE ce qu'elle déclare. Lister les autres
+  // codes du registre inviterait à croire qu'ils sont disponibles ici.
+  const codes = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? (declaredCodes ?? []).filter((code) => isKnownTemplateId(code))
+    : listTemplateCodesForScope(scope);
+
+  const items = [];
+  for (const templateCode of codes) {
+    const contract = templateDefinition(templateCode);
+    if (!contract) continue;
+    const resolved = await resolveForProjection(templateCode, scope, { declaredCodes });
+    items.push({
+      templateCode,
+      label: getTemplateDefinition(templateCode).defaultName,
+      description: resolved.description || getTemplateDefinition(templateCode).defaultDescription,
+      subject: resolved.subject,
+      html: resolved.html,
+      enabled: resolved.enabled,
+      configured: resolved.configured,
+      usable: resolved.usable,
+      unusableReason: resolved.unusableReason,
+      unusableMessage: resolved.unusableMessage,
+      version: resolved.version,
+      source: resolved.source,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      updatedAt: resolved.updatedAt,
+      category: contract.category,
+      ownedBy: contract.scopes.includes(SCOPE_TYPES.PROJECT) ? SCOPE_TYPES.PROJECT : SCOPE_TYPES.PANEL,
+      retentionClass: getTemplateDefinition(templateCode).retentionClass ?? null,
+      variableContractFingerprint: variableContractFingerprint(templateCode),
+      variables: variablesFor(templateCode).map((v) => ({
+        key: v.key, label: v.label, description: v.description,
+        type: v.type, required: v.required,
+      })),
+    });
+  }
+  return items;
+}
+
+/**
  * LA MÊME RÉSOLUTION, POUR UN ÉCRAN D'ÉDITION — un refus devient un BROUILLON.
  *
  * ── POURQUOI DEUX FONCTIONS, ET PAS UN DRAPEAU ─────────────────────────────
@@ -669,8 +881,40 @@ export async function draftTemplate(templateCode, scope) {
   const definition = assertKnownTemplate(templateCode);
   assertScopeAllowedForCode(templateCode, scope);
 
+  /**
+   * L'ÉDITEUR VOIT LES ARCHIVES — l'envoi, jamais (L12.1).
+   *
+   * Ce filtre a d'abord exclu les instances archivées ici aussi. C'était une
+   * faute : un exploitant perdait l'accès au contenu qu'il avait écrit à la
+   * seconde où le projet cessait de déclarer le code, et l'archive — dont toute
+   * la raison d'être est de PRÉSERVER ce contenu — le rendait inaccessible.
+   *
+   * La distinction est donc portée par les deux fonctions, pas par le filtre :
+   * `resolveTemplate` sert l'ENVOI et ignore les archives ; `draftTemplate`
+   * sert l'ÉCRAN D'ADMINISTRATION et les montre, marquées comme telles.
+   */
   const stored = await PanelEmailTemplate
     .findOne({ templateCode, ...scopeFilter(scope) }).lean();
+
+  if (stored?.archivedAt) {
+    return {
+      templateCode,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      source: scope.scopeType === SCOPE_TYPES.PANEL ? TEMPLATE_SOURCES.PANEL : TEMPLATE_SOURCES.PROJECT,
+      configured: true,
+      archived: true,
+      archivedAt: stored.archivedAt,
+      archivedReason: stored.archivedReason ?? '',
+      name: stored.name,
+      description: stored.description,
+      subject: stored.subject,
+      html: stored.html,
+      enabled: stored.enabled,
+      version: stored.version,
+      updatedAt: stored.updatedAt,
+    };
+  }
 
   if (stored) return resolveTemplate(templateCode, scope);
 
@@ -779,6 +1023,82 @@ export async function renderForSend({ templateCode, scope, variables = {} }) {
  * du lot — le bug « aperçu correct, e-mail différent » doit être structurellement
  * impossible, et il l'est parce qu'il n'y a qu'un résolveur et qu'un renderer.
  */
+/**
+ * L'APERÇU AUTORITATIF — celui d'un CONSOMMATEUR, pas celui d'un éditeur (L12.1).
+ *
+ * `previewTemplate` ci-dessous sert l'éditeur du Panel : il prévisualise un
+ * brouillon, y compris avant qu'aucune instance n'existe. Celui-ci sert le
+ * Manager, et répond à une autre question — « à quoi ressemble l'e-mail QUI
+ * PARTIRAIT aujourd'hui ? ». Il part donc de la résolution d'envoi, et refuse
+ * de rendre quoi que ce soit quand l'envoi refuserait lui aussi.
+ */
+export async function previewResolvedTemplate(templateCode, scope, { declaredCodes = null } = {}) {
+  const definition = assertKnownTemplate(templateCode);
+  const resolved = await resolveForProjection(templateCode, scope, { declaredCodes });
+
+  if (!resolved.usable) {
+    return {
+      templateId: templateCode,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      subject: null,
+      html: null,
+      usable: false,
+      configured: resolved.configured,
+      version: resolved.version,
+      source: resolved.source,
+      unusableReason: resolved.unusableReason,
+      unusableMessage: resolved.unusableMessage,
+      renderError: null,
+      sampleVariables: Object.fromEntries(sampleVariablesFor(templateCode)),
+    };
+  }
+
+  try {
+    const rendered = renderTemplate({
+      templateId: templateCode,
+      template: { subject: resolved.subject, html: resolved.html },
+      variables: sampleVariablesFor(templateCode),
+    });
+    return {
+      templateId: templateCode,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      subject: rendered.subject,
+      html: rendered.html,
+      usedVariables: rendered.usedVariables,
+      usable: true,
+      configured: resolved.configured,
+      version: resolved.version,
+      source: resolved.source,
+      unusableReason: null,
+      unusableMessage: '',
+      renderError: null,
+      sampleVariables: Object.fromEntries(sampleVariablesFor(templateCode)),
+    };
+  } catch (error) {
+    return {
+      templateId: templateCode,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      subject: null,
+      html: null,
+      usable: false,
+      configured: resolved.configured,
+      version: resolved.version,
+      source: resolved.source,
+      unusableReason: error?.code ?? 'RENDER_FAILED',
+      unusableMessage: error?.message ?? 'Rendu impossible.',
+      renderError: {
+        code: error?.code ?? 'RENDER_FAILED',
+        message: error?.message ?? 'Rendu impossible.',
+        details: error instanceof EmailRenderError ? error.details : [],
+      },
+      sampleVariables: Object.fromEntries(sampleVariablesFor(templateCode)),
+    };
+  }
+}
+
 export async function previewTemplate(templateCode, scope, { variables = null } = {}) {
   const definition = assertKnownTemplate(templateCode);
   const template = await draftTemplate(templateCode, scope);
@@ -1018,6 +1338,13 @@ export async function describeTemplates(scope) {
       enabled: resolved.enabled,
       /** `false` = aucune instance dans cette portée. L'écran doit le DIRE. */
       configured: resolved.configured,
+      /**
+       * `true` = le projet ne déclare plus ce code ; l'instance et son
+       * historique sont conservés, l'envoi la refuse. L'écran doit le
+       * distinguer d'un modèle actif, sans pour autant la cacher : c'est ici
+       * qu'on relit le contenu écrit avant le retrait.
+       */
+      archived: resolved.archived === true,
       version: resolved.version,
       source: resolved.source,
       scopeType: resolved.scopeType,

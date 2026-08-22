@@ -28,14 +28,18 @@ import { describeGlobalSender, resolveGlobalSender } from './panelGlobalSender.s
 import {
   assertKnownTemplate,
   declaredCodesForProject,
+  describeProjectionForScope,
   describeTemplates,
   draftTemplate,
   getVersion,
   listVersions,
+  previewResolvedTemplate,
   previewTemplate,
+  resolveForProjection,
   restoreVersion,
   saveTemplate,
 } from './panelEmailTemplate.service.js';
+import { variableContractFingerprint } from './panelEmailTemplateContract.js';
 import { templateDefinition } from './panelEmailTemplateDefinitions.js';
 import { SCOPE_TYPES, describeScope, panelScope } from './panelEmailTemplateScope.js';
 import { sampleVariablesFor, variablesFor } from './panelEmailTemplateRegistry.js';
@@ -176,6 +180,92 @@ export async function listAdministrableScopes() {
   ];
 }
 
+/* -------------------------------------------------------------------------- */
+/*  LA PROJECTION SERVIE AUX PROJETS — lecture seule (L12.1)                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ── POURQUOI CES TROIS FONCTIONS EXISTENT À CÔTÉ DES « EDITABLE » ───────────
+ *
+ * Les fonctions `…EditableTemplate…` servent l'ÉDITEUR du Panel : elles partent
+ * de `draftTemplate`, qui propose le défaut du registre quand aucune instance
+ * n'existe encore — c'est le service rendu à quelqu'un qui vient en créer une.
+ *
+ * Celles-ci servent un CONSOMMATEUR, et répondent à une autre question : « que
+ * partirait-il aujourd'hui ? ». Elles partent donc de la résolution d'ENVOI, et
+ * ne fabriquent aucun contenu de repli. Un modèle non configuré rend
+ * `usable: false` et sa raison — pas un brouillon qui aurait l'air d'être en
+ * production.
+ *
+ * Deux jeux de fonctions plutôt qu'un drapeau : un `{ forSend: true }` aurait
+ * fait dépendre la véracité d'un écran d'un booléen qu'un appelant oublie.
+ */
+export async function listProjectedTemplates(scope) {
+  const items = await describeProjectionForScope(scope);
+  return items.map((item) => ({
+    templateId: item.templateCode,
+    name: item.label,
+    description: item.description,
+    subject: item.subject,
+    enabled: item.enabled,
+    configured: item.configured,
+    usable: item.usable,
+    unusableReason: item.unusableReason,
+    unusableMessage: item.unusableMessage,
+    version: item.version,
+    source: item.source,
+    category: item.category,
+    ownedBy: item.ownedBy,
+    scope: serializeScope(scope),
+    variableCount: item.variables.length,
+    variableContractFingerprint: item.variableContractFingerprint,
+    retentionClass: item.retentionClass,
+    updatedAt: item.updatedAt,
+  }));
+}
+
+export async function getProjectedTemplate(templateCode, scope) {
+  assertKnownTemplate(templateCode);
+  const declaredCodes = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? await declaredCodesForProject(scope.scopeId)
+    : null;
+  const resolved = await resolveForProjection(templateCode, scope, { declaredCodes });
+  const contract = templateDefinition(templateCode);
+  return {
+    templateId: templateCode,
+    name: resolved.name,
+    description: resolved.description,
+    subject: resolved.subject,
+    html: resolved.html,
+    enabled: resolved.enabled,
+    configured: resolved.configured,
+    usable: resolved.usable,
+    unusableReason: resolved.unusableReason,
+    unusableMessage: resolved.unusableMessage,
+    version: resolved.version,
+    source: resolved.source,
+    scope: serializeScope(scope),
+    ownedBy: contract.scopes.includes(SCOPE_TYPES.PROJECT) ? SCOPE_TYPES.PROJECT : SCOPE_TYPES.PANEL,
+    contract: {
+      category: contract.category,
+      allowedVariables: contract.allowedVariables,
+      requiredVariables: contract.requiredVariables,
+      fingerprint: variableContractFingerprint(templateCode),
+    },
+    variables: serializeVariables(templateCode),
+    updatedAt: resolved.updatedAt,
+  };
+}
+
+export async function previewProjectedTemplate(templateCode, scope) {
+  assertKnownTemplate(templateCode);
+  const declaredCodes = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? await declaredCodesForProject(scope.scopeId)
+    : null;
+  const preview = await previewResolvedTemplate(templateCode, scope, { declaredCodes });
+  return { ...preview, scope: serializeScope(scope) };
+}
+
 export async function listEditableTemplates(scope) {
   const templates = await describeTemplates(scope);
   return templates.map((template) => {
@@ -187,6 +277,7 @@ export async function listEditableTemplates(scope) {
       enabled: template.enabled,
       /** Aucune instance dans cette portée : l'écran doit le montrer, pas le masquer. */
       configured: template.configured,
+      archived: template.archived === true,
       valid: validation.valid,
       errorCount: validation.errors.length,
       variableCount: template.variables.length,
@@ -226,6 +317,17 @@ export async function getEditableTemplate(templateCode, scope) {
   return {
     templateId: templateCode,
     declared: declares === null ? null : declares.includes(templateCode),
+    /**
+     * ARCHIVÉ — visible ICI, et nulle part ailleurs (L12.1).
+     *
+     * Une instance archivée n'est plus servie à l'envoi ni à la projection du
+     * projet. L'écran d'administration, lui, doit continuer de la montrer :
+     * c'est le seul endroit d'où l'on peut relire le contenu qu'un exploitant a
+     * écrit, et l'archive n'a de sens que si elle reste consultable.
+     */
+    archived: template.archived === true,
+    archivedAt: template.archivedAt ?? null,
+    archivedReason: template.archivedReason ?? '',
     name: template.name,
     description: template.description,
     subject: template.subject,
@@ -307,34 +409,44 @@ export async function previewEditableTemplate(templateCode, scope, draft = {}) {
 
 export async function describeTemplateReadiness(templateCode, scope) {
   assertKnownTemplate(templateCode);
+
+  /**
+   * LA MÊME RÉSOLUTION QUE L'ENVOI (L12.1).
+   *
+   * Ce diagnostic partait de `draftTemplate` : pour une portée PROJECT sans
+   * instance, il évaluait donc le DÉFAUT DU REGISTRE — un contenu que l'envoi
+   * refuse précisément de servir. Il pouvait ainsi répondre « prêt » à propos
+   * d'un modèle dont le premier envoi aurait échoué, et il ignorait tout de la
+   * déclaration d'usage, qui est pourtant le PREMIER refus opposé au rendu.
+   *
+   * Un diagnostic qui n'emprunte pas le chemin réel n'est pas un diagnostic.
+   */
+  const declaredCodes = scope.scopeType === SCOPE_TYPES.PROJECT
+    ? await declaredCodesForProject(scope.scopeId)
+    : null;
+
   const [template, sender, availability] = await Promise.all([
-    draftTemplate(templateCode, scope),
+    resolveForProjection(templateCode, scope, { declaredCodes }),
     describeGlobalSender(),
     describeAvailability('BREVO'),
   ]);
 
-  const validation = serializeValidation(templateCode, template);
+  // Un modèle non configuré n'a pas de contenu à valider : le déclarer invalide
+  // ajouterait un second blocage pour la même cause, déjà nommée.
+  const validation = template.configured
+    ? serializeValidation(templateCode, template)
+    : { valid: true, errors: [] };
   const blockers = [];
   const warnings = [];
 
-  /**
-   * L'ABSENCE D'INSTANCE EST UN BLOCAGE, PAS UN AVERTISSEMENT (L11.1).
-   *
-   * C'est la contrepartie visible du fail-closed : un modèle non configuré pour
-   * cette portée ne partira pas, et l'écran doit le dire AVANT que le DEV ne
-   * saisisse une adresse de test — pas après un refus de la passerelle.
-   */
-  if (!template.configured && scope.scopeType === SCOPE_TYPES.PROJECT) {
+  if (!template.usable) {
     blockers.push(blocker(
-      'TEMPLATE_NOT_CONFIGURED',
-      `Aucun modèle « ${templateCode} » n’est configuré pour ${describeScope(scope)} : `
-      + 'enregistrez-en un. Le contenu du Panel ne sera jamais servi à sa place.',
+      template.unusableReason ?? 'TEMPLATE_NOT_CONFIGURED',
+      template.unusableMessage
+        || `Aucun modèle « ${templateCode} » exploitable pour ${describeScope(scope)}.`,
     ));
   }
-  if (!template.enabled) {
-    blockers.push(blocker('TEMPLATE_DISABLED', `Le template « ${templateCode} » est désactivé.`));
-  }
-  if (!validation.valid) {
+  if (template.configured && !validation.valid) {
     blockers.push(blocker(
       'TEMPLATE_INVALID',
       `Le template « ${templateCode} » contient ${validation.errors.length} erreur(s) de validation.`,
@@ -559,6 +671,9 @@ export async function compareScopesForCode(templateCode) {
 
 export default {
   compareScopesForCode,
+  getProjectedTemplate,
+  listProjectedTemplates,
+  previewProjectedTemplate,
   describeTemplateReadiness,
   getEditableTemplate,
   getEditableTemplateVersion,

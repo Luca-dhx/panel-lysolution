@@ -20,14 +20,9 @@ import { introspectFederatedPrincipal } from '../controllers/bridgeFederation.co
 import {
   getProjectEmailTemplate,
   getProjectEmailTemplateReadiness,
-  getProjectEmailTemplateVersion,
-  getProjectEmailTemplateVersions,
   listProjectEmailTemplates,
   postProjectEmailTemplatePreview,
-  postProjectEmailTemplateRestore,
   postProjectEmailTemplateTestSend,
-  postProjectEmailTemplatesImport,
-  putProjectEmailTemplate,
 } from '../controllers/bridgeEmailTemplates.controller.js';
 
 const router = Router();
@@ -102,15 +97,17 @@ router.post('/federation/introspect', asyncHandler(introspectFederatedPrincipal)
  * ferait déchiffrer une clé Brevo pour enregistrer du texte. `test-send`, lui,
  * EST un acte fournisseur : il redescend par la passerelle, sans exception.
  */
+/*
+ * MODÈLES D'E-MAIL — LECTURE SEULE (1.11.0).
+ *
+ * Les verbes d'écriture (`PUT /:id`, `POST /import`, `POST /:id/versions/:v/
+ * restore`) ont été retirés : le Panel est la seule autorité d'édition, et
+ * aucun projet n'empruntait ces routes. Voir l'en-tête du contrôleur.
+ */
 router.get('/email-templates', asyncHandler(listProjectEmailTemplates));
-router.post('/email-templates/import', asyncHandler(postProjectEmailTemplatesImport));
 router.get('/email-templates/:templateId', asyncHandler(getProjectEmailTemplate));
-router.put('/email-templates/:templateId', asyncHandler(putProjectEmailTemplate));
 router.post('/email-templates/:templateId/preview', asyncHandler(postProjectEmailTemplatePreview));
 router.get('/email-templates/:templateId/readiness', asyncHandler(getProjectEmailTemplateReadiness));
 router.post('/email-templates/:templateId/test-send', asyncHandler(postProjectEmailTemplateTestSend));
-router.get('/email-templates/:templateId/versions', asyncHandler(getProjectEmailTemplateVersions));
-router.get('/email-templates/:templateId/versions/:version', asyncHandler(getProjectEmailTemplateVersion));
-router.post('/email-templates/:templateId/versions/:version/restore', asyncHandler(postProjectEmailTemplateRestore));
 
 export default router;

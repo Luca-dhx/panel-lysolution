@@ -205,12 +205,29 @@ section('5 · §64 — RETRAIT LIVE : C disparaît de l’actif, son contenu SUR
   const actifsApres = await actifsDe(SB);
   check('§64 après retrait, 2 modèles actifs', actifsApres.length === 2);
   check('§2 C ne figure plus dans la vue active', !actifsApres.includes(C));
-  check('§13 le retrait est rapporté', decl.lastReconciliation.removed.includes(C));
+  /**
+   * ── LE RETRAIT EST DÉSORMAIS UN ACTE, PLUS UN CONSTAT (L12.1) ─────────────
+   *
+   * Ce champ s'appelait `removed`, et il ne retirait rien : la réconciliation
+   * se contentait de RECENSER les instances hors déclaration. Elles restaient
+   * actives, éditables dans le Panel, et présentées comme si elles partaient
+   * encore — le parc de TEST en portait deux, silencieusement, depuis des
+   * semaines.
+   *
+   * Il s'appelle `archived` parce qu'il archive. Le nom décrit maintenant ce
+   * qui a lieu, et les trois contrôles qui suivent le vérifient : l'instance
+   * sort de l'actif, sa raison est écrite, son contenu survit.
+   */
+  check('§13 le retrait est un ARCHIVAGE, et il est rapporté',
+    decl.lastReconciliation.archived.includes(C));
 
   /** ── LA PROPRIÉTÉ CENTRALE : RIEN N'A ÉTÉ DÉTRUIT ────────────────────── */
   const instanceC = await PanelEmailTemplate
     .findOne({ templateCode: C, ...scopes.scopeFilter(scopes.projectScope(SB)) }).lean();
   check('§3 l’instance de C existe TOUJOURS en base', Boolean(instanceC));
+  check('§3 elle porte une DATE d’archivage', typeof instanceC.archivedAt === 'string' && instanceC.archivedAt.length > 0);
+  check('§3 elle porte la RAISON de son archivage',
+    /ne déclare plus/i.test(instanceC.archivedReason ?? ''));
   check('§3 sa personnalisation est intacte', instanceC.version === 2
     && instanceC.html.includes('Texte du client, à ne jamais perdre.'));
   const versionsC = await PanelEmailTemplateVersion

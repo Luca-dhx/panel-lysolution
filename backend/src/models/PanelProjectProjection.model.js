@@ -352,6 +352,23 @@ const emailTemplateUsageSchema = new mongoose.Schema(
     declaredAt: { type: String, default: null },
 
     /**
+     * L'EMPREINTE DU CONTRAT DE VARIABLES QUE LE PROJET SAIT SERVIR (L12.1).
+     *
+     * `{ [templateCode]: fingerprint }`. Le projet n'invente rien : il renvoie
+     * l'empreinte que le Panel lui a SERVIE la dernière fois qu'il a lu son
+     * contrat. Elle dit donc exactement une chose — « voici la version du
+     * vocabulaire d'après laquelle mes résolveurs produisent des valeurs ».
+     *
+     * Comparée à celle du registre, elle rend un écart DÉTECTABLE AVANT le
+     * premier envoi raté : ajouter une variable obligatoire, en retirer une ou
+     * en changer le type se voit ici, et non trois semaines plus tard dans un
+     * MISSING_REQUIRED_VARIABLE sur une réinitialisation de mot de passe.
+     *
+     * Vide pour un projet antérieur au lot : c'est `UNDECLARED`, pas une panne.
+     */
+    contractFingerprints: { type: Map, of: String, default: () => new Map() },
+
+    /**
      * CE QUE LE PANEL EN A FAIT — le compte rendu de la dernière
      * réconciliation. Un exploitant doit pouvoir répondre à « pourquoi ce
      * projet n'a-t-il que huit modèles alors qu'il en déclare neuf ? » sans
@@ -366,7 +383,17 @@ const emailTemplateUsageSchema = new mongoose.Schema(
       existing: { type: [String], default: [] },
       unknown: { type: [String], default: [] },
       forbidden: { type: [String], default: [] },
-      removed: { type: [String], default: [] },
+      /**
+       * `archived` a remplacé `removed` (L12.1). L'ancien nom décrivait un
+       * constat sans acte : il listait des instances que rien ne retirait, et
+       * qui restaient donc actives. Le nouveau nomme ce qui a réellement eu
+       * lieu — l'instance est archivée, son historique conservé, l'envoi la
+       * refuse.
+       */
+      archived: { type: [String], default: [] },
+      restored: { type: [String], default: [] },
+      /** Codes dont l'empreinte de contrat déclarée n'est plus celle du registre. */
+      staleContracts: { type: [String], default: [] },
     },
 
     sourceModifiedAt: { type: String, required: true },

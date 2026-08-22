@@ -328,6 +328,8 @@ export async function brevoSendTemplate({ definition, context, credentials, inpu
       templateScopeId: rendered.scopeId,
       templateVersion: rendered.version,
       templateSource: rendered.source,
+      // Le sujet EXACT remis au fournisseur — pas celui d'une copie locale.
+      subject: rendered.subject,
     };
   } catch (error) {
     if (error instanceof CapabilityError) throw error;

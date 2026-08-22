@@ -113,6 +113,29 @@ const panelEmailTemplateSchema = new mongoose.Schema(
     version: { type: Number, default: 1, min: 1 },
 
     updatedBy: { type: String, default: null },
+
+    /**
+     * ── L'ARCHIVE, ET POURQUOI CE N'EST PAS UNE SUPPRESSION (L12.1) ─────────
+     *
+     * Un projet cesse de déclarer un modèle : son instance ne doit plus être
+     * présentée comme utilisable, ni servie à l'envoi. Jusqu'ici la
+     * réconciliation se contentait de la RECENSER dans `removed` — elle restait
+     * donc active, éditable, et affichée comme si elle partait encore.
+     *
+     * Trois issues étaient possibles. La suppression détruirait l'historique
+     * d'édition d'un contenu réellement expédié — un exploitant qui enquête sur
+     * un e-mail d'il y a six mois perdrait la seule trace de ce qui est parti.
+     * La désactivation (`enabled: false`) mentirait sur la cause : « désactivé »
+     * est une décision d'exploitant, or personne n'a rien décidé — c'est le
+     * projet qui a cessé d'en avoir besoin.
+     *
+     * Reste l'archive : l'instance et son historique demeurent, elle disparaît
+     * des listes actives, l'envoi la refuse, et la RAISON est écrite. Une
+     * nouvelle déclaration la réveille telle qu'elle était.
+     */
+    archivedAt: { type: String, default: null },
+    archivedReason: { type: String, default: '' },
+
     createdAt: { type: String, required: true },
     updatedAt: { type: String, required: true },
   },

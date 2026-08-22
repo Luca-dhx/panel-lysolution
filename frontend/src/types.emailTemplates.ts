@@ -94,6 +94,17 @@ export interface EmailTemplateSummary {
    */
   configured: boolean;
   /**
+   * L'INSTANCE EST-ELLE ARCHIVÉE ? (L12.1)
+   *
+   * `true` = le projet a cessé de déclarer ce code. L'instance et son
+   * historique sont conservés — l'archive n'existe que pour cela — mais l'envoi
+   * la refuse et la projection servie au projet ne la contient plus.
+   *
+   * Elle reste visible ICI, et seulement ici : c'est le seul endroit d'où l'on
+   * peut relire le contenu écrit avant le retrait.
+   */
+  archived?: boolean;
+  /**
    * CE PROJET DÉCLARE-T-IL ENCORE CE MODÈLE ? — trois valeurs, trois sens.
    *
    *   true   il l'utilise : modèle ACTIF ;
@@ -125,6 +136,10 @@ export interface EmailTemplateDetail {
   html: string;
   enabled: boolean;
   configured: boolean;
+  /** Voir `archived` sur le résumé : conservé, hors service, relisible ici. */
+  archived?: boolean;
+  archivedAt?: string | null;
+  archivedReason?: string;
   version: number;
   source: EmailTemplateSource;
   scope: EmailTemplateScopeBadge;

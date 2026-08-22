@@ -809,9 +809,11 @@ export function EmailTemplatesPage() {
                 Modèles précédemment utilisés ({templates.filter((t) => t.declared === false).length})
               </summary>
               <p className="muted">
-                Ce projet ne les déclare plus. Leur contenu et leur historique sont
-                CONSERVÉS : s’il les réutilise, il les retrouvera tels quels. Tout
-                envoi de ces modèles est refusé tant qu’ils ne sont pas redéclarés.
+                Ce projet ne les déclare plus : leurs instances sont ARCHIVÉES. Leur
+                contenu et leur historique sont CONSERVÉS — s’il les réutilise, il les
+                retrouvera tels quels, à la version où ils avaient été laissés. Tout
+                envoi de ces modèles est refusé tant qu’ils ne sont pas redéclarés, et
+                ils ne figurent plus dans ce que le projet consulte.
               </p>
               <div className="template-list">
                 {templates.filter((t) => t.declared === false).map((template) => (
@@ -826,7 +828,9 @@ export function EmailTemplatesPage() {
                       <p className="template-code">{template.templateId}</p>
                     </div>
                     <div className="template-list-meta">
-                      <span className="badge badge-muted">Non utilisé</span>
+                      <span className="badge badge-muted">
+                        {template.archived ? 'Archivé' : 'Non utilisé'}
+                      </span>
                       <span className="muted">{template.configured ? `v${template.version}` : '—'}</span>
                     </div>
                   </button>

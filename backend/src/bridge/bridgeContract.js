@@ -63,7 +63,7 @@ import { z } from 'zod';
 //   champ inconnu fait refuser le message ENTIER. Le projet ne les publie donc
 //   qu'à un Panel qui a ANNONCÉ savoir les lire (voir `panelSpeaks` côté
 //   projet). Compatible 1.0.x à 1.9.x.
-export const CONTRACT_VERSION = '1.10.0';
+export const CONTRACT_VERSION = '1.11.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -229,7 +229,16 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
   'CONTRACT_DOCUMENT',
   'DEV_COMPANY',
   'TEAM_MEMBER',
-  'EMAIL_TEMPLATE',
+  /*
+   * `EMAIL_TEMPLATE` a ete RETIRE en 1.11.0.
+   *
+   * Il figurait ici depuis l'origine sans qu'aucun emetteur ne le produise ni
+   * qu'aucun projecteur ne l'applique : une entite declaree que rien ne
+   * synchronisait. La garder aurait fait croire, a la lecture du contrat, que
+   * le contenu des modeles voyage entre le Panel et les projets. Il ne voyage
+   * pas, et il ne doit pas : le Panel est la seule autorite de contenu, et le
+   * projet ne consomme que la projection en lecture du pont.
+   */
   'INTEGRATED_API_CONFIG',
   'INTEGRATED_API_MODE',
   'EVENT',
@@ -271,6 +280,29 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * CONTRAT (quels codes existent, leurs variables) et du CONTENU.
    */
   'PROJECT_EMAIL_TEMPLATE_USAGE',
+  /**
+   * >= 1.11.0 — UN INCIDENT TECHNIQUE DURABLE, poussé par le projet.
+   *
+   * ══ POURQUOI L'ALERTE REMONTE AU LIEU DE PARTIR DU PROJET ═════════════════
+   *
+   * Le projet envoyait lui-même cette alerte, avec le modèle
+   * `PLATFORM_INCIDENT_DEV_ALERT`. Elle ne pouvait structurellement pas
+   * aboutir : ce modèle est une communication de L.Y Solution — il nomme des
+   * composants internes et ne porte jamais l'apparence d'un client — donc de
+   * portée PANEL, et un projet ne peut pas demander une portée PANEL. Chaque
+   * incident finissait en refus silencieux.
+   *
+   * Le corriger en basculant le modèle en portée PROJECT aurait fait entrer
+   * une communication interne dans le catalogue éditable d'un client, pour la
+   * seule raison que l'appel venait de là. L'ownership suit la communication,
+   * pas l'origine des faits.
+   *
+   * Le projet RAPPORTE donc le fait ; le control plane décide s'il alerte, qui
+   * il alerte, et avec quel contenu. Il gagne au passage la file durable et le
+   * rejeu : un incident survenu pendant que le Panel était injoignable — le cas
+   * le plus probable — n'est plus perdu.
+   */
+  'PLATFORM_INCIDENT',
   /**
    * >= 1.6.x — RETOUR DE LIVRAISON D'UN E-MAIL, poussé par le Panel (L8.4C).
    *
@@ -420,6 +452,11 @@ export const APPLIED_ENTITY_TYPES = Object.freeze([
    * ne decoulerait — exactement le mensonge que ce couple de listes evite.
    */
   'PROJECT_EMAIL_TEMPLATE_USAGE',
+  /**
+   * >= 1.11.0 — l'incident technique du projet. Reellement applique : son
+   * projecteur inscrit l'incident au suivi du projet et decide de l'alerte.
+   */
+  'PLATFORM_INCIDENT',
 ]);
 
 export const EMITTERS = Object.freeze({ PANEL: 'PANEL', PROJECT: 'PROJECT' });
@@ -936,7 +973,54 @@ export const emailTemplateUsagePayloadSchema = z
     revision: z.string().min(1).max(128),
     /** Horloge du projet — informatif ; `modifiedAt` arbitre le LWW. */
     declaredAt: isoDate.optional(),
+    /**
+     * L'EMPREINTE DU CONTRAT DE VARIABLES QUE LE PROJET SAIT SERVIR (1.11.0).
+     *
+     * `{ [templateCode]: fingerprint }`. Le projet n'invente rien : il renvoie
+     * l'empreinte que le Panel lui a servie. Elle rend detectable AVANT le
+     * premier envoi rate le fait qu'une variable soit devenue obligatoire, ait
+     * disparu ou ait change de type depuis que ce projet a lu son contrat.
+     *
+     * Optionnelle : un projet anterieur au lot n'en envoie pas, et ce n'est pas
+     * une panne — c'est un contrat non declare, que le Panel sait nommer.
+     */
+    contractFingerprints: z.record(z.string().min(1).max(80), z.string().max(64)).optional(),
     softwareVersion: z.string().max(64).nullable().optional(),
+  })
+  .strict();
+
+/**
+ * L'INCIDENT TECHNIQUE D'UN PROJET (1.11.0) — des FAITS, jamais un ordre.
+ *
+ * Le projet ne nomme ni modele, ni destinataire, ni sujet : il decrit ce qui
+ * est tombe. Lui laisser nommer le modele rouvrirait la porte que ce lot ferme
+ * — un projet choisissant le contenu d'une communication de L.Y Solution.
+ *
+ * `kind` est un vocabulaire ferme : un message libre aurait fini par porter une
+ * trace d'exception, donc potentiellement un secret, dans un e-mail.
+ */
+export const platformIncidentPayloadSchema = z
+  .object({
+    kind: z.enum([
+      'CAPABILITY_FAILURE',
+      'PANEL_PROJECTION_FAILURE',
+      'DEPLOYMENT_FAILURE',
+      'SERVICE_UNAVAILABLE',
+    ]),
+    /** Le composant precis : `billing.checkout.create`, `CONTRACT`, un run... */
+    component: z.string().min(1).max(120),
+    environment: z.enum(['TEST', 'PROD']),
+    occurrences: z.number().int().positive(),
+    firstSeenAt: z.string().min(1).max(40),
+    /** Erreur DEJA rendue sure par le projet : code stable + message court. */
+    error: z
+      .object({
+        code: z.string().max(80).default(''),
+        message: z.string().max(400).default(''),
+      })
+      .strict(),
+    /** L'evenement de domaine qui l'a produit, pour la correlation. */
+    eventId: z.string().max(64).nullable().optional(),
   })
   .strict();
 

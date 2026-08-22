@@ -479,6 +479,26 @@ const emailSendTemplateOutput = z.object({
   templateScopeId: z.string().nullable().optional(),
   templateVersion: z.number().int().min(0).optional(),
   templateSource: z.enum(['PANEL', 'PROJECT', 'REGISTRY_DEFAULT']).optional(),
+
+  /**
+   * LE SUJET RÉELLEMENT EXPÉDIÉ — la dernière copie locale à disparaître (L12.1).
+   *
+   * ── CE QUE LE PROJET AFFICHAIT, ET POURQUOI C'ÉTAIT FAUX ──────────────────
+   *
+   * Son suivi de livraison portait un `subjectSnapshot` lu dans SA base : le
+   * sujet du modèle local, qu'un écran du Manager pouvait éditer et que le
+   * Panel n'a jamais expédié. L'audit a mesuré l'écart — sept modèles sur
+   * quatorze divergeaient — et personne ne pouvait le voir : l'écran affichait
+   * un sujet avec la même assurance qu'un fait.
+   *
+   * Un champ qui prétend décrire ce qui est parti doit décrire ce qui est
+   * parti. Le seul composant qui sait est celui qui vient de rendre.
+   *
+   * Facultatif pour la même raison que les champs ci-dessus : un rejeu
+   * (`ALREADY_SENT`) ne re-résout pas le modèle, et la livraison porte déjà le
+   * sujet enregistré au premier envoi — qui est la vérité de CE message.
+   */
+  subject: z.string().max(300).optional(),
 }).strict();
 
 /* -------------------------------------------------------------------------- */

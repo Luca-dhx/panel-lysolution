@@ -23,10 +23,12 @@ import {
   contractPayloadSchema,
   emailTemplateUsagePayloadSchema,
   nowIso,
+  platformIncidentPayloadSchema,
   projectPresentationPayloadSchema,
   siteStatusPayloadSchema,
   teamMemberPayloadSchema,
 } from '../../bridge/bridgeContract.js';
+import logger from '../../utils/logger.js';
 import { PanelDiagnostic } from '../../models/PanelSyncState.model.js';
 export { stampOf } from './projectGeneration.js';
 import {
@@ -385,6 +387,7 @@ async function applyProjectEmailTemplateUsage({ projectId, change, stamp }) {
         templateCodes: u.templateCodes,
         revision: u.revision,
         declaredAt: u.declaredAt ?? null,
+        contractFingerprints: u.contractFingerprints ?? {},
         sourceModifiedAt: change.modifiedAt,
         ...stamp,
       },
@@ -407,6 +410,33 @@ async function applyProjectEmailTemplateUsage({ projectId, change, stamp }) {
     actor: { userId: 'bridge', userEmail: '' },
   });
 
+  /**
+   * LE CONTRÔLE DE COMPATIBILITÉ, ICI ET PAS À L'ENVOI (L12.1).
+   *
+   * Le projet vient d'annoncer l'empreinte du vocabulaire d'après lequel ses
+   * résolveurs produisent des valeurs. C'est le seul instant où l'on peut
+   * comparer AVANT qu'un e-mail ne soit demandé — attendre l'envoi, c'est
+   * découvrir l'écart sur une réinitialisation de mot de passe.
+   *
+   * Un écart est SIGNALÉ, jamais bloquant : seul le rendu sait si les valeurs
+   * réellement fournies suffisent, et refuser d'avance interdirait des envois
+   * parfaitement rendables au motif qu'un type a été précisé.
+   */
+  const { describeContractCompatibility } = await import(
+    '../email/panelEmailTemplateContract.js'
+  );
+  const compatibilite = describeContractCompatibility(
+    u.contractFingerprints ?? {},
+    u.templateCodes,
+  );
+  if (compatibilite.stale.length) {
+    logger.warn(
+      `[email] ${projectId} — contrat de variables PÉRIMÉ pour ${compatibilite.stale.length} `
+      + `modèle(s) : ${compatibilite.stale.join(', ')}. Ce projet produit ses valeurs d'après `
+      + 'un vocabulaire qui n’est plus celui du registre — un envoi peut échouer.',
+    );
+  }
+
   await PanelProjectEmailTemplateUsage.updateOne(
     { projectId },
     {
@@ -417,11 +447,40 @@ async function applyProjectEmailTemplateUsage({ projectId, change, stamp }) {
           existing: rapport.existing,
           unknown: rapport.unknown,
           forbidden: rapport.forbidden,
-          removed: rapport.removed,
+          archived: rapport.archived,
+          restored: rapport.restored,
+          staleContracts: compatibilite.stale,
         },
       },
     },
   );
+}
+
+/**
+ * L'INCIDENT TECHNIQUE D'UN PROJET (1.11.0).
+ *
+ * ── POURQUOI IL N'Y A RIEN À PERSISTER DE PLUS QUE LA CHRONOLOGIE ───────────
+ *
+ * Un incident est un FAIT daté, pas un état qui converge : il n'a pas de
+ * « dernière valeur » à réconcilier, et deux incidents ne s'écrasent pas l'un
+ * l'autre. Lui donner une collection dédiée aurait créé un doublon de la
+ * chronologie de supervision, qui répond déjà exactement à « que s'est-il
+ * passé sur ce projet, et quand ».
+ *
+ * `handleProjectIncident` inscrit donc l'événement PUIS décide de l'alerte, et
+ * ne lève jamais : une alerte non partie ne doit pas faire rejeter la
+ * synchronisation qui l'a apportée — le projet la rejouerait sans fin, et une
+ * panne d'e-mail deviendrait une panne de pont.
+ */
+async function applyPlatformIncident({ projectId, change }) {
+  if (change.deleted) return; // un incident ne se retire pas : il a eu lieu.
+
+  const incident = parsePayload(platformIncidentPayloadSchema, change.payload, 'PLATFORM_INCIDENT');
+
+  const { handleProjectIncident } = await import(
+    '../supervision/platformIncidentAlerting.service.js'
+  );
+  await handleProjectIncident({ projectId, incident });
 }
 
 export const PROJECTORS = Object.freeze({
@@ -431,6 +490,7 @@ export const PROJECTORS = Object.freeze({
   TEAM_MEMBER: applyTeamMember,
   PROJECT_SITE_STATUS: applyProjectSiteStatus,
   PROJECT_EMAIL_TEMPLATE_USAGE: applyProjectEmailTemplateUsage,
+  PLATFORM_INCIDENT: applyPlatformIncident,
 });
 
 /** Types réellement appliqués — dérivés de la table, jamais réécrits à côté. */

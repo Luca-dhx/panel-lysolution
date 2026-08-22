@@ -292,6 +292,16 @@ export const EVENT_TYPES = Object.freeze({
    * donnée : on relit un journal pour trouver les pannes, pas pour filtrer les
    * rétablissements.
    */
+  /**
+   * L12.1 — UN INCIDENT TECHNIQUE DURABLE RAPPORTÉ PAR UN PROJET.
+   *
+   * Écrit à la réception de l'entité `PLATFORM_INCIDENT`, AVANT toute
+   * tentative d'alerte : le suivi doit porter l'incident même si l'e-mail
+   * échoue. Un incident qui n'existe qu'à travers un e-mail parti disparaît
+   * exactement le jour où l'envoi tombe en panne — c'est-à-dire le jour où on
+   * en a le plus besoin.
+   */
+  PLATFORM_INCIDENT_RAISED: 'PLATFORM_INCIDENT_RAISED',
   PROJECT_BRIDGE_DEGRADED: 'PROJECT_BRIDGE_DEGRADED',
   PROJECT_BRIDGE_RECOVERED: 'PROJECT_BRIDGE_RECOVERED',
 });

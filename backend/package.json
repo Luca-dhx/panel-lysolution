@@ -45,6 +45,8 @@
     "test:manifest": "node ../tests/manifest.test.js",
     "test:template-provisioning": "node ../tests/email-template-provisioning-lifecycle.test.js",
     "test:template-declaration": "node ../tests/email-template-declaration-lifecycle.test.js",
+    "test:incident-dispatch": "node ../tests/platform-incident-dispatch.test.js",
+    "test:variable-contract": "node ../tests/email-variable-contract.test.js",
     "test:no-undef": "node ../tests/undefined-identifier.test.js",
     "test:invoice-archival": "node ../tests/stripe-invoice-archival.test.js",
     "test:capabilities": "node ../tests/capabilities.test.js",
