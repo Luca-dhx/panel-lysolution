@@ -903,6 +903,24 @@ section('16. Le webhook ne dit rien du règlement — la facture, elle, le dit')
     dejaConnu.corroboration.paymentIntentId === 'pi_l13_presta');
 
   /**
+   * ── LE GARDE-FOU SE REFERME, ET UNE SEULE FOIS ────────────────────────────
+   *
+   * « Soldé » ne suffisait pas : un encaissement peut porter ses chiffres et
+   * pas son identité de règlement — c'est le cas de tous ceux qui ont été
+   * soldés avant que la relecture n'existe. Un tel fait n'est pas « déjà
+   * fait », et on le laisse repasser UNE fois. Maintenant qu'il est complet,
+   * il ne repasse plus.
+   */
+  const apresApprentissage = await reglement.captureSettlementForFact(fait.factId);
+  check('un encaissement COMPLET n’est plus jamais réinterrogé',
+    apresApprentissage.outcome === 'ALREADY_SETTLED');
+
+  const charges = await PanelFinancialTransaction.countDocuments({
+    'provenance.externalId': 'txn_l13_muet',
+  });
+  check('…et le repassage n’a produit aucune seconde charge', charges === 1);
+
+  /**
    * UNE FACTURE SOLDÉE SANS RÈGLEMENT — avoir, ou solde client. Aucun euro n'a
    * traversé le réseau de cartes, donc aucune commission. C'est une IMPASSE,
    * et le compteur de tentatives doit la borner.

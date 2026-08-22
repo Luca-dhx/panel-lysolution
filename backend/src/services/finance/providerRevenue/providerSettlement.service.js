@@ -421,8 +421,26 @@ export async function captureSettlementForFact(factId, { fetchImpl } = {}) {
      * C'est le garde-fou le plus rapide du module, et celui que traversent tous
      * les rejeux de webhook : un paiement dont les frais sont connus n'est
      * jamais réinterrogé, quel que soit le nombre d'annonces qui le suivent.
+     *
+     * ══ « SOLDÉ » NE SUFFIT PAS : IL FAUT AUSSI « COMPLET » ═════════════════
+     *
+     * Un encaissement peut porter ses chiffres et ne pas porter son IDENTITÉ de
+     * règlement — c'est le cas de tous ceux qui ont été soldés avant que la
+     * relecture de facture n'existe. Or le remboursement de L10.4 a besoin de
+     * cette identité, et sans elle le Panel ne peut plus rendre l'argent.
+     *
+     * Un tel fait n'est donc pas « déjà fait » : il lui manque quelque chose de
+     * réparable. On laisse passer, UNE fois — dès que l'intention est apprise,
+     * ce garde-fou se referme pour toujours. Les montants, eux, ne bougeront
+     * pas : `shouldReplaceSettlement` refuse de remplacer un `SETTLED`, et
+     * l'index unique refuse une seconde charge.
+     *
+     * Un remboursement est exempté : son identité canonique EST son `re_…`, il
+     * n'a aucune intention à apprendre.
      */
-    if (fait.settlement?.status === SETTLEMENT_STATUS.SETTLED) {
+    const complet = fait.kind === FACT_KIND.REFUND
+      || Boolean(fait.corroboration?.paymentIntentId);
+    if (fait.settlement?.status === SETTLEMENT_STATUS.SETTLED && complet) {
       return {
         ...rien,
         outcome: SETTLEMENT_OUTCOME.ALREADY_SETTLED,
