@@ -163,8 +163,23 @@ export function shouldReplaceSettlement(existant, entrant) {
  *
  * Un REVENU, lui, n'a pas d'écriture propre : ni une facture ni une session ne
  * touchent le solde. C'est le DÉBIT qui le fait, et on le rejoint par
- * l'intention — la référence la plus stable, celle que Stripe n'a pas déplacée.
- * Le débit direct reste le repli des charges utiles anciennes.
+ * l'intention quand la charge utile l'a donnée, par le débit sinon.
+ *
+ * ══ ET QUAND LE WEBHOOK N'A DONNÉ NI L'UNE NI L'AUTRE ═══════════════════════
+ *
+ * C'est le cas NOMINAL sur un compte récent, et la recette réelle l'a montré :
+ * en `2026-06-24.dahlia`, un `invoice.paid` ne porte ni `charge`, ni
+ * `payment_intent`, ni `payments.data`. Les deux premières voies tombent
+ * ensemble — exactement comme en L10.7.
+ *
+ * On repart alors de ce que le Panel possède à coup sûr : **l'identité
+ * canonique du fait**. La facture, lui, ne bouge pas d'une version d'API à
+ * l'autre, et le fournisseur la relira avec la version ÉPINGLÉE du Panel, où le
+ * règlement est présent. Une convergence ne doit jamais dépendre du champ qu'un
+ * webhook expose ce mois-ci.
+ *
+ * L'ordre reste du plus DIRECT au plus DÉRIVÉ : ce que la charge utile affirme
+ * d'abord, la relecture ensuite — un appel de moins quand elle suffit.
  */
 export function settlementReferenceOf(fait) {
   if (fait?.kind === FACT_KIND.REFUND || fait?.objectType === CANONICAL_TYPES.REFUND) {
@@ -174,6 +189,17 @@ export function settlementReferenceOf(fait) {
   if (intention) return { paymentIntentId: intention };
   const debit = fait?.corroboration?.chargeId;
   if (debit) return { chargeId: debit };
+  /**
+   * LE REPLI QUI FERME LE DÉFAUT — l'objet canonique lui-même.
+   *
+   * Réservé à la FACTURE : une session sans facture porte toujours son
+   * `payment_intent` (Stripe ne l'en a pas retiré), et la relire n'apprendrait
+   * rien de plus. Étendre le repli à tout objet canonique aurait ajouté un
+   * appel fournisseur là où la charge utile suffit.
+   */
+  if (fait?.objectType === CANONICAL_TYPES.INVOICE && fait?.objectId) {
+    return { invoiceId: fait.objectId };
+  }
   return null;
 }
 
@@ -428,11 +454,19 @@ export async function captureSettlementForFact(factId, { fetchImpl } = {}) {
 
     const reference = settlementReferenceOf(fait);
     if (!reference) {
+      /**
+       * LE COMPTEUR MONTE, MÊME SANS APPEL — et c'est ce qui borne la file.
+       *
+       * `UNAVAILABLE` est réexaminé à chaque cycle depuis que la recette a
+       * montré qu'un tel verdict pouvait devenir faux. Sans incrémenter ici, un
+       * fait sans aucune référence resterait dans la file pour l'éternité, et
+       * l'ordonnanceur le relirait toutes les heures sans fin.
+       */
       await inscrire(fait, {
         status: SETTLEMENT_STATUS.UNAVAILABLE,
         reason: SETTLEMENT_REASON.NO_PAYMENT_REFERENCE,
         provider: PROVIDER,
-      });
+      }, { incrementer: true });
       return { ...rien, outcome: SETTLEMENT_OUTCOME.UNAVAILABLE, reason: SETTLEMENT_REASON.NO_PAYMENT_REFERENCE };
     }
 
@@ -604,17 +638,33 @@ export async function convergePendingSettlements({ limit = 100, fetchImpl } = {}
     transactionId: { $ne: null },
     environment: runtimeEnvironment(),
     /**
-     * `null` et `PENDING` — mais PAS `UNAVAILABLE` ni `UNUSABLE`.
+     * `null`, `PENDING` et `UNAVAILABLE` — mais PAS `UNUSABLE`.
      *
-     * Ces deux-là sont des verdicts, pas des attentes : réinterroger un
-     * paiement sans débit ou dans une devise non gérée produirait le même refus
-     * à chaque cycle, pour toujours. Ils restent lisibles dans la file de
-     * diagnostic, et un rattrapage explicite peut les forcer.
+     * ══ POURQUOI `UNAVAILABLE` REVIENT DANS LA FILE ═════════════════════════
+     *
+     * Il a d'abord été exclu, avec une raison qui semblait bonne : « il n'y a
+     * rien à attendre ». La recette réelle a montré que c'était faux — et de la
+     * pire façon, celle qui ne lève aucune erreur.
+     *
+     * Un `invoice.paid` du compte de recette ne porte, dans sa version d'API,
+     * NI `charge`, NI `payment_intent`, NI `payments.data`. Le verdict
+     * `NO_PAYMENT_REFERENCE` était donc exact au moment où il a été rendu, et
+     * il est devenu faux dès qu'une voie de résolution supplémentaire a existé.
+     * Exclu de la file, il aurait figé une commission manquante pour toujours,
+     * en silence.
+     *
+     * Un verdict n'est vrai que pour le code qui l'a produit. Ce qui borne
+     * réellement le coût n'est pas le statut, c'est le COMPTEUR DE TENTATIVES —
+     * il est là pour ça, et il suffit.
+     *
+     * `UNUSABLE` reste dehors : une devise non gérée ne dépend d'aucune
+     * résolution, elle dépend d'une décision comptable que ce lot n'a pas prise.
      */
     $or: [
       { 'settlement.status': null },
       { 'settlement.status': { $exists: false } },
       { 'settlement.status': SETTLEMENT_STATUS.PENDING },
+      { 'settlement.status': SETTLEMENT_STATUS.UNAVAILABLE },
     ],
     'settlement.attempts': { $lt: MAX_TENTATIVES_SETTLEMENT },
   })

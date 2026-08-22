@@ -64,6 +64,7 @@ import {
   retrievePaymentSettlement,
   retrieveChargeSettlement,
   retrieveRefundSettlement,
+  retrieveInvoicePayment,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
@@ -1814,7 +1815,9 @@ async function portalCreate({ definition, context, credentials, input, fetchImpl
  * Stripe n'a rien prélevé. L'appelant réessaiera ; c'est la convergence.
  */
 async function settlementRetrieve({ definition, credentials, input, fetchImpl }) {
-  const { paymentIntentId, chargeId, refundId } = input;
+  const { refundId } = input;
+  let { paymentIntentId, chargeId } = input;
+  const { invoiceId } = input;
 
   /** Secondes Stripe — le contrat de sortie les rend telles quelles. */
   const secondes = (date) => (date instanceof Date ? Math.floor(date.getTime() / 1000) : null);
@@ -1882,7 +1885,42 @@ async function settlementRetrieve({ definition, credentials, input, fetchImpl })
     });
   }
 
-  if (chargeId) {
+  /**
+   * ── LA FACTURE MÈNE À SON RÈGLEMENT, ET C'EST UNE RELECTURE ─────────────
+   *
+   * Le webhook n'a rien dit du règlement — voir le contrat d'entrée. On relit
+   * donc la facture chez le fournisseur, avec la version d'API épinglée du
+   * Panel, et l'on repart de ce qu'elle désigne. Aucune donnée n'est devinée :
+   * si la facture ne désigne rien, c'est une IMPASSE, et on le dit.
+   */
+  if (invoiceId) {
+    const res = await guard(definition, () => retrieveInvoicePayment({
+      credentials, invoiceId, timeoutMs: definition.timeoutMs, fetchImpl,
+    }));
+    const facture = res.invoice ?? {};
+    const reglements = Array.isArray(facture.payments?.data) ? facture.payments.data : [];
+    paymentIntentId = typeof facture.payment_intent === 'string'
+      ? facture.payment_intent
+      : (facture.payment_intent?.id ?? null);
+    for (const r of reglements) {
+      if (paymentIntentId) break;
+      const pi = r?.payment?.payment_intent;
+      paymentIntentId = typeof pi === 'string' ? pi : (pi?.id ?? null);
+    }
+    chargeId = typeof facture.charge === 'string' ? facture.charge : (facture.charge?.id ?? null);
+
+    if (!paymentIntentId && !chargeId) {
+      /**
+       * UNE FACTURE PAYÉE SANS RÈGLEMENT DÉSIGNÉ — c'est le cas d'une facture
+       * soldée par un avoir ou par le solde du client. Aucun euro n'a traversé
+       * le réseau de cartes, donc aucune commission n'a été prélevée. Il n'y a
+       * rien à attendre : c'est une impasse, pas une attente.
+       */
+      return vide(SETTLEMENT_STATUS.UNAVAILABLE, SETTLEMENT_REASON.NO_PAYMENT_REFERENCE);
+    }
+  }
+
+  if (chargeId && !paymentIntentId) {
     const res = await guard(definition, () => retrieveChargeSettlement({
       credentials, chargeId, timeoutMs: definition.timeoutMs, fetchImpl,
     }));

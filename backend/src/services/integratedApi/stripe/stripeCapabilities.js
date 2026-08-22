@@ -405,13 +405,26 @@ const settlementRetrieveInput = z.object({
   paymentIntentId: z.string().trim().min(1).max(255).optional(),
   chargeId: z.string().trim().min(1).max(255).optional(),
   refundId: z.string().trim().min(1).max(255).optional(),
+  /**
+   * LA FACTURE — LA SEULE RÉFÉRENCE QUE LE PANEL POSSÈDE À COUP SÛR.
+   *
+   * Observation de recette réelle : en `2026-06-24.dahlia`, un `invoice.paid`
+   * ne porte ni `charge`, ni `payment_intent`, ni `payments.data`. Un fait de
+   * revenu facturé n'a donc AUCUNE référence de règlement à présenter — mais il
+   * a son identité canonique. Le verbe la relit chez le fournisseur, avec la
+   * version d'API ÉPINGLÉE du Panel, où le règlement est présent.
+   *
+   * C'est la même leçon que L10.7 : ne jamais faire dépendre une convergence du
+   * champ qu'un webhook expose ce mois-ci.
+   */
+  invoiceId: z.string().trim().min(1).max(255).optional(),
 }).strict().superRefine((valeur, ctx) => {
-  const fournies = ['paymentIntentId', 'chargeId', 'refundId'].filter((k) => valeur[k]);
+  const fournies = ['paymentIntentId', 'chargeId', 'refundId', 'invoiceId'].filter((k) => valeur[k]);
   if (fournies.length !== 1) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['paymentIntentId'],
-      message: 'Exactement une référence est attendue : intention, débit, ou remboursement.',
+      message: 'Exactement une référence est attendue : intention, débit, remboursement, ou facture.',
     });
   }
 });

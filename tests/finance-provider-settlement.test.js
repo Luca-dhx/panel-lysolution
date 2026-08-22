@@ -59,6 +59,8 @@ const appels = [];
 const ecritures = new Map();
 /** Débits sans écriture — le cas « pas encore arrêté par le fournisseur ». */
 const debitsSansEcriture = new Set();
+/** Ce que la RELECTURE d'une facture rend, par opposition à ce que le webhook dit. */
+const facturesReglees = new Map();
 
 const ecriture = ({ id, source, amount, fee, net, type = 'charge', status = 'pending' }) => ({
   id,
@@ -110,6 +112,22 @@ const fauxStripe = http.createServer(async (req, res) => {
         balance_transaction: ecritures.get(chargeId) ?? null,
       },
     });
+  }
+
+  /**
+   * LA FACTURE, RELUE AVEC LA VERSION D'API DU PANEL.
+   *
+   * Le webhook du compte de recette (`2026-06-24.dahlia`) ne porte NI `charge`,
+   * NI `payment_intent`, NI `payments.data` sur un `invoice.paid`. La relecture,
+   * elle, les rend — c'est tout l'objet du repli par l'objet canonique. Le faux
+   * Stripe reproduit exactement cet écart.
+   */
+  const factureLue = /^\/v1\/invoices\/([^/?]+)/.exec(req.url ?? '');
+  if (req.method === 'GET' && factureLue) {
+    const id = decodeURIComponent(factureLue[1]);
+    const regle = facturesReglees.get(id);
+    if (!regle) return repondre(404, { error: { code: 'resource_missing' } });
+    return repondre(200, regle);
   }
 
   const remboursement = /^\/v1\/refunds\/([^/?]+)/.exec(req.url ?? '');
@@ -772,6 +790,151 @@ section('15. Aucun écran financier n’appelle le fournisseur');
   check('le détail d’un mouvement non plus', appels.length === avant && detail.status === 200);
   check('…et il porte l’écriture de solde dans ses références techniques',
     detail.json.data.providerFact?.settlement?.balanceTransactionId === 'txn_l13_presta');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('16. Le webhook ne dit rien du règlement — la facture, elle, le dit');
+/* ══════════════════════════════════════════════════════════════════════════ */
+{
+  /**
+   * LE DÉFAUT QUE LA RECETTE DÉPLOYÉE A RÉVÉLÉ, ET QU'AUCUN CONTRÔLE LOCAL
+   * N'AURAIT ATTRAPÉ.
+   *
+   * Le compte de recette émet ses webhooks en `2026-06-24.dahlia`. Dans cette
+   * version, un `invoice.paid` ne porte NI `charge`, NI `payment_intent`, NI
+   * `payments.data` — la sous-liste arrive VIDE et exige une expansion. Le fait
+   * normalisé n'avait donc aucune référence de règlement, et la capture rendait
+   * `NO_PAYMENT_REFERENCE` : honnête, et sans issue.
+   *
+   * C'est le même défaut qu'en L10.7, un champ plus loin. La correction est
+   * donc la même doctrine : ne pas dépendre du champ qu'un webhook expose, mais
+   * repartir de l'identité CANONIQUE que le Panel possède, et relire chez le
+   * fournisseur avec SA version d'API épinglée.
+   */
+  const nue = facture({
+    id: 'in_l13_webhook_muet',
+    number: 'FA-2026-0102',
+    /** Ce que la version récente NE dit PAS. */
+    payment_intent: undefined,
+    charge: undefined,
+    payments: { data: [] },
+  });
+  delete nue.payment_intent;
+  delete nue.charge;
+
+  /** La relecture, elle, rend le règlement — comme le vrai Stripe. */
+  facturesReglees.set('in_l13_webhook_muet', {
+    id: 'in_l13_webhook_muet',
+    object: 'invoice',
+    payments: { data: [{ status: 'paid', payment: { payment_intent: 'pi_l13_muet' } }] },
+  });
+  ecritures.set('ch_l13_muet', ecriture({
+    id: 'txn_l13_muet', source: 'ch_l13_muet', amount: 12_000, fee: 205, net: 11_795,
+  }));
+
+  /**
+   * L'APPARTENANCE SE PROUVE PAR LA FACTURE ELLE-MÊME.
+   *
+   * Sans intention à plat, le normalisateur n'a plus de filiation à proposer :
+   * c'est exactement la situation de L10.7, et c'est le graphe interne qui
+   * répond — la session a lié sa facture avant même qu'elle soit payée.
+   */
+  await lier(PROJET, 'INVOICE', 'in_l13_webhook_muet');
+
+  const recu = await projection.recordStripeRevenueEvent({
+    environment: 'TEST',
+    eventType: 'invoice.paid',
+    payload: evenement('invoice.paid', nue),
+    providerEventId: 'evt_l13_muet',
+  });
+  check('le revenu est porté au registre malgré un webhook muet',
+    recu.status === 'PROJECTED');
+
+  const fait = await factOf('in_l13_webhook_muet');
+  check('le fait ne porte AUCUNE référence de règlement — c’est le fait observé',
+    !fait.corroboration?.paymentIntentId && !fait.corroboration?.chargeId);
+  check('…et la résolution repart alors de l’objet CANONIQUE',
+    reglement.settlementReferenceOf(fait).invoiceId === 'in_l13_webhook_muet');
+
+  await projection.settleProjectedFact(fait.factId);
+  const solde = await factOf('in_l13_webhook_muet');
+  check('la commission est retrouvée par relecture de la facture',
+    solde.settlement.status === 'SETTLED'
+    && solde.settlement.balanceTransactionId === 'txn_l13_muet'
+    && solde.settlement.providerFeeCents === 205);
+  check('…et la charge est écrite au registre',
+    (await txOf(solde.settlement.feeTransactionId))?.amountCents === 205);
+  check('brut − frais = net, sur les chiffres du fournisseur',
+    solde.settlement.grossCents - solde.settlement.providerFeeCents === solde.settlement.netCents);
+
+  /**
+   * UNE FACTURE SOLDÉE SANS RÈGLEMENT — avoir, ou solde client. Aucun euro n'a
+   * traversé le réseau de cartes, donc aucune commission. C'est une IMPASSE,
+   * et le compteur de tentatives doit la borner.
+   */
+  facturesReglees.set('in_l13_sans_reglement', {
+    id: 'in_l13_sans_reglement', object: 'invoice', payments: { data: [] },
+  });
+  const avoir = facture({ id: 'in_l13_sans_reglement', number: 'FA-2026-0103' });
+  delete avoir.payment_intent;
+  delete avoir.charge;
+  await lier(PROJET, 'INVOICE', 'in_l13_sans_reglement');
+  await projection.recordStripeRevenueEvent({
+    environment: 'TEST',
+    eventType: 'invoice.paid',
+    payload: evenement('invoice.paid', avoir),
+    providerEventId: 'evt_l13_avoir',
+  });
+  const sansFrais = await factOf('in_l13_sans_reglement');
+  check('une facture sans règlement est une IMPASSE nommée',
+    sansFrais.settlement.status === 'UNAVAILABLE'
+    && sansFrais.settlement.reason === 'NO_PAYMENT_REFERENCE');
+  check('…et aucune charge n’est inventée',
+    sansFrais.settlement.feeTransactionId === null);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('17. Un verdict n’est vrai que pour le code qui l’a produit');
+/* ══════════════════════════════════════════════════════════════════════════ */
+{
+  /**
+   * POURQUOI `UNAVAILABLE` REVIENT DANS LA FILE.
+   *
+   * Il en avait d'abord été exclu — « il n'y a rien à attendre » — et la recette
+   * déployée a montré le coût de cette certitude : le verdict était exact au
+   * moment où il a été rendu, et il est devenu faux dès qu'une voie de
+   * résolution supplémentaire a existé. Exclu, il aurait figé une commission
+   * manquante pour toujours, en silence.
+   *
+   * Ce qui borne le coût n'est pas le statut : c'est le COMPTEUR DE TENTATIVES.
+   */
+  const fait = await factOf('in_l13_sans_reglement');
+  const avant = fait.settlement.attempts;
+  check('une impasse incrémente son compteur, même sans appel fournisseur', avant >= 1);
+
+  const bilan = await reglement.convergePendingSettlements({});
+  const apres = await factOf('in_l13_sans_reglement');
+  check('…et elle est BIEN réexaminée par la convergence',
+    apres.settlement.attempts > avant);
+  check('la convergence ne solde rien qui ne puisse l’être', bilan.settled === 0);
+
+  /** Au-delà de la borne, elle sort d'elle-même : pas d'appel horaire éternel. */
+  await PanelProviderRevenueFact.updateOne(
+    { factId: fait.factId },
+    { $set: { 'settlement.attempts': reglement.MAX_TENTATIVES_SETTLEMENT } },
+  );
+  const verdict = await reglement.captureSettlementForFact(fait.factId);
+  check('au-delà de la borne, on cesse de réessayer tout seul',
+    verdict.outcome === 'ABANDONED');
+  check('…mais le motif reste lisible pour un exploitant',
+    (await factOf('in_l13_sans_reglement')).settlement.reason === 'NO_PAYMENT_REFERENCE');
+
+  /** Une devise non gérée, elle, ne dépend d'aucune résolution : elle reste dehors. */
+  const codeSource = fs.readFileSync(
+    path.join(RACINE, 'backend/src/services/finance/providerRevenue/providerSettlement.service.js'), 'utf8',
+  );
+  check('`UNUSABLE` reste hors de la file — aucune relecture ne change une devise',
+    !/'settlement\.status': SETTLEMENT_STATUS\.UNUSABLE/.test(codeSource));
 }
 
 await close();

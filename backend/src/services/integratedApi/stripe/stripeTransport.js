@@ -879,6 +879,43 @@ export async function retrieveChargeSettlement({
 }
 
 /**
+ * `GET /v1/invoices/{id}` — LA FACTURE, POUR RETROUVER SON RÈGLEMENT.
+ *
+ * ══ LE DÉFAUT OBSERVÉ EN RECETTE RÉELLE, ET IL EST LE MÊME QU'EN L10.7 ══════
+ *
+ * Le compte de recette émet ses webhooks en `2026-06-24.dahlia`. Dans cette
+ * version, un `invoice.paid` ne porte NI `charge`, NI `payment_intent`, NI même
+ * `payments.data` — la sous-liste arrive vide, elle exige une expansion. Le
+ * fait normalisé n'avait donc AUCUNE référence de règlement, et la capture des
+ * frais rendait honnêtement `NO_PAYMENT_REFERENCE` : il n'y avait rien à
+ * suivre.
+ *
+ * C'est exactement le défaut que L10.7 a déjà rencontré sur `invoice.payment_intent`,
+ * et la leçon est la même : **ne pas dépendre du champ qu'un webhook expose**.
+ * Ce que le Panel possède à coup sûr, c'est l'identité CANONIQUE du fait — la
+ * facture. Il la relit donc chez le fournisseur, avec SA propre version d'API
+ * épinglée, où le règlement est présent.
+ *
+ * ══ POURQUOI L'EXPANSION, ET POURQUOI CELLE-LÀ ══════════════════════════════
+ *
+ * `payments.data.payment.payment_intent` est l'emplacement des versions
+ * récentes ; `charge` et `payment_intent` à plat sont ceux des anciennes. On
+ * demande l'expansion et l'on lit les trois — la relecture est une lecture, son
+ * coût est un appel, et son absence coûterait une commission manquante.
+ */
+export async function retrieveInvoicePayment({ credentials, invoiceId, timeoutMs, fetchImpl }) {
+  if (!invoiceId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de facture manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/invoices/${encodeURIComponent(invoiceId)}`,
+    query: { expand: ['payments.data.payment.payment_intent'] },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { invoice: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
  * `GET /v1/refunds/{id}` — le remboursement et SON écriture de solde.
  *
  * Un remboursement produit sa PROPRE `balance_transaction`, distincte de celle

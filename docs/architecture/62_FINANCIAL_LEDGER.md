@@ -1332,10 +1332,56 @@ ferait exactement ce que L10.3 a interdit : un onglet Finances rafraîchi en bou
 déclencherait autant d'appels Stripe. Une recette vérifie que lister, résumer et ouvrir un
 détail ne produisent **aucun** appel fournisseur.
 
+### Le webhook ne dit rien du règlement — la facture, elle, le dit
+
+**Défaut trouvé par la recette déployée, et par elle seule.** Le compte de recette émet
+ses webhooks en `2026-06-24.dahlia`. Dans cette version, un `invoice.paid` ne porte
+**ni** `charge`, **ni** `payment_intent`, **ni** `payments.data` — la sous-liste arrive
+vide et exige une expansion. Le fait normalisé n'avait donc aucune référence de
+règlement, et la capture rendait honnêtement `NO_PAYMENT_REFERENCE` : exacte, et sans
+issue. Une commission manquante, en silence.
+
+C'est **le même défaut qu'en L10.7**, un champ plus loin, et la correction est la même
+doctrine :
+
+> Ne jamais faire dépendre une convergence du champ qu'un webhook expose ce mois-ci.
+> Repartir de l'identité **canonique** que le Panel possède, et relire chez le
+> fournisseur avec **sa propre version d'API épinglée**.
+
+L'ordre de résolution va donc du plus DIRECT au plus DÉRIVÉ — un appel de moins quand la
+charge utile suffit :
+
+```
+1. corroboration.paymentIntentId   ce que la charge utile affirme
+2. corroboration.chargeId          le repli des charges utiles anciennes
+3. l'objet canonique INVOICE       la RELECTURE, quand les deux premiers manquent
+```
+
+Le repli est réservé à la FACTURE : une session sans facture porte toujours son
+`payment_intent`, et la relire n'apprendrait rien de plus.
+
+Une facture soldée **sans** règlement — avoir, ou solde client — reste une impasse
+nommée : aucun euro n'a traversé le réseau de cartes, donc aucune commission, et rien
+n'est inventé.
+
+### Un verdict n'est vrai que pour le code qui l'a produit
+
+`UNAVAILABLE` avait d'abord été **exclu** de la file de convergence, avec une raison qui
+semblait bonne : « il n'y a rien à attendre ». La recette déployée a montré le coût de
+cette certitude — le verdict était exact au moment où il a été rendu, et il est devenu
+faux dès qu'une voie de résolution supplémentaire a existé.
+
+Ce qui borne réellement le coût d'une file n'est pas le statut, c'est le **compteur de
+tentatives**. `UNAVAILABLE` y revient donc, borné comme le reste ; `UNUSABLE` reste
+dehors, parce qu'une devise non gérée ne dépend d'aucune relecture mais d'une décision
+comptable que ce lot n'a pas prise.
+
 ### `billing.settlement.retrieve` — la première capacité hors surface projet
 
-Elle lit `payment_intent.latest_charge.balance_transaction` (un seul aller-retour), ou
-l'écriture propre d'un `re_…`, ou celle d'un `ch_…` en repli.
+Elle accepte **exactement une** référence — intention, débit, remboursement, ou facture —
+et lit `payment_intent.latest_charge.balance_transaction` en un seul aller-retour,
+l'écriture propre d'un `re_…`, celle d'un `ch_…`, ou relit la facture pour retrouver son
+règlement.
 
 Toutes les autres capacités désignent une ressource de PROJET et prouvent son
 appartenance. Celle-ci désigne une écriture du **registre de solde de L.Y Solution** :
