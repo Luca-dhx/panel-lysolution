@@ -78,7 +78,8 @@
     "migrate:public-contact-email": "node src/scripts/migrations/2026-08-21-public-contact-email.js",
     "test:client-company": "node ../tests/client-company.test.js",
     "test:auth-rate-limit": "node ../tests/auth-rate-limit.test.js",
-    "test:bridge-consumption": "node ../tests/bridge-consumption.test.js"
+    "test:bridge-consumption": "node ../tests/bridge-consumption.test.js",
+    "test:client-company-ui": "node ../tests/client-company-ui.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

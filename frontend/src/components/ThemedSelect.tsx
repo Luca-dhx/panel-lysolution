@@ -20,12 +20,20 @@
  * `prefers-reduced-motion`, ce délai tombe à zéro : personne n'attend une
  * animation qu'il a demandé de ne pas voir.
  */
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Icon } from '@/components/Icon';
 
 export interface ThemedOption {
   value: string;
   label: string;
+  /**
+   * LA SECONDE LIGNE — le contexte, pas le nom.
+   *
+   * « Demo SB Auto » ne suffit pas à choisir quand deux instances portent le
+   * même nom sur deux environnements. Le libellé nomme, l’indice DISTINGUE.
+   * Facultatif : une liste de filtres n’en a pas besoin.
+   */
+  hint?: string;
 }
 
 /** Durée de l'animation de fermeture — la même valeur que le token CSS. */
@@ -43,6 +51,9 @@ export function ThemedSelect({
   placeholder = 'Choisir…',
   disabled = false,
   ariaLabel,
+  searchable = false,
+  searchPlaceholder = 'Rechercher…',
+  emptyLabel = 'Aucun résultat.',
 }: {
   value: string;
   options: ThemedOption[];
@@ -51,17 +62,49 @@ export function ThemedSelect({
   placeholder?: string;
   disabled?: boolean;
   ariaLabel?: string;
+  /**
+   * ── POURQUOI LA RECHERCHE VIT ICI, ET NON DANS UN SECOND COMPOSANT ─────
+   *
+   * Parce qu’un menu déroulant cherchable n’est pas un AUTRE contrôle : ce
+   * sont les mêmes règles de clavier, la même fermeture au clic extérieur,
+   * le même retournement quand il n’y a pas la place dessous, la même
+   * animation de sortie. Un « ProjectPicker » parallèle aurait recopié tout
+   * cela — et aurait fini par diverger sur la seule chose qui compte ici :
+   * l’accessibilité, qui se dégrade toujours dans la copie.
+   *
+   * Ce qui change vraiment tient en trois choses : un champ de filtre, une
+   * seconde ligne par option, et un état « aucun résultat ».
+   */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  emptyLabel?: string;
 }) {
   const [ouvert, setOuvert] = useState(false);
   const [ferme, setFerme] = useState(false);
   const [survole, setSurvole] = useState(0);
   const [versLeHaut, setVersLeHaut] = useState(false);
+  const [filtre, setFiltre] = useState('');
   const racine = useRef<HTMLDivElement | null>(null);
   const declencheur = useRef<HTMLButtonElement | null>(null);
+  const champ = useRef<HTMLInputElement | null>(null);
   const idMenu = useId();
 
   const choisie = options.find((o) => o.value === value) ?? null;
   const visible = ouvert || ferme;
+
+  /**
+   * LA RECHERCHE PORTE SUR LE LIBELLÉ **ET** SUR L’INDICE.
+   *
+   * Taper « PROD » doit trouver un projet dont seul l’environnement le dit.
+   * Chercher sur le seul nom aurait rendu la seconde ligne décorative.
+   */
+  const listees = useMemo(() => {
+    const q = filtre.trim().toLowerCase();
+    if (!searchable || !q) return options;
+    return options.filter(
+      (o) => `${o.label} ${o.hint ?? ''}`.toLowerCase().includes(q),
+    );
+  }, [options, filtre, searchable]);
 
   const fermer = (rendreLeFocus = false) => {
     if (!ouvert) return;
@@ -81,8 +124,28 @@ export function ThemedSelect({
     if (cadre) setVersLeHaut(window.innerHeight - cadre.bottom < 240 && cadre.top > 240);
     setFerme(false);
     setOuvert(true);
+    /**
+     * LE FILTRE REPART À VIDE À CHAQUE OUVERTURE.
+     *
+     * Le garder d’une fois sur l’autre ferait rouvrir un menu qui masque la
+     * plupart de ses options, sans que rien à l’écran n’explique pourquoi.
+     */
+    setFiltre('');
     setSurvole(Math.max(0, options.findIndex((o) => o.value === value)));
   };
+
+  /** Le focus va au champ dès l’ouverture : on ouvre pour chercher. */
+  useEffect(() => {
+    if (ouvert && searchable) champ.current?.focus();
+  }, [ouvert, searchable]);
+
+  /**
+   * Le survol ne doit jamais désigner une option que le filtre vient de
+   * retirer — sinon Entrée choisit un élément invisible.
+   */
+  useEffect(() => {
+    setSurvole((i) => (i < listees.length ? i : 0));
+  }, [listees.length]);
 
   // Clic à côté : on referme. Sur `mousedown`, pas sur `click` — sinon un clic
   // qui commence dans le menu et finit dehors refermerait sans rien choisir.
@@ -116,19 +179,29 @@ export function ThemedSelect({
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSurvole((i) => (i + 1) % options.length);
+      if (listees.length > 0) setSurvole((i) => (i + 1) % listees.length);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSurvole((i) => (i - 1 + options.length) % options.length);
+      if (listees.length > 0) setSurvole((i) => (i - 1 + listees.length) % listees.length);
     } else if (e.key === 'Home') {
       e.preventDefault();
       setSurvole(0);
     } else if (e.key === 'End') {
       e.preventDefault();
-      setSurvole(options.length - 1);
-    } else if (e.key === 'Enter' || e.key === ' ') {
+      setSurvole(Math.max(0, listees.length - 1));
+    } else if (e.key === 'Enter') {
       e.preventDefault();
-      const option = options[survole];
+      const option = listees[survole];
+      if (option) choisir(option);
+    } else if (e.key === ' ' && !searchable) {
+      /**
+       * L’ESPACE CHOISIT — SAUF QUAND ON PEUT TAPER.
+       *
+       * Dans un menu cherchable, l’espace appartient à la saisie : le
+       * détourner rendrait impossible de chercher « Demo SB Auto ».
+       */
+      e.preventDefault();
+      const option = listees[survole];
       if (option) choisir(option);
     } else if (e.key === 'Tab') {
       fermer();
@@ -166,20 +239,48 @@ export function ThemedSelect({
           role="listbox"
           aria-label={ariaLabel}
         >
-          {options.map((option, index) => (
+          {searchable ? (
+            /*
+              LE CHAMP VIT DANS LE MENU, et sa touche est traitée par le MÊME
+              gestionnaire que le déclencheur : flèches, Entrée et Échap se
+              comportent pareil qu’on ait la main sur le bouton ou sur la
+              saisie. Deux jeux de règles auraient produit deux menus.
+            */
+            <li className="tselect-search" role="presentation">
+              <Icon name="search" size={13} className="tselect-search-icon" />
+              <input
+                ref={champ}
+                className="tselect-search-input"
+                type="text"
+                value={filtre}
+                placeholder={searchPlaceholder}
+                aria-label={searchPlaceholder}
+                onChange={(e) => { setFiltre(e.target.value); setSurvole(0); }}
+                onKeyDown={auClavier}
+              />
+            </li>
+          ) : null}
+
+          {listees.length === 0 ? (
+            <li className="tselect-empty" role="presentation">{emptyLabel}</li>
+          ) : null}
+
+          {listees.map((option, index) => (
             <li
               key={option.value}
               role="option"
               aria-selected={option.value === value}
               className={[
                 'tselect-option',
+                option.hint ? 'tselect-option-rich' : '',
                 option.value === value ? 'tselect-option-selected' : '',
                 index === survole ? 'tselect-option-active' : '',
               ].filter(Boolean).join(' ')}
               onMouseEnter={() => setSurvole(index)}
               onMouseDown={(e) => { e.preventDefault(); choisir(option); }}
             >
-              {option.label}
+              <span className="tselect-option-label">{option.label}</span>
+              {option.hint ? <span className="tselect-option-hint">{option.hint}</span> : null}
             </li>
           ))}
         </ul>

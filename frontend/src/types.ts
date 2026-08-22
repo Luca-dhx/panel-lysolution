@@ -127,6 +127,18 @@ export interface PublicProject {
       signing: { ready: boolean; missing: string[] };
     };
   } | null;
+  /**
+   * L’APPARTENANCE, SANS L’IDENTITÉ.
+   *
+   * `clientCompany` ci-dessus coûte une lecture par projet et n’existe donc
+   * que sur la fiche. CE champ-ci vit sur le registre : il est TOUJOURS là,
+   * liste comprise, et il répond à la seule question dont un sélecteur de
+   * rattachement a besoin — « ce projet est-il déjà pris ? ».
+   *
+   * `null` = libre. Un projet n’a qu’une entreprise cliente ; une entreprise
+   * en a autant qu’elle veut.
+   */
+  clientCompanyId: string | null;
   projectKey: string;
   /**
    * L'ENVIRONNEMENT DE CETTE INSTANCE — DÉCLARÉ par le projet, ou `null`.

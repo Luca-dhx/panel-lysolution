@@ -3183,3 +3183,640 @@ body {
   .finance-default-tech { grid-template-columns: minmax(0, 1fr); gap: var(--p-space-1); }
   .finance-default-amount { font-size: var(--p-text-lg); }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   REFONTE « CLIENTS » — liste d'entreprises, fiche, édition en ligne.
+
+   ══ CE QUI NE VA PAS DANS UN TABLEAU, ICI ═════════════════════════════════
+
+   Un `<td>` n'a pas d'espacement propre : tout ce qu'on y met se touche, et
+   rien ne dit quels morceaux vont ensemble. Six colonnes donnaient six poids
+   visuels égaux — la raison sociale, qui est LA chose qu'on cherche, pesait
+   autant qu'un compte de projets.
+
+   Tout ce qui suit n'utilise que les tokens. Aucune valeur hexadécimale, aucun
+   espacement inventé : les marges sortent de l'échelle `--p-space-*`, ce qui
+   est précisément ce qui fait qu'une page « respire » de la même façon que les
+   autres.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Un bouton qui porte une icône aligne ses deux enfants sur une même ligne
+   optique. `.btn` est `inline-block` : sans cela, l'icône se pose sur la ligne
+   de base du texte et paraît systématiquement trop basse. */
+.btn:has(> .icon) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+
+/* Une taille compacte pour les actions DANS une liste : le bouton doit rester
+   cliquable sans dominer la ligne qu'il accompagne. */
+.btn-sm {
+  padding: var(--p-space-1) var(--p-space-3);
+  font-size: var(--p-text-xs);
+  white-space: nowrap;
+}
+
+/* Une action SECONDAIRE d'une ligne — retirer, détacher. Sans bordure au
+   repos : trois boutons encadrés côte à côte transforment une liste en
+   barre d'outils, et l'on ne lit plus le contenu. */
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--p-text-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--p-border-strong);
+  color: var(--p-text);
+}
+
+/* ── CASE À COCHER ────────────────────────────────────────────────────────── */
+
+.checkbox {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--p-space-2);
+  cursor: pointer;
+  user-select: none;
+  /* Le libellé entier est cliquable : la cible utile est le texte, pas le
+     carré de 18 px. */
+  padding: var(--p-space-1) 0;
+}
+
+.checkbox-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* L'`<input>` natif est CONSERVÉ — il porte l'état, le focus, la touche
+   Espace et l'annonce. Il est rendu invisible, jamais `display: none` :
+   un élément retiré du flux n'est plus focalisable, et le clavier perdrait
+   la case. */
+.checkbox-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.checkbox-box {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--p-border-strong);
+  border-radius: var(--p-radius-sm);
+  background: var(--p-surface-sunken);
+  color: transparent;
+  transition:
+    background var(--p-motion-fast) var(--p-ease),
+    border-color var(--p-motion-fast) var(--p-ease),
+    color var(--p-motion-fast) var(--p-ease);
+  /* Aligne la case sur la MAJUSCULE du libellé, pas sur le milieu du bloc :
+     avec un indice sur deux lignes, un centrage ferait descendre la case. */
+  margin-top: 1px;
+}
+
+.checkbox:hover .checkbox-box {
+  border-color: var(--p-primary);
+}
+
+.checkbox-input:checked + .checkbox-box {
+  background: var(--p-primary);
+  border-color: var(--p-primary);
+  color: var(--p-background);
+}
+
+/* LE FOCUS EST VISIBLE — sur la peinture, puisque l'input ne se voit pas.
+   Sans cette règle, un utilisateur au clavier ne saurait jamais où il est. */
+.checkbox-input:focus-visible + .checkbox-box {
+  outline: 2px solid var(--p-primary);
+  outline-offset: 2px;
+}
+
+.checkbox-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.checkbox-label {
+  font-size: var(--p-text-sm);
+  line-height: 1.35;
+}
+
+.checkbox-hint {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+  line-height: 1.4;
+}
+
+/* ── SÉLECTEUR CHERCHABLE ─────────────────────────────────────────────────── */
+
+.tselect-search {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  padding: var(--p-space-2) var(--p-space-3);
+  /* Le champ est ÉPINGLÉ en haut du menu : la liste défile dessous, et l'on
+     n'a jamais à remonter pour affiner sa recherche. */
+  position: sticky;
+  top: calc(var(--p-space-1) * -1);
+  z-index: 1;
+  background: var(--p-surface-raised);
+  border-bottom: 1px solid var(--p-border);
+  margin-bottom: var(--p-space-1);
+}
+
+.tselect-search-icon { color: var(--p-text-muted); flex: 0 0 auto; }
+
+.tselect-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--p-text);
+  font: inherit;
+  font-size: var(--p-text-sm);
+  outline: none;
+}
+
+.tselect-search-input::placeholder { color: var(--p-text-faint); }
+
+.tselect-empty {
+  padding: var(--p-space-3);
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+  line-height: 1.5;
+}
+
+/* Une option à deux lignes : le nom, puis ce qui la distingue. */
+.tselect-option-rich {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 48px;
+}
+
+.tselect-option-label { font-weight: 500; }
+
+.tselect-option-hint {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+/* ── BARRE D'ACTIONS DE LA PAGE CLIENTS ───────────────────────────────────── */
+
+.cc-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+  margin-bottom: var(--p-space-5);
+}
+
+/* L'ACTION D'ABORD, LE FILTRE À SA DROITE. Le bouton qui crée est le geste le
+   plus structurant de la page : il ouvre la barre. La case le suit parce
+   qu'elle gouverne ce que la liste montre. */
+.cc-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-4);
+  flex-wrap: wrap;
+}
+
+/* ── LISTE DES ENTREPRISES ────────────────────────────────────────────────── */
+
+.cc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* L'ESPACE ENTRE LES ITEMS EST CE QUI LES REND LISIBLES : des cartouches
+     collées se lisent comme un seul bloc rayé. */
+  gap: var(--p-space-3);
+}
+
+.cc-item {
+  display: grid;
+  /* avatar | corps | action — l'action garde sa colonne, donc son alignement
+     est le même d'une ligne à l'autre quelle que soit la longueur du nom. */
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--p-space-4);
+  padding: var(--p-space-4);
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+  transition:
+    border-color var(--p-motion-fast) var(--p-ease),
+    background var(--p-motion-fast) var(--p-ease);
+}
+
+.cc-item:hover {
+  border-color: var(--p-border-strong);
+  background: var(--p-surface-raised);
+}
+
+/* Une fiche archivée reste lisible mais recule : elle n'est pas une erreur,
+   elle est hors du flux courant. */
+.cc-item-archived { opacity: 0.72; }
+
+.cc-item-avatar {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--p-radius);
+  background: var(--p-primary-soft);
+  color: var(--p-primary);
+  /* Alignée sur la PREMIÈRE LIGNE de texte, pas sur le milieu du bloc : avec
+     trois lignes de contenu, un centrage la ferait flotter au milieu de rien. */
+  margin-top: 2px;
+}
+
+.cc-item-body {
+  display: flex;
+  flex-direction: column;
+  /* Le nom et ses métadonnées sont PROCHES — ils décrivent la même chose ;
+     les badges sont plus loin, parce qu'ils disent autre chose. */
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+.cc-item-identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+.cc-item-name {
+  font-family: var(--p-font-heading);
+  font-size: var(--p-text-lg);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--p-text);
+  overflow-wrap: anywhere;
+}
+
+.cc-item-trading {
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+}
+
+.cc-item-meta {
+  margin: 0;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.cc-item-sep { color: var(--p-text-faint); }
+
+.cc-item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  margin-top: var(--p-space-1);
+}
+
+.cc-item-action {
+  align-self: center;
+  text-decoration: none;
+}
+
+/* ── FICHE : L'EN-TÊTE ────────────────────────────────────────────────────── */
+
+.cc-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+}
+
+.cc-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--p-space-4);
+  padding: var(--p-space-5);
+  background: var(--p-surface);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius-lg);
+}
+
+.cc-hero-avatar {
+  width: 60px;
+  height: 60px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--p-radius-lg);
+  background: var(--p-primary-soft);
+  color: var(--p-primary);
+}
+
+.cc-hero-identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+
+.cc-hero-name {
+  margin: 0;
+  font-size: var(--p-text-2xl);
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.cc-hero-meta {
+  margin: 0;
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+  line-height: 1.5;
+}
+
+.cc-hero-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  margin-top: var(--p-space-1);
+}
+
+.cc-hero-actions {
+  display: flex;
+  gap: var(--p-space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cc-edit-notice { margin: 0; }
+
+/* ── FICHE : LES SECTIONS ─────────────────────────────────────────────────── */
+
+.cc-section { margin: 0; }
+
+.cc-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-3);
+  padding-bottom: var(--p-space-3);
+  margin-bottom: var(--p-space-4);
+  border-bottom: 1px solid var(--p-border);
+  flex-wrap: wrap;
+}
+
+/* L'ICÔNE DANS SON CONTENEUR — c'est elle qui permet de retrouver une section
+   sans lire les six titres. */
+.cc-section-icon {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--p-radius-sm);
+  background: var(--p-surface-sunken);
+  color: var(--p-text-muted);
+}
+
+.cc-section-title {
+  margin: 0;
+  flex: 1 1 auto;
+  font-size: var(--p-text-lg);
+  line-height: 1.2;
+}
+
+.cc-section-action {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cc-section-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+}
+
+/* ── FICHE : UNE LIGNE, DEUX ÉTATS ────────────────────────────────────────── */
+
+/* Le libellé garde SA colonne en lecture comme en édition : c'est ce qui fait
+   que la fiche ne saute pas quand on bascule. */
+.cc-field {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14rem) minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--p-space-2) var(--p-space-4);
+  margin: 0;
+}
+
+.cc-field-label {
+  font-size: var(--p-text-sm);
+  color: var(--p-text-muted);
+  line-height: 1.5;
+}
+
+.cc-field-value {
+  font-size: var(--p-text-sm);
+  color: var(--p-text);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+/* En édition, la ligne s'aligne sur le HAUT : un champ est plus grand qu'un
+   texte, et une ligne de base commune ferait remonter le libellé. */
+.cc-field-editing { align-items: start; }
+
+.cc-field-editing .cc-field-label { padding-top: var(--p-space-2); }
+
+.cc-field-input {
+  grid-column: 2;
+  width: 100%;
+  min-width: 0;
+}
+
+.cc-textarea {
+  resize: vertical;
+  font-family: inherit;
+}
+
+/* L'erreur et l'indice se rangent SOUS le champ, dans sa colonne — jamais
+   sous le libellé, où l'on ne les relie pas au bon endroit. */
+.cc-field-error,
+.cc-field-hint {
+  grid-column: 2;
+  font-size: var(--p-text-xs);
+  line-height: 1.45;
+}
+
+.cc-field-hint { color: var(--p-text-muted); }
+
+.cc-field-error { color: var(--p-danger); font-weight: 500; }
+
+.cc-field-invalid .cc-field-input {
+  border-color: var(--p-danger);
+}
+
+.cc-address {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+  margin: 0;
+  padding: var(--p-space-4);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+}
+
+.cc-address > .cc-field-label {
+  padding: 0 var(--p-space-2);
+  font-weight: 600;
+  color: var(--p-text);
+}
+
+.cc-note {
+  margin: 0;
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+  line-height: 1.5;
+}
+
+/* ── FICHE : LES LISTES (PROJETS, DOCUMENTS) ──────────────────────────────── */
+
+.cc-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+.cc-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--p-space-3);
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+}
+
+.cc-row-icon {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--p-radius-sm);
+  background: var(--p-surface-raised);
+  color: var(--p-text-muted);
+}
+
+.cc-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cc-row-title {
+  font-size: var(--p-text-sm);
+  font-weight: 600;
+  color: var(--p-text);
+  overflow-wrap: anywhere;
+}
+
+.cc-row-meta {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+  line-height: 1.45;
+}
+
+.cc-row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cc-row-actions .btn { text-decoration: none; }
+
+/* ══ TABLETTE ════════════════════════════════════════════════════════════════
+   Le sélecteur de la section « Projets » a besoin de largeur : sous 64rem, il
+   passe sous le titre plutôt que de s'écraser à côté. */
+@media (max-width: 64rem) {
+  .cc-section-action {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ══ MOBILE ══════════════════════════════════════════════════════════════════
+   Rien ne rétrécit : tout s'EMPILE. Une grille à trois colonnes sur 390 px
+   donne des colonnes de quelques caractères, et c'est ainsi qu'un tableau se
+   met à déborder horizontalement. */
+@media (max-width: 48rem) {
+  .cc-item,
+  .cc-hero {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  /* L'action passe sur sa propre ligne, sous le contenu, alignée à gauche
+     comme tout le reste — et pleine largeur pour rester une cible confortable
+     au pouce. */
+  .cc-item-action,
+  .cc-hero-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+    margin-top: var(--p-space-2);
+  }
+
+  .cc-item-action { justify-content: center; }
+
+  .cc-hero-actions > .btn { flex: 1 1 auto; justify-content: center; }
+
+  /* Libellé au-dessus de sa valeur : deux colonnes sur 390 px laisseraient
+     moins de vingt caractères à chacune. */
+  .cc-field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--p-space-1);
+  }
+
+  .cc-field-input,
+  .cc-field-error,
+  .cc-field-hint { grid-column: 1; }
+
+  .cc-field-editing .cc-field-label { padding-top: 0; }
+
+  .cc-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .cc-row-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .cc-hero { padding: var(--p-space-4); }
+
+  .cc-hero-avatar { width: 44px; height: 44px; }
+
+  .cc-hero-name { font-size: var(--p-text-xl); }
+}

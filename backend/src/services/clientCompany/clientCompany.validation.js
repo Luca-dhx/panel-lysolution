@@ -296,13 +296,39 @@ const clientCompanySchema = z.object({
  */
 export function validateClientCompanyInput(input) {
   const parsed = clientCompanySchema.safeParse(input ?? {});
-  if (parsed.success) return { valid: true, value: parsed.data, errors: [] };
+  if (parsed.success) return { valid: true, value: parsed.data, errors: [], issues: [] };
 
   const errors = parsed.error.issues.map((issue) => {
     const path = issue.path.join('.');
     return issue.message.includes(path) || path === '' ? issue.message : `${path} : ${issue.message}`;
   });
-  return { valid: false, value: null, errors };
+
+  /**
+   * ── LE MÊME REFUS, MAIS ATTRIBUABLE ────────────────────────────────────
+   *
+   * ══ CE QUE `errors` NE PERMETTAIT PAS ════════════════════════════════
+   *
+   * Des PHRASES. « siren : SIREN : 9 chiffres attendus. » se lit très bien
+   * dans une notification, et ne permet à aucun écran de savoir SOUS QUEL
+   * CHAMP la poser. L’interface n’avait donc qu’un choix : tout empiler en
+   * haut du formulaire, et laisser l’opérateur chercher lequel de ses
+   * trente champs est en cause.
+   *
+   * Le découper côté écran aurait voulu dire deviner le chemin en coupant
+   * la chaîne au premier « : » — c’est-à-dire faire dépendre l’affichage
+   * d’un détail de formulation, qui change au premier message réécrit.
+   *
+   * ══ `errors` EST CONSERVÉ, ET DÉLIBÉRÉMENT ═══════════════════════════
+   *
+   * Il porte le message d’ensemble, et des appelants le lisent déjà. On
+   * AJOUTE le chemin à côté ; on ne remplace rien, donc rien ne casse.
+   */
+  const issues = parsed.error.issues.map((issue) => ({
+    path: issue.path.join('.'),
+    message: issue.message,
+  }));
+
+  return { valid: false, value: null, errors, issues };
 }
 
 /* -------------------------------------------------------------------------- */

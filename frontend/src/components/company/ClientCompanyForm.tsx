@@ -22,6 +22,7 @@
  */
 import type { ChangeEvent } from 'react';
 
+import { Checkbox } from '@/components/ui';
 import type { ClientAddress, ClientCompany } from '@/types.clientCompany';
 
 export interface ClientCompanyFormValue {
@@ -273,14 +274,17 @@ export function ClientCompanyForm({
           <Champ label="Téléphone" value={value.phone} onChange={set('phone')} placeholder="+33 4 00 00 00 00" />
           <Champ label="Site web" value={value.website} onChange={set('website')} placeholder="https://exemple.fr" />
         </div>
-        <label className="toolbar-check">
-          <input
-            type="checkbox"
-            checked={value.useBillingAddress}
-            onChange={(e) => onChange({ ...value, useBillingAddress: e.target.checked })}
-          />
-          L’adresse de facturation diffère du siège
-        </label>
+        {/*
+          LA MÊME CASE QUE PARTOUT AILLEURS.
+          Une case native ici et une case thémée sur la liste auraient donné
+          deux apparences pour un même geste, dans le même écran.
+        */}
+        <Checkbox
+          checked={value.useBillingAddress}
+          onChange={(v) => onChange({ ...value, useBillingAddress: v })}
+          label="L’adresse de facturation diffère du siège"
+          hint="Décochée, la facture part à l’adresse du siège — jamais à une adresse vide."
+        />
         {value.useBillingAddress ? (
           <BlocAdresse
             titre="Adresse de facturation"

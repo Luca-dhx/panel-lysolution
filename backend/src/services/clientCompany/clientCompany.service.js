@@ -261,7 +261,13 @@ function refuserSiInvalide(verdict) {
   throw ApiError.badRequest(
     'PANEL_CLIENT_COMPANY_INVALID',
     `Fiche client invalide : ${verdict.errors.join(' · ')}`,
-    { errors: verdict.errors },
+    /**
+     * `errors` reste la phrase ; `issues` dit SOUS QUEL CHAMP la poser.
+     * L’écran d’édition en ligne affiche le message au pied du champ
+     * concerné — une erreur qu’on doit chercher n’est pas corrigée, elle
+     * est contournée.
+     */
+    { errors: verdict.errors, issues: verdict.issues ?? [] },
   );
 }
 

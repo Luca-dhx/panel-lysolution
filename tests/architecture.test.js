@@ -262,10 +262,16 @@ section('Le frontend passe par le client d’API centralisé');
   // champ vide, et le retirer rendrait un formulaire de saisie de domaine
   // moins clair sans rien sécuriser. On l'écarte donc explicitement plutôt
   // que d'affaiblir la règle sur le reste.
+  // Un placeholder n'est pas toujours un ATTRIBUT JSX : l'édition en ligne de
+  // la fiche cliente le passe en PROPRIÉTÉ d'objet (`placeholder: 'https://…'`),
+  // parce que la ligne y décide elle-même si elle rend un texte ou un champ.
+  // C'est le même exemple montré dans le même champ vide — l'exemption suit
+  // donc l'intention de la règle, pas la syntaxe du jour.
   const hardcoded = frontendFiles.filter((file) => {
     const source = read(file)
       .replace(/placeholder=(["'])(?:(?!\1).)*\1/g, '')
-      .replace(/placeholder=\{`[^`]*`\}/g, '');
+      .replace(/placeholder=\{`[^`]*`\}/g, '')
+      .replace(/placeholder:\s*(["'])(?:(?!\1).)*\1/g, '');
     return /https?:\/\/(?!localhost)/.test(source);
   });
   check(`aucune URL absolue codée en dur dans le frontend${hardcoded.length ? ` — ${hardcoded.map(rel)}` : ''}`,

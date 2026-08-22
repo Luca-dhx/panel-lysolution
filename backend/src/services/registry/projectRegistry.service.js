@@ -490,6 +490,33 @@ export function toPublicProject(record, now = Date.now(), projections = {}, dest
      */
     environment: declaredEnvironmentOf(record),
     projectName: record.projectName,
+    /**
+     * ── À QUELLE ENTREPRISE CLIENTE CE PROJET APPARTIENT-IL ? ───────────
+     *
+     * ══ POURQUOI CE CHAMP, ALORS QUE `clientCompany` RESTE SUR LA FICHE ═
+     *
+     * Ce sont deux questions différentes, et elles n’ont pas le même prix.
+     *
+     *   « QUI est le client ? »        exige de LIRE la fiche cliente —
+     *                                  une requête par projet. C’est ce
+     *                                  qui reste réservé à la fiche.
+     *   « Ce projet appartient-il      se lit sur le registre lui-même :
+     *     DÉJÀ à quelqu’un ? »         le champ est sur le document, il ne
+     *                                  coûte rien, il est déjà chargé.
+     *
+     * ══ CE QUE SON ABSENCE COÛTAIT ═════════════════════════════════════
+     *
+     * Le sélecteur « rattacher un projet » de la fiche cliente ne pouvait
+     * écarter que les projets DÉJÀ rattachés à CETTE fiche-ci. Un projet
+     * appartenant à une AUTRE entreprise y était donc proposé, et le
+     * choisir le lui prenait silencieusement — un changement de client
+     * légal, avec ses conséquences sur la facturation, présenté comme un
+     * simple ajout.
+     *
+     * Un projet n’a qu’une entreprise cliente ; une entreprise en a autant
+     * qu’elle veut. `null` se lit « libre », jamais « inconnu ».
+     */
+    clientCompanyId: record.clientCompanyId ?? null,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     pairing: {
