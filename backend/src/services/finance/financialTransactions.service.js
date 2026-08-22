@@ -771,7 +771,33 @@ export async function getTransaction(transactionId) {
 async function decorate(transactions) {
   const avecPieces = await withReceipts(transactions);
   const { withRefundState } = await import('./refunds/refundOrchestration.service.js');
-  return withRefundState(avecPieces);
+  const avecRemboursements = await withRefundState(avecPieces);
+
+  /**
+   * ── L'ENCAISSEMENT NET — BRUT, FRAIS, NET (L13) ─────────────────────────
+   *
+   * ══ POURQUOI ICI, ET PAS DANS `toPublicTransaction` ════════════════════
+   *
+   * Parce que ce n'est pas une propriété du mouvement : c'est une OBSERVATION
+   * qui vit sur le fait fournisseur, à côté. Elle se joint, comme le
+   * descripteur de justificatif et l'état de remboursement — en UNE requête
+   * pour toute la page, jamais une par ligne.
+   *
+   * ══ ET SURTOUT : LE MONTANT DE LA LIGNE NE BOUGE PAS ═══════════════════
+   *
+   * Un encaissement de 120 € reste 120 € dans la colonne « Montant » et dans
+   * tous les totaux. Le net est une LECTURE ajoutée à côté ; le jour où il
+   * remplacerait le brut, le chiffre d'affaires du Panel cesserait d'être
+   * celui des factures émises.
+   *
+   * ══ AUCUN APPEL FOURNISSEUR ════════════════════════════════════════════
+   *
+   * Tout vient de la base : l'observation a été capturée par la convergence,
+   * hors de tout écran. Un onglet Finances rafraîchi en boucle ne déclenche
+   * aucun appel Stripe — la règle centrale de L10.3, intacte.
+   */
+  const { withSettlement } = await import('./providerRevenue/providerSettlement.service.js');
+  return withSettlement(avecRemboursements);
 }
 
 async function withReceipts(transactions) {

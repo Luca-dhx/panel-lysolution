@@ -593,6 +593,36 @@ function capability(code, options) {
      * manquait l'identifiant de la demande et les liens des signataires.
      */
     replayByReexecution: options.replayByReexecution === true,
+    /**
+     * CE VERBE FAIT-IL PARTIE DE LA SURFACE OFFERTE AUX PROJETS ? (L13)
+     *
+     * ══ POURQUOI CE DRAPEAU A DÛ EXISTER ═══════════════════════════════════
+     *
+     * Les octrois ont disparu : depuis leur suppression, TOUT projet appairé
+     * peut invoquer TOUTE capacité du registre par `/bridge/v1`. C'est
+     * volontaire et sûr — chaque adaptateur prouve l'appartenance de la
+     * ressource qu'on lui désigne, et un projet ne peut donc atteindre que ce
+     * qui est à lui.
+     *
+     * `billing.settlement.retrieve` rompt cette symétrie, et pour une raison
+     * de NATURE. Elle ne lit pas une ressource de projet : elle lit le
+     * REGISTRE DE SOLDE du compte Stripe de L.Y Solution — combien le
+     * fournisseur a prélevé sur un encaissement. Cette écriture-là n'appartient
+     * à aucun projet ; elle appartient à l'entreprise.
+     *
+     * Il n'existe donc AUCUN lien à vérifier, et écrire une vérification
+     * d'appartenance sur un objet qui n'en a pas aurait été une garde
+     * décorative. Le refus est déplacé d'un cran : ce verbe n'est pas atteignable
+     * depuis le pont, quel que soit le projet et quelle que soit l'entrée.
+     *
+     * ══ POURQUOI UN REFUS « INCONNU » ET NON « INTERDIT » ══════════════════
+     *
+     * Un refus qui distingue « ce verbe existe mais pas pour vous » de « ce
+     * verbe n'existe pas » transforme le pont en oracle : on apprendrait, un
+     * code à la fois, la surface interne du Panel. Même doctrine que le refus
+     * de filiation sur une facture étrangère (L6.3B).
+     */
+    panelOnly: options.panelOnly === true,
   });
 }
 
@@ -951,6 +981,26 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     },
   }),
 
+  /**
+   * L13 — LES FRAIS RÉELS D'UN ENCAISSEMENT.
+   *
+   * `panelOnly`, et c'est la première capacité du registre à l'être. Elle ne
+   * lit pas une ressource de projet mais le REGISTRE DE SOLDE de L.Y Solution :
+   * combien Stripe a prélevé. Aucun lien d'appartenance n'existe sur une telle
+   * écriture, et lui en inventer un aurait produit une garde décorative. Le
+   * verbe est donc retiré de la surface du pont — voir le drapeau.
+   */
+  'billing.settlement.retrieve': capability('billing.settlement.retrieve', {
+    provider: 'STRIPE',
+    label: 'Lire les frais réels d’un encaissement',
+    inputSchema: STRIPE_CAPABILITIES['billing.settlement.retrieve'].inputSchema,
+    outputSchema: STRIPE_CAPABILITIES['billing.settlement.retrieve'].outputSchema,
+    timeoutMs: 20_000,
+    idempotency: IDEMPOTENCY.SAFE_RETRY,
+    requiredPermissions: [PERMISSIONS.BILLING_READ],
+    panelOnly: true,
+  }),
+
   'billing.refund': capability('billing.refund', {
     provider: 'STRIPE',
     label: 'Rembourser',
@@ -1148,6 +1198,15 @@ export function describeCapability(code) {
     idempotency: capability.idempotency,
     timeoutMs: capability.timeoutMs,
     requiredPermissions: [...capability.requiredPermissions],
+    /**
+     * L13 — ce verbe est-il hors de la surface du pont ?
+     *
+     * Rendu ICI et pas sur le pont : ce catalogue est celui du plan de
+     * contrôle, lu par un exploitant du Panel. Lui cacher qu'une action existe
+     * mais n'est pas offerte aux projets l'obligerait à relire le code pour
+     * comprendre pourquoi un projet ne peut pas l'appeler.
+     */
+    panelOnly: capability.panelOnly === true,
   };
 }
 

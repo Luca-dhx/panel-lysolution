@@ -185,6 +185,16 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
     'billing.invoice.retrieve',
     'billing.portal.create',
     /**
+     * L13 — LES FRAIS RÉELS D'UN ENCAISSEMENT.
+     *
+     * Servie, mais HORS de la surface du pont (`panelOnly`). Elle ne lit pas
+     * une ressource de projet : elle lit le registre de solde de L.Y Solution,
+     * c'est-à-dire ce que le fournisseur a prélevé. Aucun lien d'appartenance
+     * n'existe sur une telle écriture, et lui en inventer un aurait produit une
+     * garde décorative — voir la vérification de fermeture plus bas.
+     */
+    'billing.settlement.retrieve',
+    /**
      * LES SIX ACTES DE SIGNATURE.
      *
      * Cinq à l’origine, et non onze : l’API historique exposait onze endpoints,
@@ -241,7 +251,17 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
    * `billing.subscription.retrieve`.
    */
   const stripeServies = registry.capabilitiesForProvider('STRIPE');
-  check('treize capacités Stripe sont servies', stripeServies.length === 13);
+  check('quatorze capacités Stripe sont servies', stripeServies.length === 14);
+  /**
+   * ── ET UNE SEULE EST FERMÉE AU PONT (L13) ─────────────────────────────────
+   *
+   * La fermeture est une EXCEPTION, pas une commodité : toutes les autres
+   * prouvent l'appartenance de la ressource qu'on leur désigne, et sont donc
+   * sûres à offrir. Celle-ci n'a aucune ressource de projet à prouver.
+   */
+  check('…dont une seule hors surface projet, et c’est la lecture du solde',
+    registry.listCapabilityDefinitions().filter((c) => c.panelOnly)
+      .map((c) => c.code).join() === 'billing.settlement.retrieve');
   /**
    * La huitième — le remboursement — s'ancre elle aussi sur un lien prouvé, et
    * par la même filiation : l'intention de paiement est adoptée à la projection

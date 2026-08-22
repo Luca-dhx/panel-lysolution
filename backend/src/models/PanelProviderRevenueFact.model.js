@@ -210,6 +210,144 @@ const providerRevenueFactSchema = new mongoose.Schema(
     },
 
     /**
+     * L13 — LA DÉCOMPOSITION FISCALE, TELLE QUE LE FOURNISSEUR L'A ÉMISE.
+     *
+     * ══ POURQUOI ELLE EST ICI, ET PAS DÉDUITE D'UN TAUX ═════════════════════
+     *
+     * Le contrat porte un `taxRate`, et l'on pourrait en dériver la TVA d'un
+     * encaissement. Ce serait une SECONDE vérité : le taux du contrat est celui
+     * d'aujourd'hui, la facture est celle d'un jour donné, et un changement de
+     * taux entre les deux ferait mentir toutes les lignes passées.
+     *
+     * Stripe, lui, a émis un document où la ventilation est FIGÉE — `subtotal`,
+     * `tax`, `total` sur une facture ; `amount_subtotal`,
+     * `total_details.amount_tax`, `amount_total` sur une session. C'est ce que
+     * le client a lu, c'est ce que le comptable retrouvera, et c'est donc la
+     * seule ventilation que le Panel a le droit d'afficher.
+     *
+     * ══ CE QU'ELLE N'EST PAS ════════════════════════════════════════════════
+     *
+     * Elle n'entre dans AUCUN agrégat. Le registre somme des mouvements de
+     * trésorerie, et un mouvement de trésorerie est TTC — c'est le montant qui
+     * a quitté le compte du client. La ventilation sert à LIRE une ligne, et
+     * elle prépare l'export comptable, où HT et TVA se déclarent séparément.
+     *
+     * `null` quand le fournisseur n'a rien ventilé : une facture sans TVA rend
+     * `tax: null`, et l'absence se lit comme une absence.
+     */
+    fiscal: {
+      /** HT — la base imposable, telle que le document l'affiche. */
+      netExcludingTaxCents: { type: Number, default: null },
+      /** La TVA du document. `null` = le fournisseur n'en a pas déclaré. */
+      taxCents: { type: Number, default: null },
+      /** TTC — ce que le client a effectivement dû. */
+      grossIncludingTaxCents: { type: Number, default: null },
+      /** D'où vient la ventilation : `INVOICE` ou `CHECKOUT_SESSION`. */
+      source: { type: String, default: null },
+    },
+
+    /**
+     * L13 — CE QUE L'ENCAISSEMENT A RÉELLEMENT RAPPORTÉ.
+     *
+     * ══ L'INVARIANT QUE CE BLOC EXISTE POUR RENDRE VÉRIFIABLE ═══════════════
+     *
+     *     brut − frais fournisseur = net
+     *
+     * et surtout, ce qu'il n'est PAS :
+     *
+     *     net ≠ chiffre d'affaires
+     *
+     * Le chiffre d'affaires reste le BRUT — c'est ce qui a été facturé, et
+     * c'est ce qu'une déclaration attend. La commission est un COÛT, porté par
+     * un mouvement séparé du registre (`feeTransactionId`), qui diminue le
+     * bénéfice sans jamais diminuer le revenu.
+     *
+     * ══ POURQUOI CE BLOC VIT SUR LE FAIT, ET PAS SUR LA TRANSACTION ═════════
+     *
+     * Même raison que `invoiceDocument` et `corroboration` : L10.1 a posé que
+     * la `provenance` d'un mouvement reste MAIGRE — quatre champs plats. Une
+     * ventilation de frais, un identifiant d'écriture de solde et une date de
+     * disponibilité sont des données FOURNISSEUR ; les faire entrer dans le
+     * registre comptable en ferait, en deux lots, le schéma de Stripe.
+     *
+     * Le registre porte donc le CHIFFRE (un mouvement de coût, en centimes) et
+     * une référence opaque. Ce bloc porte l'OBSERVATION qui l'a produit.
+     *
+     * ══ L'ABSENCE EST UN ÉTAT, PAS UN ZÉRO ══════════════════════════════════
+     *
+     * `status: PENDING` dit « Stripe n'a pas encore arrêté ses comptes ».
+     * `providerFeeCents: 0` dirait « Stripe n'a rien prélevé ». Les confondre
+     * ferait afficher « Frais : 0,00 € » sur un encaissement qui en portera
+     * deux euros dans une heure — et personne ne reviendrait vérifier.
+     */
+    settlement: {
+      /** `SETTLED` | `PENDING` | `UNAVAILABLE` | `UNUSABLE`. Jamais muet. */
+      status: { type: String, default: null },
+      /** Pourquoi il n'y a pas de chiffres, quand il n'y en a pas. */
+      reason: { type: String, default: null },
+      provider: { type: String, default: null },
+      /**
+       * L'AUTORITÉ DU MONTANT — l'écriture de solde chez le fournisseur.
+       *
+       * C'est elle, et elle seule, qui a produit `providerFeeCents`. Aucun
+       * chemin du Panel ne calcule un frais depuis une grille tarifaire : la
+       * recette le vérifie, et ce champ est la preuve qu'un exploitant peut
+       * rapprocher du tableau de bord Stripe.
+       */
+      balanceTransactionId: { type: String, default: null },
+      grossCents: { type: Number, default: null },
+      providerFeeCents: { type: Number, default: null },
+      netCents: { type: Number, default: null },
+      currency: { type: String, default: null },
+      /** `charge`, `refund`, `payout`… — la nature chez le fournisseur. */
+      providerType: { type: String, default: null },
+      reportingCategory: { type: String, default: null },
+      /** `pending` | `available` — l'argent est-il déjà disponible ? */
+      providerStatus: { type: String, default: null },
+      availableOn: { type: Date, default: null },
+      /** Le débit dont cette écriture découle. */
+      chargeId: { type: String, default: null },
+      exchangeRate: { type: Number, default: null },
+      /**
+       * LA VENTILATION TELLE QUE STRIPE LA DONNE — lue, jamais recomposée.
+       *
+       * Le total qui fait foi reste `providerFeeCents`, parce que c'est lui que
+       * le fournisseur garantit égal à `gross − net`. Additionner soi-même les
+       * lignes rouvrirait une question d'arrondi sur une donnée dont on n'est
+       * pas l'autorité.
+       */
+      feeDetails: {
+        type: [{
+          type: { type: String, default: null },
+          description: { type: String, default: null },
+          amountCents: { type: Number, default: null },
+          currency: { type: String, default: null },
+          application: { type: String, default: null },
+          _id: false,
+        }],
+        default: [],
+      },
+      /**
+       * LE MOUVEMENT DE COÛT PRODUIT AU REGISTRE — le seul pont vers le ledger.
+       *
+       * `null` quand il n'y a rien à écrire : un frais de zéro n'est pas un
+       * mouvement (doctrine L10.1). L'observation, elle, existe quand même.
+       */
+      feeTransactionId: { type: String, default: null },
+      observedAt: { type: Date, default: null },
+      /**
+       * COMBIEN DE FOIS ON A DEMANDÉ, ET POURQUOI LA DERNIÈRE A ÉCHOUÉ.
+       *
+       * Un encaissement dont les frais ne se récupèrent pas reste un
+       * encaissement : le revenu est écrit, seul le coût manque. Sans ces deux
+       * champs, ce manque serait muet — et un coût absent qu'on ne sait pas
+       * absent est le pire des deux mondes.
+       */
+      attempts: { type: Number, default: 0 },
+      lastError: { type: String, default: null },
+    },
+
+    /**
      * L10.4 — LE REÇU STRIPE DE LA CHARGE.
      *
      * Il ne vit pas dans `invoiceDocument` parce qu'il n'est pas une facture :
@@ -327,6 +465,22 @@ providerRevenueFactSchema.index({ projectId: 1, occurredAt: -1 }, { name: 'proje
 providerRevenueFactSchema.index(
   { environment: 1, 'corroboration.paymentIntentId': 1 },
   { name: 'by_payment_intent', sparse: true },
+);
+
+/**
+ * L13 — LA FILE DES FRAIS : « quels encaissements projetés n'ont pas de coût ? ».
+ *
+ * C'est la question que pose la convergence à chaque passage, et elle porte sur
+ * toute la collection. Sans index, le balayage serait linéaire à chaque cycle —
+ * et il grossit avec le chiffre d'affaires, c'est-à-dire au pire moment.
+ *
+ * `settlement.status` est en tête parce qu'il est le plus sélectif : passé les
+ * premières heures, la quasi-totalité des faits sont `SETTLED` et sortent du
+ * balayage dès la première clé.
+ */
+providerRevenueFactSchema.index(
+  { projectionStatus: 1, 'settlement.status': 1, 'settlement.attempts': 1 },
+  { name: 'settlement_backlog' },
 );
 
 export const PanelProviderRevenueFact = mongoose.model(

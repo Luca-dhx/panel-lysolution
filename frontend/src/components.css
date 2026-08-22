@@ -3820,3 +3820,138 @@ body {
 
   .cc-hero-name { font-size: var(--p-text-xl); }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ENCAISSEMENT NET — BRUT · FRAIS · NET (L13)
+
+   ══ POURQUOI CE BLOC EST DISCRET, ET DOIT LE RESTER ═════════════════════════
+
+   Le montant du mouvement reste la donnée principale de sa cellule : c'est lui
+   que le client a payé, c'est lui qui entre dans tous les totaux, et c'est lui
+   qu'on cherche en parcourant un livret. La ventilation l'EXPLIQUE ; si elle
+   pesait autant, l'œil ne saurait plus lequel des trois nombres est le montant
+   de la ligne.
+
+   D'où : une taille inférieure, une couleur atténuée, et un net qui reprend
+   seulement un peu de poids — parce que c'est la seule des trois lignes qui
+   apporte une information nouvelle.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.finance-settlement {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin-top: var(--p-space-2);
+  font-size: var(--p-text-sm);
+  font-weight: 400;
+  color: var(--p-text-muted);
+  /* Les chiffres s'alignent en colonne : sans chasse fixe, « 1 » et « 0 »
+     décalent les trois lignes les unes par rapport aux autres. */
+  font-variant-numeric: tabular-nums;
+}
+
+.finance-settlement-compact { font-size: 0.78rem; }
+
+/*
+  Libellé à gauche, montant à droite, sur toute la largeur disponible — la
+  forme d'un décompte, celle qui se lit sans chercher où va quoi.
+*/
+.finance-settlement-line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--p-space-3);
+  align-items: baseline;
+}
+
+.finance-settlement-label { text-align: left; }
+.finance-settlement-value { text-align: right; white-space: nowrap; }
+
+/* Le net reprend la couleur du texte : c'est lui qu'on retient. */
+.finance-settlement-net {
+  color: var(--p-text);
+  font-weight: 600;
+  padding-top: 0.15rem;
+  border-top: 1px solid var(--p-border);
+  margin-top: 0.15rem;
+}
+
+/*
+  L'ATTENTE EST UNE PHRASE, PAS UN MONTANT.
+
+  Elle occupe la place des trois lignes sans en prendre la forme : un cadre
+  aligné en colonnes ferait chercher des chiffres là où il n'y en a pas encore.
+*/
+.finance-settlement-pending .finance-settlement-note {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+/* La ventilation du fournisseur — une liste sobre, jamais un tableau. */
+.finance-fee-details {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+/*
+  Sur mobile, le tableau s'empile : la cellule Montant retrouve toute la
+  largeur, et le décompte respire au lieu de s'écraser contre son libellé.
+*/
+@media (max-width: 48rem) {
+  .finance-settlement-compact { font-size: var(--p-text-sm); }
+}
+
+/*
+  ── LES SECTIONS DU DÉTAIL D'UN MOUVEMENT ─────────────────────────────────
+
+  `finance-detail-block` était UTILISÉ depuis L10.4 sans être défini : le bloc
+  « Remboursements » s'affichait donc collé au reste, sans titre distinct ni
+  respiration. Ce n'était pas visible tant qu'il n'y avait qu'une section ;
+  L13 en ajoute deux — commercial et encaissement — et trois blocs indistincts
+  se lisent comme une seule liste de vingt lignes.
+
+  Chaque section est donc SÉPARÉE : un filet, un titre, un espace. La règle est
+  la même que pour les impayés — quand des informations ont des natures
+  différentes, la mise en page doit le montrer.
+*/
+.finance-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+  margin-top: var(--p-space-4);
+  padding-top: var(--p-space-4);
+  border-top: 1px solid var(--p-border);
+}
+
+.finance-detail-block > h3 {
+  margin: 0;
+  font-size: var(--p-text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--p-text-muted);
+}
+
+/*
+  Deux colonnes quand la place le permet — deux montants qui se comparent se
+  lisent côte à côte. Une seule en dessous : les écraser les couperait tous
+  les deux.
+*/
+.finance-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: var(--p-space-2) var(--p-space-4);
+}
+
+/*
+  Dans le détail, le décompte n'est plus une annotation : il EST la réponse à
+  « combien cet encaissement a-t-il rapporté ». Il reprend donc la taille du
+  texte courant et une largeur bornée, pour que les trois montants s'alignent
+  sans traverser toute la fenêtre.
+*/
+.finance-detail-block .finance-settlement {
+  font-size: var(--p-text-base, 1rem);
+  max-width: 22rem;
+  margin-top: 0;
+}

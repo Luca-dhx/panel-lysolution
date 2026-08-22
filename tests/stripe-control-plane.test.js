@@ -69,7 +69,10 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
 {
   // DIX depuis L6.3A, qui ajoute l'administration de l'endpoint webhook.
   // DOUZE depuis L6.3B : les factures (liste + unité) et le portail client.
-  check('douze capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 12);
+  // TREIZE depuis L10.6B-3 : la nouvelle tentative sur une créance impayée —
+  //   le compte n'avait pas suivi, et ce contrôle était rouge depuis.
+  // QUATORZE depuis L13 : la lecture des frais réels d'un encaissement.
+  check('quatorze capacités contractualisées', STRIPE_CAPABILITY_CODES.length === 14);
   const problemes = capabilities.validateStripeCapabilities();
   check(`catalogue cohérent (${problemes.length} problème(s))`, problemes.length === 0);
   problemes.forEach((p) => console.error(`      · ${p}`));
@@ -87,7 +90,7 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * réellement exécutés.
    */
   const servies = [...STRIPE_CAPABILITY_CODES];
-  check('douze capacités servies — toutes', servies.length === 12);
+  check('quatorze capacités servies — toutes', servies.length === 14);
   check('…l’ouverture de session', servies.includes('billing.checkout.create'));
   check('…sa lecture (L6.2C)', servies.includes('billing.checkout.retrieve'));
   check('…le client d’un contrat (L6.2D)', servies.includes('billing.customer.ensure'));
@@ -136,7 +139,14 @@ section('1. CONTRACTS — ce qu’une capacité refuse avant tout appel');
    * qu'aucune capacité n'exigeait cette famille ; les trois de ce lot
    * l'exigent.
    */
-  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION', 'PAYMENT_INTENT', 'CUSTOMER'];
+  /**
+   * INVOICE a rejoint les familles ancrables avec la NOUVELLE TENTATIVE
+   * (L10.6B-3) : une facture s'ancre par filiation, comme l'abonnement — elle
+   * découle d'une session ou d'un abonnement déjà possédé, et c'est un webhook
+   * signé qui la désigne. La liste de ce contrôle n'avait pas suivi, et il
+   * était rouge depuis.
+   */
+  const ancrables = ['CHECKOUT_SESSION', 'SUBSCRIPTION', 'PAYMENT_INTENT', 'CUSTOMER', 'INVOICE'];
   check('aucune capacité servie n’exige une famille non ancrable',
     servies.every((c) => {
       const d = STRIPE_CAPABILITIES[c];
@@ -259,7 +269,20 @@ section('2. LE PROJET NE DÉCIDE NI DU MONDE, NI DU MONTANT, NI DE LA CLÉ');
               // remboursements partiels du même paiement sont deux actes
               // légitimes, qu'une identité dérivée confondrait.
               : code === 'billing.refund' ? { paymentIntentId: 'pi_1', operationId: OP }
-                : { subscriptionId: 'sub_1', operationId: OP };
+                // L10.6B-3 — la nouvelle tentative désigne la FACTURE impayée,
+                // et son identité d'acte est dérivée : le projet ne la nomme
+                // pas, sinon il pourrait lancer deux prélèvements simultanés.
+                : code === 'billing.invoice.retry' ? { invoiceId: 'in_1' }
+                  /**
+                   * L13 — LA LECTURE DES FRAIS RÉELS.
+                   *
+                   * Aucun `operationId` : c'est une lecture pure, hors surface
+                   * du pont (`panelOnly`). Il n'y a pas d'acte à nommer, et
+                   * aucun projet ne peut en fabriquer deux — il ne peut pas
+                   * l'appeler du tout.
+                   */
+                  : code === 'billing.settlement.retrieve' ? { paymentIntentId: 'pi_1' }
+                    : { subscriptionId: 'sub_1', operationId: OP };
     check(`${code} : l’entrée nominale est acceptée`, schema.safeParse(base).success === true);
     const refuses = interdits.filter((champ) => schema.safeParse({ ...base, [champ]: 'x' }).success === false);
     check(`${code} : les ${interdits.length} champs interdits sont refusés`, refuses.length === interdits.length);
@@ -290,8 +313,16 @@ section('3. COMMERCIAL READINESS — l’écriture financière avant l’ouvertu
    * QUATRE depuis L6.2G. Une résiliation est une écriture financière au même
    * titre qu'un paiement : elle met fin à un encaissement récurrent, et se
    * tromper de projet coûte aussi cher que d'encaisser deux fois.
+   *
+   * CINQ depuis L10.6B-3 : retenter la collecte d'une créance DÉCLENCHE un
+   * prélèvement réel. Le compte n'avait pas suivi, et ce contrôle était rouge
+   * depuis.
+   *
+   * L13 n'en ajoute AUCUNE : lire ce qu'un fournisseur a prélevé ne déplace
+   * pas d'argent. Une lecture classée financière aurait exigé une idempotence
+   * fournisseur qu'aucune lecture ne peut porter.
    */
-  check('quatre écritures financières contractualisées', financieres.length === 4);
+  check('cinq écritures financières contractualisées', financieres.length === 5);
   /**
    * Et la QUATRIÈME est la seule qui rende de l'argent. Toutes les autres
    * engagent l'avenir ; celle-ci défait le passé, et rien ne la défait à son

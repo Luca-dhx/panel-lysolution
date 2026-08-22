@@ -141,7 +141,19 @@ section('Une seule porte pour l’environnement');
   // précisément pour la sécurité : les arguments d'un processus sont
   // lisibles par tout utilisateur de la machine (`ps aux`), son environnement
   // ne l'est pas. Les interdire ici pousserait le secret vers argv.
-  const ENV_ENTRY_POINTS = [path.join('scripts', 'deploy-worker.js')];
+  //
+  // `deploy-drive.js` relève EXACTEMENT du même cas, et l'exception ne l'avait
+  // pas suivi quand il est arrivé : c'est un point d'entrée console qui pilote
+  // le moteur officiel, et le seul `process.env` qu'il lit est le mot de passe
+  // SSH d'invocation — celui-là même que l'écran de déploiement collecte dans
+  // un formulaire. Le faire passer par `argv` le rendrait lisible par tout
+  // utilisateur de la machine ; le faire passer par la configuration en ferait
+  // un secret persistant. L'environnement du processus est le moins mauvais
+  // des trois, et c'est la raison d'être de cette liste.
+  const ENV_ENTRY_POINTS = [
+    path.join('scripts', 'deploy-worker.js'),
+    path.join('scripts', 'deploy-drive.js'),
+  ];
 
   const offenders = backendFiles.filter((file) => {
     if (!/process\.env[.[]/.test(read(file))) return false;

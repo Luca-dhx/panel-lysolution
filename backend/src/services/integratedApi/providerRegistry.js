@@ -205,6 +205,10 @@ export const PROVIDER_DEFINITIONS = Object.freeze({
       // L6.3B — les dernières lectures du projet, et son écran de portail.
       'billing.invoice.retrieve',
       'billing.portal.create',
+      // L13 — les frais RÉELS d'un encaissement, lus sur l'écriture de solde.
+      // La seule capacité Stripe hors surface projet : elle lit le registre de
+      // solde de L.Y Solution, qui n'appartient à aucun projet (`panelOnly`).
+      'billing.settlement.retrieve',
     ]),
     credentialRoles: Object.freeze([
       role('secretKey', 'Clé secrète', {

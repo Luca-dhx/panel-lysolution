@@ -377,6 +377,84 @@ const refundView = z.object({
   outcome: z.enum(['REFUNDED', 'ALREADY_REFUNDED']),
 }).strict();
 
+/* ── L13 — L'ENCAISSEMENT NET ─────────────────────────────────────────────── */
+
+/**
+ * `billing.settlement.retrieve` — CE QUE LE FOURNISSEUR A PRÉLEVÉ.
+ *
+ * ══ TROIS PORTES D'ENTRÉE, ET UNE SEULE À LA FOIS ═══════════════════════════
+ *
+ * Un fait de revenu porte une intention (`pi_…`). Un fait de remboursement
+ * porte un `re_…`. Les débits anciens n'ont parfois que leur `ch_…`. Les trois
+ * mènent à la MÊME chose — l'écriture de solde — et l'exiger sous une seule
+ * forme aurait obligé l'appelant à faire lui-même la traversée, c'est-à-dire à
+ * payer des appels fournisseur pour préparer un appel fournisseur.
+ *
+ * Le refus des trois à la fois n'est pas du zèle : accepter l'ambiguïté
+ * obligerait l'exécutant à choisir, et ce choix serait la première chose qu'on
+ * chercherait à retourner contre lui.
+ *
+ * ══ AUCUN MONTANT N'ENTRE, ET C'EST L'INVARIANT DU LOT ══════════════════════
+ *
+ * Ni brut attendu, ni taux, ni barème. Ce verbe n'a rien à vérifier et rien à
+ * calculer : il LIT. Un montant en entrée aurait ouvert la porte à un frais
+ * « proposé » puis « confirmé », donc à un frais que le Panel aurait pu écrire
+ * lui-même.
+ */
+const settlementRetrieveInput = z.object({
+  paymentIntentId: z.string().trim().min(1).max(255).optional(),
+  chargeId: z.string().trim().min(1).max(255).optional(),
+  refundId: z.string().trim().min(1).max(255).optional(),
+}).strict().superRefine((valeur, ctx) => {
+  const fournies = ['paymentIntentId', 'chargeId', 'refundId'].filter((k) => valeur[k]);
+  if (fournies.length !== 1) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['paymentIntentId'],
+      message: 'Exactement une référence est attendue : intention, débit, ou remboursement.',
+    });
+  }
+});
+
+/** Une ligne de la ventilation Stripe — recopiée, jamais recomposée. */
+const feeDetailView = z.object({
+  type: z.string().nullable(),
+  description: z.string().nullable(),
+  amountCents: z.number().int().nullable(),
+  currency: z.string().nullable(),
+  application: z.string().nullable(),
+}).strict();
+
+/**
+ * CE QUE LE VERBE REND — et la raison pour laquelle il rend un STATUT.
+ *
+ * `SETTLED` porte des chiffres. `PENDING` n'en porte aucun, et c'est une
+ * réponse, pas un échec : un prélèvement ou un virement n'a pas d'écriture de
+ * solde tant que les fonds n'ont pas bougé. Rendre `0` dans ce cas aurait
+ * inscrit au registre un coût nul qu'il aurait fallu corriger ensuite — donc
+ * réécrire une écriture passée.
+ */
+const settlementView = z.object({
+  status: z.enum(['SETTLED', 'PENDING', 'UNAVAILABLE', 'UNUSABLE']),
+  reason: z.string().nullable(),
+  balanceTransactionId: z.string().nullable(),
+  /** Le brut TEL QUE LE FOURNISSEUR le voit. Signé : négatif sur un rendu. */
+  grossCents: z.number().int().nullable(),
+  /** L'AUTORITÉ du coût. Jamais dérivé d'une grille tarifaire. */
+  providerFeeCents: z.number().int().nullable(),
+  netCents: z.number().int().nullable(),
+  currency: z.string().nullable(),
+  providerType: z.string().nullable(),
+  reportingCategory: z.string().nullable(),
+  providerStatus: z.string().nullable(),
+  /** Secondes Stripe — converties par l'appelant, jamais ici. */
+  availableOn: z.number().int().nullable(),
+  occurredAt: z.number().int().nullable(),
+  chargeId: z.string().nullable(),
+  exchangeRate: z.number().nullable(),
+  feeDetails: z.array(feeDetailView),
+}).strict();
+
 /**
  * `billing.customer.ensure` — LE SEUL CONTRAT SANS `operationId`, et c'est le
  * cœur de sa sémantique (L6.2D).
@@ -826,6 +904,16 @@ function capability(code, options) {
      * qui lisait une taxinomie d'effets désormais supprimée.
      */
     financial: options.financial === true,
+    /**
+     * L13 — CE VERBE EST-IL OFFERT AUX PROJETS ?
+     *
+     * Déclaré ici ET dans le registre des capacités, comme `provider` et
+     * `timeoutMs` : les deux catalogues doivent raconter la même histoire, et
+     * `assertRegistryAlignment` existe pour le vérifier. Un drapeau posé d'un
+     * seul côté aurait laissé la validation Stripe raisonner sur une surface
+     * qui n'est pas celle que la passerelle applique.
+     */
+    panelOnly: options.panelOnly === true,
   });
 }
 
@@ -1142,6 +1230,39 @@ export const STRIPE_CAPABILITIES = Object.freeze({
     resourceKind: STRIPE_RESOURCE_KINDS.PAYMENT_INTENT,
   }),
 
+  /**
+   * L13 — LA LECTURE QUI DONNE SON COÛT À UN ENCAISSEMENT.
+   *
+   * ══ POURQUOI ELLE N'A PAS DE `resourceKind` ════════════════════════════════
+   *
+   * Toutes les autres capacités désignent une ressource de PROJET, et prouvent
+   * son appartenance avant d'agir. Celle-ci désigne une écriture du REGISTRE DE
+   * SOLDE de L.Y Solution : ce que Stripe a prélevé sur un encaissement. Cette
+   * écriture n'appartient à aucun projet — elle appartient à l'entreprise, et
+   * lui inventer un propriétaire aurait produit une garde décorative.
+   *
+   * La protection est donc d'une autre nature : `panelOnly`. Le verbe n'est pas
+   * atteignable depuis le pont, quel que soit le projet appelant. Voir le
+   * drapeau dans `capabilityRegistry.js`.
+   *
+   * ══ POURQUOI `billing:read` MALGRÉ TOUT ════════════════════════════════════
+   *
+   * Le registre exige une permission par capacité, et c'en est bien une :
+   * lecture de facturation. Qu'aucun projet ne puisse l'obtenir ne rend pas la
+   * déclaration inutile — elle dit ce que l'acte EST, indépendamment de qui
+   * peut le demander.
+   */
+  'billing.settlement.retrieve': capability('billing.settlement.retrieve', {
+    label: 'Lire les frais réels d’un encaissement',
+    inputSchema: settlementRetrieveInput,
+    outputSchema: settlementView,
+    timeoutMs: 20_000,
+    /** Lecture pure : la rejouer ne peut produire qu'un appel de plus. */
+    idempotency: 'SAFE_RETRY',
+    requiredPermissions: ['billing:read'],
+    panelOnly: true,
+  }),
+
   'billing.subscription.cancel_at_period_end': capability('billing.subscription.cancel_at_period_end', {
     label: 'Résilier un abonnement en fin de période',
     inputSchema: subscriptionCancelInput,
@@ -1234,7 +1355,22 @@ export function validateStripeCapabilities() {
      * contrat. `DERIVED_OPERATION_IDENTITY` recense ces cas, un par un — la
      * liste est fermée pour qu'aucun verbe ne s'y glisse par commodité.
      */
-    if (!Object.hasOwn(shape, 'operationId') && !DERIVED_OPERATION_IDENTITY.includes(code)) {
+    /**
+     * ── L'EXCEPTION : UNE LECTURE PURE HORS SURFACE PROJET (L13) ──────────
+     *
+     * La règle protège contre « deux appels indiscernables, deux effets ». Une
+     * lecture `SAFE_RETRY` n'a aucun effet : la rejouer ne produit qu'un appel
+     * de plus. Et `panelOnly` ferme la seule voie par laquelle un tiers
+     * pourrait en fabriquer deux — le pont ne l'atteint pas.
+     *
+     * Les deux conditions sont exigées ENSEMBLE. Une lecture ouverte aux
+     * projets garde son identité d'acte, parce que le registre d'opérations
+     * est aussi ce qui trace qui a demandé quoi.
+     */
+    const lecturePureInterne = definition.panelOnly && definition.idempotency === 'SAFE_RETRY';
+    if (!Object.hasOwn(shape, 'operationId')
+      && !DERIVED_OPERATION_IDENTITY.includes(code)
+      && !lecturePureInterne) {
       problems.push(`${code} : aucune identité d’acte, ni fournie ni dérivée.`);
     }
     // Une ÉCRITURE financière sans idempotence fournisseur est un doublon en

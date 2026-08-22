@@ -818,6 +818,88 @@ export async function retrievePaymentIntent({ credentials, paymentIntentId, time
   return { paymentIntent: res.json, requestId: res.requestId, durationMs: res.durationMs };
 }
 
+/* ── L13 — L'ÉCRITURE DE SOLDE, DONC LE FRAIS RÉEL ───────────────────────── */
+
+/**
+ * `GET /v1/payment_intents/{id}` — intention, débit ET écriture de solde.
+ *
+ * ══ POURQUOI UNE LECTURE DE PLUS PLUTÔT QU'UN `expand` SUR LA PRÉCÉDENTE ════
+ *
+ * `retrievePaymentIntent` sert le remboursement, et un remboursement est la
+ * plus irréversible des écritures du parc. Élargir son `expand` aurait changé
+ * la charge utile d'un chemin financier éprouvé pour le confort d'un autre —
+ * un couplage qu'on paierait le jour où Stripe modifiera l'objet imbriqué.
+ *
+ * ══ DEUX NIVEAUX D'`expand`, ET C'EST LE MINIMUM ════════════════════════════
+ *
+ * Le frais ne vit ni sur l'intention ni sur la facture : il vit sur la
+ * `balance_transaction` du DÉBIT. Sans le double `expand`, il faudrait trois
+ * allers-retours (intention → débit → écriture) là où un seul suffit — trois
+ * fois plus d'occasions qu'une convergence s'interrompe au milieu.
+ *
+ * ══ C'EST UNE LECTURE, DONC ELLE SE REJOUE ══════════════════════════════════
+ *
+ * `retries: 2` comme les autres lectures. Aucun euro ne bouge ici : la seule
+ * conséquence d'un rejeu est un appel de plus.
+ */
+export async function retrievePaymentSettlement({
+  credentials, paymentIntentId, timeoutMs, fetchImpl,
+}) {
+  if (!paymentIntentId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de paiement manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/payment_intents/${encodeURIComponent(paymentIntentId)}`,
+    query: { expand: ['latest_charge.balance_transaction'] },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { paymentIntent: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/charges/{id}` — le débit, écriture de solde étendue.
+ *
+ * Le repli quand un fait ne porte PAS d'intention : c'est le cas des débits
+ * anciens, et de ceux qu'une version d'API a cessé de rattacher à plat. Un
+ * remboursement, lui, désigne toujours son débit — c'est par ici qu'il trouve
+ * son écriture.
+ */
+export async function retrieveChargeSettlement({
+  credentials, chargeId, timeoutMs, fetchImpl,
+}) {
+  if (!chargeId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de débit manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/charges/${encodeURIComponent(chargeId)}`,
+    query: { expand: ['balance_transaction'] },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { charge: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
+/**
+ * `GET /v1/refunds/{id}` — le remboursement et SON écriture de solde.
+ *
+ * Un remboursement produit sa PROPRE `balance_transaction`, distincte de celle
+ * du débit : montant négatif, et un `fee` qui dit — c'est tout l'enjeu — si le
+ * fournisseur a rendu sa commission ou l'a gardée. Le Panel ne suppose ni l'un
+ * ni l'autre : il lit.
+ */
+export async function retrieveRefundSettlement({
+  credentials, refundId, timeoutMs, fetchImpl,
+}) {
+  if (!refundId) {
+    throw new StripeTransportError(TRANSPORT_CODES.INPUT_INVALID, 'Identifiant de remboursement manquant.');
+  }
+  const res = await stripeFetch({
+    credentials, method: 'GET', path: `/v1/refunds/${encodeURIComponent(refundId)}`,
+    query: { expand: ['balance_transaction'] },
+    timeoutMs, fetchImpl, retries: 2,
+  });
+  return { refund: res.json, requestId: res.requestId, durationMs: res.durationMs };
+}
+
 /**
  * `GET /v1/refunds` — LA LECTURE QUI PORTE LA CONVERGENCE DURABLE.
  *

@@ -231,17 +231,29 @@ section('4. SOURCE DE VÉRITÉ UNIQUE — aucune seconde liste ne subsiste');
 }
 
 /* ========================================================================== */
-section('5. INVENTAIRE — 23 actions, toutes servies');
+section('5. INVENTAIRE — 25 actions, toutes servies');
 /* ========================================================================== */
 {
   /**
-   * 23 depuis que la PREUVE D’AUDIT est un acte à part
-   * (`signature.certificate.download`). Le compte est écrit en dur exprès : une
-   * capacité qui apparaît sans que personne l’ait voulue est exactement ce que
-   * ce contrôle existe pour attraper.
+   * 25 depuis que les FRAIS RÉELS d’un encaissement sont un acte à part
+   * (`billing.settlement.retrieve`, L13). Le compte est écrit en dur exprès :
+   * une capacité qui apparaît sans que personne l’ait voulue est exactement ce
+   * que ce contrôle existe pour attraper.
    */
-  check('24 actions déclarées', definitions.length === 24);
-  check('…et 24 exécutants', adapters.listAdaptedCapabilities().length === 24);
+  check('25 actions déclarées', definitions.length === 25);
+  check('…et 25 exécutants', adapters.listAdaptedCapabilities().length === 25);
+
+  /**
+   * ── LA SURFACE OFFERTE AUX PROJETS EST PLUS PETITE QUE LE REGISTRE (L13) ──
+   *
+   * Une seule capacité est fermée au pont, et c'est une exception qui doit le
+   * rester : elle ne lit pas une ressource de PROJET mais le registre de solde
+   * de L.Y Solution. Le compte est écrit en dur pour la même raison que le
+   * précédent — une seconde fermeture doit être un choix, jamais une habitude.
+   */
+  const fermees = definitions.filter((d) => d.panelOnly);
+  check('une seule capacité est hors surface projet',
+    fermees.length === 1 && fermees[0].code === 'billing.settlement.retrieve');
   check('billing.subscription.reconcile n’est plus déclarée',
     !registry.isKnownCapability('billing.subscription.reconcile'));
   /**

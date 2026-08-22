@@ -44,6 +44,7 @@ import {
   STATUSES,
   PanelFinancialTransaction,
 } from '../../models/PanelFinancialTransaction.model.js';
+import { PROVIDER_FEE_EXTERNAL_KIND } from './providerRevenue/providerSettlement.service.js';
 import { FINANCE_TIMEZONE } from './period.js';
 import { buildQueryFilter, publicPeriod } from './financialTransactions.service.js';
 
@@ -106,6 +107,41 @@ export async function summarize(demande = {}) {
           },
           { $sort: { '_id.bucket': 1 } },
         ],
+        /*
+          L13 — LA PART DES COÛTS QUI EST UNE COMMISSION DE PAIEMENT.
+
+          ══ C'EST UNE VENTILATION, PAS UN TOTAL DE PLUS ══════════════════════
+
+          Ces centimes sont DÉJÀ dans `byCategory.costCents` : ce sont des
+          mouvements `COST` ordinaires, écrits par la projection fournisseur.
+          On les compte une seconde fois ICI pour pouvoir répondre à « combien
+          la facturation nous coûte-t-elle ? » — jamais pour les ajouter.
+
+          Les additionner aux coûts serait le seul double comptage que ce lot
+          puisse introduire, et c'est pour l'écarter que la formule est écrite
+          une fois, ici, plutôt que recomposée dans chaque écran.
+
+          ══ POURQUOI LA CLÉ EST LE TYPE D'OBJET EXTERNE ══════════════════════
+
+          `provenance.externalKind = BALANCE_TRANSACTION` désigne exactement les
+          lignes nées d'une écriture de solde fournisseur — ni les saisies
+          manuelles, ni les coûts récurrents, ni les revenus. Filtrer sur
+          `origin: STRIPE` seul aurait aussi ramassé les REVENUS, dont l'origine
+          est la même : le fournisseur est une origine, pas une nature.
+
+          Le filtre reste GÉNÉRIQUE : il ne nomme aucun fournisseur. Un second
+          PSP écrirait ses commissions sous la même forme et entrerait dans ce
+          total sans qu'une ligne change.
+        */
+        providerFees: [
+          {
+            $match: {
+              category: 'COST',
+              'provenance.externalKind': PROVIDER_FEE_EXTERNAL_KIND,
+            },
+          },
+          { $group: { _id: '$provenance.provider', amountCents: { $sum: '$amountCents' }, count: { $sum: 1 } } },
+        ],
         count: [{ $count: 'value' }],
       },
     },
@@ -120,6 +156,21 @@ export async function summarize(demande = {}) {
   const byCategory = emptyCategories();
   for (const [category, ligne] of Object.entries(categories)) {
     byCategory[category] = ligne.amountCents;
+  }
+
+  /**
+   * LA VENTILATION DES COÛTS — lue sur la même passe que tout le reste.
+   *
+   * `_id` porte le fournisseur (`STRIPE`). Il est conservé pour que l'écran
+   * puisse dire lequel coûte quoi le jour où il y en aura deux — et il n'y a
+   * rien à changer pour cela.
+   */
+  const parFournisseur = {};
+  let fraisFournisseur = 0;
+  for (const ligne of resultat?.providerFees ?? []) {
+    const fournisseur = ligne._id ?? 'INCONNU';
+    parFournisseur[fournisseur] = (parFournisseur[fournisseur] ?? 0) + ligne.amountCents;
+    fraisFournisseur += ligne.amountCents;
   }
 
   return {
@@ -137,6 +188,23 @@ export async function summarize(demande = {}) {
       costCents: byCategory.COST,
       refundCents: byCategory.REFUND,
       adjustmentCents: byCategory.ADJUSTMENT,
+    },
+    /**
+     * L13 — DE QUOI LES COÛTS SONT FAITS. Un SOUS-ENSEMBLE, jamais un ajout.
+     *
+     *     totalCents = providerFeeCents + otherCents
+     *     totalCents = byCategory.costCents            (la même chose, dite deux fois)
+     *
+     * L'égalité est écrite ici, une fois, pour qu'aucun écran n'ait à la
+     * recomposer — et donc pour qu'aucun écran ne puisse se tromper en
+     * additionnant la commission aux charges dont elle fait déjà partie.
+     */
+    costs: {
+      totalCents: byCategory.COST,
+      providerFeeCents: fraisFournisseur,
+      otherCents: byCategory.COST - fraisFournisseur,
+      /** Le détail par fournisseur — vide tant qu'aucune commission n'existe. */
+      byProvider: parFournisseur,
     },
     count: resultat?.count?.[0]?.value ?? 0,
     series: buildSeries(resultat?.series ?? []),
@@ -208,6 +276,29 @@ export async function summarizeByProject(demande = {}, { limit = 50 } = {}) {
         },
         costCents: {
           $sum: { $cond: [{ $eq: ['$category', 'COST'] }, '$amountCents', 0] },
+        },
+        /**
+         * L13 — la part de ces coûts qui est une commission de paiement.
+         *
+         * SOUS-ENSEMBLE de `costCents`, jamais un total de plus : la question
+         * à laquelle il répond est « combien encaisser ce client nous
+         * coûte-t-il ? », pas « quels sont ses coûts ». Les additionner
+         * doublerait la commission — c'est le seul double comptage que ce lot
+         * puisse introduire, et il est écarté ici comme dans `summarize`.
+         */
+        providerFeeCents: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ['$category', 'COST'] },
+                  { $eq: ['$provenance.externalKind', PROVIDER_FEE_EXTERNAL_KIND] },
+                ],
+              },
+              '$amountCents',
+              0,
+            ],
+          },
         },
         count: { $sum: 1 },
       },

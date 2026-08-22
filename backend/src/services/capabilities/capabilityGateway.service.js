@@ -113,6 +113,27 @@ export async function invokeCapability({
   const definition = getCapabilityDefinition(code);
   if (!definition) throw capabilityUnknown(code);
 
+  /**
+   * ── 1 bis. CE VERBE EST-IL OFFERT AU PONT ? (L13) ────────────────────────
+   *
+   * Quelques capacités ne lisent pas une ressource de projet mais le registre
+   * de solde de L.Y Solution — ce que le fournisseur a prélevé. Elles n'ont
+   * aucun lien d'appartenance à vérifier, parce que leur objet n'appartient à
+   * aucun projet : lui en inventer un aurait produit une garde décorative.
+   *
+   * Le refus vit donc ici, avant tout contexte, et il est INDISTINCT d'un code
+   * inconnu. Répondre « existe mais interdit » ferait du pont un oracle sur la
+   * surface interne du Panel — la même raison qui fait refuser une facture
+   * étrangère comme une facture inexistante (L6.3B).
+   *
+   * Aucun journal non plus : il n'y a rien à auditer dans un code que le pont
+   * n'a jamais eu le droit de connaître, et journaliser ferait de la tentative
+   * une trace utile à qui la répète.
+   */
+  if (definition.panelOnly && source === INVOCATION_SOURCES.PROJECT_BRIDGE) {
+    throw capabilityUnknown(code);
+  }
+
   // ── 2. QUI PARLE, ET 3. DANS QUEL MONDE ? ─────────────────────────────────
   /**
    * LA CONSTRUCTION DU CONTEXTE PEUT ELLE-MÊME REFUSER — et ce refus-là est

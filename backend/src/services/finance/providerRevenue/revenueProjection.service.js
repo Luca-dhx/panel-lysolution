@@ -329,6 +329,16 @@ async function upsertFact({ fact, eventType, providerEventId }) {
         occurredAt: fact.occurredAt,
         periodStart: fact.periodStart ?? null,
         periodEnd: fact.periodEnd ?? null,
+        /**
+         * L13 — LA VENTILATION FISCALE EST POSÉE À LA PREMIÈRE ANNONCE.
+         *
+         * En `$setOnInsert` comme les champs économiques, et pour la même
+         * raison : c'est ce que le DOCUMENT affichait, et un document ne se
+         * réécrit pas. Une seconde annonce du même paiement — facture réémise,
+         * rejeu tardif, taux de TVA changé entre-temps — ne doit pas pouvoir
+         * modifier la répartition HT/TVA d'un encaissement déjà comptabilisé.
+         */
+        fiscal: fact.fiscal ?? null,
         ownershipResourceType: fact.ownershipVia?.resourceType ?? null,
         ownershipResourceId: fact.ownershipVia?.resourceId ?? null,
         projectionStatus: PROJECTION_STATUS.PENDING,
@@ -621,12 +631,44 @@ export async function projectFact(factId) {
  * encaissé.
  */
 export async function settleProjectedFact(factId) {
-  const rien = { archived: null, announced: null };
+  const rien = { archived: null, announced: null, settled: null };
   try {
     const fait = await PanelProviderRevenueFact.findOne({ factId }).lean();
     if (!fait || fait.projectionStatus !== PROJECTION_STATUS.PROJECTED || !fait.transactionId) {
       return rien;
     }
+
+    /**
+     * ── LE COÛT FOURNISSEUR, D'ABORD, ET POUR LES DEUX GENRES DE FAIT (L13) ──
+     *
+     * ══ POURQUOI IL PRÉCÈDE LA FACTURE ET L'ANNONCE ════════════════════════
+     *
+     * Parce qu'il touche au REGISTRE, et que les deux autres n'y touchent pas.
+     * Un message qui invite à ouvrir un mouvement doit décrire un mouvement
+     * complet : l'expédier avant que la commission n'y figure enverrait le
+     * lecteur vers un encaissement dont le net n'est pas encore le bon.
+     *
+     * ══ POURQUOI UN REMBOURSEMENT PASSE ICI, LUI AUSSI ═════════════════════
+     *
+     * Il n'a ni facture ni annonce — c'est la doctrine documentaire de L10.4 —
+     * mais il a bien une écriture de solde, avec son propre frais. Le sauter
+     * laisserait les commissions des remboursements hors du bilan, et le
+     * bénéfice serait faux dans l'autre sens.
+     *
+     * ══ IL NE PEUT PAS DÉFAIRE LE REVENU ═══════════════════════════════════
+     *
+     * `captureSettlementForFact` ne lève jamais et n'écrit qu'en ajout. Un
+     * frais indisponible laisse l'encaissement entier et lisible ; la
+     * convergence le reprendra.
+     */
+    const { captureSettlementForFact } = await import('./providerSettlement.service.js');
+    const settled = await captureSettlementForFact(factId).catch((err) => {
+      logger.warn(
+        `[finance] frais fournisseur non relevés pour ${maskResourceId(fait.objectId)} `
+        + `(${fait.environment}) — ${err?.message ?? 'erreur inconnue'}. Le revenu, lui, est écrit.`,
+      );
+      return null;
+    });
 
     /**
      * UN REMBOURSEMENT N'A NI FACTURE NI ANNONCE D'ENCAISSEMENT.
@@ -635,7 +677,7 @@ export async function settleProjectedFact(factId) {
      * doctrine documentaire de L10.4 — et annoncer « un projet a payé » sur une
      * sortie d'argent serait exactement faux.
      */
-    if (fait.kind === FACT_KIND.REFUND) return rien;
+    if (fait.kind === FACT_KIND.REFUND) return { ...rien, settled };
 
     const archived = await archiveInvoiceForFact(factId).catch((err) => {
       logger.warn(
@@ -660,7 +702,7 @@ export async function settleProjectedFact(factId) {
         return null;
       });
 
-    return { archived, announced };
+    return { archived, announced, settled };
   } catch (err) {
     logger.warn(
       `[finance] suites d'encaissement non données pour ${factId} — `
@@ -1603,6 +1645,33 @@ export async function describeProviderFact(transaction) {
         number: fait.invoiceDocument.number ?? null,
         hostedUrl: fait.invoiceDocument.hostedUrl ?? null,
         pdfUrl: fait.invoiceDocument.pdfUrl ?? null,
+      }
+      : null,
+    /**
+     * L13 — L'ÉCRITURE DE SOLDE, ET ELLE SEULE FAIT AUTORITÉ SUR LE FRAIS.
+     *
+     * Rendue dans le panneau TECHNIQUE, à côté des autres identifiants
+     * fournisseur, et pas dans la lecture courante : c'est la PREUVE qu'un
+     * exploitant rapproche du tableau de bord Stripe, pas une information qu'on
+     * consulte tous les jours. Les chiffres, eux, sont déjà sur le mouvement
+     * (`settlement`), sous une forme générique qu'aucun second PSP n'obligerait
+     * à refaire.
+     */
+    settlement: fait.settlement?.status
+      ? {
+        status: fait.settlement.status,
+        reason: fait.settlement.reason ?? null,
+        balanceTransactionId: fait.settlement.balanceTransactionId ?? null,
+        providerType: fait.settlement.providerType ?? null,
+        reportingCategory: fait.settlement.reportingCategory ?? null,
+        providerStatus: fait.settlement.providerStatus ?? null,
+        availableOn: fait.settlement.availableOn
+          ? new Date(fait.settlement.availableOn).toISOString() : null,
+        chargeId: fait.settlement.chargeId ?? null,
+        /** Le mouvement de charge produit — le pont vers le registre. */
+        providerCostTransactionId: fait.settlement.feeTransactionId ?? null,
+        attempts: fait.settlement.attempts ?? 0,
+        lastError: fait.settlement.lastError ?? null,
       }
       : null,
     /** Le dernier événement qui a parlé de ce fait — diagnostic d'arrivée. */

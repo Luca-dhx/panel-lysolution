@@ -61,10 +61,19 @@ import {
   createBillingPortalSession,
   listRefunds,
   createRefund,
+  retrievePaymentSettlement,
+  retrieveChargeSettlement,
+  retrieveRefundSettlement,
   StripeTransportError,
   TRANSPORT_CODES,
   OUTCOMES,
 } from './stripeTransport.js';
+import {
+  SETTLEMENT_STATUS,
+  SETTLEMENT_REASON,
+  normalizeBalanceTransaction,
+  settlementOfPaymentIntent,
+} from './stripeSettlementAuthority.js';
 import {
   STRIPE_RESOURCE_TYPES,
   BINDING_SOURCES,
@@ -1775,7 +1784,143 @@ async function portalCreate({ definition, context, credentials, input, fetchImpl
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/*  billing.settlement.retrieve — L13                                         */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * LE FRAIS RÉEL D'UN ENCAISSEMENT — lu sur l'écriture de solde, jamais calculé.
+ *
+ * ══ CE QUE CET ADAPTATEUR NE FAIT PAS ═══════════════════════════════════════
+ *
+ * Il ne vérifie AUCUNE appartenance, et c'est délibéré : l'objet qu'il lit —
+ * une `balance_transaction` — n'appartient à aucun projet. C'est une ligne du
+ * registre de solde de L.Y Solution. Écrire ici un `assertOwnedResource` aurait
+ * été une garde décorative, et pire : elle aurait fait croire à une protection
+ * qui n'existe pas. La protection réelle est `panelOnly`, dans le registre :
+ * aucun projet ne peut atteindre ce code.
+ *
+ * ══ IL NE CALCULE RIEN NON PLUS ═════════════════════════════════════════════
+ *
+ * Pas un pourcentage, pas un palier, pas une soustraction inventée. Les trois
+ * nombres — brut, frais, net — viennent tous de Stripe, et le normalisateur
+ * refuse le triplet s'il ne s'additionne pas. C'est l'invariant du lot, et il
+ * est vérifiable en lisant ces quinze lignes.
+ *
+ * ══ « PAS ENCORE » EST UNE RÉPONSE VALIDE ═══════════════════════════════════
+ *
+ * Un paiement par prélèvement n'a pas d'écriture de solde tant que les fonds
+ * n'ont pas bougé. On rend alors `PENDING` — jamais `0`, qui affirmerait que
+ * Stripe n'a rien prélevé. L'appelant réessaiera ; c'est la convergence.
+ */
+async function settlementRetrieve({ definition, credentials, input, fetchImpl }) {
+  const { paymentIntentId, chargeId, refundId } = input;
+
+  /** Secondes Stripe — le contrat de sortie les rend telles quelles. */
+  const secondes = (date) => (date instanceof Date ? Math.floor(date.getTime() / 1000) : null);
+
+  const vide = (status, reason, extra = {}) => ({
+    status,
+    reason: reason ?? null,
+    balanceTransactionId: extra.balanceTransactionId ?? null,
+    grossCents: null,
+    providerFeeCents: null,
+    netCents: null,
+    currency: null,
+    providerType: null,
+    reportingCategory: null,
+    providerStatus: null,
+    availableOn: null,
+    occurredAt: null,
+    chargeId: extra.chargeId ?? null,
+    exchangeRate: null,
+    feeDetails: [],
+  });
+
+  const rendu = (settlement) => ({
+    status: SETTLEMENT_STATUS.SETTLED,
+    reason: null,
+    balanceTransactionId: settlement.balanceTransactionId,
+    grossCents: settlement.grossCents,
+    providerFeeCents: settlement.providerFeeCents,
+    netCents: settlement.netCents,
+    currency: settlement.currency,
+    providerType: settlement.providerType,
+    reportingCategory: settlement.reportingCategory,
+    providerStatus: settlement.providerStatus,
+    availableOn: secondes(settlement.availableOn),
+    occurredAt: secondes(settlement.occurredAt),
+    chargeId: settlement.chargeId ?? settlement.sourceId ?? null,
+    exchangeRate: settlement.exchangeRate,
+    feeDetails: settlement.feeDetails,
+  });
+
+  /**
+   * L'ÉCRITURE D'UN REMBOURSEMENT EST LA SIENNE, PAS CELLE DU DÉBIT.
+   *
+   * Montant négatif, et un `fee` qui dit — c'est tout l'enjeu du cas — si le
+   * fournisseur a rendu sa commission ou l'a gardée. Le Panel ne suppose ni
+   * l'un ni l'autre.
+   */
+  if (refundId) {
+    const res = await guard(definition, () => retrieveRefundSettlement({
+      credentials, refundId, timeoutMs: definition.timeoutMs, fetchImpl,
+    }));
+    const bt = res.refund?.balance_transaction;
+    if (!bt || typeof bt !== 'object') {
+      return vide(
+        SETTLEMENT_STATUS.PENDING,
+        SETTLEMENT_REASON.BALANCE_TRANSACTION_PENDING,
+        { chargeId: typeof res.refund?.charge === 'string' ? res.refund.charge : null },
+      );
+    }
+    const { settlement, reason } = normalizeBalanceTransaction({ balanceTransaction: bt });
+    if (!settlement) return vide(SETTLEMENT_STATUS.UNUSABLE, reason);
+    return rendu({
+      ...settlement,
+      chargeId: typeof res.refund?.charge === 'string' ? res.refund.charge : settlement.sourceId,
+    });
+  }
+
+  if (chargeId) {
+    const res = await guard(definition, () => retrieveChargeSettlement({
+      credentials, chargeId, timeoutMs: definition.timeoutMs, fetchImpl,
+    }));
+    const bt = res.charge?.balance_transaction;
+    if (!bt || typeof bt !== 'object') {
+      return vide(
+        SETTLEMENT_STATUS.PENDING, SETTLEMENT_REASON.BALANCE_TRANSACTION_PENDING, { chargeId },
+      );
+    }
+    const { settlement, reason } = normalizeBalanceTransaction({ balanceTransaction: bt });
+    if (!settlement) return vide(SETTLEMENT_STATUS.UNUSABLE, reason, { chargeId });
+    return rendu({ ...settlement, chargeId });
+  }
+
+  const res = await guard(definition, () => retrievePaymentSettlement({
+    credentials, paymentIntentId, timeoutMs: definition.timeoutMs, fetchImpl,
+  }));
+  const lu = settlementOfPaymentIntent({ paymentIntent: res.paymentIntent });
+  if (lu.settlement) return rendu(lu.settlement);
+
+  /**
+   * DEUX ABSENCES QUI N'APPELLENT PAS LE MÊME GESTE.
+   *
+   *   pas encore d'écriture  →  `PENDING`, on réessaiera ;
+   *   pas de débit du tout   →  `UNAVAILABLE`, il n'y a rien à attendre.
+   */
+  const attente = lu.reason === SETTLEMENT_REASON.BALANCE_TRANSACTION_PENDING;
+  return vide(
+    attente ? SETTLEMENT_STATUS.PENDING : SETTLEMENT_STATUS.UNAVAILABLE,
+    lu.reason,
+    { chargeId: lu.chargeId ?? null, balanceTransactionId: lu.balanceTransactionId ?? null },
+  );
+}
+
 export const STRIPE_ADAPTERS = Object.freeze({
+  /** L13 — les frais réels, hors surface projet. Voir `panelOnly`. */
+  'billing.settlement.retrieve': settlementRetrieve,
+
   /**
    * L6.3B — les trois verbes qui retirent au projet ses dernières lectures
    * Stripe. Tous trois remontent au client par le LIEN d'appartenance, jamais

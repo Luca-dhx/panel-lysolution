@@ -101,6 +101,76 @@ export interface FinancialTransaction {
    * distinguer « nul » de « zéro rendu ».
    */
   refund?: TransactionRefundState;
+
+  /* ── L13 ─────────────────────────────────────────────────────────────────── */
+  /**
+   * L'ENCAISSEMENT NET — présent SEULEMENT sur un mouvement fournisseur.
+   *
+   * Absent sur une saisie manuelle, sur une occurrence de coût récurrent, et
+   * sur la ligne de commission elle-même : cette dernière EST le frais, lui en
+   * attacher un ferait lire « frais du frais ».
+   */
+  settlement?: TransactionSettlement;
+  /**
+   * HT / TVA / TTC tels que le DOCUMENT fournisseur les portait.
+   *
+   * `null` quand il n'a rien ventilé — une facture sans TVA, un remboursement.
+   * Jamais recalculé depuis le taux du contrat : celui-ci est celui
+   * d'aujourd'hui, la facture est celle d'un jour donné.
+   */
+  fiscal?: TransactionFiscal | null;
+}
+
+/**
+ * CE QUE LE FOURNISSEUR A PRÉLEVÉ, ET CE QUI RESTE.
+ *
+ * ══ LES NOMS SONT GÉNÉRIQUES, ET C'EST UNE DÉCISION ═════════════════════════
+ *
+ * `provider`, `providerCostCents` — jamais `stripe…`. Le jour où un second
+ * fournisseur de paiement entrera, l'écran Finances n'aura pas à être refait :
+ * le nom du fournisseur est une VALEUR, pas une clé.
+ *
+ * ══ `PENDING` N'EST PAS ZÉRO ════════════════════════════════════════════════
+ *
+ * `providerCostCents: null` avec `status: 'PENDING'` signifie « le fournisseur
+ * n'a pas encore arrêté ses comptes ». L'écran doit alors écrire « frais en
+ * cours de récupération », JAMAIS « 0,00 € » — qui affirmerait qu'il n'a rien
+ * prélevé, et que personne ne reviendrait vérifier.
+ */
+export interface TransactionSettlement {
+  status: 'SETTLED' | 'PENDING' | 'UNAVAILABLE' | 'UNUSABLE';
+  reason: string | null;
+  /** `STRIPE` aujourd'hui. Une valeur, jamais une clé de champ. */
+  provider: string;
+  /** Ce que le REGISTRE a inscrit — l'autorité du montant encaissé. */
+  grossCents: number;
+  /** Ce que le fournisseur a prélevé. `null` tant qu'il ne l'a pas dit. */
+  providerCostCents: number | null;
+  /** DÉRIVÉ : `gross − providerCost`. Jamais stocké, jamais un revenu. */
+  netCents: number | null;
+  currency: string;
+  /** L'écriture de solde — la PREUVE que le frais n'a pas été calculé ici. */
+  balanceTransactionId: string | null;
+  /** Le mouvement de charge produit. `null` si le frais était nul. */
+  providerCostTransactionId: string | null;
+  /** `pending` | `available` — quand le fournisseur libère les fonds. */
+  providerStatus: string | null;
+  availableOn: string | null;
+  /** La ventilation telle que le fournisseur la donne. Lue, jamais recomposée. */
+  feeDetails: {
+    type: string | null;
+    description: string | null;
+    amountCents: number | null;
+    currency: string | null;
+  }[];
+}
+
+export interface TransactionFiscal {
+  netExcludingTaxCents: number | null;
+  taxCents: number | null;
+  grossIncludingTaxCents: number;
+  /** `INVOICE` ou `CHECKOUT_SESSION` — quel document portait la ventilation. */
+  source: string | null;
 }
 
 export type RefundState = 'NON_REMBOURSE' | 'PARTIELLEMENT_REMBOURSE' | 'REMBOURSE';
@@ -314,6 +384,26 @@ export interface ProviderFact {
     hostedUrl: string | null;
     pdfUrl: string | null;
   } | null;
+  /**
+   * L13 — L'ÉCRITURE DE SOLDE : la preuve, pas la lecture courante.
+   *
+   * Les chiffres (brut, frais, net) vivent sur le mouvement, sous
+   * `settlement`, dans un vocabulaire générique. Ce bloc-ci porte les
+   * identités FOURNISSEUR, pour qui veut rapprocher du tableau de bord Stripe.
+   */
+  settlement?: {
+    status: string;
+    reason: string | null;
+    balanceTransactionId: string | null;
+    providerType: string | null;
+    reportingCategory: string | null;
+    providerStatus: string | null;
+    availableOn: string | null;
+    chargeId: string | null;
+    providerCostTransactionId: string | null;
+    attempts: number;
+    lastError: string | null;
+  } | null;
   lastEventType: string | null;
   seenEventCount: number;
 }
@@ -349,6 +439,24 @@ export interface FinanceSummary {
     refundCents: number;
     adjustmentCents: number;
   };
+  /**
+   * L13 — DE QUOI LES COÛTS SONT FAITS. Un SOUS-ENSEMBLE, jamais un ajout.
+   *
+   *     totalCents = providerFeeCents + otherCents = byCategory.costCents
+   *
+   * L'égalité est calculée par le serveur, une fois. Aucun écran ne recompose
+   * ce total — et aucun ne peut donc additionner la commission aux charges dont
+   * elle fait déjà partie.
+   *
+   * Facultatif : un Panel plus ancien ne le porte pas, et l'écran n'affiche
+   * alors simplement aucune ventilation.
+   */
+  costs?: {
+    totalCents: number;
+    providerFeeCents: number;
+    otherCents: number;
+    byProvider: Record<string, number>;
+  };
   count: number;
   series: FinanceSeriesPoint[];
 }
@@ -369,6 +477,8 @@ export interface FinanceProjectLine {
   outflowCents: number;
   revenueCents: number;
   costCents: number;
+  /** L13 — la part des coûts qui est une commission. SOUS-ENSEMBLE de `costCents`. */
+  providerFeeCents?: number;
   netCents: number;
   count: number;
 }

@@ -175,6 +175,45 @@ export function ProviderFactPanel({ fact }: { fact: ProviderFact }) {
           {fact.corroboration.customerId ? (
             <Ligne label="Client"><CopyField value={fact.corroboration.customerId} /></Ligne>
           ) : null}
+          {/*
+            ── L'ÉCRITURE DE SOLDE (L13) ────────────────────────────────────
+
+            C'est LA référence de ce lot : celle par laquelle un exploitant
+            retrouve, dans le tableau de bord Stripe, la ligne exacte qui a
+            fixé la commission. Elle est ici et pas plus haut parce qu'elle
+            n'est pas une lecture courante — c'est une PREUVE, celle que le
+            frais a été observé et non calculé.
+          */}
+          {fact.settlement?.balanceTransactionId ? (
+            <Ligne label="Écriture de solde">
+              <CopyField value={fact.settlement.balanceTransactionId} />
+              {fact.settlement.reportingCategory ? (
+                <span className="muted"> · {fact.settlement.reportingCategory}</span>
+              ) : null}
+            </Ligne>
+          ) : null}
+          {/*
+            POURQUOI IL N'Y A PAS ENCORE DE FRAIS — dit ici, jamais deviné.
+
+            Un encaissement dont la commission n'est pas encore connue affiche
+            « en cours de récupération » plus haut. Cette ligne-ci donne le
+            motif technique, et le nombre de tentatives : c'est ce qu'un
+            exploitant vient chercher quand l'attente dure.
+          */}
+          {fact.settlement && fact.settlement.status !== 'SETTLED' ? (
+            <Ligne label="Frais fournisseur">
+              {fact.settlement.status}
+              {fact.settlement.reason ? (
+                <span className="muted"> · {fact.settlement.reason}</span>
+              ) : null}
+              {fact.settlement.attempts ? (
+                <span className="muted"> · {fact.settlement.attempts} tentative(s)</span>
+              ) : null}
+              {fact.settlement.lastError ? (
+                <div className="cell-secondary">{fact.settlement.lastError}</div>
+              ) : null}
+            </Ligne>
+          ) : null}
           {fact.lastEventType ? (
             <Ligne label="Dernier événement">
               {fact.lastEventType}

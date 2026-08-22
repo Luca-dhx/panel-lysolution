@@ -29,6 +29,7 @@
 import logger from '../../utils/logger.js';
 import { materializeAllDue } from './recurringCosts.service.js';
 import { convergePendingRevenue } from './providerRevenue/revenueProjection.service.js';
+import { convergePendingSettlements } from './providerRevenue/providerSettlement.service.js';
 import { convergePendingRefunds } from './refunds/refundOrchestration.service.js';
 import { sendDueReminders } from './paymentRequests/paymentRequests.service.js';
 import { expireDueGracePeriods } from './paymentDefaults/paymentDefaults.service.js';
@@ -76,6 +77,33 @@ export async function runRecurringCostCycle() {
     });
     if (revenus.projected) {
       logger.info(`[finance] ${revenus.projected} revenu(s) fournisseur en attente projeté(s).`);
+    }
+
+    /**
+     * ── LES FRAIS FOURNISSEUR CONVERGENT ICI, ET NULLE PART AILLEURS (L13) ──
+     *
+     * ══ POURQUOI PAS À LA LECTURE, COMME LA PROJECTION ════════════════════
+     *
+     * Même raison que les remboursements, un cran plus haut : celle-ci PARLE À
+     * STRIPE. La brancher sur l'ouverture d'un écran ferait exactement ce que
+     * L10.3 a interdit — un opérateur qui consulte le livret déclencherait des
+     * appels fournisseur, et une page rafraîchie en boucle en déclencherait
+     * autant.
+     *
+     * ══ CE QU'ELLE RATTRAPE, ET C'EST LE CAS NOMINAL ══════════════════════
+     *
+     * Tous les encaissements ANTÉRIEURS à ce lot n'ont aucune observation :
+     * ils entrent dans cette file au premier cycle, et leur commission rejoint
+     * le bilan sans qu'aucune migration n'ait à réécrire quoi que ce soit.
+     * Ensuite, elle ne sert qu'aux écritures de solde différées — prélèvement,
+     * virement — et aux redémarrages.
+     */
+    const frais = await convergePendingSettlements({}).catch((err) => {
+      logger.warn(`[finance] Convergence des frais fournisseur impossible : ${err.message}`);
+      return { settled: 0 };
+    });
+    if (frais.settled) {
+      logger.info(`[finance] ${frais.settled} encaissement(s) soldé(s) : commission fournisseur portée au registre.`);
     }
 
     /**

@@ -526,8 +526,16 @@ section('18. « Tout supprimer » prévient que les règles survivent');
 section('19. Un revenu Stripe se lit comme un revenu manuel');
 {
   const code = code2(workspace);
+  /**
+   * La fenêtre est large : L13 a inséré, entre le test d'origine et le libellé,
+   * le cas de la LIGNE DE COMMISSION — qui doit se nommer autrement pour qu'on
+   * ne la prenne pas pour un second paiement. Une fenêtre serrée aurait fait
+   * échouer ce contrôle sur un ajout parfaitement légitime.
+   */
   check('l’origine automatique est signalée DISCRÈTEMENT',
-    /origin === 'STRIPE'[\s\S]{0,200}Encaissé via Stripe/.test(workspace));
+    /origin === 'STRIPE'[\s\S]{0,900}Encaissé via Stripe/.test(workspace));
+  check('…et une commission ne se lit PAS comme un encaissement',
+    /BALANCE_TRANSACTION[\s\S]{0,120}Coût de traitement du paiement/.test(workspace));
   check('…sans aucun identifiant Stripe dans la ligne',
     !/in_|pi_|cs_|sub_/.test(code.replace(/'STRIPE'/g, '')));
   check('le monde TEST est signalé par une pastille',
@@ -715,6 +723,84 @@ section('21. Les tables se lisent comme des tables — alignement et empilement'
   /* Le champ de fichier est une mécanique : il ne doit pas s’annoncer. */
   check('le champ de fichier est retiré de l’arbre d’accessibilité',
     /tabIndex=\{-1\}[\s\S]{0,60}aria-hidden="true"/.test(code(recu)));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L13 — BRUT · FRAIS · NET DANS L'ÉCRAN
+   ══════════════════════════════════════════════════════════════════════════ */
+
+section('L13. L’encaissement net se lit dans la liste, pas seulement au détail');
+{
+  const decompte = lire('frontend/src/components/finance/SettlementBreakdown.tsx');
+  const codeDecompte = code2(decompte);
+
+  check('le décompte affiche les TROIS lignes attendues',
+    /Brut/.test(codeDecompte) && /Frais/.test(codeDecompte) && /Net/.test(codeDecompte));
+
+  /**
+   * LE CONTRÔLE LE PLUS IMPORTANT DE CETTE SECTION.
+   *
+   * Un frais inconnu et un frais nul se ressemblent dans une colonne et sont
+   * opposés dans un bilan. « 0,00 € » affirme que le fournisseur n'a rien
+   * prélevé ; quelqu'un le croira et ne reviendra pas vérifier.
+   */
+  check('un frais INCONNU s’écrit en toutes lettres, jamais « 0,00 € »',
+    /Frais en cours de récupération/.test(decompte)
+    && /status !== 'SETTLED'|providerCostCents !== null/.test(codeDecompte));
+  check('…et le décompte n’est rendu QUE si le fournisseur a parlé',
+    /const solde = settlement\.status === 'SETTLED'/.test(codeDecompte));
+
+  check('le décompte est monté dans la LISTE',
+    /<SettlementBreakdown[\s\S]{0,120}compact/.test(code2(workspace)));
+  check('…et dans le DÉTAIL', /<SettlementBreakdown/.test(code2(detail)));
+
+  /**
+   * LE MONTANT DE LA LIGNE N'EST PAS REMPLACÉ. La colonne « Montant » rend
+   * toujours `amountCents` : c'est lui qui fait le chiffre d'affaires.
+   */
+  check('le montant de la ligne reste le BRUT du mouvement',
+    /formatFlowCents\(ligne\.amountCents, ligne\.flow\)/.test(code2(workspace)));
+
+  check('aucun champ « stripe… » ne traverse l’écran',
+    !/stripeFee|stripeCost|fraisStripe/i.test(codeDecompte));
+}
+
+section('L13. Les cartes disent que la commission est un COÛT, pas un revenu');
+{
+  const codeWorkspace = code2(workspace);
+  check('« Revenus » reste le total de la CATÉGORIE revenu — donc le brut',
+    /summary\.byCategory\.revenueCents/.test(codeWorkspace));
+  check('« Coûts » annonce la part des commissions par un « dont »',
+    /summary\.costs[\s\S]{0,240}dont \$\{formatCents\(summary\.costs\.providerFeeCents\)\} de commissions/.test(workspace));
+  check('…et l’écran ne recompose AUCUN total lui-même',
+    !/providerFeeCents \+|costCents \+ /.test(codeWorkspace));
+  check('la ventilation n’apparaît pas quand il n’y a rien à ventiler',
+    /summary\.costs\.providerFeeCents > 0/.test(codeWorkspace));
+}
+
+section('L13. Le détail sépare le commercial, l’encaissement et la preuve');
+{
+  const codeDetail = code2(detail);
+  check('les informations commerciales sont un bloc à part',
+    /Informations commerciales/.test(detail)
+    && /transaction\.fiscal\.netExcludingTaxCents/.test(codeDetail)
+    && /transaction\.fiscal\.taxCents/.test(codeDetail));
+  check('…et ne s’affichent QUE si le document les portait',
+    /transaction\.fiscal \?/.test(codeDetail));
+
+  check('le résultat de l’encaissement est un bloc à part',
+    /Résultat de l’encaissement/.test(detail));
+  check('…qui nomme le fournisseur par sa VALEUR, pas par une constante',
+    /transaction\.settlement\.provider/.test(codeDetail));
+  check('…et qui donne le pont vers le mouvement de commission',
+    /providerCostTransactionId/.test(codeDetail));
+
+  const panneau = lire('frontend/src/components/finance/ProviderFactPanel.tsx');
+  check('l’écriture de solde vit dans les identifiants TECHNIQUES, repliés',
+    /Écriture de solde/.test(panneau)
+    && /balanceTransactionId/.test(code2(panneau)));
+  check('…et le motif d’une attente y est lisible',
+    /settlement\.status !== 'SETTLED'[\s\S]{0,400}reason/.test(panneau));
 }
 
 finish();

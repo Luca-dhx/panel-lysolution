@@ -234,6 +234,7 @@ interchangeables.
 | # | Contrôle | Refus |
 |---|---|---|
 | 1 | La capacité existe-t-elle ? | `CAPABILITY_UNKNOWN` (404) |
+| 1 bis | Est-elle offerte au PONT ? (L13) | `CAPABILITY_UNKNOWN` (404) — voir ci-dessous |
 | 2 | Qui parle ? | `CAPABILITY_PROJECT_SCOPE_MISMATCH` (403) |
 | 3 | Quel monde ? | `CAPABILITY_ENVIRONMENT_MISMATCH` (409) |
 | 4 | A-t-il le droit ? | `CAPABILITY_NOT_GRANTED` (403) |
@@ -248,6 +249,22 @@ C'est ce qui garantit qu'une écriture financière refusée en pré-ouverture ne
 touche *rien* — pas même le coffre. Si l'on testait d'abord « est-ce migré ? »,
 la preuve « zéro appel fournisseur » reposerait sur l'absence d'adaptateur,
 c'est-à-dire sur un accident de calendrier, et non sur la politique.
+
+**Une capacité `panelOnly` est refusée avant tout contexte, et comme un code
+INCONNU.** C'est la première fermeture du registre (L13,
+`billing.settlement.retrieve`), et elle existe parce que ce verbe ne lit pas une
+ressource de PROJET : il lit le registre de solde de L.Y Solution — ce que le
+fournisseur de paiement a prélevé. Une telle écriture n'appartient à aucun
+projet, et lui inventer un propriétaire aurait produit une garde décorative.
+
+Le refus est *indistinct* d'un code inconnu, et il n'est pas journalisé.
+Répondre « existe mais interdit » ferait du pont un oracle : on apprendrait, un
+code à la fois, la surface interne du Panel. C'est la même doctrine que le refus
+de filiation sur une facture étrangère (L6.3B), appliquée un cran plus haut.
+
+La fermeture est une **exception**, jamais une commodité : toutes les autres
+capacités prouvent l'appartenance de la ressource qu'on leur désigne, et sont
+donc sûres à offrir. Un contrôle de recette vérifie qu'il n'y en a qu'une.
 
 **L'entrée est validée avant les identifiants.** Un corps malformé ne doit pas
 faire déchiffrer une clé : le coffre ne s'ouvre que pour un appel qui va partir.

@@ -200,6 +200,81 @@ const entier = (v) => (Number.isInteger(v) ? v : null);
 const instant = (secondes) => (Number.isFinite(secondes) ? new Date(secondes * 1000) : null);
 
 /* -------------------------------------------------------------------------- */
+/*  L13 — LA VENTILATION FISCALE DU DOCUMENT                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * HT / TVA / TTC — LUS SUR LE DOCUMENT, JAMAIS DÉRIVÉS D'UN TAUX DE CONTRAT.
+ *
+ * ══ POURQUOI CE N'EST PAS `computeTax(contract.taxRate)` ════════════════════
+ *
+ * Le contrat porte le taux d'AUJOURD'HUI. La facture porte celui du jour où
+ * elle a été émise. Les deux coïncident jusqu'au premier changement de taux —
+ * et ce jour-là, toutes les lignes passées se mettraient à afficher une TVA
+ * qu'aucun client n'a jamais payée. Une ventilation recalculée est une
+ * ventilation qui ment rétroactivement.
+ *
+ * Le document, lui, est figé. C'est ce que le client a lu, c'est ce qu'un
+ * contrôle retrouvera, et c'est donc la seule autorité admissible.
+ *
+ * ══ ELLE N'EST RENDUE QUE SI ELLE DÉCRIT LE MOUVEMENT ═══════════════════════
+ *
+ * Un règlement PARTIEL ne se ventile pas : proratiser HT et TVA exigerait une
+ * règle d'arrondi et une politique d'imputation qu'aucun écran ne pose. On rend
+ * donc `null` — l'absence se lit comme une absence, et le montant TTC reste
+ * exact, ce qui est le seul chiffre dont le registre a besoin.
+ *
+ * @returns {{netExcludingTaxCents, taxCents, grossIncludingTaxCents, source}|null}
+ */
+export function fiscalOfInvoice(invoice, paidCents) {
+  const total = entier(invoice?.total);
+  if (total === null || total !== paidCents) return null;
+
+  /**
+   * L'ORDRE DES SOURCES DU HT, ET POURQUOI.
+   *
+   * `total_excluding_tax` est le HT APRÈS remise — c'est celui qui, additionné
+   * à la TVA, redonne le total. `subtotal` est le HT AVANT remise : l'utiliser
+   * ferait afficher « 100 HT + 20 TVA = 110 TTC » sur une facture remisée.
+   */
+  const ht = entier(invoice?.total_excluding_tax)
+    ?? entier(invoice?.subtotal_excluding_tax)
+    ?? entier(invoice?.subtotal);
+  if (ht === null) return null;
+
+  /**
+   * La TVA est la DIFFÉRENCE, pas un champ recopié — et ce n'est pas un calcul
+   * fiscal : c'est l'identité `TTC − HT`, entre deux entiers que le fournisseur
+   * a lui-même arrêtés. Stripe expose `tax` (ancien) puis `total_taxes[]`
+   * (récent) ; se fier à l'un des deux ferait dépendre l'affichage de la
+   * version d'API du compte, exactement le défaut qui a déjà coûté
+   * `invoice.payment_intent`.
+   */
+  return {
+    netExcludingTaxCents: ht,
+    taxCents: total - ht,
+    grossIncludingTaxCents: total,
+    source: CANONICAL_TYPES.INVOICE,
+  };
+}
+
+/** Même doctrine, sur une session sans facture — Stripe y range la TVA ailleurs. */
+export function fiscalOfSession(session, paidCents) {
+  const total = entier(session?.amount_total);
+  if (total === null || total !== paidCents) return null;
+
+  const tva = entier(session?.total_details?.amount_tax);
+  if (tva === null) return null;
+
+  return {
+    netExcludingTaxCents: total - tva,
+    taxCents: tva,
+    grossIncludingTaxCents: total,
+    source: CANONICAL_TYPES.CHECKOUT_SESSION,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /*  NORMALISATION                                                             */
 /* -------------------------------------------------------------------------- */
 
@@ -282,6 +357,9 @@ function normalizeInvoice({ objet, payload, environment }) {
       label: invoiceLineLabel(objet),
       periodStart: instant(objet.lines?.data?.[0]?.period?.start),
       periodEnd: instant(objet.lines?.data?.[0]?.period?.end),
+
+      /** L13 — HT / TVA / TTC tels que le DOCUMENT les porte. Voir la fonction. */
+      fiscal: fiscalOfInvoice(objet, amountPaid),
 
       /**
        * PAR QUELLE RESSOURCE L'APPARTENANCE SE PROUVE.
@@ -408,6 +486,9 @@ function normalizeSession({ objet, payload, environment, eventType }) {
       periodStart: null,
       periodEnd: null,
 
+      /** L13 — la session porte sa TVA sous `total_details`. Voir la fonction. */
+      fiscal: fiscalOfSession(objet, amountTotal),
+
       /** La session a son PROPRE lien : l'appartenance est directe (L6.2B). */
       ownershipVia: { resourceType: 'CHECKOUT_SESSION', resourceId: sessionId },
 
@@ -524,6 +605,16 @@ export function normalizeStripeRefundObject({ refund, environment, chargeReceipt
        * Un remboursement n'a PAS de facture, et n'en aura pas. Voir la doctrine
        * documentaire : Stripe n'émet ni PDF ni page hébergée pour un `re_…`.
        */
+      /**
+       * L13 — AUCUNE VENTILATION FISCALE SUR UN REMBOURSEMENT.
+       *
+       * Stripe n'émet aucun document ventilé pour un `re_…` : ni facture, ni
+       * avoir. Répartir le montant rendu entre HT et TVA supposerait de savoir
+       * ce que le remboursement défait — une décision comptable qui appartient
+       * à l'avoir, pas au mouvement de trésorerie.
+       */
+      fiscal: null,
+
       invoiceDocument: null,
       /**
        * Le reçu de la CHARGE — que Stripe réédite en y portant les sommes
@@ -611,6 +702,8 @@ export default {
   REFUND_EVENTS,
   subscriptionIdOfInvoice,
   paymentIntentIdOfInvoice,
+  fiscalOfInvoice,
+  fiscalOfSession,
   normalizeStripeRevenueEvent,
   normalizeStripeRefundObject,
   normalizeStripeRefundEvent,

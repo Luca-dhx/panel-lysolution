@@ -177,6 +177,26 @@ const TESTS = [
   // métadonnée apposée sur le remboursement empêche d'en créer un second.
   // Elle vérifie aussi que rendre 100 € n'ajoute pas 100 € de charges.
   'finance-refunds.test.js',
+  /**
+   * L13 — LE COÛT DU FOURNISSEUR DE PAIEMENT, ET CE QU'IL N'A PAS LE DROIT DE
+   * FAIRE AU CHIFFRE D'AFFAIRES.
+   *
+   * Ce que cette suite garde tient en trois phrases :
+   *
+   *   · le montant du frais vient de la `balance_transaction` STRIPE, jamais
+   *     d'une formule tarifaire — et un balayage de sources interdit d'en
+   *     réintroduire une ;
+   *   · une vente de 120 € reste un revenu de 120 € ; la commission est une
+   *     CHARGE, qui diminue le bénéfice sans diminuer le chiffre d'affaires ;
+   *   · une observation en ATTENTE n'efface jamais une observation ACQUISE,
+   *     quel que soit l'ordre d'arrivée des webhooks.
+   *
+   * Elle éprouve aussi l'absence temporaire d'écriture de solde, la
+   * convergence qui la rattrape, l'idempotence sous rejeu, les transactions
+   * antérieures au lot, et la fermeture de la lecture du registre de solde à
+   * la surface du pont.
+   */
+  'finance-provider-settlement.test.js',
   // L10.5 — DE L'ARGENT RÉCLAMÉ, QUI N'EST PAS ENCORE DE L'ARGENT GAGNÉ. Cette
   // suite garde la frontière : envoyer une prestation n'inscrit RIEN au ledger,
   // et le revenu naît uniquement du fait Stripe, par L10.3. Elle éprouve aussi

@@ -42,6 +42,7 @@ import { TransactionForm } from '@/components/finance/TransactionForm';
 import type { ProjectChoice } from '@/components/finance/TransactionForm';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
+import { SettlementBreakdown } from '@/components/finance/SettlementBreakdown';
 import { RefundModal } from '@/components/finance/RefundModal';
 import { PaymentRequestPanel } from '@/components/finance/PaymentRequestPanel';
 import { PaymentDefaultPanel } from '@/components/finance/PaymentDefaultPanel';
@@ -295,6 +296,25 @@ export function FinanceWorkspace({
             {formatCents(summary.byCategory.costCents)}
           </p>
           <p className="metric-label">Coûts de la période</p>
+          {/*
+            ── DONT LES COMMISSIONS DE PAIEMENT (L13) ───────────────────────
+
+            « dont », et le mot compte : ces centimes sont DÉJÀ dans le total
+            au-dessus. Une carte séparée les aurait fait lire comme un coût
+            supplémentaire, et quelqu'un les aurait additionnés.
+
+            La ventilation vient du SERVEUR, où l'égalité
+            `total = commissions + autres` est calculée une fois. Cet écran ne
+            la recompose pas, et ne peut donc pas s'en écarter.
+
+            Elle n'apparaît que s'il y en a : une ligne « dont 0,00 € »
+            annoncerait un poste de charge inexistant.
+          */}
+          {summary.costs && summary.costs.providerFeeCents > 0 ? (
+            <p className="metric-hint">
+              {`dont ${formatCents(summary.costs.providerFeeCents)} de commissions de paiement`}
+            </p>
+          ) : null}
         </div>
         <div className={`metric metric-${netTone(net)}`}>
           <p className={`metric-value finance-net-${netTone(net)}`}>{formatNetCents(net)}</p>
@@ -463,7 +483,16 @@ export function FinanceWorkspace({
                       */}
                       {ligne.origin === 'STRIPE' ? (
                         <span className="cell-secondary">
-                          {ligne.category === 'REFUND' ? 'Remboursé via Stripe' : 'Encaissé via Stripe'}
+                          {/*
+                            LA COMMISSION SE NOMME, pour qu'on ne la prenne pas
+                            pour un second paiement (L13). Elle porte déjà
+                            « Commission Stripe — … » dans son libellé ; cette
+                            seconde ligne dit ce qu'elle EST — un coût de
+                            fournisseur — plutôt que d'où elle vient.
+                          */}
+                          {ligne.provenance?.externalKind === 'BALANCE_TRANSACTION'
+                            ? 'Coût de traitement du paiement'
+                            : (ligne.category === 'REFUND' ? 'Remboursé via Stripe' : 'Encaissé via Stripe')}
                           {ligne.provenance?.environment === 'TEST' ? (
                             <span className="badge badge-warn finance-env-tag">TEST</span>
                           ) : null}
@@ -503,6 +532,22 @@ export function FinanceWorkspace({
                       className={`finance-cell-amount finance-amount-${ligne.flow.toLowerCase()}`}
                     >
                       {formatFlowCents(ligne.amountCents, ligne.flow)}
+                      {/*
+                        ── BRUT · FRAIS · NET, SOUS LE MONTANT (L13) ─────────
+
+                        Le montant au-dessus ne bouge pas : c'est lui qui compte
+                        dans tous les totaux, et c'est lui que le client a payé.
+                        La ventilation le complète — elle ne le remplace jamais.
+
+                        Elle est ICI, dans la liste, parce que c'est la question
+                        qu'on se pose EN PARCOURANT le livret : « ce paiement
+                        m'a rapporté combien, vraiment ? ». Obliger à ouvrir
+                        chaque détail pour l'apprendre rendrait l'information
+                        inutilisable.
+                      */}
+                      {ligne.settlement ? (
+                        <SettlementBreakdown settlement={ligne.settlement} compact />
+                      ) : null}
                     </td>
                     <td data-label="Justificatif">
                       <ReceiptCell transaction={ligne} onChanged={reload} compact />

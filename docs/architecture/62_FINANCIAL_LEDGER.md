@@ -1157,6 +1157,274 @@ capacité `checkout.session.expire` qui n'existe pas au catalogue.
 
 ---
 
+## 13 septies. COÛT FOURNISSEUR ET ENCAISSEMENT NET (L13)
+
+### Le fait que ce lot corrige
+
+Un paiement de 120 € produisait **une** ligne : `+120 €`. C'est ce que le client a payé,
+et c'est juste. Mais 117,85 € seulement avaient rejoint le compte : les 2,15 € de
+commission Stripe n'existaient **nulle part**.
+
+Le chiffre d'affaires était exact. Le bénéfice était **faux** — surestimé de tous les
+frais de paiement de l'année, sans qu'aucun écran ne puisse le dire.
+
+### La chaîne, de bout en bout
+
+```
+CLIENT
+  │ paie 120,00 € TTC
+  ▼
+STRIPE — BALANCE TRANSACTION (txn_…)
+  ├── amount  120,00 €      ce que le client a versé
+  ├── fee       2,15 €      ce que le fournisseur prélève   ◄── AUTORITÉ
+  └── net     117,85 €      ce qui rejoint le solde
+  ▼
+SOLDE STRIPE
+  │ payout
+  ▼
+COMPTE BANCAIRE
+```
+
+Le dernier mouvement est un **transfert de trésorerie**, jamais un revenu.
+
+### Les invariants, et ils ne se négocient pas
+
+```
+REVENUE ≠ NET STRIPE                le CA reste le BRUT
+GROSS − PROVIDER FEES = NET         vérifié sur les chiffres du fournisseur
+PAYOUT ≠ REVENUE                    un virement n'est pas une vente
+STRIPE FEE = PROVIDER COST          une charge d'exploitation, pas une réduction de vente
+STRIPE DATA = autorité du montant   jamais une formule tarifaire
+PANEL = projection métier           il constate, il ne recalcule pas
+```
+
+### Pourquoi le frais ne se calcule JAMAIS
+
+Observation réelle, même compte de recette, même jour, même devise :
+
+| brut | frais | barème effectif |
+|---|---|---|
+| 34 800 c | 547 | 1,5 % + 0,25 € — carte européenne |
+| 1 200 c | 64 | 3,25 % + 0,25 € — carte hors EEE |
+
+Deux paiements, deux barèmes. Une formule écrite dans le Panel aurait donné le premier
+juste et le second faux — un écart de vingt centimes qui ne se remarque pas ligne à
+ligne, et qui se remarque au bilan, un an plus tard, quand plus rien n'est vérifiable.
+
+À cela s'ajoutent les remises négociées, les changements de tarif, les moyens de paiement
+alternatifs et les frais de change. **L'autorité du montant est la `balance_transaction`,
+et rien d'autre.** Une recette balaie les sources et refuse tout barème codé en dur.
+
+### Le modèle : une CHARGE séparée, jamais un champ sur le revenu
+
+```
+PanelFinancialTransaction  (REVENUE / INFLOW / origin STRIPE)
+   provenance.externalKind = INVOICE | CHECKOUT_SESSION
+   amountCents             = 12 000            ◄── le CA, inchangé
+        ▲
+        │ parentTransactionId
+        │
+PanelFinancialTransaction  (COST / OUTFLOW / origin STRIPE)
+   provenance.externalKind = BALANCE_TRANSACTION
+   provenance.externalId   = txn_…             ◄── l'identité qui dédoublonne
+   amountCents             = 215
+```
+
+Trois raisons, et la première suffirait :
+
+1. **Le registre a déjà un moteur de coûts, et il est générique.** Une ligne `COST` +
+   `OUTFLOW` entre dans « Coûts de la période » et diminue le bénéfice sans qu'une seule
+   ligne de l'agrégateur change. Un champ `stripeFeeCents` posé sur le revenu aurait exigé
+   un second moteur — donc une seconde occasion de compter la commission deux fois.
+2. **Une commission bancaire EST une charge d'exploitation.** Le modèle dit ce qui est vrai.
+3. **L'idempotence était déjà en base.** L'index unique partiel
+   `uniq_provider_external_object` porte `{provider, environment, externalKind, externalId}` :
+   une même écriture de solde observée dix fois ne peut produire qu'une ligne.
+
+Ce n'est **pas** un second paiement métier : la charge porte `parentTransactionId`, hérite
+de la date comptable du revenu, et n'a aucun sens détachée de lui.
+
+```
+PAIEMENT  ←→  COÛT FOURNISSEUR  ←→  BALANCE TRANSACTION
+```
+
+### Ce que le fait porte, et ce que le registre porte
+
+La doctrine de L10.1 tient : la `provenance` d'un mouvement reste **maigre** — quatre
+champs plats. Le détail fournisseur vit sur le FAIT, à côté de `invoiceDocument` et
+`corroboration` :
+
+```
+PanelProviderRevenueFact.settlement
+  status                  SETTLED | PENDING | UNAVAILABLE | UNUSABLE
+  reason                  pourquoi il n'y a pas de chiffres, quand il n'y en a pas
+  balanceTransactionId    LA PREUVE — rapprochable du tableau de bord Stripe
+  grossCents / providerFeeCents / netCents / currency
+  providerType / reportingCategory / providerStatus / availableOn
+  feeDetails[]            la ventilation Stripe, LUE et jamais recomposée
+  feeTransactionId        le mouvement de charge produit
+  attempts / lastError    un coût absent qu'on ne sait pas absent est le pire des cas
+
+PanelProviderRevenueFact.fiscal
+  netExcludingTaxCents / taxCents / grossIncludingTaxCents / source
+```
+
+`fiscal` vient du **document** (`invoice.total_excluding_tax` / `total`, ou
+`session.total_details.amount_tax` / `amount_total`), jamais du `taxRate` du contrat :
+celui-ci est celui d'aujourd'hui, la facture est celle d'un jour donné, et un changement
+de taux ferait mentir rétroactivement toutes les lignes passées. Un règlement PARTIEL
+n'est **pas** ventilé — proratiser HT et TVA exigerait une règle d'arrondi qu'aucun écran
+ne pose.
+
+### `PENDING` n'est pas zéro
+
+C'est la distinction la plus importante du lot.
+
+| | ce que cela affirme |
+|---|---|
+| `providerFeeCents: 0` avec `SETTLED` | le fournisseur n'a **rien** prélevé |
+| `providerFeeCents: null` avec `PENDING` | le fournisseur n'a **pas encore** arrêté ses comptes |
+
+Un prélèvement ou un virement n'a pas de `balance_transaction` le jour du paiement.
+Écrire `0` ce jour-là inscrirait un coût nul dans les comptes, puis il faudrait le
+corriger — c'est-à-dire réécrire une écriture passée. L'écran dit donc
+« Frais en cours de récupération », **jamais** « 0,00 € » : quelqu'un lirait ce chiffre,
+le croirait, et ne reviendrait jamais vérifier.
+
+### Convergence : l'ordre d'arrivée ne peut rien casser
+
+La règle d'arbitrage ne dépend d'**aucune horloge** — comparer des dates supposerait que
+les horloges concordent :
+
+> **Un `SETTLED` ne se remplace que par lui-même, c'est-à-dire jamais.**
+
+La condition vit dans le **filtre** de l'écriture, pas seulement dans un `if` : entre la
+lecture du fait et sa mise à jour, une autre convergence a pu inscrire les chiffres.
+
+| situation | comportement |
+|---|---|
+| webhook rejoué dix fois | une seule charge (index unique), capture `ALREADY_SETTLED` |
+| lecture tardive `PENDING` après un `SETTLED` | ignorée — le frais acquis reste |
+| redémarrage entre paiement et capture | la file de convergence reprend au cycle suivant |
+| écriture de solde différée (SEPA, virement) | `PENDING`, puis `SETTLED` — sans réécriture |
+| paiements antérieurs au lot | entrent dans la file au premier cycle, aucune migration |
+| devise non gérée | `UNUSABLE`, aucun mouvement, jamais de conversion à la volée |
+| fait d'un autre monde | `ENVIRONMENT_MISMATCH`, jamais soldé ici |
+| plus de 6 tentatives | sort de la file automatique, reste diagnosticable |
+
+L'ordre d'écriture est **la charge d'abord, l'observation ensuite**. Une coupure entre les
+deux laisse au pire une charge écrite et un fait qui réessaiera — le second passage
+retrouve la ligne par son index et achève l'inscription. Dans l'ordre inverse, la coupure
+laisserait un fait qui se dit soldé sans charge, et le garde-fou interdirait pour toujours
+de la rattraper.
+
+### Où l'appel a lieu, et où il n'a JAMAIS lieu
+
+`revenueProjection.service.js` promet en en-tête : « pas un `fetch`, pas un client, pas une
+lecture d'API ». La promesse tient. La capture des frais vit dans
+`providerSettlement.service.js`, déclenchée par :
+
+- `settleProjectedFact()` — les **suites** d'un encaissement prouvé, après le webhook ;
+- `recurringCostScheduler` — la convergence horaire, qui tourne sans lecteur.
+
+**Jamais** par une lecture financière. Brancher la capture sur l'ouverture d'un écran
+ferait exactement ce que L10.3 a interdit : un onglet Finances rafraîchi en boucle
+déclencherait autant d'appels Stripe. Une recette vérifie que lister, résumer et ouvrir un
+détail ne produisent **aucun** appel fournisseur.
+
+### `billing.settlement.retrieve` — la première capacité hors surface projet
+
+Elle lit `payment_intent.latest_charge.balance_transaction` (un seul aller-retour), ou
+l'écriture propre d'un `re_…`, ou celle d'un `ch_…` en repli.
+
+Toutes les autres capacités désignent une ressource de PROJET et prouvent son
+appartenance. Celle-ci désigne une écriture du **registre de solde de L.Y Solution** :
+elle n'appartient à aucun projet, et lui inventer un propriétaire aurait produit une garde
+décorative. La protection est donc d'une autre nature — `panelOnly` :
+
+- refusée si `source === PROJECT_BRIDGE`, **avant** tout contexte ;
+- refusée en `CAPABILITY_UNKNOWN`, indistinctement d'un code inconnu — répondre « existe
+  mais interdit » ferait du pont un oracle sur la surface interne du Panel ;
+- non journalisée : il n'y a rien à auditer dans un code que le pont n'a jamais eu le droit
+  de connaître.
+
+C'est la **seule** capacité fermée du registre, et une recette vérifie qu'elle le reste.
+
+### Les agrégats — ce qui a changé, et surtout ce qui n'a pas changé
+
+**Rien** dans la définition du bénéfice. `net = Σ(INFLOW) − Σ(OUTFLOW)` était déjà juste :
+la charge fournisseur y entre comme n'importe quelle sortie.
+
+Ce qui est ajouté est une **ventilation**, pas un total :
+
+```
+byCategory.revenueCents   240,00 €   ◄── le CA, INCHANGÉ par les commissions
+byCategory.costCents        4,05 €
+costs.totalCents            4,05 €   = byCategory.costCents  (la même chose, dite deux fois)
+costs.providerFeeCents      4,05 €   ◄── DONT les commissions
+costs.otherCents            0,00 €
+totals.netCents           235,95 €   ◄── le bénéfice, diminué des commissions
+```
+
+L'égalité `total = providerFee + other` est calculée **une fois**, côté serveur. Aucun
+écran ne la recompose, et aucun ne peut donc additionner la commission aux charges dont
+elle fait déjà partie. L'écran écrit « **dont** 4,05 € de commissions de paiement » sous la
+carte « Coûts » — jamais une carte séparée, qui se lirait comme un coût supplémentaire.
+
+### Les remboursements — mesuré, pas supposé
+
+Un remboursement a sa **propre** écriture de solde : montant négatif, et un `fee` qui dit
+si le fournisseur a rendu sa commission. Emprunter celle du débit inscrirait le frais du
+paiement une seconde fois.
+
+Observation sur le compte de recette : `fee: 0` — **la commission du paiement d'origine
+n'est pas restituée**. Le Panel n'en déduit rien de général : il écrit ce qu'il lit.
+Le modèle couvre les trois cas :
+
+| `fee` observé | mouvement écrit |
+|---|---|
+| `> 0` | `COST` / `OUTFLOW` — « Commission Stripe sur remboursement » |
+| `= 0` | **aucun** — un mouvement de zéro n'est pas un mouvement |
+| `< 0` | `ADJUSTMENT` / `INFLOW` — « Commission Stripe restituée » |
+
+Une commission rendue n'est **jamais** un `REVENUE` : aucun client ne l'a payée, et la
+ranger là gonflerait le chiffre d'affaires d'une somme jamais facturée.
+
+### Prêt pour Pennylane — sans Pennylane
+
+Ce lot **n'intègre pas** Pennylane et n'écrit aucune ligne vers un système comptable. Il
+rend le branchement futur possible en garantissant que les six natures restent
+distinguables **sans ambiguïté et sans recalcul**, par lecture seule du registre :
+
+| nature comptable | comment elle se reconnaît |
+|---|---|
+| vente / revenu client | `category REVENUE` + `flow INFLOW` |
+| TVA | `fact.fiscal.taxCents` — figée par le document, jamais dérivée d'un taux |
+| commission fournisseur | `category COST` + `provenance.externalKind = BALANCE_TRANSACTION` |
+| remboursement | `category REFUND` + `parentTransactionId` vers le paiement défait |
+| ajustement fournisseur | `category ADJUSTMENT` + même `externalKind` |
+| payout → banque | **n'existe pas au registre**, et c'est le point |
+
+Les identités de rapprochement sont toutes présentes et stables : `transactionId`
+(interne), `provenance.externalId` (document ou écriture de solde), `balanceTransactionId`,
+`chargeId`, `paymentIntentId`, `invoiceDocument.number`, `clientCompanyId`, `projectId`.
+
+**Un payout ne deviendra jamais un revenu.** Il n'entre pas au registre, parce qu'il n'est
+pas un fait économique : c'est un déplacement d'argent déjà gagné, du solde Stripe vers la
+banque. Le jour où un rapprochement bancaire l'exigera, il aura sa propre nature — jamais
+un `REVENUE` de plus. C'est la faute que la structure de ce lot rend impossible à commettre
+par inadvertance : rien dans le chemin de projection ne sait produire un revenu à partir
+d'un mouvement de trésorerie.
+
+### Ce que le lot n'a PAS fait
+
+Aucune intégration Pennylane. Aucun export comptable. Aucun modèle de payout. Aucune
+conversion de devise. Aucune ventilation fiscale sur un règlement partiel. Aucun
+recalcul rétroactif des frais d'un paiement déjà soldé — un `SETTLED` est définitif.
+
+
+---
+
 ## 14. Ce que ces lots n'ont PAS fait
 
 **Aucun second stockage de fichiers** : le protocole Media existant a été étendu, pas
@@ -1208,6 +1476,8 @@ models/PanelRecurringCost.model.js              la RÈGLE et ses révisions appe
 services/finance/recurrence.js                  calendrier PUR — ancrage, cycles, rattrapage
 services/finance/recurringCosts.service.js      matérialisation, révisions, arrêt
 services/finance/recurringCostScheduler.js      commodité horaire — jamais la garantie
+services/integratedApi/stripe/stripeSettlementAuthority.js   PUR — ce qu'une balance transaction affirme
+services/finance/providerRevenue/providerSettlement.service.js  la charge fournisseur, sa convergence, son read-model
 services/finance/receipts.service.js            rattachement et autorisation d'une pièce
 services/upload/documentValidation.js           signatures d'octets, noms de fichiers
 services/upload/privateMedia.service.js         le média PRIVÉ — extension du protocole

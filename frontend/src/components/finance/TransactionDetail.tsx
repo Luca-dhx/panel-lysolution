@@ -22,6 +22,7 @@ import type { ProviderFact, RefundRequest } from '@/types.finance';
 import { formatCents, formatFlowCents } from '@/lib/money';
 import { FinanceModal } from '@/components/finance/FinanceModal';
 import { ReceiptCell } from '@/components/finance/ReceiptCell';
+import { SettlementBreakdown } from '@/components/finance/SettlementBreakdown';
 import {
   CATEGORY_LABELS, FLOW_LABELS, ORIGIN_LABELS, STATUS_LABELS, ownershipLabel,
 } from '@/components/finance/financeLabels';
@@ -220,6 +221,102 @@ export function TransactionDetail({
           </Ligne>
         ) : null}
       </div>
+
+      {/*
+        ── CE QUE LA VENTE VALAIT (L13) ──────────────────────────────────────
+
+        HT, TVA, TTC tels que le DOCUMENT du fournisseur les portait. Jamais
+        recalculés depuis le taux du contrat : celui-ci est celui d'aujourd'hui,
+        la facture est celle d'un jour donné, et un changement de taux ferait
+        mentir rétroactivement toutes les lignes passées.
+
+        Le bloc n'apparaît que si le fournisseur a réellement ventilé. Une
+        facture sans TVA n'a pas de TVA à afficher — pas « 0,00 € », rien.
+      */}
+      {transaction.fiscal ? (
+        <div className="finance-detail-block">
+          <h3>Informations commerciales</h3>
+          <div className="finance-detail-list">
+            <Ligne label="Montant HT">{formatCents(transaction.fiscal.netExcludingTaxCents)}</Ligne>
+            <Ligne label="TVA">{formatCents(transaction.fiscal.taxCents)}</Ligne>
+            <Ligne label="Montant TTC">
+              {formatCents(transaction.fiscal.grossIncludingTaxCents)}
+              <span className="muted"> · le montant réellement débité</span>
+            </Ligne>
+          </div>
+        </div>
+      ) : null}
+
+      {/*
+        ── CE QUE L'ENCAISSEMENT A RAPPORTÉ (L13) ────────────────────────────
+
+        La question à laquelle le registre ne savait pas répondre avant ce lot.
+        Le montant affiché tout en haut ne bouge pas : c'est le brut, c'est ce
+        que le client a payé, et c'est lui qui compte dans le chiffre
+        d'affaires. Ce bloc dit ce que le fournisseur en a retenu.
+      */}
+      {transaction.settlement ? (
+        <div className="finance-detail-block">
+          <h3>Résultat de l’encaissement</h3>
+          <SettlementBreakdown settlement={transaction.settlement} />
+          <div className="finance-detail-list">
+            <Ligne label="Fournisseur de paiement">
+              {transaction.settlement.provider}
+              {transaction.provenance?.environment ? (
+                <span className="muted"> · {transaction.provenance.environment}</span>
+              ) : null}
+            </Ligne>
+            {/*
+              LA VENTILATION DU FOURNISSEUR — lue, jamais recomposée.
+
+              Le total qui fait foi reste « Frais » ci-dessus : c'est lui que
+              Stripe garantit égal à brut − net. Additionner ces lignes
+              soi-même rouvrirait une question d'arrondi sur une donnée dont on
+              n'est pas l'autorité.
+            */}
+            {transaction.settlement.feeDetails.length > 0 ? (
+              <Ligne label="Détail des frais">
+                <ul className="finance-fee-details">
+                  {transaction.settlement.feeDetails.map((d, i) => (
+                    <li key={`${d.type ?? 'fee'}-${i}`}>
+                      {d.description ?? d.type ?? 'Frais'}
+                      {' · '}
+                      {formatCents(d.amountCents)}
+                    </li>
+                  ))}
+                </ul>
+              </Ligne>
+            ) : null}
+            {/*
+              QUAND L'ARGENT DEVIENT DISPONIBLE — une information de trésorerie,
+              pas de résultat. Le revenu est acquis le jour du paiement ; les
+              fonds, eux, arrivent plus tard. Confondre les deux ferait attendre
+              un virement pour constater une vente.
+            */}
+            {transaction.settlement.availableOn ? (
+              <Ligne label="Fonds disponibles le">
+                {DATE_SEULE.format(new Date(transaction.settlement.availableOn))}
+                {transaction.settlement.providerStatus === 'pending' ? (
+                  <span className="muted"> · encore en attente chez le fournisseur</span>
+                ) : null}
+              </Ligne>
+            ) : null}
+            {/*
+              LE PONT VERS LA CHARGE. La commission n'est pas un champ de ce
+              mouvement : c'est un MOUVEMENT à part, qui pèse sur le bénéfice
+              et qu'on retrouve dans la liste. Son identité est donnée ici pour
+              que le lien se voie.
+            */}
+            {transaction.settlement.providerCostTransactionId ? (
+              <Ligne label="Mouvement de commission">
+                <code className="inline-code">
+                  {transaction.settlement.providerCostTransactionId}
+                </code>
+              </Ligne>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {/*
         LE FAIT FOURNISSEUR — après les données métier, et jamais avant.
