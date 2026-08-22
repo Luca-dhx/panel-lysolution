@@ -197,6 +197,22 @@ export function isPanelPortalConfiguration(configuration) {
  * cette phrase-là qu'un exploitant lira dans un journal, et c'est elle qui doit
  * suffire à comprendre ce que le client pouvait faire.
  *
+ * ══ SEUL `enabled` FAIT FOI, ET C'EST UNE MESURE ════════════════════════════
+ *
+ * Dérive provoquée à la main sur le compte de recette, puis réalignée par le
+ * chemin normal :
+ *
+ *   avant   customer_update  enabled=false  allowed_updates=[]
+ *   dérive  customer_update  enabled=true   allowed_updates=[name,address,tax_id]
+ *   après   customer_update  enabled=false  allowed_updates=[name,address,tax_id]
+ *
+ * Stripe CONSERVE la liste des champs quand la fonctionnalité est désactivée,
+ * bien que le réalignement envoie `allowed_updates: []`. La liste résiduelle
+ * n'accorde rien — le portail n'affiche pas la section — mais elle ne doit pas
+ * compter comme un écart : la signaler déclencherait un réalignement à chaque
+ * ouverture, que Stripe n'appliquerait jamais. On ne juge donc que `enabled`,
+ * et une réactivation depuis le tableau de bord reste attrapée à coup sûr.
+ *
  * @returns {string[]} vide si la configuration est conforme.
  */
 export function portalConfigurationDrift(configuration) {
