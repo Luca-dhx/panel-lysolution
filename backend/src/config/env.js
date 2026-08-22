@@ -300,6 +300,21 @@ export const config = {
   timelineHistorySize: positiveInt('TIMELINE_HISTORY_SIZE', 300),
   // Certificat : seuil d alerte avant expiration, en jours.
   certificateWarningDays: positiveInt('CERTIFICATE_WARNING_DAYS', 21),
+
+  /**
+   * ══ LE BAIL DE TRAITEMENT DES WEBHOOKS — ici, et pas dans le module ═══════
+   *
+   * `webhookLease.js` lisait `process.env` lui-même. Le dépôt a une règle, et
+   * `bridge-conformity` la vérifie : SEUL ce fichier lit l'environnement. Elle
+   * n'est pas décorative — c'est ce qui rend possible de lire, en une page,
+   * tout ce qui rend un déploiement différent d'un autre.
+   *
+   * Les valeurs sont justifiées dans `webhookLease.js` : bail à deux ordres de
+   * grandeur au-dessus du pire cas mesuré, plafond à cinq tentatives.
+   */
+  webhookLeaseTtlMs: positiveInt('WEBHOOK_LEASE_TTL_MS', 120_000),
+  webhookStaleReceivedMs: positiveInt('WEBHOOK_STALE_RECEIVED_MS', 120_000),
+  webhookMaxAttempts: positiveInt('WEBHOOK_MAX_ATTEMPTS', 5),
   debug: process.env.PANEL_DEBUG === '1',
   /**
    * DIAGNOSTIC DE DÉPLOIEMENT — réglages du journal forensique.

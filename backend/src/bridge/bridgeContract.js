@@ -63,7 +63,7 @@ import { z } from 'zod';
 //   champ inconnu fait refuser le message ENTIER. Le projet ne les publie donc
 //   qu'à un Panel qui a ANNONCÉ savoir les lire (voir `panelSpeaks` côté
 //   projet). Compatible 1.0.x à 1.9.x.
-export const CONTRACT_VERSION = '1.11.0';
+export const CONTRACT_VERSION = '1.12.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -88,6 +88,27 @@ export const PANEL_API_ROUTES = Object.freeze({
    * qui existe, et le contrat n'a pas à le savoir.
    */
   capabilityInvoke: '/bridge/v1/capabilities/{code}/invoke',
+
+  /**
+   * ══ LA PROJECTION DES MODÈLES D'E-MAIL (1.11.0) — CINQ ROUTES, EN LECTURE ══
+   *
+   * ── POURQUOI ELLES MANQUAIENT ICI ────────────────────────────────────────
+   *
+   * Le Panel les SERT depuis la 1.11.0 (`bridge.routes.js`) et le projet les
+   * APPELLE — mais ce miroir ne les déclarait pas. `bridge-conformity`
+   * comparait donc 9 chemins déclarés à 14 servis, et échouait ; la recette
+   * était dark, et personne ne l'a lu. Une garde qui échoue en permanence
+   * n'est plus une garde.
+   *
+   * LECTURE SEULE, définitivement : les verbes d'écriture de cette surface ont
+   * été retirés en 1.11.0. Le projet ne détient plus aucune copie de contenu —
+   * il consulte ce que le Panel servirait à l'envoi.
+   */
+  emailTemplates: '/bridge/v1/email-templates',
+  emailTemplate: '/bridge/v1/email-templates/{code}',
+  emailTemplatePreview: '/bridge/v1/email-templates/{code}/preview',
+  emailTemplateReadiness: '/bridge/v1/email-templates/{code}/readiness',
+  emailTemplateTestSend: '/bridge/v1/email-templates/{code}/test-send',
   /**
    * LE SECRET DE VÉRIFICATION D'UN PROJET (L6.3A).
    *
@@ -734,6 +755,15 @@ export const heartbeatSchema = z
             lastSuccessfulApplyAt: isoDate.nullable().optional(),
             consecutivePullFailures: z.number().int().min(0).optional(),
             consecutiveUnreadableChanges: z.number().int().min(0).optional(),
+            /**
+             * COMBIEN D'ÉCRITURES LE PROJET A RENONCÉ À APPLIQUER (>= 1.12.0).
+             *
+             * Une écriture garée est passée SOUS le curseur : le calcul de
+             * retard ne la verra jamais. Sans ce compte, renoncer proprement
+             * redeviendrait perdre en silence.
+             */
+            parkedChanges: z.number().int().min(0).optional(),
+            lastParkedAt: isoDate.nullable().optional(),
             appliedTotal: z.number().int().min(0).optional(),
             state: z.string().min(1).max(40).nullable().optional(),
           })

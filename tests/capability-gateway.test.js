@@ -24,6 +24,8 @@ await startMemoryMongo();
 await connectTestDatabase();
 
 const registry = await import('../backend/src/services/capabilities/capabilityRegistry.js');
+const registre = await import('../backend/src/services/integratedApi/providerRegistry.js');
+const environnement = await import('../backend/src/services/integratedApi/environment.js');
 const errors = await import('../backend/src/services/capabilities/capabilityErrors.js');
 const contextModule = await import('../backend/src/services/capabilities/invocationContext.js');
 const adapters = await import('../backend/src/services/capabilities/providerAdapters.js');
@@ -398,14 +400,26 @@ section('2. CONTEXTE — l’autorité vient du jeton, pas du corps');
   check('la projection d’audit ne porte pas la fiche', !('panelProject' in decrit));
   check('…et ne porte aucun hachage d’appairage', !JSON.stringify(decrit).includes('bridgeToken'));
 
-  // Une fiche qui déclare l'autre monde est refusée, même authentifiée.
+  /**
+   * ══ LE MONDE DU PROJET EST LE SIEN — ET LE PANEL NE LE REMPLACE PAS ═════
+   *
+   * Cette assertion disait l'inverse : une fiche déclarant PROD sur un Panel
+   * TEST était REFUSÉE. Le monde du projet n'était donc jamais l'autorité — il
+   * n'était qu'une condition d'admission, et c'est `config.env` qui décidait.
+   *
+   * Tant qu'un Panel TEST ne sert que des projets TEST, les deux valeurs
+   * coïncident et le défaut ne se voit pas. Le jour où le Panel passe en PROD,
+   * un projet de recette voit sa capacité résolue vers le compte de PRODUCTION,
+   * ou refusée sans recours. Dans les deux cas, une propriété qui n'appartient
+   * pas au projet aurait décidé à sa place.
+   */
   const etranger = await projet({ projectId: 'projet-prod', environment: 'PROD' });
-  let mismatch = null;
-  try { contextModule.buildInvocationContext({ panelProject: etranger }); } catch (err) { mismatch = err; }
-  check('fiche déclarant PROD sur un Panel TEST → ENVIRONMENT_MISMATCH',
-    mismatch?.code === CODES.ENVIRONMENT_MISMATCH);
+  check('fiche déclarant PROD sur un Panel TEST → contexte PROD',
+    contextModule.buildInvocationContext({ panelProject: etranger }).environment === 'PROD');
 
-  // `null` = jamais parlé. Ce n'est pas un désaccord.
+  // `null` = jamais parlé. Ce n'est pas un désaccord : c'est une absence, et
+  // le monde du Panel reprend la main faute de mieux — la SEULE substitution
+  // qui subsiste, et elle disparaît au premier battement.
   const neuf = await projet({ projectId: 'projet-neuf', environment: null });
   check('fiche sans environnement déclaré → accepté, servi en TEST',
     contextModule.buildInvocationContext({ panelProject: neuf }).environment === 'TEST');
@@ -732,14 +746,66 @@ section('10. ENVIRONNEMENT — résolu deux fois, jamais choisi');
   check('Hostinger (PANEL_GLOBAL) → aucun environnement',
     resolver.resolveCredentialEnvironment(ctx, registry.getCapabilityDefinition('dns.record.ensure')) === null);
 
-  // Un contexte fabriqué qui prétendrait PROD est refusé par la seconde
-  // résolution — défense en profondeur, et c'est elle qu'on éprouve ici.
-  let divergent = null;
+  /**
+   * ══ LA MATRICE CROISÉE — LE RÉSULTAT NE DÉPEND QUE DU PROJET ════════════
+   *
+   * Quatre combinaisons, un fournisseur à deux mondes. Le runtime du Panel est
+   * INJECTÉ : c'est la seule façon d'éprouver un Panel PROD sans en démarrer un.
+   */
+  const monde = (panelEnv, projetEnv) => environnement.resolveIntegratedApiEnvironment({
+    providerDefinition: registre.getProviderDefinition('BREVO'),
+    runtimeEnvironment: panelEnv,
+    projectEnvironment: projetEnv,
+  });
+  check('Panel TEST + Projet TEST → fournisseur TEST', monde('TEST', 'TEST') === 'TEST');
+  check('Panel TEST + Projet PROD → fournisseur PROD', monde('TEST', 'PROD') === 'PROD');
+  check('Panel PROD + Projet TEST → fournisseur TEST', monde('PROD', 'TEST') === 'TEST');
+  check('Panel PROD + Projet PROD → fournisseur PROD', monde('PROD', 'PROD') === 'PROD');
+  check('…le monde du Panel ne change RIEN quand le projet a parlé',
+    monde('TEST', 'TEST') === monde('PROD', 'TEST')
+    && monde('TEST', 'PROD') === monde('PROD', 'PROD'));
+
+  /**
+   * UN FOURNISSEUR À COMPTE UNIQUE N'HÉRITE D'AUCUN MONDE — ni du projet, ni du
+   * Panel. `null` est la réponse exacte : c'est elle qui empêche un
+   * `environment` fantôme d'entrer dans une clé d'identifiants.
+   */
+  const unique = (panelEnv, projetEnv) => environnement.resolveIntegratedApiEnvironment({
+    providerDefinition: registre.getProviderDefinition('HOSTINGER'),
+    runtimeEnvironment: panelEnv,
+    projectEnvironment: projetEnv,
+  });
+  check('fournisseur à compte unique → null, quel que soit le projet',
+    unique('TEST', 'TEST') === null && unique('PROD', 'PROD') === null
+    && unique('TEST', 'PROD') === null && unique('PROD', 'TEST') === null);
+
+  /**
+   * L'ENVIRONNEMENT NE VIENT JAMAIS DE LA CHARGE UTILE. Un projet TEST qui
+   * écrirait `environment: PROD` dans son corps de requête parle dans le vide :
+   * le contexte est construit depuis la FICHE, et ce champ n'est pas lu.
+   */
+  const forge = contextModule.buildInvocationContext({
+    panelProject: fiche,
+    payload: { environment: 'PROD', mode: 'PROD', providerEnvironment: 'PROD' },
+  });
+  check('un environnement FORGÉ dans la charge utile est ignoré',
+    forge.environment === 'TEST');
+  check('…et la résolution suit la fiche, pas le corps',
+    resolver.resolveCredentialEnvironment(forge, definition) === 'TEST');
+
+  /**
+   * Un environnement de projet qui n'est ni TEST ni PROD est REFUSÉ — pas
+   * remplacé en douce par celui du Panel.
+   */
+  let invalide = null;
   try {
-    resolver.resolveCredentialEnvironment({ ...ctx, environment: 'PROD' }, definition);
-  } catch (err) { divergent = err; }
-  check('contexte PROD sur un Panel TEST → ENVIRONMENT_MISMATCH',
-    divergent?.code === CODES.ENVIRONMENT_MISMATCH);
+    environnement.resolveIntegratedApiEnvironment({
+      providerDefinition: registre.getProviderDefinition('BREVO'),
+      projectEnvironment: 'STAGING',
+    });
+  } catch (err) { invalide = err; }
+  check('environnement de projet invalide → refus explicite',
+    /PROJECT_ENVIRONMENT_INVALID/.test(invalide?.code ?? invalide?.message ?? ''));
 
   // Le jeu PROD existe dans le coffre et ne doit JAMAIS être atteint d'ici.
   await controlPlane.saveCredentialSet('BREVO', 'PROD', {

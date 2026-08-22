@@ -544,6 +544,94 @@ Côté **SB Auto**, la question ne se pose pas : ses lignes héritées portent
 `PENDING` signifiait déjà « commencé, pas fini ». Le reprendre est donc exact,
 pas une réinterprétation.
 
+### ACCUSER STRIPE N'EST PAS AVOIR LIVRÉ LE PROJET
+
+C'est la phrase la plus importante de tout ce chapitre, et elle tient en deux
+lignes :
+
+```
+Panel répond 200 à Stripe   =  « le Panel prend la RESPONSABILITÉ du fait »
+                            ≠  « le projet l'a déjà appliqué »
+```
+
+Le trajet complet compte donc **deux accusés**, et ils n'ont ni le même
+émetteur, ni la même signification :
+
+```
+Stripe  ──webhook──▶  Panel   ──200──▶  Stripe      1er accusé : je le prends
+                        │
+                        ▼
+                 fait canonique durable  (journal, seq ordonnée)
+                        │
+                        ▼
+Panel   ──livraison──▶  Projet  ──curseur──▶  Panel  2e accusé : je l'ai appliqué
+```
+
+Entre les deux, **le Panel reste responsable**. Un projet éteint, un réseau
+coupé, un Panel redémarré : l'écriture est au journal, elle y reste, et le
+projet la reprendra. Le fournisseur, lui, n'a plus rien à rejouer — et n'a plus
+à le faire.
+
+### Le curseur EST l'accusé — à condition qu'il ne mente pas
+
+Le projet tire les écritures du journal par pages et persiste sa position. Il
+déclare cette position au Panel à chaque battement (`bridgeStats.consumption`).
+Le Panel compare sa propre séquence à ce curseur : la différence est le
+**retard**, et ce retard a un âge.
+
+Tout repose donc sur une propriété du curseur : **il ne dépasse jamais une
+écriture non appliquée.**
+
+Elle n'était pas tenue. Le projet appliquait une page et écrivait le curseur à
+la fin, quoi qu'il arrive — une écriture dont l'applicateur échouait était
+comptée `skipped`, un incident était journalisé, et le curseur passait
+par-dessus. Le commentaire d'origine le disait sans détour : *« cette écriture
+ne sera PAS relivrée par le Panel »*.
+
+Ce n'était donc pas seulement une perte : c'était un **accusé mensonger**. Le
+Panel voyait un retard nul, sa fiche restait verte, et le fait n'existait nulle
+part. Toute la mesure de retard ci-dessus s'appuyait sur une valeur fausse.
+
+Depuis, le curseur est **retenu** sur la première écriture non appliquée. La
+page entière est retirée au cycle suivant ; les écritures déjà appliquées de
+cette page sont écartées par la fenêtre d'idempotence, qui existe exactement
+pour ce cas.
+
+### Et l'écriture qu'aucune tentative ne passera ?
+
+Elle bloquerait le flux à vie, et tout ce qui la suit avec elle. Après cinq
+tentatives (`BRIDGE_MAX_APPLY_ATTEMPTS`), elle est **garée** en lettre morte
+durable — type, identifiant, motif, tentatives, date, **jamais la charge
+utile** — et le curseur passe.
+
+Renoncer en le disant n'est pas perdre en silence. Une écriture garée est
+passée SOUS le curseur : le calcul de retard ne la verra plus jamais. Le projet
+déclare donc son compte au battement (`parkedChanges`, contrat 1.12.0), et le
+Panel en fait un signal de supervision à part entière — seuil **1**, parce
+qu'un renoncement n'a aucun état normal.
+
+Une écriture **illisible** est garée immédiatement : aucune tentative ne la
+rendra conforme, et cinq cycles perdus à le prouver ne servent personne.
+
+### Ce qui est durable de bout en bout, et ce qui ne l'est pas
+
+| | durable | pourquoi |
+|---|---|---|
+| journal du Panel (`PanelSyncJournalEntry`) | **oui** | la source de vérité, ordonnée et rejouable |
+| curseur du projet | **oui** | après un arrêt, le tirage reprend où il s'était arrêté |
+| compteurs d'échec par écriture | **oui** | sinon le plafond se remet à zéro à chaque redémarrage, et une écriture toxique bloque à vie |
+| lettre morte | **oui** | un incident se relit |
+| livraison immédiate (push) | **non, et c'est voulu** | un accélérateur, jamais la garantie — le journal est le filet |
+| idempotence des livraisons poussées | **oui** depuis ce lot | c'était une `Map` mémoire ; un redémarrage la vidait, et la relivraison rendait `APPLIED` au lieu de `DUPLICATE` |
+
+### Le projet ne détient aucune clé de fournisseur
+
+Il ne reçoit ni identifiant Stripe, ni autorité fournisseur, ni droit de relire
+Stripe. Il reçoit un **fait canonique métier** — jamais la charge utile brute du
+webhook. C'est aussi pourquoi la reprise d'un événement abandonné est le travail
+du Panel, et de lui seul : c'est lui qui détient la clé, et lui qui peut relire
+l'événement à la source.
+
 ### La supervision, parce qu'un abandon silencieux est le même défaut
 
 | type | quand | sévérité |

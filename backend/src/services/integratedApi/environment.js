@@ -2,16 +2,31 @@
 //
 // docs/architecture/INTEGRATED_API_CONTROL_PLANE_ROADMAP.md §7.
 //
-// ── UNE SEULE ENTRÉE, ET ELLE N'EST PAS NÉGOCIABLE ──────────────────────────
+// ══ QUI CHOISIT TEST OU PROD ══════════════════════════════════════
 //
-//   environnement d'une intégration = ENV du runtime du Panel
+//   pour une capacité AGISSANT POUR UN PROJET  →  l'environnement du PROJET
+//   pour une capacité propre au PANEL           →  l'environnement du PANEL
+//   pour un fournisseur à compte unique         →  aucun des deux : `null`
+//
+// ── CE QUI ÉTAIT ÉCRIT ICI, ET POURQUOI C'ÉTAIT UN DÉFAUT ──────────────────
+//
+//     environnement d'une intégration = ENV du runtime du Panel
+//
+// La règle était vraie tant qu'un Panel ne servait qu'un monde et que tous ses
+// projets le partageaient — ce qui est le cas aujourd'hui, et ce qui rend le
+// défaut INVISIBLE. Le jour où le Panel passe en PROD, un projet de recette
+// verrait sa capacité Stripe résolue vers le compte de PRODUCTION, ou refusée
+// sans recours. Dans les deux cas, la décision aurait été prise par une
+// propriété qui n'appartient pas au projet.
+//
+// L'environnement d'un projet est un FAIT DE SON IDENTITÉ, constaté à
+// l'appairage et tenu à jour par le registre du Panel. Il ne vient jamais d'une
+// charge utile : un projet TEST qui écrirait `environment: PROD` dans son corps
+// de requête ne serait pas cru — c'est la fiche qui parle, pas l'appelant.
 //
 // Pas le domaine. Pas un en-tête. Pas un paramètre du frontend. Pas un
-// `activeMode` choisi à la main. Pas une préférence d'écran.
-//
-// Le `config.env` du processus est déjà la valeur contre laquelle chaque
-// appairage a été validé (`pairing.bootstrap` refuse un projet qui déclare un
-// autre monde). La réutiliser ferme la boucle sans créer de seconde vérité.
+// `activeMode` choisi à la main. Pas une préférence d'écran. Et désormais :
+// pas le `config.env` du Panel, dès lors qu'un projet est en cause.
 //
 // ── POURQUOI CETTE FONCTION EXISTE, PLUTÔT QU'UN `config.env` PARTOUT ───────
 //
@@ -57,6 +72,17 @@ export function runtimeEnvironment() {
 export function resolveIntegratedApiEnvironment({
   providerDefinition,
   runtimeEnvironment: runtime = runtimeEnvironment(),
+  /**
+   * L'ENVIRONNEMENT DU PROJET POUR QUI ON AGIT — l'autorité, quand il existe.
+   *
+   * `null` signifie « aucun projet en cause » : une capacité que le Panel
+   * exerce pour lui-même. C'est le SEUL cas où son propre monde décide.
+   *
+   * Il vient du registre (`PanelProject.runtime.environment`), constaté à
+   * l'appairage et tenu à jour par le battement — jamais d'un champ de la
+   * requête. Un projet TEST qui réclamerait PROD ne serait pas cru.
+   */
+  projectEnvironment = null,
 } = {}) {
   if (!providerDefinition) {
     throw ApiError.badRequest(
@@ -72,14 +98,42 @@ export function resolveIntegratedApiEnvironment({
     );
   }
 
+  if (projectEnvironment !== null && !ENVIRONMENTS.includes(projectEnvironment)) {
+    throw ApiError.badRequest(
+      'PANEL_INTEGRATED_API_PROJECT_ENVIRONMENT_INVALID',
+      `Environnement de projet invalide : « ${projectEnvironment} ». TEST ou PROD attendus.`,
+    );
+  }
+
   switch (providerDefinition.scope) {
     case SCOPES.PANEL_GLOBAL:
-      // Le fournisseur ne connaît qu'un monde. Lui en inventer deux
-      // dédoublerait un compte unique.
+      /**
+       * ── UN COMPTE UNIQUE N'A PAS DE MONDE, ET ON NE LUI EN INVENTE PAS ────
+       *
+       * Le modèle du fournisseur fait foi : Hostinger n'a qu'un portefeuille.
+       * Lui attribuer `TEST` ou `PROD` dédoublerait un compte unique et
+       * créerait un jeu d'identifiants que personne ne remplirait jamais.
+       *
+       * Surtout : on ne substitue PAS `config.env` en douce parce qu'il faut
+       * bien mettre quelque chose. `null` est la réponse exacte, et c'est
+       * elle qui empêche un `environment` fantôme d'entrer dans une clé.
+       */
       return null;
     case SCOPES.ENVIRONMENT:
     case SCOPES.PROJECT_ENVIRONMENT:
-      return runtime;
+      /**
+       * ── LE PROJET DÉCIDE, ET LE PANEL SEULEMENT À DÉFAUT ─────────────────
+       *
+       * Un fournisseur à deux mondes (Stripe, Brevo, OpenSign) est résolu par
+       * l'environnement de celui POUR QUI on agit. Le `runtime` ne reprend la
+       * main que lorsqu'aucun projet n'est en cause — une capacité que le
+       * Panel exerce pour lui-même, où son monde est effectivement le sujet.
+       *
+       * L'ordre de ces deux termes EST l'invariant du lot. L'inverser
+       * rendrait le Panel maître d'une décision qui appartient au projet, et
+       * le défaut resterait invisible tant que les deux coïncident.
+       */
+      return projectEnvironment ?? runtime;
     case SCOPES.PROJECT:
       return null;
     default:

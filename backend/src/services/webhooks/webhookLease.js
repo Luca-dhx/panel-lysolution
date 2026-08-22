@@ -34,6 +34,16 @@
 import crypto from 'node:crypto';
 import os from 'node:os';
 
+/**
+ * LES SEUILS VIENNENT DE `config/env.js`, ET DE NULLE PART AILLEURS.
+ *
+ * Ce module les lisait dans `process.env`. Le dépôt a une règle — seul
+ * `config/env.js` lit l'environnement — et `bridge-conformity` la vérifie. Elle
+ * permet de lire en une page tout ce qui distingue un déploiement d'un autre ;
+ * un module qui s'en dispense rend ce réglage invisible.
+ */
+import config from '../../config/env.js';
+
 import {
   WEBHOOK_EVENT_STATUS,
   WEBHOOK_TERMINAL_STATUSES,
@@ -61,7 +71,7 @@ import {
  *                  Pour un `subscription.deleted`, c'est un site servi alors
  *                  que le contrat est fini.
  */
-export const LEASE_TTL_MS = positiveEnv('WEBHOOK_LEASE_TTL_MS', 120_000);
+export const LEASE_TTL_MS = config.webhookLeaseTtlMs;
 
 /**
  * Un `RECEIVED` de moins de 120 s n'est pas « abandonné » : c'est peut-être le
@@ -69,7 +79,7 @@ export const LEASE_TTL_MS = positiveEnv('WEBHOOK_LEASE_TTL_MS', 120_000);
  * écrit. On applique donc le même délai qu'au bail — la question posée est la
  * même : « assez de temps a-t-il passé pour que le silence signifie mort ? ».
  */
-export const STALE_RECEIVED_MS = positiveEnv('WEBHOOK_STALE_RECEIVED_MS', LEASE_TTL_MS);
+export const STALE_RECEIVED_MS = config.webhookStaleReceivedMs;
 
 /**
  * ══ CINQ TENTATIVES, PUIS ON RENONCE — ET ON LE DIT ═════════════════════════
@@ -84,12 +94,7 @@ export const STALE_RECEIVED_MS = positiveEnv('WEBHOOK_STALE_RECEIVED_MS', LEASE_
  * alerte de supervision nommée. Un événement abandonné sans trace est
  * exactement le défaut que ce lot corrige.
  */
-export const MAX_PROCESSING_ATTEMPTS = positiveEnv('WEBHOOK_MAX_ATTEMPTS', 5);
-
-function positiveEnv(nom, defaut) {
-  const brut = Number.parseInt(process.env[nom] ?? '', 10);
-  return Number.isFinite(brut) && brut > 0 ? brut : defaut;
-}
+export const MAX_PROCESSING_ATTEMPTS = config.webhookMaxAttempts;
 
 /**
  * L'IDENTITÉ DU PROCESSUS — et le nonce en est la seule partie sérieuse.

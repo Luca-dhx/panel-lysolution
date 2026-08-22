@@ -57,7 +57,17 @@ section('Chemins du contrat PanelBridge (servis par le Panel)');
   // moyen pour un projet d'apprendre qu'une session développeur doit être
   // fermée. Comme le canal de vérification, elle est nommée ci-dessous : un
   // chemin de plus doit se déclarer, jamais se fondre dans un comptage.
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 9);
+  /**
+   * 14 DEPUIS 1.11.0 — les cinq routes de LECTURE des modèles d'e-mail.
+   *
+   * Le nombre reste écrit en dur, et c'est délibéré : un chemin qui apparaît
+   * sans qu'on l'ait voulu doit faire échouer ce test, pas se fondre dans un
+   * comptage dynamique. Il disait encore 9 alors que le Panel en servait 14 —
+   * la garde échouait donc en permanence, et une garde qui échoue toujours
+   * n'est plus une garde. C'est ce qui a laissé le miroir dériver de deux
+   * versions sans que personne ne le voie.
+   */
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 14);
   check('le canal de vérification est au contrat',
     inMirror.includes('/bridge/v1/webhooks/{provider}/verification-secret'));
   check('l’introspection d’identité fédérée est au contrat',
@@ -184,10 +194,15 @@ section('Types d’entités synchronisées');
    * dernier état métier exposé au Panel qui ne voyageait pas, et qu'un écran
    * allait donc lire directement chez le projet à chaque affichage.
    */
-  check('les six types appliqués sont nommés',
-    contract.APPLIED_ENTITY_TYPES.length === 6
+  /**
+   * SEPT DEPUIS 1.11.0 — `PLATFORM_INCIDENT` a rejoint la table : un incident
+   * technique durable rapporté par un projet, dont le Panel décide s'il alerte.
+   * L'assertion en nommait six, et échouait donc depuis cet ajout.
+   */
+  check('les sept types appliqués sont nommés',
+    contract.APPLIED_ENTITY_TYPES.length === 7
     && ['DIAGNOSTIC', 'PROJECT_PRESENTATION', 'CONTRACT', 'TEAM_MEMBER',
-      'PROJECT_SITE_STATUS', 'PROJECT_EMAIL_TEMPLATE_USAGE']
+      'PROJECT_SITE_STATUS', 'PROJECT_EMAIL_TEMPLATE_USAGE', 'PLATFORM_INCIDENT']
       .every((t) => contract.APPLIED_ENTITY_TYPES.includes(t)));
   check('statuts d’accusé conformes', ['APPLIED', 'DUPLICATE', 'IGNORED', 'REJECTED'].every(
     (s) => contract.ACK_STATUS[s] === s && panelSpec.includes(s),

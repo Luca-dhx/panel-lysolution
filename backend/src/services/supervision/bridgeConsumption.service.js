@@ -97,6 +97,19 @@ export const CONSUMPTION_REASONS = Object.freeze({
   PULL_FAILING: 'PULL_FAILING',
   CHANGES_UNREADABLE: 'CHANGES_UNREADABLE',
   BACKLOG_STALE: 'BACKLOG_STALE',
+  /**
+   * DES ÉCRITURES ONT ÉTÉ GARÉES (contrat >= 1.12.0).
+   *
+   * Le projet a épuisé ses tentatives d'application et est passé outre. Ces
+   * écritures sont désormais SOUS son curseur : le calcul de retard ci-dessous
+   * ne les verra jamais, et sans ce signal elles seraient parfaitement
+   * invisibles depuis le Panel.
+   *
+   * Le seuil est UN. Contrairement au retard — dont l'état normal est d'exister
+   * quelques secondes — une écriture garée n'a aucun état normal : elle est un
+   * renoncement, et il n'y en a jamais « un peu ».
+   */
+  CHANGES_PARKED: 'CHANGES_PARKED',
 });
 
 function decodeCursor(cursor) {
@@ -183,6 +196,9 @@ export async function describeConsumptionHealth({ projectId, runtime = {}, now =
     reasons.push(CONSUMPTION_REASONS.CHANGES_UNREADABLE);
   }
 
+  const parked = Number(consumption.parkedChanges ?? 0);
+  if (parked > 0) reasons.push(CONSUMPTION_REASONS.CHANGES_PARKED);
+
   const backlog = await measureBacklog(projectId, consumption.cursor ?? null);
   const age = ageMinutes(backlog.oldestModifiedAt, now);
   if (backlog.pending > 0 && age !== null && age >= CONSUMPTION_THRESHOLDS.BACKLOG_AGE_MINUTES) {
@@ -208,6 +224,8 @@ export async function describeConsumptionHealth({ projectId, runtime = {}, now =
       backlogAgeMinutes: age,
       consecutivePullFailures: pullFailures,
       consecutiveUnreadableChanges: unreadable,
+      parkedChanges: parked,
+      lastParkedAt: consumption.lastParkedAt ?? null,
       lastCursorAdvanceAt: consumption.lastCursorAdvanceAt ?? null,
       lastSuccessfulApplyAt: consumption.lastSuccessfulApplyAt ?? null,
       appliedTotal: consumption.appliedTotal ?? null,
@@ -228,6 +246,13 @@ export function explainConsumptionReasons(reasons = [], detail = {}) {
     phrases.push(
       `${detail.consecutiveUnreadableChanges} écritures consécutives ont été ÉCARTÉES parce que `
       + 'le projet ne sait pas les lire — cette donnée est perdue tant qu’elle n’est pas republiée',
+    );
+  }
+  if (reasons.includes(CONSUMPTION_REASONS.CHANGES_PARKED)) {
+    phrases.push(
+      `${detail.parkedChanges} écriture(s) ont été GARÉES par le projet après épuisement `
+      + 'de ses tentatives d’application — elles ne repartiront pas toutes seules, '
+      + 'seule une nouvelle publication les ramènera',
     );
   }
   if (reasons.includes(CONSUMPTION_REASONS.BACKLOG_STALE)) {

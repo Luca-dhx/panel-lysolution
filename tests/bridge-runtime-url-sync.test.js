@@ -78,9 +78,20 @@ const battement = (overrides = {}) => ({
 });
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('1. Le contrat est en 1.9.0, et l’extension est ADDITIVE');
+section('1. LE CONTRAT AVANCE, ET L’EXTENSION RESTE ADDITIVE');
 {
-  check('la version du miroir est 1.9.0', contract.CONTRACT_VERSION === '1.9.0');
+  /**
+   * L'ÉPINGLE DISAIT ENCORE 1.9.0 — le contrat était passé à 1.11.0 sans que
+   * personne ne le voie : cette assertion échouait en permanence. Une garde qui
+   * échoue toujours n'est plus une garde, et c'est ainsi qu'un miroir dérive.
+   *
+   * Ce que cette recette prouve n'est PAS un numéro : c'est que l'extension
+   * `runtime.network` de la 1.9.0 reste ADDITIVE — un battement sans elle est
+   * toujours valide, et un Panel antérieur ne la reçoit jamais. On épingle donc
+   * la version COURANTE, et l'additivité est éprouvée juste en dessous.
+   */
+  check(`la version du miroir est 1.12.0 (lu : ${contract.CONTRACT_VERSION})`,
+    contract.CONTRACT_VERSION === '1.12.0');
   check('un projet 1.8 reste COMPATIBLE (majeure identique)',
     contract.isContractCompatible('1.8.0') === true);
   check('un projet 1.9 est compatible', contract.isContractCompatible('1.9.0') === true);

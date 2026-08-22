@@ -332,9 +332,95 @@ vers un fournisseur réel).
 
 `resolveCredentialsForCapability(context, capability)` est la seule porte.
 
-L'environnement est **dérivé deux fois** et les deux doivent concorder : la
-portée du fournisseur (L1) et le contexte (L2). Un fournisseur `PANEL_GLOBAL`
-rend `null` — lui inventer deux mondes dédoublerait un compte unique.
+### QUI CHOISIT TEST OU PROD
+
+```
+capacité agissant POUR UN PROJET   →  l'environnement du PROJET
+capacité propre au PANEL           →  l'environnement du PANEL
+fournisseur à compte unique        →  aucun des deux : null
+```
+
+**L'environnement du Panel ne décide jamais pour un projet.**
+
+#### Ce qui était écrit, et pourquoi c'était un défaut
+
+```js
+resolveIntegratedApiEnvironment()  →  config.env          // le monde du PANEL
+resolveInstanceEnvironment()       →  runtimeEnvironment() // le même
+```
+
+La déclaration du projet n'était qu'un **veto** : si elle différait, refus. Le
+monde du projet n'était donc jamais l'autorité — et la « défense en profondeur »
+qui comparait les deux résolutions comparait en réalité une valeur à elle-même.
+
+Tant qu'un Panel TEST ne sert que des projets TEST, les deux coïncident et le
+défaut ne se voit pas. Le jour où le Panel passe en PROD, un projet de recette
+voit sa capacité Stripe résolue vers le compte de **production** — ou refusée
+sans recours. Dans les deux cas, une propriété qui n'appartient pas au projet
+aurait décidé à sa place.
+
+#### La règle, et d'où vient la valeur
+
+```
+providerEnvironment = resolveFrom(PROJECT.environment, PROVIDER.scope)
+```
+
+`PROJECT.environment` vient de `PanelProject.runtime.environment` — le registre
+du Panel, écrit à l'appairage et tenu à jour par le battement. **Jamais d'un
+champ de la requête.** Un projet TEST qui écrirait `environment: PROD` dans son
+corps parle dans le vide : ce champ n'est pas lu, et ne l'a jamais été.
+
+`null` (le projet n'a jamais parlé) n'est pas un désaccord mais une absence :
+le monde du Panel reprend alors la main, faute de mieux. C'est la seule
+substitution qui subsiste, et elle disparaît au premier battement.
+
+#### La matrice
+
+| Panel | Projet | fournisseur à deux mondes |
+|---|---|---|
+| TEST | TEST | **TEST** |
+| TEST | PROD | **PROD** |
+| PROD | TEST | **TEST** |
+| PROD | PROD | **PROD** |
+
+Le résultat ne dépend que du projet. Éprouvé sur STRIPE, BREVO et OPENSIGN,
+runtime injecté, **aucun appel fournisseur**.
+
+#### Fournisseur à compte unique
+
+`HOSTINGER` est `PANEL_GLOBAL` : il n'a qu'un portefeuille. La résolution rend
+`null`, quelles que soient les combinaisons — et surtout, **on ne substitue pas
+`config.env` en douce** parce qu'il faut bien mettre quelque chose. `null` est
+la réponse exacte, et c'est elle qui empêche un `environment` fantôme d'entrer
+dans une clé d'identifiants. Le modèle du fournisseur fait foi.
+
+#### Ce que `PANEL_ENV` gouverne encore
+
+Sa base, son runtime, ses propres adresses, sa configuration de contrôle, et
+les capacités `PANEL_SELF` — celles qu'il exerce pour lui-même, où son monde
+est effectivement le sujet. Rien d'autre.
+
+La garde `assertEnvironmentServed` — « exécuter en PROD depuis un Panel TEST » —
+a quitté le chemin des capacités de projet. Elle reste en place là où elle
+protège vraiment : le provisionnement des identifiants
+(`assertAdministrableEnvironment`) et la disponibilité que le Panel déclare pour
+lui-même (`describeAvailability`).
+
+#### La frontière avec l'APPAIRAGE, qui n'a pas changé
+
+`pairing.bootstrap` refuse toujours un projet qui déclare un autre monde que
+celui du Panel, et c'est **délibéré** : une instance de Panel n'héberge que des
+fiches de son propre environnement. Sans cette règle, un Panel de recette
+recevrait les contrats et l'équipe d'un site en production.
+
+La matrice croisée est donc prouvée **au résolveur**, là où la décision se
+prend — pas par une paire Panel/projet de mondes différents, que la doctrine
+d'appairage rend volontairement impossible.
+
+---
+
+Un fournisseur `PANEL_GLOBAL` rend `null` — lui inventer deux mondes
+dédoublerait un compte unique.
 
 **Doctrine de disponibilité : `VALID` et empreinte à jour.** Pas seulement
 « rempli ». Trois raisons, par gravité croissante :

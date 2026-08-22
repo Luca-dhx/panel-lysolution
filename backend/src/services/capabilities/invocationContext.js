@@ -166,25 +166,39 @@ export function assertProjectScope(authenticatedProjectId, payload = {}) {
 }
 
 /**
- * L'environnement de CETTE instance — et la preuve que la fiche est d'accord.
+ * ══ L'ENVIRONNEMENT D'UN PROJET — SON FAIT, PAS CELUI DU PANEL ══════════════
  *
- * `runtime.environment` est `null` tant que le projet n'a jamais parlé : ce
- * n'est pas un désaccord, c'est une absence, et un projet authentifié qui
- * invoque est par définition en train de parler. On ne bloque donc que sur une
- * valeur PRÉSENTE et DIFFÉRENTE.
+ * ── CE QUI ÉTAIT ÉCRIT ICI, ET POURQUOI C'ÉTAIT UN DÉFAUT ──────────────────
+ *
+ * La fonction rendait `runtimeEnvironment()` — le monde du PANEL — et se
+ * servait de la déclaration du projet comme d'un simple VETO : si elle
+ * différait, refus. Le monde du projet n'était donc jamais l'autorité ; il
+ * n'était qu'une condition d'admission.
+ *
+ * Tant qu'un Panel TEST ne sert que des projets TEST, les deux valeurs
+ * coïncident et le défaut ne se voit pas. Le jour où le Panel passe en PROD,
+ * un projet de recette voit sa capacité Stripe résolue vers le compte de
+ * PRODUCTION — ou refusée sans recours. Dans les deux cas, une propriété qui
+ * n'appartient pas au projet aurait décidé à sa place.
+ *
+ * ── CE QUI LA REMPLACE ─────────────────────────────────────────────────────
+ *
+ * La fiche parle. `runtime.environment` vient du registre du Panel, constaté à
+ * l'appairage et tenu à jour par le battement — **jamais** d'un champ de la
+ * requête. Un projet TEST qui écrirait `environment: PROD` dans son corps ne
+ * serait pas cru : ce champ n'est pas lu ici, et ne l'a jamais été.
+ *
+ * ── ET SI LE PROJET N'A JAMAIS PARLÉ ? ─────────────────────────────────────
+ *
+ * `null` n'est pas un désaccord, c'est une absence — un projet appairé qui
+ * n'a pas encore déclaré son monde. On retombe alors sur celui du Panel, faute
+ * de mieux, et c'est la seule substitution qui subsiste. Elle est étroite,
+ * nommée, et disparaît au premier battement.
  */
 export function resolveInstanceEnvironment(panelProject) {
   const served = runtimeEnvironment();
   const declared = panelProject?.runtime?.environment ?? null;
-
-  if (declared && declared !== served) {
-    throw new CapabilityError(
-      CAPABILITY_ERROR_CODES.ENVIRONMENT_MISMATCH,
-      `Refusé : cette instance de Panel sert ${served}, la fiche du projet déclare ${declared}.`,
-      { served, declared },
-    );
-  }
-  return served;
+  return declared ?? served;
 }
 
 /**

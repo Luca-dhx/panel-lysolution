@@ -83,6 +83,40 @@
 #     l'ORDRE DE DÉPLOIEMENT est imposé : le Panel accepte AVANT que le projet
 #     n'émette, et le projet ne publie qu'à un Panel qui a annoncé savoir lire.
 #     Compatible 1.0.x à 1.9.x.
+#   1.12.0 — CE QUE LE PROJET A RENONCE A APPLIQUER. UN CHANGEMENT, ADDITIF :
+#     · `Heartbeat.bridgeStats.consumption.parkedChanges` et `.lastParkedAt` —
+#       le nombre d'ecritures que le projet a GAREES en lettre morte apres avoir
+#       epuise ses tentatives d'application, et la date de la derniere.
+#       Une ecriture garee est passee SOUS le curseur : le calcul de retard du
+#       Panel ne la verra jamais. Sans ce compte, renoncer proprement
+#       redeviendrait perdre en silence.
+#     Optionnels, comme tout le bloc. Compatible 1.0.x a 1.11.x.
+#   1.11.0 — L'AUTORITÉ DES MODÈLES D'E-MAIL, RENDUE EXPLICITE. QUATRE CHANGEMENTS :
+#     · CINQ ROUTES DE LECTURE sur /bridge/v1/email-templates — la projection
+#       des modèles réellement affectés au projet appelant, telle que le Panel
+#       les résoudrait à l'envoi. Le projet ne détient plus aucune copie de
+#       contenu : il consulte.
+#     · LES VERBES D'ÉCRITURE DE CETTE SURFACE SONT RETIRÉS (PUT /{code},
+#       POST /import, POST /{code}/versions/{v}/restore). Ils n'avaient aucun
+#       appelant, et ils contredisaient l'autorité unique du Panel : une porte
+#       que personne n'emprunte mais que l'architecture interdit se retire, sans
+#       quoi le premier lot pressé la trouve.
+#     · `EMAIL_TEMPLATE` EST RETIRÉ des entityType. Il y figurait depuis
+#       l'origine sans qu'aucun émetteur ne le produise ni qu'aucun projecteur
+#       ne l'applique : une entité déclarée que rien ne synchronisait, laissant
+#       croire que le CONTENU des modèles voyage. Il ne voyage pas.
+#     · nouvel entityType `PLATFORM_INCIDENT`, poussé par le PROJET — un
+#       incident technique durable. L'alerte correspondante partait du projet
+#       avec un modèle de portée PANEL : elle ne pouvait structurellement pas
+#       aboutir, et échouait en silence. Le projet rapporte désormais les FAITS ;
+#       le control plane décide de l'alerte, de ses destinataires et de son
+#       contenu.
+#     · `EmailTemplateUsage.contractFingerprints` — OPTIONNEL. L'empreinte du
+#       contrat de variables que le projet sait servir, telle que le Panel la lui
+#       a servie. Elle rend un écart de vocabulaire détectable AVANT le premier
+#       envoi raté.
+#     Compatible 1.0.x à 1.10.x en MAJEURE. Le retrait d'`EMAIL_TEMPLATE` et des
+#     verbes d'écriture ne casse aucun client : aucun ne les utilisait.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -92,7 +126,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.10.0
+  version: 1.12.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -595,6 +629,183 @@ paths:
         '409':
           description: Version majeure du contrat non supportee.
 
+  /bridge/v1/email-templates:
+    get:
+      operationId: listProjectEmailTemplates
+      tags: [email-templates]
+      summary: Les modeles d'e-mail affectes a CE projet — LECTURE SEULE
+      description: >
+        LA PROJECTION AUTORITATIVE, telle que le Panel la resoudrait a l'envoi.
+
+        Le projet ne detient plus aucune copie de contenu. Cette surface est
+        donc la SEULE facon pour lui de savoir quel sujet, quel contenu et
+        quelles variables la plateforme expedierait en son nom.
+
+        Elle emprunte exactement la meme resolution que l'envoi : un modele non
+        configure pour la portee du projet rend `usable: false` et sa raison,
+        jamais un contenu de repli. Servir un defaut ici ferait croire a un
+        modele pret alors que le premier envoi echouerait.
+
+        AUCUN VERBE D'ECRITURE n'existe sur cette surface, et c'est la propriete
+        centrale du contrat 1.11.0 : le Panel est la seule autorite d'edition.
+
+        Disponible depuis 1.11.0.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+      responses:
+        '200':
+          description: La projection des modeles du projet.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        templateId: { type: string }
+                        name: { type: string }
+                        description: { type: string }
+                        subject:
+                          type: string
+                          description: Le sujet REELLEMENT expedie pour ce projet.
+                        enabled: { type: boolean }
+                        configured:
+                          type: boolean
+                          description: Une instance existe-t-elle pour cette portee ?
+                        usable:
+                          type: boolean
+                          description: L'envoi aboutirait-il en l'etat ?
+                        unusableReason: { type: string, nullable: true }
+                        unusableMessage: { type: string }
+                        version: { type: integer }
+                        source:
+                          type: string
+                          enum: [PANEL, PROJECT, REGISTRY_DEFAULT]
+                          nullable: true
+                        ownedBy:
+                          type: string
+                          enum: [PANEL, PROJECT]
+                        variableCount: { type: integer }
+                        variableContractFingerprint:
+                          type: string
+                          description: >
+                            L'empreinte du contrat de variables. Le projet la
+                            renvoie dans sa declaration d'usage : c'est elle qui
+                            rend un ecart de vocabulaire detectable AVANT le
+                            premier envoi rate.
+
+  /bridge/v1/email-templates/{code}:
+    get:
+      operationId: getProjectEmailTemplate
+      tags: [email-templates]
+      summary: Le detail d'un modele affecte au projet — LECTURE SEULE
+      description: >
+        Meme resolution que l'envoi. Porte le contenu reellement expedie, le
+        contrat de variables et son empreinte.
+
+        Disponible depuis 1.11.0.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Le modele resolu pour ce projet.
+
+  /bridge/v1/email-templates/{code}/preview:
+    post:
+      operationId: previewProjectEmailTemplate
+      tags: [email-templates]
+      summary: Un apercu rendu par le PANEL, avec SES variables d'exemple
+      description: >
+        POST parce qu'il declenche un rendu, pas parce qu'il ecrit.
+
+        LE CORPS EST IGNORE, et c'est delibere : il acceptait autrefois un
+        brouillon (sujet + HTML) pour previsualiser une saisie en cours. Cette
+        saisie n'existe plus, et un corps tolere serait la premiere marche vers
+        un contenu pousse par le projet.
+
+        Disponible depuis 1.11.0.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Le rendu, ou la raison pour laquelle il n'y en a pas.
+
+  /bridge/v1/email-templates/{code}/readiness:
+    get:
+      operationId: getProjectEmailTemplateReadiness
+      tags: [email-templates]
+      summary: Cet e-mail partirait-il, et sinon pourquoi ?
+      description: >
+        Diagnostic calcule sur le MEME chemin que l'envoi : declaration d'usage,
+        portee autorisee, instance configuree, interrupteur, expediteur,
+        fournisseur. Un diagnostic qui n'emprunte pas le chemin reel n'est pas
+        un diagnostic — il repondait « pret » pour des modeles dont le premier
+        envoi echouait.
+
+        Disponible depuis 1.11.0.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Le verdict et ses blocages.
+
+  /bridge/v1/email-templates/{code}/test-send:
+    post:
+      operationId: sendProjectEmailTemplateTest
+      tags: [email-templates]
+      summary: Envoyer un e-mail de test, execute par le PANEL
+      description: >
+        L'envoi emprunte exactement la chaine d'un e-mail metier : modele du
+        Panel, variables d'exemple du Panel, expediteur du Panel, transport
+        Brevo. Le projet ne fournit que l'adresse de reception.
+
+        Disponible depuis 1.11.0.
+      security:
+        - bridgeToken: []
+      parameters:
+        - $ref: '#/components/parameters/ContractVersion'
+        - name: code
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipientEmail]
+              properties:
+                recipientEmail: { type: string, format: email }
+      responses:
+        '200':
+          description: L'envoi a ete accepte par le fournisseur.
+
 components:
   securitySchemes:
     bridgeToken:
@@ -908,7 +1119,6 @@ components:
                   - CONTRACT_DOCUMENT
                   - DEV_COMPANY
                   - TEAM_MEMBER
-                  - EMAIL_TEMPLATE
                   - INTEGRATED_API_CONFIG
                   - INTEGRATED_API_MODE
                   - EVENT
@@ -916,6 +1126,8 @@ components:
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
                   - PROJECT_EMAIL_TEMPLATE_USAGE
+            - PLATFORM_INCIDENT
+                  - PLATFORM_INCIDENT
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
@@ -1250,6 +1462,8 @@ components:
                 lastSuccessfulApplyAt: { type: string, format: date-time, nullable: true }
                 consecutivePullFailures: { type: integer, minimum: 0 }
                 consecutiveUnreadableChanges: { type: integer, minimum: 0 }
+                parkedChanges: { type: integer, minimum: 0 }
+                lastParkedAt: { type: string, format: date-time, nullable: true }
                 appliedTotal: { type: integer, minimum: 0 }
                 state:
                   type: string
@@ -1392,7 +1606,6 @@ components:
             - CONTRACT_DOCUMENT
             - DEV_COMPANY
             - TEAM_MEMBER
-            - EMAIL_TEMPLATE
             - INTEGRATED_API_CONFIG
             - INTEGRATED_API_MODE
             - EVENT
@@ -1400,6 +1613,7 @@ components:
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
             - PROJECT_EMAIL_TEMPLATE_USAGE
+            - PLATFORM_INCIDENT
             - EMAIL_DELIVERY_EVENT
             - SIGNATURE_EVENT
             - PAYMENT_REQUEST

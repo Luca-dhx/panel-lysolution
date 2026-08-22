@@ -78,6 +78,31 @@
 #     l'ORDRE DE DÉPLOIEMENT est imposé : le Panel accepte AVANT que le projet
 #     n'émette, et le projet ne publie qu'à un Panel qui a annoncé savoir lire.
 #     Compatible 1.0.x à 1.9.x.
+#   1.12.0 — CE QUE LE PROJET A RENONCE A APPLIQUER. UN CHANGEMENT, ADDITIF :
+#     · `Heartbeat.bridgeStats.consumption.parkedChanges` et `.lastParkedAt` —
+#       le nombre d'ecritures que le projet a GAREES en lettre morte apres avoir
+#       epuise ses tentatives d'application, et la date de la derniere.
+#       Une ecriture garee est passee SOUS le curseur : le calcul de retard du
+#       Panel ne la verra jamais. Sans ce compte, renoncer proprement
+#       redeviendrait perdre en silence.
+#     Optionnels, comme tout le bloc. Compatible 1.0.x a 1.11.x.
+#   1.11.0 — L'AUTORITÉ DES MODÈLES D'E-MAIL, RENDUE EXPLICITE. DEUX CHANGEMENTS
+#     visibles dans CE contrat (les cinq routes de lecture vivent côté Panel) :
+#     · `EMAIL_TEMPLATE` EST RETIRÉ des entityType. Il y figurait depuis
+#       l'origine sans qu'aucun émetteur ne le produise ni qu'aucun projecteur
+#       ne l'applique : une entité déclarée que rien ne synchronisait, laissant
+#       croire que le CONTENU des modèles voyage entre le Panel et les projets.
+#       Il ne voyage pas, et il ne doit pas : le Panel en est la seule autorité.
+#     · nouvel entityType `PLATFORM_INCIDENT`, poussé par le PROJET — un
+#       incident technique durable, décrit par des FAITS (nature, composant,
+#       environnement, occurrences, erreur sûre). Le projet ne nomme ni modèle,
+#       ni destinataire, ni sujet : le control plane décide de l'alerte.
+#       Il envoyait auparavant cette alerte lui-même, avec un modèle de portée
+#       PANEL — un projet ne peut pas demander une portée PANEL, et l'envoi
+#       échouait donc en silence depuis toujours.
+#     Compatible 1.0.x à 1.10.x en MAJEURE : aucun client n'émettait
+#     `EMAIL_TEMPLATE`, et un Panel qui ignore `PLATFORM_INCIDENT` le refuse
+#     proprement (`REJECTED`) sans rien casser d'autre.
 # =============================================================================
 openapi: 3.0.3
 info:
@@ -87,7 +112,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.10.0
+  version: 1.12.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -713,7 +738,6 @@ components:
                   - CONTRACT_DOCUMENT
                   - DEV_COMPANY
                   - TEAM_MEMBER
-                  - EMAIL_TEMPLATE
                   - INTEGRATED_API_CONFIG
                   - INTEGRATED_API_MODE
                   - EVENT
@@ -721,6 +745,8 @@ components:
                   - PROJECT_PRESENTATION
                   - PROJECT_SITE_STATUS
                   - PROJECT_EMAIL_TEMPLATE_USAGE
+            - PLATFORM_INCIDENT
+                  - PLATFORM_INCIDENT
                   - EMAIL_DELIVERY_EVENT
                   - SIGNATURE_EVENT
                   - PAYMENT_REQUEST
@@ -856,7 +882,6 @@ components:
             - CONTRACT_DOCUMENT
             - DEV_COMPANY
             - TEAM_MEMBER
-            - EMAIL_TEMPLATE
             - INTEGRATED_API_CONFIG
             - INTEGRATED_API_MODE
             - EVENT
@@ -864,6 +889,7 @@ components:
             - PROJECT_PRESENTATION
             - PROJECT_SITE_STATUS
             - PROJECT_EMAIL_TEMPLATE_USAGE
+            - PLATFORM_INCIDENT
             - EMAIL_DELIVERY_EVENT
             - SIGNATURE_EVENT
             - PAYMENT_REQUEST

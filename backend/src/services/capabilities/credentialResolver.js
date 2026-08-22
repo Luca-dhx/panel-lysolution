@@ -27,7 +27,6 @@ import PanelIntegratedApiCredentialSet, {
 import { getProviderDefinition } from '../integratedApi/providerRegistry.js';
 import {
   resolveIntegratedApiEnvironment,
-  assertEnvironmentServed,
 } from '../integratedApi/environment.js';
 import {
   decryptCredentialSet,
@@ -46,27 +45,62 @@ export const CREDENTIAL_REFUSAL = Object.freeze({
 });
 
 /**
- * L'environnement du jeu d'identifiants à utiliser — jamais un paramètre.
+ * L'environnement du jeu d'identifiants à utiliser — jamais un champ de requête.
  *
- * Il est DÉRIVÉ deux fois, et les deux doivent concorder :
+ * Il est DÉRIVÉ de deux choses, et de rien d'autre :
  *
- *   1. la portée du fournisseur décide s'il y a un monde (L1 `environment.js`) ;
- *   2. le contexte porte celui de l'instance (L2, constaté à l'appairage).
+ *   1. la portée du fournisseur décide s'il y a un monde (`environment.js`) ;
+ *   2. le contexte porte celui du PROJET pour qui on agit — constaté à
+ *      l'appairage, tenu à jour par le battement, lu dans le registre du Panel.
  *
- * Pour un fournisseur `PANEL_GLOBAL`, la réponse est `null` : il n'a qu'un
- * compte, et lui en inventer deux dédoublerait un portefeuille unique.
+ * Pour un fournisseur à compte unique, la réponse est `null` : lui inventer
+ * deux mondes dédoublerait un portefeuille unique.
+ *
+ * ── CE QUI A DISPARU D'ICI, ET POURQUOI ────────────────────────────────────
+ *
+ * `assertEnvironmentServed(environment)` refusait tout monde différent de celui
+ * du Panel. C'était la garde qui empêchait « exécuter une action PROD depuis un
+ * Panel TEST » — et elle avait un sens tant que rien d'autre n'ancrait
+ * l'environnement à une identité vérifiée.
+ *
+ * Elle interdisait aussi la seule chose qu'un plan de contrôle doit savoir
+ * faire : servir un projet de PRODUCTION et un projet de RECETTE depuis la même
+ * instance, chacun sur son monde. L'ancrage est désormais plus solide qu'un
+ * `.env` de processus — c'est la fiche du projet, écrite par le Panel — et
+ * c'est elle qui décide.
+ *
+ * La garde reste EN PLACE là où elle protège vraiment : le provisionnement des
+ * identifiants (`assertAdministrableEnvironment`) et la disponibilité déclarée
+ * par le Panel pour lui-même (`describeAvailability`).
  */
 export function resolveCredentialEnvironment(context, capability) {
   const definition = getProviderDefinition(capability.provider);
-  const environment = resolveIntegratedApiEnvironment({ providerDefinition: definition });
+  /**
+   * ── L'ENVIRONNEMENT DU CONTEXTE EST L'ENTRÉE, PLUS LE `config.env` ───────
+   *
+   * `context.environment` porte le monde du PROJET pour qui l'appel a lieu
+   * (`resolveInstanceEnvironment`), ou celui du Panel pour une capacité qu'il
+   * exerce pour lui-même. C'est cette valeur qui entre dans la résolution.
+   *
+   * Avant ce lot, la primitive relisait `config.env` de son côté et le
+   * contexte l'avait relu du sien : la comparaison qui suivait était donc
+   * toujours vraie, et la « défense en profondeur » ne défendait rien —
+   * elle comparait une valeur à elle-même.
+   */
+  const environment = resolveIntegratedApiEnvironment({
+    providerDefinition: definition,
+    projectEnvironment: context.environment ?? null,
+  });
 
-  // `null` = fournisseur global : rien à confronter, il n'a pas de monde.
+  // `null` = fournisseur à compte unique : rien à confronter, il n'a pas de monde.
   if (environment === null) return null;
 
-  // Défense en profondeur : la primitive L1 rend déjà `config.env`, et le
-  // contexte l'a relu depuis le runtime. S'ils divergeaient, quelqu'un aurait
-  // introduit une seconde source — on préfère le savoir ici que le découvrir
-  // par un e-mail de production parti d'une recette.
+  /**
+   * La confrontation garde son sens pour les fournisseurs à deux mondes : elle
+   * vérifie que la résolution n'a pas dérivé du monde demandé. Elle n'est plus
+   * tautologique — la primitive peut désormais rendre autre chose que le
+   * runtime, et c'est précisément ce qu'on veut constater.
+   */
   if (environment !== context.environment) {
     throw new CapabilityError(
       CAPABILITY_ERROR_CODES.ENVIRONMENT_MISMATCH,
@@ -74,7 +108,6 @@ export function resolveCredentialEnvironment(context, capability) {
       { contextEnvironment: context.environment, resolvedEnvironment: environment },
     );
   }
-  assertEnvironmentServed(environment);
   return environment;
 }
 

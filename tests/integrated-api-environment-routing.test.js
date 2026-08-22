@@ -1,8 +1,20 @@
-// ROUTAGE D'ENVIRONNEMENT — invariant RUNTIME_ENVIRONMENT_RESOLVES_PROVIDER_ENVIRONMENT.
+// ROUTAGE D'ENVIRONNEMENT — invariant PROJECT_ENVIRONMENT_RESOLVES_PROVIDER_ENVIRONMENT.
 //
 // C'est le test qui justifie tout le chantier : l'environnement d'une
-// intégration se DÉDUIT du runtime, il ne se choisit pas. Aucun hostname,
-// aucun `activeMode`, aucun paramètre venu d'un frontend.
+// intégration se DÉDUIT, il ne se choisit pas. Aucun hostname, aucun
+// `activeMode`, aucun paramètre venu d'un frontend, aucun champ de requête.
+//
+// ══ CE QUE L'INVARIANT DISAIT, ET CE QU'IL DIT MAINTENANT ══════════════════
+//
+//   avant   environnement fournisseur = ENV du runtime du PANEL
+//   après   environnement fournisseur = ENV du PROJET pour qui on agit,
+//           et celui du Panel seulement quand aucun projet n'est en cause
+//
+// La règle d'avant était vraie tant qu'un Panel ne servait qu'un monde et que
+// tous ses projets le partageaient — ce qui est le cas aujourd'hui, et ce qui
+// rendait le défaut INVISIBLE. Le jour où le Panel passe en PROD, un projet de
+// recette verrait sa capacité Stripe résolue vers le compte de PRODUCTION, ou
+// refusée sans recours.
 //
 // Il couvre aussi la distinction qui rend la doctrine tenable :
 //   · ADMINISTRER le jeu PROD depuis un Panel TEST  → autorisé (provisionnement)
@@ -82,10 +94,68 @@ section('Rien d’autre que le runtime ne peut décider');
       providerDefinition: stripe, runtimeEnvironment: '',
     }), 'PANEL_INTEGRATED_API_RUNTIME_ENVIRONMENT_INVALID'));
 
-  // La signature elle-même est la garantie : il n'y a AUCUN paramètre par
-  // lequel un appelant pourrait demander un autre monde.
+  // La signature elle-même reste une garantie : il n'y a AUCUN paramètre par
+  // lequel un appelant DEMANDERAIT un monde. `projectEnvironment` n'en est pas
+  // un — il ne vient pas de l'appelant mais du registre du Panel.
   check('resolveIntegratedApiEnvironment n’accepte pas d’environnement demandé',
     !/requestedEnvironment|desiredEnvironment/.test(resolveIntegratedApiEnvironment.toString()));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LA MATRICE CROISÉE — le résultat ne dépend QUE du projet');
+{
+  /**
+   * Quatre combinaisons, sur les quatre fournisseurs à deux mondes réellement
+   * déclarés au catalogue. Le runtime du Panel est INJECTÉ : c'est la seule
+   * façon d'éprouver un Panel PROD sans en démarrer un, et AUCUN appel n'est
+   * fait à un fournisseur.
+   */
+  const DUAL = ['STRIPE', 'BREVO', 'OPENSIGN'];
+  const monde = (code, panelEnv, projetEnv) => resolveIntegratedApiEnvironment({
+    providerDefinition: getProviderDefinition(code),
+    runtimeEnvironment: panelEnv,
+    projectEnvironment: projetEnv,
+  });
+
+  for (const code of DUAL) {
+    check(`${code} — Panel TEST + Projet TEST → TEST`, monde(code, 'TEST', 'TEST') === 'TEST');
+    check(`${code} — Panel TEST + Projet PROD → PROD`, monde(code, 'TEST', 'PROD') === 'PROD');
+    check(`${code} — Panel PROD + Projet TEST → TEST`, monde(code, 'PROD', 'TEST') === 'TEST');
+    check(`${code} — Panel PROD + Projet PROD → PROD`, monde(code, 'PROD', 'PROD') === 'PROD');
+    check(`${code} — le monde du Panel ne change RIEN`,
+      monde(code, 'TEST', 'TEST') === monde(code, 'PROD', 'TEST')
+      && monde(code, 'TEST', 'PROD') === monde(code, 'PROD', 'PROD'));
+  }
+
+  /**
+   * SANS PROJET — une capacité que le Panel exerce POUR LUI-MÊME. C'est le seul
+   * cas où son propre monde décide, et il reste servi.
+   */
+  check('aucun projet en cause → le monde du Panel reprend la main',
+    monde('STRIPE', 'TEST', null) === 'TEST' && monde('STRIPE', 'PROD', null) === 'PROD');
+
+  /**
+   * FOURNISSEUR À COMPTE UNIQUE — il n'hérite d'aucun monde, ni du projet ni du
+   * Panel. `null` est la réponse exacte : c'est elle qui empêche un
+   * `environment` fantôme d'entrer dans une clé d'identifiants.
+   */
+  const unique = (panelEnv, projetEnv) => resolveIntegratedApiEnvironment({
+    providerDefinition: getProviderDefinition('HOSTINGER'),
+    runtimeEnvironment: panelEnv,
+    projectEnvironment: projetEnv,
+  });
+  check('HOSTINGER (compte unique) → null, quelles que soient les combinaisons',
+    unique('TEST', 'TEST') === null && unique('PROD', 'PROD') === null
+    && unique('TEST', 'PROD') === null && unique('PROD', 'TEST') === null);
+  check('…le modèle du fournisseur est respecté, jamais substitué par PANEL_ENV',
+    getProviderDefinition('HOSTINGER').scope === SCOPES.PANEL_GLOBAL);
+
+  /** Un environnement de projet qui n'existe pas est REFUSÉ, pas remplacé. */
+  check('un environnement de projet invalide est refusé',
+    refuses(() => resolveIntegratedApiEnvironment({
+      providerDefinition: getProviderDefinition('STRIPE'),
+      projectEnvironment: 'STAGING',
+    }), 'PANEL_INTEGRATED_API_PROJECT_ENVIRONMENT_INVALID'));
 }
 
 section('FAIL CLOSED — assertEnvironmentServed');
