@@ -536,6 +536,115 @@ section('O. LE MOTIF « la ligne existe donc c’est un doublon » A DISPARU');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+section('N bis. LES LIGNES HÉRITÉES — classées, jamais rejouées en masse');
+{
+  /**
+   * ══ LE DÉFAUT MESURÉ SUR LA PILE DÉPLOYÉE ═══════════════════════════════
+   *
+   * La nouvelle machine dit : « un `RECEIVED` ancien n'a jamais été réclamé,
+   * donc il est reprenable ». Vrai pour une ligne qu'elle a écrite — une telle
+   * ligne naît `PROCESSING`. FAUX pour l'historique : sous l'ancien contrat,
+   * `RECEIVED` était l'état de FIN.
+   *
+   * Au premier démarrage après déploiement, le balayage a donc déclaré
+   * abandonné tout l'historique et est parti le rejouer :
+   *
+   *     BREVO/WEBHOOK_REPLAY_UNSUPPORTED = 30  (4 tentatives)
+   *     OPENSIGN/WEBHOOK_REPLAY_UNSUPPORTED = 9
+   *
+   * Trente-neuf événements parfaitement traités marchaient vers `DEAD_LETTER`
+   * et vers autant d'alertes décrivant des incidents qui n'existaient pas.
+   */
+  await WebhookEvent.deleteMany({});
+  const { migrateLegacyWebhookEvents, LEGACY_MARKER } = await import(
+    '../backend/src/services/webhooks/webhookEventMigration.js'
+  );
+
+  await WebhookEvent.create([
+    /** Trois lignes héritées : ni compteur, ni bail — jamais réclamées. */
+    { ...cle('evt_legacy_1'), eventType: 'invoice.paid', status: ST.RECEIVED, receivedAt: new Date(Date.now() - 864e5).toISOString() },
+    { provider: 'BREVO', environment: 'TEST', providerEventId: 'brevo_legacy', eventType: 'delivered', status: ST.RECEIVED, receivedAt: new Date(Date.now() - 864e5).toISOString() },
+    { provider: 'OPENSIGN', environment: 'TEST', providerEventId: 'os_legacy', eventType: 'signed', status: ST.RECEIVED, receivedAt: new Date(Date.now() - 864e5).toISOString() },
+    /** Une ligne DÉJÀ conclue : la migration n'a rien à y faire. */
+    { ...cle('evt_deja_fini'), eventType: 'invoice.paid', status: ST.PROCESSED, processingAttempts: 1, receivedAt: new Date(Date.now() - 864e5).toISOString() },
+    /** Une ligne abîmée par le balayage fautif. */
+    {
+      provider: 'BREVO', environment: 'TEST', providerEventId: 'brevo_abime', eventType: 'opened',
+      status: ST.FAILED, processingAttempts: 4, receivedAt: new Date(Date.now() - 864e5).toISOString(),
+      lastError: { code: 'WEBHOOK_REPLAY_UNSUPPORTED', message: 'x', retryable: true, at: new Date().toISOString() },
+    },
+  ]);
+
+  const bilan = await migrateLegacyWebhookEvents();
+  check('les trois lignes héritées sont classées', bilan.legacy === 3, `${bilan.legacy}`);
+  check('…et la ligne abîmée est remise en état', bilan.unsupported === 1, `${bilan.unsupported}`);
+
+  const legacy = await lire('evt_legacy_1');
+  check('une ligne héritée devient PROCESSED', legacy.status === ST.PROCESSED);
+  check('…et DIT pourquoi — ce n’est pas une supposition tacite',
+    legacy.lastError?.code === LEGACY_MARKER && legacy.lastError?.retryable === false);
+
+  const abime = await WebhookEvent.findOne({ providerEventId: 'brevo_abime' }).lean();
+  check('la ligne réclamée à tort est rendue à son état de fin', abime.status === ST.PROCESSED);
+  check('…et son bail est retiré', abime.leaseOwner === null && abime.leaseExpiresAt === null);
+
+  const dejaFini = await lire('evt_deja_fini');
+  check('un PROCESSED existant reste terminal et INTACT',
+    dejaFini.status === ST.PROCESSED && !dejaFini.lastError?.code);
+
+  check('AUCUNE ligne n’a été supprimée — la migration est additive',
+    (await WebhookEvent.countDocuments({})) === 5);
+
+  /** Idempotente : un second passage ne trouve plus rien. */
+  const second = await migrateLegacyWebhookEvents();
+  check('un second passage ne classe rien', second.legacy === 0 && second.unsupported === 0);
+
+  /** Et le balayage ne réclame plus rien après la migration. */
+  const apres = await recovery.recoverAbandonedWebhookEvents({ environment: 'TEST' });
+  check('le balayage ne trouve plus AUCUN abandonné', apres.scanned === 0, `${apres.scanned}`);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('N ter. LE BALAYAGE NE RÉCLAME QUE CE QU’IL PEUT REJOUER');
+{
+  await WebhookEvent.deleteMany({});
+  /** Trois abandonnés, dont deux chez des fournisseurs sans relecture. */
+  const perime = () => ({
+    status: ST.PROCESSING, processingAttempts: 1, leaseOwner: 'mort',
+    leaseExpiresAt: new Date(Date.now() - 5_000).toISOString(),
+    receivedAt: new Date(Date.now() - 60_000).toISOString(),
+  });
+  publier('evt_rejouable', 'invoice.paid', { id: 'in_R', object: 'invoice' });
+  await WebhookEvent.create([
+    { ...cle('evt_rejouable'), eventType: 'invoice.paid', ...perime() },
+    { provider: 'BREVO', environment: 'TEST', providerEventId: 'brevo_perime', eventType: 'opened', ...perime() },
+    { provider: 'OPENSIGN', environment: 'TEST', providerEventId: 'os_perime', eventType: 'signed', ...perime() },
+  ]);
+
+  const bilan = await recovery.recoverAbandonedWebhookEvents({ environment: 'TEST' });
+  check('seul l’événement REJOUABLE est balayé', bilan.scanned === 1, `${bilan.scanned}`);
+  check('…et il est réappliqué', bilan.recovered === 1);
+
+  const brevo = await WebhookEvent.findOne({ providerEventId: 'brevo_perime' }).lean();
+  const opensign = await WebhookEvent.findOne({ providerEventId: 'os_perime' }).lean();
+  check('un événement non rejouable N’EST PAS réclamé — pas de tentative gâchée',
+    brevo.processingAttempts === 1 && opensign.processingAttempts === 1,
+    `${brevo.processingAttempts}/${opensign.processingAttempts}`);
+  check('…son état n’a pas bougé',
+    brevo.status === ST.PROCESSING && opensign.status === ST.PROCESSING);
+
+  /** Et surtout : dix passages ne le font pas dériver vers DEAD_LETTER. */
+  for (let i = 0; i < 10; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await recovery.recoverAbandonedWebhookEvents({ environment: 'TEST' });
+  }
+  const apres = await WebhookEvent.findOne({ providerEventId: 'brevo_perime' }).lean();
+  check('dix balayages ne le poussent PAS vers DEAD_LETTER',
+    apres.status !== ST.DEAD_LETTER && apres.processingAttempts === 1,
+    `${apres.status} · ${apres.processingAttempts}`);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 section('P. INVOICE.PAID RETRAITÉ — la BARRIÈRE FINALE, en base');
 {
   /**

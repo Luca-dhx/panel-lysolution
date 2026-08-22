@@ -490,6 +490,60 @@ soit le nombre d'événements qui l'annoncent, de rejeux, de processus concurren
 ou de redémarrages. Le second écrivain reçoit un `E11000`, et ce refus **est**
 la garantie.
 
+### Les lignes écrites avant le bail — classées, jamais rejouées en masse
+
+La machine dit : « un `RECEIVED` ancien n'a jamais été réclamé, donc il est
+reprenable ». C'est vrai d'une ligne qu'elle a écrite — une telle ligne naît
+`PROCESSING`. **C'est faux de l'historique** : sous l'ancien contrat, `RECEIVED`
+était l'état de FIN.
+
+Mesuré au premier démarrage après déploiement — le balayage a déclaré abandonné
+tout l'historique et est parti le rejouer :
+
+```
+BREVO/WEBHOOK_REPLAY_UNSUPPORTED    = 30   (déjà 4 tentatives)
+OPENSIGN/WEBHOOK_REPLAY_UNSUPPORTED =  9
+```
+
+Trente-neuf événements parfaitement traités marchaient vers `DEAD_LETTER`, et la
+supervision allait annoncer trente-neuf incidents qui n'existaient pas. Une file
+d'alerte qu'on apprend à ignorer ne protège plus de rien.
+
+**Deux corrections, et elles sont distinctes.**
+
+1. **Le balayage ne réclame que ce qu'il peut rejouer.** Brevo et OpenSign
+   n'exposent pas leurs événements en lecture : pour eux, une ligne abandonnée
+   n'appelle aucun geste de notre part, et leur propre mécanique de rejeu est la
+   seule réparation qui existe. Le filtre est posé sur le balayage lui-même — on
+   ne réclame pas un travail qu'on ne peut pas faire.
+
+2. **Une migration additive classe les lignes héritées**, une fois
+   (`webhookEventMigration.js`, avant le balayage au démarrage) :
+
+| ligne héritée | classée |
+|---|---|
+| `RECEIVED`, sans compteur ni bail | → `PROCESSED`, marquée `LEGACY_RECEIVED_BEFORE_LEASE` |
+| `PROCESSED` | inchangée — reste terminale |
+| `FAILED` avec `WEBHOOK_REPLAY_UNSUPPORTED` | → `PROCESSED` (réclamée à tort par le balayage fautif) |
+
+**Pourquoi classer plutôt que rejouer** — parce qu'on n'a aucune preuve dans un
+sens ni dans l'autre, et que les deux erreurs n'ont pas le même prix :
+
+- *les rejouer* → réexécuter des mois d'événements, réécrire des appartenances,
+  réémettre des acheminements vers les projets. Un rattrapage dont personne ne
+  peut prédire la portée n'est pas un rattrapage, c'est un incident ;
+- *les classer* → on honore la sémantique sous laquelle elles ont été écrites, et
+  **on l'écrit** : le marqueur reste en base. La garantie neuve s'applique à
+  partir de là.
+
+Aucune ligne n'est supprimée. La migration est idempotente : un second passage
+n'en trouve aucune, puisque celles qu'elle a traitées ne sont plus `RECEIVED`.
+
+Côté **SB Auto**, la question ne se pose pas : ses lignes héritées portent
+`PROCESSED` ou `IGNORED` — terminales dans la machine neuve — et son ancien
+`PENDING` signifiait déjà « commencé, pas fini ». Le reprendre est donc exact,
+pas une réinterprétation.
+
 ### La supervision, parce qu'un abandon silencieux est le même défaut
 
 | type | quand | sévérité |
@@ -577,6 +631,7 @@ n'a aucune raison de rester en base. Voir §12.
 services/webhooks/webhookLease.js                le BAIL — réclamation atomique, classification, plafond
 services/webhooks/webhookRecovery.js             la REPRISE — relit l’événement à la source, rejoue les mêmes effets
 services/webhooks/webhookSupervision.js          ce qu’on DIT quand un événement ne s’applique pas
+services/webhooks/webhookEventMigration.js       les lignes d’avant le bail, classées une fois
 | `services/webhooks/webhookDiagnostics.js` | états, codes, gravité, masquage |
 | `models/PanelIntegratedApiWebhookBinding.model.js` | état du webhook, index unique `(provider, environment)` |
 | `models/PanelProviderWebhookEvent.model.js` | registre de réception, index unique d'idempotence |

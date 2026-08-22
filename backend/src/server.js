@@ -22,6 +22,7 @@ import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
 import { recoverAbandonedWebhookEvents } from './services/webhooks/webhookRecovery.js';
+import { migrateLegacyWebhookEvents } from './services/webhooks/webhookEventMigration.js';
 import {
   startRecurringCostScheduler, stopRecurringCostScheduler,
 } from './services/finance/recurringCostScheduler.js';
@@ -364,6 +365,24 @@ async function start() {
    * ne doit pas empêcher un backend de servir. Il est journalisé et supervisé,
    * et le passage suivant le reprendra.
    */
+  /**
+   * D'ABORD LA MIGRATION, ENSUITE LE BALAYAGE — et l'ordre est le sujet.
+   *
+   * Les lignes écrites avant le bail portent `RECEIVED`, qui valait alors fin
+   * de traitement. Sans cette classification préalable, le balayage déclare
+   * abandonné TOUT L'HISTORIQUE et part le rejouer.
+   */
+  const webhooksHerites = await migrateLegacyWebhookEvents().catch((err) => {
+    logger.warn(`Classification des webhooks hérités impossible : ${err.message}`);
+    return null;
+  });
+  if (webhooksHerites?.legacy || webhooksHerites?.unsupported) {
+    logger.info(
+      `Webhooks hérités : ${webhooksHerites.legacy} classé(s), `
+      + `${webhooksHerites.unsupported} remis en état.`,
+    );
+  }
+
   const webhooksRepris = await recoverAbandonedWebhookEvents().catch((err) => {
     logger.warn(`Reprise des webhooks abandonnés impossible : ${err.message}`);
     return null;

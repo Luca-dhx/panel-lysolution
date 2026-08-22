@@ -41,15 +41,31 @@ import {
 import { reportWebhookProcessingFailure, reportAbandonedSweep } from './webhookSupervision.js';
 
 /**
- * Seuls les événements Stripe sont REJOUABLES depuis la source.
+ * ══ SEUL STRIPE EST REJOUABLE — ET LE BALAYAGE NE REGARDE QUE LUI ═══════════
  *
- * Brevo n'expose pas ses événements en lecture, et Yousign ne les conserve pas
- * de la même façon. Pour eux, la reprise se limite à ce qu'elle peut honnêtement
- * faire : rendre l'événement reprenable — donc applicable au prochain rejeu du
- * fournisseur — et le SIGNALER. Prétendre le contraire produirait une reprise
- * qui échoue en boucle sur un 404.
+ * Brevo n'expose pas ses événements en lecture, OpenSign non plus. Pour eux,
+ * une ligne abandonnée n'appelle aucun geste de notre part : nous n'avons
+ * aucun moyen d'en retrouver le contenu, et leur propre mécanique de rejeu est
+ * la seule réparation qui existe.
+ *
+ * ── LE DÉFAUT MESURÉ SUR LA PILE DÉPLOYÉE ──────────────────────────────────
+ *
+ * Le balayage les réclamait quand même, échouait sur
+ * `WEBHOOK_REPLAY_UNSUPPORTED`, et écrivait `FAILED` — un état REPRENABLE.
+ * Le passage suivant les reprenait donc, échouait de nouveau, et ainsi de suite
+ * jusqu'au plafond :
+ *
+ *     BREVO/WEBHOOK_REPLAY_UNSUPPORTED = 30   (4 tentatives)
+ *     OPENSIGN/WEBHOOK_REPLAY_UNSUPPORTED = 9
+ *
+ * Trente-neuf événements parfaitement traités marchaient vers `DEAD_LETTER`, et
+ * la supervision allait annoncer trente-neuf incidents qui n'existaient pas.
+ * Une file d'alerte qu'on apprend à ignorer ne protège plus de rien.
+ *
+ * Le filtre est donc posé sur le BALAYAGE, pas seulement dans le rejeu : on ne
+ * réclame pas un travail qu'on ne peut pas faire.
  */
-const FOURNISSEURS_REJOUABLES = new Set(['STRIPE']);
+const FOURNISSEURS_REJOUABLES = Object.freeze(['STRIPE']);
 
 /**
  * Borne de balayage. Un démarrage ne doit pas se transformer en rattrapage de
@@ -88,7 +104,7 @@ export async function replayWebhookEvent(evenement, { fetchImpl } = {}) {
     return { outcome: reclamation.outcome, status };
   };
 
-  if (!FOURNISSEURS_REJOUABLES.has(String(evenement.provider).toUpperCase())) {
+  if (!FOURNISSEURS_REJOUABLES.includes(String(evenement.provider).toUpperCase())) {
     /**
      * On rend le bail plutôt que de conclure : l'événement reste `FAILED`, donc
      * reprenable par le fournisseur, et la supervision dit pourquoi nous, nous
@@ -212,7 +228,12 @@ export async function replayWebhookEvent(evenement, { fetchImpl } = {}) {
 export async function recoverAbandonedWebhookEvents({
   environment = null, limit = LOT_MAX, now = Date.now(), fetchImpl,
 } = {}) {
-  const filtre = { ...abandonedFilter(now), ...(environment ? { environment } : {}) };
+  const filtre = {
+    /** On ne réclame QUE ce qu'on peut rejouer — voir `FOURNISSEURS_REJOUABLES`. */
+    provider: { $in: FOURNISSEURS_REJOUABLES },
+    ...abandonedFilter(now),
+    ...(environment ? { environment } : {}),
+  };
 
   const abandonnes = await PanelProviderWebhookEvent.find(filtre)
     .sort({ receivedAt: 1 })
