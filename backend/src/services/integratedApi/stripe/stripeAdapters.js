@@ -1927,6 +1927,15 @@ async function settlementRetrieve({ definition, credentials, input, fetchImpl })
     const res = await guard(definition, () => retrieveChargeSettlement({
       credentials, chargeId, timeoutMs: definition.timeoutMs, fetchImpl,
     }));
+    /**
+     * LE DÉBIT DÉSIGNE SON INTENTION — et on la rend, comme partout ailleurs.
+     *
+     * L'appelant peut n'avoir eu que le débit : c'est le cas d'un fait dont le
+     * webhook s'est tu sur l'intention. La lui rendre ici lui permet
+     * d'apprendre, et c'est cette identité que le remboursement exige.
+     */
+    const intention = res.charge?.payment_intent;
+    paymentIntentId = typeof intention === 'string' ? intention : (intention?.id ?? null);
     const bt = res.charge?.balance_transaction;
     if (!bt || typeof bt !== 'object') {
       return vide(

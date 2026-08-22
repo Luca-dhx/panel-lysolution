@@ -130,6 +130,21 @@ const fauxStripe = http.createServer(async (req, res) => {
     return repondre(200, regle);
   }
 
+  /** LE DÉBIT — il désigne son intention, et le Panel l'apprend par lui. */
+  const debit = /^\/v1\/charges\/([^/?]+)/.exec(req.url ?? '');
+  if (req.method === 'GET' && debit) {
+    const id = decodeURIComponent(debit[1]);
+    if (!ecritures.has(id) && !debitsSansEcriture.has(id)) {
+      return repondre(404, { error: { code: 'resource_missing' } });
+    }
+    return repondre(200, {
+      id,
+      object: 'charge',
+      payment_intent: id.replace('ch_', 'pi_'),
+      balance_transaction: ecritures.get(id) ?? null,
+    });
+  }
+
   const remboursement = /^\/v1\/refunds\/([^/?]+)/.exec(req.url ?? '');
   if (req.method === 'GET' && remboursement) {
     const id = decodeURIComponent(remboursement[1]);
@@ -919,6 +934,34 @@ section('16. Le webhook ne dit rien du règlement — la facture, elle, le dit')
     'provenance.externalId': 'txn_l13_muet',
   });
   check('…et le repassage n’a produit aucune seconde charge', charges === 1);
+
+  /**
+   * ── LES ENCAISSEMENTS DÉJÀ EN BASE SONT RATTRAPÉS, EUX AUSSI ──────────────
+   *
+   * Sans cela, la réparation n'aurait touché que les paiements FUTURS, et le
+   * remboursement serait resté impossible sur ceux qui existent déjà —
+   * c'est-à-dire exactement ceux dont un client peut réclamer l'argent.
+   */
+  await PanelProviderRevenueFact.updateOne(
+    { objectId: 'in_l13_webhook_muet' },
+    { $set: { 'corroboration.paymentIntentId': null } },
+  );
+  const rattrapage = await reglement.convergePendingSettlements({});
+  check('un encaissement soldé mais INCOMPLET rentre dans la file',
+    (await factOf('in_l13_webhook_muet')).corroboration.paymentIntentId === 'pi_l13_muet');
+  /**
+   * LE RATTRAPAGE REPASSE, ET NE DUPLIQUE RIEN.
+   *
+   * Il compte bien un encaissement soldé — il l'a réexaminé — mais l'index
+   * unique et le refus de remplacer un `SETTLED` garantissent que rien n'a
+   * bougé au registre. C'est la définition même d'une convergence : on peut la
+   * rejouer sans conséquence.
+   */
+  check('le rattrapage a bien réexaminé le fait', rattrapage.examined >= 1);
+  check('…sans produire de seconde charge',
+    (await PanelFinancialTransaction.countDocuments({ 'provenance.externalId': 'txn_l13_muet' })) === 1);
+  check('…ni modifier le frais déjà acquis',
+    (await factOf('in_l13_webhook_muet')).settlement.providerFeeCents === 205);
 
   /**
    * UNE FACTURE SOLDÉE SANS RÈGLEMENT — avoir, ou solde client. Aucun euro n'a

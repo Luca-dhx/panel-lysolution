@@ -578,6 +578,18 @@ export async function captureSettlementForFact(factId, { fetchImpl } = {}) {
      * une réécriture. On n'écrase donc jamais une valeur existante — on ne
      * remplit qu'un vide.
      */
+    /**
+     * UNE RELECTURE QUI N'APPREND RIEN DOIT COMPTER, sans quoi un fait
+     * définitivement muet reviendrait dans la file toutes les heures, pour
+     * toujours. Le compteur est le seul frein — ici comme ailleurs.
+     */
+    if (!vue.paymentIntentId && !fait.corroboration?.paymentIntentId
+      && fait.kind !== FACT_KIND.REFUND) {
+      await PanelProviderRevenueFact.updateOne(
+        { factId }, { $inc: { 'settlement.attempts': 1 } },
+      ).catch(() => null);
+    }
+
     if (vue.paymentIntentId && !fait.corroboration?.paymentIntentId) {
       await PanelProviderRevenueFact.updateOne(
         { factId, 'corroboration.paymentIntentId': null },
@@ -720,6 +732,24 @@ export async function convergePendingSettlements({ limit = 100, fetchImpl } = {}
       { 'settlement.status': { $exists: false } },
       { 'settlement.status': SETTLEMENT_STATUS.PENDING },
       { 'settlement.status': SETTLEMENT_STATUS.UNAVAILABLE },
+      /**
+       * ── ET LES SOLDÉS QUI NE SONT PAS COMPLETS ──────────────────────────
+       *
+       * Un encaissement peut porter ses chiffres et pas son IDENTITÉ de
+       * règlement : c'est le cas de tous ceux qui ont été soldés avant que la
+       * relecture de facture n'existe. Sans eux dans cette file, la réparation
+       * n'aurait touché que les paiements FUTURS — et le remboursement serait
+       * resté impossible sur ceux qui existent déjà, c'est-à-dire exactement
+       * ceux dont un client peut réclamer l'argent.
+       *
+       * Un remboursement en est exempté : son identité canonique EST son
+       * `re_…`, il n'a aucune intention à apprendre.
+       */
+      {
+        'settlement.status': SETTLEMENT_STATUS.SETTLED,
+        'corroboration.paymentIntentId': null,
+        kind: { $ne: FACT_KIND.REFUND },
+      },
     ],
     'settlement.attempts': { $lt: MAX_TENTATIVES_SETTLEMENT },
   })
