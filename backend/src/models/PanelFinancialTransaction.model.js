@@ -231,6 +231,34 @@ const financialTransactionSchema = new mongoose.Schema(
      */
     projectNameSnapshot: { type: String, default: null },
 
+    /**
+     * ── À QUELLE PERSONNE MORALE CE REVENU A-T-IL ÉTÉ FACTURÉ ───────────────
+     *
+     * ══ POURQUOI CE CHAMP, ET POURQUOI PAS LE CONTRAT ═══════════════════════
+     *
+     * L'identité financière d'un encaissement était rattachée au PROJET, et
+     * lisible seulement par le libellé — « Frais de lancement — CTR-2026-0002 ».
+     * Le contrat y servait de fil, alors qu'il est FACULTATIF : une prestation
+     * ponctuelle n'en a pas, et sa transaction ne se rattachait donc à aucune
+     * identité juridique.
+     *
+     * L'entreprise cliente, elle, est présente dans TOUS les cas où l'on
+     * encaisse — c'est même la condition pour encaisser. Elle est donc le bon
+     * axe : « qui a payé » se répond toujours, « sous quel contrat » parfois.
+     *
+     * ══ CE QU'IL N'EST PAS ═════════════════════════════════════════════════
+     *
+     * Ni une autorité d'appartenance — c'est le registre de liens Stripe qui
+     * l'arbitre —, ni un instantané. C'est une RÉFÉRENCE : la fiche vivante se
+     * lit à côté. L'instantané légal, lui, vit sur la prestation ou sur la
+     * facture archivée, là où il fait preuve.
+     *
+     * `null` sur les transactions antérieures à ce lot, et sur celles d'un
+     * projet dont l'entreprise a été détachée depuis. L'absence se lit comme
+     * une absence.
+     */
+    clientCompanyId: { type: String, default: null, index: true },
+
     // ── TAXONOMIE — deux axes, voir l'en-tête de ce fichier ─────────────────
     flow: { type: String, enum: FLOW_VALUES, required: true },
     category: { type: String, enum: CATEGORY_VALUES, required: true },

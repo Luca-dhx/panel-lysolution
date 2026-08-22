@@ -141,7 +141,52 @@ export class CustomerAuthorityError extends Error {
  * lisibilité vaut plus que l'opacité : c'est ce qu'un opérateur lira dans le
  * registre d'opérations le jour où il cherchera pourquoi un client manque.
  */
-export function customerOperationId({ environment, contractId }) {
+/**
+ * ── LA CLÉ A CHANGÉ DE PORTEUR : DU CONTRAT À L’ENTREPRISE CLIENTE ────────
+ *
+ * ══ CE QUE LA CLÉ PAR CONTRAT PRODUISAIT ═════════════════════════════════
+ *
+ * Un client Stripe par CONTRAT. Donc, pour une même personne morale :
+ *
+ *   · deux contrats successifs        → deux clients Stripe
+ *   · deux projets du même client     → deux clients Stripe
+ *   · une prestation SANS contrat     → AUCUN client — et une facture sans
+ *                                        destinataire identifié
+ *
+ * Le troisième cas était le plus grave : le verbe n’était tout simplement
+ * pas appelé, et la facture d’une prestation ponctuelle ne portait aucune
+ * identité juridique. Les deux premiers dupliquaient la même entreprise dans
+ * le tableau de bord Stripe, avec un historique de facturation scindé.
+ *
+ * ══ POURQUOI L’ENTREPRISE, ET PAS LE PROJET ══════════════════════════════
+ *
+ * Parce que c’est elle qu’on facture. Un projet est une instance technique ;
+ * un client peut en avoir plusieurs, et il ne veut pas trois fiches chez
+ * Stripe pour trois sites. La personne morale est le seul niveau où
+ * « Facturer à » a un sens.
+ *
+ * ══ CE QUI ARRIVE À L’ANCIENNE CLÉ ═══════════════════════════════════════
+ *
+ * Rien de destructif. Les liens existants sont ADOPTÉS sous la nouvelle clé
+ * par l’adaptateur : le même `cus_…` continue de porter l’abonnement en
+ * cours et son historique de factures. Voir `legacyCustomerOperationId`.
+ *
+ * Le MONDE reste dans la clé : `TEST` et `PROD` sont deux comptes Stripe,
+ * donc deux clients distincts pour une même personne morale. Les confondre
+ * ferait converger la recette vers le client de production.
+ */
+export function customerOperationId({ environment, clientCompanyId }) {
+  return `stripe-customer:${environment}:company:${clientCompanyId}`;
+}
+
+/**
+ * L’ANCIENNE CLÉ — conservée pour ADOPTER, jamais pour créer.
+ *
+ * Elle ne sert qu’à retrouver un client déjà créé du temps où l’autorité
+ * était le contrat. L’adaptateur le rebaptise sous la clé courante ; aucun
+ * second client n’est créé, aucune facture n’est réécrite.
+ */
+export function legacyCustomerOperationId({ environment, contractId }) {
   return `stripe-customer:${environment}:${contractId}`;
 }
 
@@ -171,14 +216,36 @@ export async function resolveCustomerIntent({
   lookupContract = defaultLookupContract,
   lookupClientCompany = resolveClientCompanyReadiness,
 }) {
-  const projection = await lookupContract(projectId);
-  const contractId = projection?.sourceContractId ?? null;
+  /**
+   * ── LE CONTRAT EST DÉSORMAIS FACULTATIF, ET LA GARDE RESTE ENTIÈRE ──────
+   *
+   * Une prestation ponctuelle n’a pas de contrat : exiger `contractRef`
+   * revenait à interdire de la facturer, ou à percer la garde qui protège
+   * les paiements contractuels. On distingue donc les deux cas au lieu de
+   * les confondre :
+   *
+   *   `contractRef` fourni  → l’appartenance est VÉRIFIÉE, exactement comme
+   *                           avant. Un identifiant qui n’est pas celui du
+   *                           projet est refusé, sans nuance.
+   *   `contractRef` absent  → aucun contrat n’est invoqué, donc rien à
+   *                           vérifier. L’autorité de facturation reste
+   *                           l’entreprise cliente, contrôlée juste après.
+   *
+   * Ce qui n’a PAS changé : on ne facture jamais sans identité légale.
+   */
+  const contractRef = String(input.contractRef ?? '').trim();
+  let projection = null;
+  let contractId = null;
 
-  if (!projection || !contractId || contractId !== String(input.contractRef)) {
-    throw new CustomerAuthorityError(
-      CUSTOMER_REFUSALS.CONTRACT_NOT_OWNED,
-      'Aucun contrat de ce projet ne correspond à cette référence.',
-    );
+  if (contractRef) {
+    projection = await lookupContract(projectId);
+    contractId = projection?.sourceContractId ?? null;
+    if (!projection || !contractId || contractId !== contractRef) {
+      throw new CustomerAuthorityError(
+        CUSTOMER_REFUSALS.CONTRACT_NOT_OWNED,
+        'Aucun contrat de ce projet ne correspond à cette référence.',
+      );
+    }
   }
 
   /**
@@ -204,9 +271,44 @@ export async function resolveCustomerIntent({
   }
 
   const company = readiness.company;
+  const clientCompanyId = String(company?.clientCompanyId ?? '').trim();
+
+  /**
+   * ── SANS IDENTIFIANT, PAS DE CLÉ — ET SURTOUT PAS UNE CLÉ VIDE ───────────
+   *
+   * La clé d'acte est `…:company:<id>`. Si l'identifiant manquait, elle
+   * deviendrait `…:company:undefined` — la MÊME pour tout le parc. Tous les
+   * projets partageraient alors un seul client Stripe, et chacun lirait les
+   * factures des autres. C'est la panne la plus grave que ce fichier puisse
+   * produire, et elle serait silencieuse.
+   *
+   * Ce cas ne devrait pas exister — la readiness vient de déclarer la
+   * facturation possible. S'il survient, la fiche et le verdict se
+   * contredisent : on refuse, et l'incohérence se voit tout de suite.
+   */
+  if (!clientCompanyId) {
+    throw new CustomerAuthorityError(
+      CUSTOMER_REFUSALS.CLIENT_COMPANY_NOT_READY,
+      'L’entreprise cliente de ce projet est déclarée facturable mais ne porte aucun '
+      + 'identifiant : la facturation est suspendue jusqu’à ce que la fiche soit cohérente.',
+      { state: readiness.state, missing: ['clientCompanyId'] },
+    );
+  }
   return {
     contractId,
-    operationId: customerOperationId({ environment, contractId }),
+    clientCompanyId,
+    operationId: customerOperationId({ environment, clientCompanyId }),
+    /**
+     * L’ANCIENNE CLÉ VOYAGE AVEC L’INTENTION, quand un contrat est en jeu.
+     *
+     * C’est ce qui permet à l’adaptateur d’ADOPTER un client créé avant ce
+     * lot au lieu d’en créer un second pour la même personne morale. Elle
+     * est `null` pour une prestation : il n’y a jamais eu de client à
+     * adopter, puisqu’il n’y en avait jamais eu du tout.
+     */
+    legacyOperationId: contractId
+      ? legacyCustomerOperationId({ environment, contractId })
+      : null,
     clientCompany: company,
     params: buildParams({ projectId, environment, contractId, projection, company }),
     taxIdentity: buildTaxIdentity(company),
@@ -312,11 +414,23 @@ function buildParams({ projectId, environment, contractId, projection, company }
     ...(adresse ? { address: adresse } : {}),
     ...(telephone ? { phone: telephone } : {}),
     metadata: {
-      contractId,
-      contractReference: projection.reference ?? '',
+      /**
+       * ── LE CONTRAT N’EST PLUS TOUJOURS LÀ, ET C’EST NORMAL ────────────────
+       *
+       * Une prestation ponctuelle n’en a pas. Les champs sont donc OMIS plutôt
+       * qu’envoyés vides : `contractId: ''` dans le tableau de bord Stripe se
+       * lit comme une donnée perdue, alors que l’absence se lit comme une
+       * absence. Les noms, eux, ne bougent pas — le support et la
+       * réconciliation les lisent ainsi depuis toujours.
+       */
+      ...(contractId ? { contractId } : {}),
+      ...(projection?.reference ? { contractReference: projection.reference } : {}),
       providerMode: environment,
       applicationEnvironment: environment,
-      /** Traçabilité du plan de contrôle. Corroboratif, jamais probant. */
+      /**
+       * Le projet qui a créé ce client. Corroboratif, jamais probant :
+       * l’autorité d’appartenance est le registre de liens.
+       */
       panelProjectId: projectId,
       clientCompanyId: company.clientCompanyId,
       ...(company.siren ? { clientSiren: company.siren } : {}),
@@ -328,5 +442,6 @@ export default {
   CUSTOMER_REFUSALS,
   CustomerAuthorityError,
   customerOperationId,
+  legacyCustomerOperationId,
   resolveCustomerIntent,
 };

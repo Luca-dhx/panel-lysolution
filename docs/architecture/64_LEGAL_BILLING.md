@@ -221,6 +221,117 @@ exactement ce qu'on veut — ce sont deux tarifs différents.
 Les abonnements **déjà souscrits** ne bougent pas : ils référencent leur `Price`
 d'origine, immuable, et continuent de prélever exactement la même somme.
 
+## 4 bis. L’AUTORITÉ DU CLIENT STRIPE : l’entreprise, pas le contrat
+
+### La cardinalité, avant
+
+Un client Stripe par **CONTRAT** — clé `stripe-customer:<monde>:<contractId>`.
+C’était fidèle à un monde où l’acheteur n’existait pas comme entité : le
+contrat était le seul porteur disponible.
+
+Trois conséquences, toutes constatées :
+
+```text
+deux contrats successifs du même client → deux clients Stripe,
+                                           historique de facturation scindé
+deux projets du même client             → deux clients Stripe
+une prestation ponctuelle (sans contrat) → AUCUN client, donc une facture
+                                           sans destinataire juridique
+```
+
+Le troisième était le plus grave, et le plus discret : le verbe
+`billing.customer.ensure` n’était tout simplement **pas appelé** pour une
+prestation. Une session de paiement réellement ouverte portait
+`customer: null`.
+
+### La cardinalité, maintenant
+
+```text
+stripe-customer:<monde>:company:<clientCompanyId>
+```
+
+Un client Stripe par **ENTREPRISE CLIENTE** et par **MONDE**. C’est le seul
+niveau où « Facturer à » a un sens : on facture une personne morale, pas un
+engagement ni une instance technique.
+
+| Dans la clé | Pourquoi |
+|---|---|
+| l’entreprise cliente | c’est elle qu’on facture |
+| le monde | `TEST` et `PROD` sont deux comptes Stripe |
+| ~~le projet~~ | déjà porté par le registre de liens |
+| ~~le contrat~~ | facultatif — une prestation n’en a pas |
+
+### Une entreprise, plusieurs projets — l’arbitrage
+
+La question mérite d’être posée : faut-il **un seul** client Stripe pour une
+entreprise qui possède trois sites ?
+
+Non — et ce n’est pas un compromis, c’est le registre d’appartenance qui le
+tranche. Son unicité est `(monde, type, ressource)` : **une ressource a
+exactement un projet propriétaire**. Partager un `cus_…` entre deux projets
+rendrait cette ressource possédée par deux projets à la fois, et chacun
+pourrait alors lire les factures de l’autre.
+
+La cardinalité retenue est donc **une entreprise cliente × un projet → un
+client Stripe**. Elle supprime la duplication par contrat et par prestation —
+celle qui existait réellement — sans démonter la garantie d’isolement.
+
+Aller plus loin exigerait de remplacer le propriétaire par un ensemble de
+lecteurs autorisés. C’est un autre modèle de sécurité, pas un réglage.
+
+### La migration : adopter, jamais recréer ni supprimer
+
+Les liens écrits avant ce lot portent l’ancienne clé. Trois issues, deux
+mauvaises :
+
+| Issue | Effet |
+|---|---|
+| ignorer l’ancien lien | un SECOND client pour la même personne morale |
+| supprimer l’ancien lien | l’abonnement en cours devient illisible par ses propres capacités |
+| **le renommer** | la ressource ne bouge pas, son propriétaire non plus — seule la question à laquelle il répond change |
+
+C’est la troisième. `adoptBindingOperation` met à jour
+`createdByOperationId` sur la ligne existante — l’unicité de la ressource
+l’impose d’ailleurs : il ne peut pas exister deux lignes pour un même `cus_…`.
+
+La cascade est **partagée** entre celui qui garantit le client
+(`customerEnsure`) et celui qui le lit pour servir factures et portail
+(`ownedCustomerOfContract`). Si seul le premier savait adopter, une simple
+consultation de factures refuserait un client que le prochain paiement
+retrouverait très bien — deux réponses différentes à la même question.
+
+Un lien **révoqué** n’est jamais adopté : on ne réhabilite pas d’office une
+appartenance qu’un humain a retirée.
+
+### L’identité d’acte est LUE, plus déduite
+
+La passerelle dérivait l’identité d’acte de façon **pure**, depuis la charge
+utile. Elle ne pouvait donc nommer que le contrat.
+
+La bonne identité vit désormais en base, sur le rattachement du projet — et
+elle **ne doit pas** venir de la charge utile : un projet qui pourrait la
+désigner pourrait réclamer le client d’un autre. La dérivation est donc
+devenue asynchrone.
+
+Ce n’est pas un détail d’implémentation. Rester pure aurait produit
+`…:company:undefined` pour **tout le parc** — une seule identité d’acte
+partagée par tous les projets, donc un seul client Stripe pour tout le monde.
+La garde qui refuse un identifiant vide existe pour que cette panne-là ne
+puisse jamais être silencieuse.
+
+### Le contrat reste, à sa place
+
+```text
+contrat  →  RÉFÉRENCE COMMERCIALE   description, champ personnalisé, metadata
+contrat  →  ❌ identité du client    plus jamais
+contrat  →  ❌ clé d’appartenance    plus jamais
+```
+
+Quand il existe, son appartenance est **vérifiée** exactement comme avant :
+une référence qui n’est pas celle du projet reste refusée. Le rendre
+facultatif distingue « pas de contrat » de « pas le bon contrat » — deux
+situations différentes que le refus unique confondait.
+
 ## 5. Ce que Stripe sait porter, et ce qu'il ne sait pas
 
 | Mention | Emplacement | Imprimée ? |

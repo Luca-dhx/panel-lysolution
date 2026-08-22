@@ -633,6 +633,92 @@ section('10. L’archivage et la suppression — aucune cascade destructive');
   check('le projet détaché APPREND qu’il n’a plus de client', retraits.length >= 1);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('11. LA MATRICE DE DISPONIBILITÉ — cinq états, deux verdicts');
+{
+  /**
+   * ── POURQUOI UNE MATRICE, ET PAS CINQ CONTRÔLES ÉPARS ────────────────────
+   *
+   * Les deux verdicts — facturer, signer — se ressemblent assez pour qu’on les
+   * confonde, et diffèrent assez pour que les confondre bloque un client sans
+   * raison. Les écrire côte à côte rend la différence LISIBLE : chaque ligne se
+   * lit comme une phrase, et un futur lecteur voit d’un coup ce qui change.
+   *
+   * Le tableau est celui du cahier des charges du lot, repris tel quel.
+   */
+  const { describeClientCompanyReadiness } = readiness;
+
+  const fiche = (surcharges = {}) => ({
+    clientCompanyId: 'cc-matrice',
+    status: 'ACTIVE',
+    legalName: 'SARL MATRICE',
+    siren: '732829320',
+    billingEmail: 'facturation@matrice.test',
+    registeredOffice: {
+      line1: '1 rue du Contrôle', postalCode: '06000', city: 'Nice', country: 'FR',
+    },
+    billingAddress: null,
+    contractualSigner: {
+      firstName: 'Camille', lastName: 'Matrice', email: 'camille@matrice.test',
+    },
+    ...surcharges,
+  });
+
+  const CAS = [
+    {
+      nom: 'CAS 1 — aucune entreprise',
+      entreprise: null,
+      facturer: false, signer: false, etat: 'MISSING_COMPANY',
+    },
+    {
+      nom: 'CAS 2 — entreprise facturable, AUCUN signataire',
+      entreprise: fiche({ contractualSigner: null }),
+      facturer: true, signer: false, etat: 'MISSING_SIGNER',
+    },
+    {
+      nom: 'CAS 3 — signataire présent, facturation INCOMPLÈTE',
+      entreprise: fiche({ siren: null }),
+      facturer: false, signer: true, etat: 'MISSING_BILLING_IDENTITY',
+    },
+    {
+      nom: 'CAS 4 — entreprise complète',
+      entreprise: fiche(),
+      facturer: true, signer: true, etat: 'READY',
+    },
+    {
+      nom: 'CAS 5 — entreprise ARCHIVÉE',
+      entreprise: fiche({ status: 'ARCHIVED' }),
+      facturer: false, signer: false, etat: 'MISSING_COMPANY',
+    },
+  ];
+
+  for (const cas of CAS) {
+    const verdict = describeClientCompanyReadiness(cas.entreprise);
+    check(`${cas.nom} → facturer ${cas.facturer ? 'AUTORISÉ' : 'BLOQUÉ'}`,
+      verdict.billing.ready === cas.facturer);
+    check(`${cas.nom} → signer ${cas.signer ? 'AUTORISÉ' : 'BLOQUÉ'}`,
+      verdict.signing.ready === cas.signer);
+    check(`${cas.nom} → état « ${cas.etat} »`, verdict.state === cas.etat);
+  }
+
+  /**
+   * ── CE QUE LA MATRICE PROUVE EN CREUX ───────────────────────────────────
+   *
+   * Les cas 2 et 3 sont symétriques et OPPOSÉS. Un verdict unique les
+   * rendrait identiques — « dossier incomplet » — et bloquerait dans les deux
+   * cas les DEUX actes. C’est exactement la confusion que la séparation évite.
+   */
+  const sansSignataire = describeClientCompanyReadiness(fiche({ contractualSigner: null }));
+  const sansSiren = describeClientCompanyReadiness(fiche({ siren: null }));
+  check('les deux incomplétudes ne bloquent PAS le même acte',
+    sansSignataire.billing.ready !== sansSiren.billing.ready
+    && sansSignataire.signing.ready !== sansSiren.signing.ready);
+  check('…et chacune NOMME ce qui lui manque',
+    sansSignataire.signing.missing.length > 0 && sansSiren.billing.missing.length > 0);
+  check('…sans jamais accuser l’autre acte',
+    sansSignataire.billing.missing.length === 0 && sansSiren.signing.missing.length === 0);
+}
+
 await close();
 await fsp.rm(DOSSIER_PRIVE, { recursive: true, force: true });
 await stopMemoryMongo();

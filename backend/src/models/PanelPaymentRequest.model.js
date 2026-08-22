@@ -226,6 +226,37 @@ const paymentRequestSchema = new mongoose.Schema(
     grossAmountCents: { type: Number, required: true, min: 1 },
     currency: { type: String, required: true },
 
+    /**
+     * ── L'INSTANTANÉ LÉGAL DU CLIENT, FIGÉ À L'OUVERTURE DU PAIEMENT ─────────
+     *
+     * ══ POURQUOI IL EXISTE ══════════════════════════════════════════════════
+     *
+     * Une facture est un document daté. Ce qu'elle affirme — la raison sociale,
+     * l'adresse, le SIREN, le numéro de TVA du destinataire — doit rester
+     * lisible même si la fiche du Panel change ensuite : déménagement,
+     * changement de dénomination, rachat. Sans instantané, relire une facture
+     * de l'an dernier afficherait l'identité d'aujourd'hui, et le document
+     * cesserait d'être une preuve.
+     *
+     * ══ POURQUOI À L'OUVERTURE, ET PAS À LA CRÉATION ════════════════════════
+     *
+     * Une prestation se rédige, se corrige, se met de côté. L'identité qui
+     * compte est celle du moment où la FACTURE est décidée — c'est-à-dire
+     * lorsque la session de paiement part chez le fournisseur. Figer plus tôt
+     * aurait gravé l'identité d'un brouillon.
+     *
+     * ══ FIGÉ UNE SEULE FOIS ═════════════════════════════════════════════════
+     *
+     * Une seconde tentative de paiement ne le réécrit pas. Deux essais sur la
+     * même prestation doivent porter la même identité, sinon « instantané » ne
+     * veut plus rien dire.
+     *
+     * `Mixed` : c'est une COPIE morte, pas un objet vivant. Le redéclarer champ
+     * par champ créerait une seconde définition à tenir alignée sur
+     * `clientLegalSnapshot.js`, qui en est l'auteur.
+     */
+    clientLegal: { type: mongoose.Schema.Types.Mixed, default: null },
+
     status: {
       type: String,
       enum: PAYMENT_REQUEST_STATUS_VALUES,

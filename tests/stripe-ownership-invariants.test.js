@@ -213,42 +213,79 @@ section('7. PLUS AUCUNE LECTURE LOCALE SUR LE PARCOURS MIGRÉ (SB Auto)');
 }
 
 /* ========================================================================== */
-section('8. LE CLIENT N’EST PAS UN SINGLETON DU PROJET (L6.2D)');
+section('8. LE CLIENT EST CELUI DE L’ENTREPRISE CLIENTE');
 /* ========================================================================== */
 {
   /**
-   * CUSTOMER_OWNERSHIP_IS_NOT_PROJECT_SINGLETON.
+   * ── L’INVARIANT A CHANGÉ DE PORTEUR, ET C’EST LE CŒUR DE CE LOT ─────────
    *
-   * L'audit du parc établit la cardinalité RÉELLE : un client Stripe par
-   * CONTRAT, pas par projet. Trois faits indépendants la prouvent — la clé
-   * d'idempotence historique `customer-<contractId>-<mode>`, le stockage sur
-   * `Contract.stripe.customerId`, et la lecture inverse de la facturation qui
-   * suppose au plus un contrat par client.
+   * ══ CE QUE L’ANCIENNE CARDINALITÉ PRODUISAIT ═════════════════════════════
    *
-   * L'invariant se lit donc sur la DÉRIVATION de l'identité d'acte : elle doit
-   * porter le contrat. Une dérivation qui porterait le projet fusionnerait les
-   * historiques de facturation de contrats distincts.
+   * « Un client Stripe par CONTRAT » venait d’un audit du parc — clé
+   * `customer-<contractId>-<mode>`, stockage sur `Contract.stripe.customerId`.
+   * Elle décrivait fidèlement un monde où l’acheteur n’existait pas comme
+   * entité. Ses conséquences :
+   *
+   *   · deux contrats successifs d’un même client → deux clients Stripe, et
+   *     un historique de facturation scindé pour une seule personne morale ;
+   *   · une prestation ponctuelle, qui n’a PAS de contrat → aucun client, donc
+   *     une facture sans destinataire juridique.
+   *
+   * ══ LA CARDINALITÉ COURANTE ══════════════════════════════════════════════
+   *
+   * Un client Stripe par ENTREPRISE CLIENTE et par MONDE. C’est le seul
+   * niveau où « Facturer à » a un sens : on facture une personne morale, pas
+   * un engagement ni une instance technique.
+   *
+   * Le PROJET reste hors de la clé — il est déjà porté par le registre de
+   * liens, et l’y remettre laisserait croire qu’une même entreprise pourrait
+   * appartenir à deux projets à la fois.
    */
-  check('l’identité d’acte du client porte le CONTRAT',
-    /customerOperationId\(\{ environment, contractId \}\)/.test(autoriteClient));
-  check('…et le MONDE', /stripe-customer:\$\{environment\}:\$\{contractId\}/.test(autoriteClient));
+  check('l’identité d’acte du client porte l’ENTREPRISE CLIENTE',
+    /customerOperationId\(\{ environment, clientCompanyId \}\)/.test(autoriteClient));
+  check('…et le MONDE',
+    /stripe-customer:\$\{environment\}:company:\$\{clientCompanyId\}/.test(autoriteClient));
   check('…mais PAS le projet',
     !/stripe-customer:[^`]*projectId/.test(autoriteClient));
+  /**
+   * La vérification porte sur le CORPS de `customerOperationId` seul : la
+   * fonction d'adoption qui la suit contient légitimement l'ancienne forme,
+   * et un test qui balaierait tout le fichier confondrait « on crée encore
+   * par contrat » avec « on sait encore lire l'ancienne clé ».
+   */
+  const debutCle = autoriteClient.indexOf('export function customerOperationId');
+  const corpsCle = autoriteClient.slice(debutCle, autoriteClient.indexOf(String.fromCharCode(10) + String.fromCharCode(125), debutCle));
+  check('…ni le contrat',
+    !/contractId/.test(corpsCle));
 
   /**
-   * Et la recherche du client existant doit être faite PAR ACTE, jamais par
-   * projet : `findBinding({projectId, resourceType: CUSTOMER})` rendrait le
-   * premier client venu du projet, c'est-à-dire potentiellement celui d'un
-   * autre contrat.
+   * L’ANCIENNE CLÉ SURVIT — pour ADOPTER, jamais pour créer.
+   *
+   * Sans elle, un client créé avant ce lot serait ignoré et l’on en créerait
+   * un second pour la même personne morale : exactement le défaut qu’on
+   * ferme. Sa seule présence ne suffit pas — le test suivant vérifie qu’elle
+   * n’aboutit qu’à une adoption.
    */
-  const debut = adaptateurs.indexOf('async function customerEnsure');
-  check('la capacité existe', debut > 0);
+  check('l’ancienne clé reste NOMMÉE pour l’adoption',
+    /legacyCustomerOperationId/.test(autoriteClient));
+
+  /**
+   * Et la recherche du client existant reste faite PAR ACTE, jamais par
+   * projet : `findBinding({projectId, resourceType: CUSTOMER})` rendrait le
+   * premier client venu du projet, c’est-à-dire potentiellement celui d’une
+   * autre entreprise.
+   */
+  const debut = adaptateurs.indexOf('async function lienClientAvecAdoption');
+  check('la cascade de résolution existe', debut > 0);
   const corps = adaptateurs.slice(debut, adaptateurs.indexOf('\n}', debut));
   check('le client existant est cherché PAR ACTE', /findBindingByOperation/.test(corps));
   check('…et jamais par simple appartenance au projet',
     !/listOwnedResourceIds|findBinding\(\{[^}]*resourceType: CUSTOMER[^}]*\}\)/.test(corps));
+  check('l’ancienne clé ne sert QU’À ADOPTER, jamais à créer',
+    /adoptBindingOperation/.test(corps) && !/createCustomer/.test(corps));
+  check('un lien RÉVOQUÉ n’est jamais adopté',
+    /revokedAt\) return herite/.test(corps));
 }
-
 /* ========================================================================== */
 section('9. LE PROJET NE NOMME PAS L’ACTE, ET N’ADOPTE RIEN (L6.2D)');
 /* ========================================================================== */

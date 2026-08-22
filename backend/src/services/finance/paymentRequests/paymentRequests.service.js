@@ -316,6 +316,25 @@ export async function resolveTaxRate(projectId) {
 }
 
 /**
+ * FIGE l'identité juridique du client de ce projet, à cet instant.
+ *
+ * Import DYNAMIQUE : le domaine financier ne doit pas tirer l'entreprise
+ * cliente dans son graphe de chargement — c'est la même discipline que celle
+ * qui garde le plan de contrôle Stripe hors du domaine financier.
+ *
+ * Rend `null` quand aucune entreprise n'est rattachée. Ce n'est pas un cas à
+ * traiter ici : l'ouverture du paiement l'aura déjà refusée bien avant.
+ */
+async function figerIdentiteCliente(projectId) {
+  const [{ resolveClientCompanyReadiness }, { buildClientLegalSnapshot }] = await Promise.all([
+    import('../../clientCompany/clientCompanyReadiness.js'),
+    import('../../clientCompany/clientLegalSnapshot.js'),
+  ]);
+  const verdict = await resolveClientCompanyReadiness({ projectId });
+  return buildClientLegalSnapshot(verdict.company, { at: nowIso() });
+}
+
+/**
  * ENREGISTRE la session ouverte pour cette demande.
  *
  * Appelée après l'ouverture, jamais avant : ce qu'on note ici est un FAIT
@@ -328,6 +347,35 @@ export async function attachCheckoutSession({ paymentRequestId, checkoutSessionI
 
   document.stripe.checkoutSessionId = checkoutSessionId ?? document.stripe.checkoutSessionId;
   document.stripe.checkoutUrl = url ?? document.stripe.checkoutUrl;
+
+  /**
+   * ── L'INSTANTANÉ LÉGAL, FIGÉ ICI ET UNE SEULE FOIS ────────────────────────
+   *
+   * C'est l'instant où la facture est décidée : la session part chez le
+   * fournisseur avec une identité de client, et c'est celle-là que le document
+   * portera. La figer maintenant rend la facture relisible dans dix ans, quelle
+   * que soit la fiche du Panel entre-temps.
+   *
+   * `if (!document.clientLegal)` : une seconde tentative de paiement sur la
+   * même prestation ne réécrit rien. Deux essais doivent porter la même
+   * identité, sans quoi le mot « instantané » ne veut plus rien dire.
+   *
+   * Best-effort ASSUMÉ, comme le reste de cette fonction : la session EXISTE
+   * déjà chez Stripe. Faire échouer l'enregistrement d'un paiement réellement
+   * ouvert parce qu'on n'a pas su recopier une adresse ferait payer au client
+   * une erreur d'écriture de notre côté. L'absence se verra — elle ne se
+   * devinera pas.
+   */
+  if (!document.clientLegal) {
+    const fige = await figerIdentiteCliente(document.projectId).catch((error) => {
+      logger.warn(
+        `[prestation] instantané légal non capturé pour ${document.paymentRequestId} : `
+        + `${error?.message ?? 'erreur inconnue'}.`,
+      );
+      return null;
+    });
+    if (fige) document.clientLegal = fige;
+  }
 
   /**
    * L'état ne recule JAMAIS. Une session ouverte sur une demande déjà payée —
@@ -579,6 +627,15 @@ export function toPublicPaymentRequest(document) {
     taxAmountCents: document.taxAmountCents,
     grossAmountCents: document.grossAmountCents,
     currency: document.currency,
+    /**
+     * L'IDENTITÉ JURIDIQUE FIGÉE À L'OUVERTURE DU PAIEMENT.
+     *
+     * Rendue telle quelle, sans recomposition : c'est ce que la facture porte,
+     * et un écran qui la relit doit voir ce que le document AFFIRME, pas ce que
+     * la fiche dit aujourd'hui. `null` tant qu'aucun paiement n'a été ouvert —
+     * la prestation est alors un brouillon, sans destinataire figé.
+     */
+    clientLegal: document.clientLegal ?? null,
     status: document.status,
     environment: document.environment ?? null,
     payable: isPayable(document.status),

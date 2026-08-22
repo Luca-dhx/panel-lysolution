@@ -27,7 +27,7 @@ import {
   startMemoryMongo, startServer,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
-import { ensureClientCompany, ligneTarifaire } from './helpers/clientCompany.fixture.js';
+import { ensureClientCompany, ligneTarifaire, seedClientCompany } from './helpers/clientCompany.fixture.js';
 
 setTestEnv();
 const MONGO_URI = await startMemoryMongo();
@@ -237,6 +237,28 @@ let idB;
  * d'un contrat à l'autre, exactement comme le ferait une résiliation suivie
  * d'un nouvel engagement.
  */
+/**
+ * ── CHANGER DE CLIENT POUR PROVOQUER UNE CRÉATION ───────────────────────────
+ *
+ * Depuis que l’acte est nommé par l’ENTREPRISE CLIENTE, un nouveau contrat sur
+ * le même client ne crée plus rien — c’est précisément l’invariant du lot.
+ * Les sections qui éprouvent la CRÉATION (concurrence, crash, réponse perdue)
+ * ont donc besoin d’un client neuf, pas d’un contrat neuf.
+ *
+ * Rattacher une AUTRE personne morale au projet est exactement le geste
+ * d’exploitation correspondant : un client remplace un autre, et le prochain
+ * paiement s’adresse à quelqu’un d’autre.
+ */
+async function nouveauClient(projectId, legalName) {
+  return seedClientCompany({ projectId, legalName });
+}
+
+/** La fiche cliente d’un projet — pour NOMMER l’acte attendu dans les contrôles. */
+async function ficheCliente(projectId) {
+  const { clientCompanyOfProject } = await import('../backend/src/services/clientCompany/clientCompanyReadiness.js');
+  return clientCompanyOfProject(projectId);
+}
+
 async function semer(projectId, sourceContractId, reference) {
   /**
    * L'ENTREPRISE CLIENTE — exigée depuis le chantier « facturation légale ».
@@ -407,8 +429,17 @@ section('4. Un contrat, un client — et le rejeu ne double pas');
     environment: 'TEST', resourceType: 'CUSTOMER', resourceId: clientA1,
   });
   check('le client est LIÉ au projet', lien?.projectId === idA);
-  check('…et l’acte qui l’a produit porte le CONTRAT',
-    lien.createdByOperationId === autorite.customerOperationId({ environment: 'TEST', contractId: CONTRAT_A1 }));
+  /**
+   * L'ACTE PORTE L'ENTREPRISE CLIENTE, plus le contrat.
+   *
+   * C'est ce qui permet à une prestation ponctuelle — qui n'a pas de contrat —
+   * d'obtenir le MÊME client, et à deux contrats successifs d'un même client
+   * de ne pas scinder son historique de facturation en deux.
+   */
+  check('…et l’acte qui l’a produit porte l’ENTREPRISE CLIENTE',
+    lien.createdByOperationId === autorite.customerOperationId({
+      environment: 'TEST', clientCompanyId: (await ficheCliente(idA)).clientCompanyId,
+    }));
   check('…par la route « le Panel crée »', lien.source === 'PANEL_CREATED');
 
   /**
@@ -439,49 +470,81 @@ section('4. Un contrat, un client — et le rejeu ne double pas');
 /* ══════════════════════════════════════════════════════════════════════════
    5. L'INVARIANT DU LOT — le client n'est PAS un singleton du projet
    ══════════════════════════════════════════════════════════════════════════ */
-section('5. Deux contrats du MÊME projet → deux clients');
+section('5. Deux contrats du MÊME client → UN SEUL client Stripe');
 {
+  /**
+   * ── LA CARDINALITÉ S’EST INVERSÉE, ET C’EST LE CŒUR DU LOT ─────────────
+   *
+   * ══ CE QUE CETTE SECTION AFFIRMAIT AVANT ═══════════════════════════════
+   *
+   * « CUSTOMER_OWNERSHIP_IS_NOT_PROJECT_SINGLETON » : un client Stripe par
+   * CONTRAT. C’était fidèle à un monde où l’acheteur n’existait pas comme
+   * entité — le contrat était le seul porteur disponible.
+   *
+   * ══ POURQUOI C’ÉTAIT UN DÉFAUT ═════════════════════════════════════════
+   *
+   * Une même personne morale apparaissait plusieurs fois dans le tableau de
+   * bord Stripe, avec un historique de facturation coupé en tranches. Et une
+   * prestation ponctuelle, faute de contrat, n’obtenait AUCUN client : sa
+   * facture partait sans destinataire juridique.
+   *
+   * ══ CE QUI EST AFFIRMÉ MAINTENANT ══════════════════════════════════════
+   *
+   * Un client Stripe par ENTREPRISE CLIENTE et par MONDE. Deux contrats
+   * successifs du même client partagent donc le même `cus_…`, et aucune
+   * création supplémentaire n’a lieu.
+   */
   await semer(idA, CONTRAT_A2, 'CTR-A2');
   const avant = creations().length;
 
   const second = await projetA.invokeCapability({
     code: ENSURE,
-    input: { contractRef: CONTRAT_A2, customer: { email: 'client2@garage.fr', name: 'Garage A bis' } },
+    input: { contractRef: CONTRAT_A2 },
   });
   check('le second contrat obtient un client', second.ok === true);
   const clientA2 = second.data.result.customerId;
-  check('…et il vient d’être CRÉÉ', second.data.result.status === 'CREATED');
 
-  check('CUSTOMER_OWNERSHIP_IS_NOT_PROJECT_SINGLETON', clientA2 !== clientA1);
-  check('…une création a bien eu lieu', creations().length === avant + 1);
+  check('…c’est LE MÊME client', clientA2 === clientA1);
+  check('…il était déjà connu', second.data.result.status === 'EXISTING');
+  check('AUCUNE création supplémentaire', creations().length === avant);
 
   const liens = await PanelStripeResourceBinding.find({
     projectId: idA, environment: 'TEST', resourceType: 'CUSTOMER',
   }).lean();
-  check('le MÊME projet porte deux liens CUSTOMER', liens.length === 2);
-  check('…un par contrat, jamais confondus',
-    new Set(liens.map((l) => l.createdByOperationId)).size === 2);
+  check('le projet ne porte QU’UN lien CUSTOMER', liens.length === 1);
+  check('…et il est nommé par l’entreprise cliente',
+    liens[0].createdByOperationId === autorite.customerOperationId({
+      environment: 'TEST', clientCompanyId: (await ficheCliente(idA)).clientCompanyId,
+    }));
 
-  // Et chaque contrat retrouve LE SIEN, pas celui de l'autre.
-  await semer(idA, CONTRAT_A1, 'CTR-A1');
-  const relu1 = await projetA.invokeCapability({
-    code: ENSURE, input: { contractRef: CONTRAT_A1, customer: { name: 'Garage A' } },
+  /**
+   * ── LA PRESTATION PONCTUELLE : SANS CONTRAT, ET POURTANT FACTURABLE ────
+   *
+   * C’est le trou que ce lot ferme. Le même verbe, appelé SANS `contractRef`,
+   * doit rendre le même client — puisque c’est la même personne morale.
+   */
+  const sansContrat = await projetA.invokeCapability({ code: ENSURE, input: {} });
+  check('un client est garanti SANS aucun contrat', sansContrat.ok === true);
+  check('…et c’est encore LE MÊME', sansContrat.data.result.customerId === clientA1);
+  check('…toujours aucune création', creations().length === avant);
+
+  /**
+   * La garde d’appartenance du contrat n’a PAS été percée au passage : une
+   * référence qui n’est pas celle du projet reste refusée.
+   */
+  const usurpe = await projetA.invokeCapability({
+    code: ENSURE, input: { contractRef: 'contrat-qui-n-est-pas-le-sien' },
   });
-  check('le contrat 1 retrouve SON client', relu1.data.result.customerId === clientA1);
-  await semer(idA, CONTRAT_A2, 'CTR-A2');
-  const relu2 = await projetA.invokeCapability({
-    code: ENSURE, input: { contractRef: CONTRAT_A2, customer: { name: 'Garage A bis' } },
-  });
-  check('le contrat 2 retrouve LE SIEN', relu2.data.result.customerId === clientA2);
-  check('…et toujours aucune création de plus', creations().length === avant + 1);
+  check('un contrat étranger reste REFUSÉ', usurpe.ok === false);
+  check('…sans rien créer', creations().length === avant);
 }
-
 /* ══════════════════════════════════════════════════════════════════════════
    6. CONCURRENCE — huit appels, un client
    ══════════════════════════════════════════════════════════════════════════ */
 const CONTRAT_A3 = 'contrat-l62d-a3-0000000004';
 section('6. Huit appels simultanés pour le même contrat');
 {
+  await nouveauClient(idA, 'Client Concurrence');
   await semer(idA, CONTRAT_A3, 'CTR-A3');
   const avant = creations().length;
   const clientsAvant = clients().length;
@@ -503,7 +566,9 @@ section('6. Huit appels simultanés pour le même contrat');
 
   const liens = await PanelStripeResourceBinding.countDocuments({
     projectId: idA, environment: 'TEST', resourceType: 'CUSTOMER',
-    createdByOperationId: autorite.customerOperationId({ environment: 'TEST', contractId: CONTRAT_A3 }),
+    createdByOperationId: autorite.customerOperationId({
+      environment: 'TEST', clientCompanyId: (await ficheCliente(idA)).clientCompanyId,
+    }),
   });
   check('un seul lien', liens === 1);
 }
@@ -514,13 +579,16 @@ section('6. Huit appels simultanés pour le même contrat');
 const CONTRAT_A4 = 'contrat-l62d-a4-0000000005';
 section('7. Le Panel meurt entre la création et le lien');
 {
+  await nouveauClient(idA, 'Client Crash');
   await semer(idA, CONTRAT_A4, 'CTR-A4');
   const premier = await projetA.invokeCapability({
     code: ENSURE, input: { contractRef: CONTRAT_A4, customer: { name: 'Garage A4' } },
   });
   const clientA4 = premier.data.result.customerId;
   const clientsApres = clients().length;
-  const acte = autorite.customerOperationId({ environment: 'TEST', contractId: CONTRAT_A4 });
+  const acte = autorite.customerOperationId({
+    environment: 'TEST', clientCompanyId: (await ficheCliente(idA)).clientCompanyId,
+  });
 
   // Le crash : ni lien, ni opération conclue, et l'opération est ANCIENNE.
   await PanelStripeResourceBinding.deleteOne({ environment: 'TEST', resourceId: clientA4 });
@@ -551,6 +619,7 @@ section('7. Le Panel meurt entre la création et le lien');
 const CONTRAT_A5 = 'contrat-l62d-a5-0000000006';
 section('8. Réponse perdue : aucune seconde création');
 {
+  await nouveauClient(idA, 'Client Réponse Perdue');
   await semer(idA, CONTRAT_A5, 'CTR-A5');
   const clientsAvant = clients().length;
   avalerProchaineCreation = true;
@@ -562,7 +631,9 @@ section('8. Réponse perdue : aucune seconde création');
   check('…en CAPABILITY_TIMEOUT, pas en « indisponible »', perdu.code === 'CAPABILITY_TIMEOUT');
   check('Stripe a pourtant bien créé le client', clients().length === clientsAvant + 1);
 
-  const acte = autorite.customerOperationId({ environment: 'TEST', contractId: CONTRAT_A5 });
+  const acte = autorite.customerOperationId({
+    environment: 'TEST', clientCompanyId: (await ficheCliente(idA)).clientCompanyId,
+  });
   const operation = await PanelCapabilityOperation.findOne({ projectId: idA, operationId: acte }).lean();
   check('l’opération est marquée UNKNOWN — pas FAILED', operation?.status === 'UNKNOWN');
 
@@ -639,9 +710,10 @@ section('9. Le projet B n’atteint rien de A');
    ══════════════════════════════════════════════════════════════════════════ */
 section('10. Le même contrat, deux mondes, deux clients');
 {
+  const clientDeA = (await ficheCliente(idA)).clientCompanyId;
   check('l’acte porte le monde',
-    autorite.customerOperationId({ environment: 'TEST', contractId: CONTRAT_A1 })
-    !== autorite.customerOperationId({ environment: 'PROD', contractId: CONTRAT_A1 }));
+    autorite.customerOperationId({ environment: 'TEST', clientCompanyId: clientDeA })
+    !== autorite.customerOperationId({ environment: 'PROD', clientCompanyId: clientDeA }));
 
   const enProd = await binding.describeOwnership({
     projectId: idA, environment: 'PROD', resourceType: 'CUSTOMER', resourceId: clientA1,

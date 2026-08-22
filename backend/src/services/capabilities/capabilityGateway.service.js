@@ -251,11 +251,23 @@ export async function invokeCapability({
      * seul sait que deux clics sont la même intention. Quelques verbes n'ont
      * pourtant qu'une réponse correcte — « garantir que ce contrat a un
      * client » — et pour ceux-là, laisser nommer l'acte permettrait d'en
-     * obtenir deux. Le registre déclare alors une dérivation PURE, évaluée ici,
+     * obtenir deux. Le registre déclare alors une dérivation, évaluée ici,
      * avant toute réservation.
+     *
+     * ── ELLE PEUT DÉSORMAIS ÊTRE ASYNCHRONE ────────────────────────────────
+     *
+     * Elle était forcément PURE, donc limitée à ce que la charge utile porte.
+     * Depuis que l’autorité du client Stripe est l’ENTREPRISE CLIENTE, la
+     * bonne identité d’acte se lit en base — le projet ne l’envoie pas, et il
+     * ne DOIT pas l’envoyer : ce serait lui laisser nommer l’acte, donc lui
+     * permettre d’en obtenir deux.
+     *
+     * Une dérivation synchrone aurait rendu `…:company:undefined` pour tout le
+     * parc : une seule identité d’acte partagée par tous les projets. On
+     * attend donc la valeur, et l’on refuse plus bas si elle manque.
      */
     const actId = definition.deriveOperationId
-      ? definition.deriveOperationId(context, input)
+      ? await definition.deriveOperationId(context, input)
       : input.operationId;
 
     const reservation = requiresReservation(definition)

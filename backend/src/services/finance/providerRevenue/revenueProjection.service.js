@@ -1164,6 +1164,29 @@ async function marquer(fait, status, reason) {
  * dans un `$set`. Un opérateur qui a attaché une facture à la main la conserve,
  * quel que soit le nombre d'événements Stripe qui suivent.
  */
+/**
+ * À QUELLE ENTREPRISE CLIENTE CE PROJET FACTURE-T-IL, MAINTENANT ?
+ *
+ * Import DYNAMIQUE : la projection de revenu ne doit pas tirer le domaine de
+ * l’entreprise cliente dans son graphe de chargement — même discipline que
+ * partout ailleurs dans cette couche.
+ *
+ * Ne LÈVE JAMAIS. Un revenu constaté est un fait : ne pas savoir le rattacher
+ * à une fiche ne doit pas empêcher de l’enregistrer. Le rattachement est une
+ * commodité de lecture, pas une condition d’existence.
+ */
+async function entrepriseClienteDe(projectId) {
+  if (!projectId) return null;
+  try {
+    const { clientCompanyOfProject } = await import('../../clientCompany/clientCompanyReadiness.js');
+    const fiche = await clientCompanyOfProject(projectId);
+    return fiche?.clientCompanyId ?? null;
+  } catch (err) {
+    logger.warn(`[finance] entreprise cliente illisible pour ${projectId} : ${err?.message ?? 'erreur inconnue'}.`);
+    return null;
+  }
+}
+
 async function upsertTransaction({ fait, projectId }) {
   const clef = {
     'provenance.provider': PROVIDER,
@@ -1210,6 +1233,8 @@ async function upsertTransaction({ fait, projectId }) {
           transactionId,
           projectId,
           projectNameSnapshot: null,
+          /** À qui l’on a facturé — voir le modèle. `null` si rien n’est rattaché. */
+          clientCompanyId: await entrepriseClienteDe(projectId),
           flow: FLOWS.INFLOW,
           /**
            * `REVENUE`, et surtout PAS une catégorie « STRIPE_REVENUE ».

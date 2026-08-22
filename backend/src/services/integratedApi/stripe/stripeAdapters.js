@@ -69,6 +69,7 @@ import {
   BINDING_SOURCES,
   STRIPE_RESOURCE_NOT_OWNED,
   bindResource,
+  adoptBindingOperation,
   findBindingByOperation,
   assertOwnedResource,
   maskResourceId,
@@ -376,13 +377,30 @@ async function checkoutCreate({ definition, context, credentials, input, fetchIm
      * de L6.2D. Elles restent sans client référencé, et le repli est explicite
      * plutôt que subi.
      */
-    if (intent.contractId) {
-      const client = await customerEnsure({
-        definition: COMPOSEES.CUSTOMER, context, credentials, fetchImpl,
-        input: { contractRef: input.contractRef },
-      });
-      customerId = client.customerId;
-    }
+    /**
+     * ── LE CLIENT EST ASSURÉ POUR TOUT PAIEMENT, SANS EXCEPTION ───────────
+     *
+     * ══ CE QUI SE PASSAIT AVANT ══════════════════════════════════════════
+     *
+     * `if (intent.contractId)`. Les prestations ponctuelles n’en ont pas :
+     * elles partaient donc SANS client Stripe. Leur facture ne portait aucune
+     * identité juridique — pas de raison sociale, pas d’adresse, pas de TVA.
+     * C’est exactement le défaut que ce parc a corrigé pour les contrats, et
+     * qui survivait ici parce que le client était dérivé du contrat.
+     *
+     * ══ CE QUI LE REND POSSIBLE ══════════════════════════════════════════
+     *
+     * L’autorité du client n’est plus le contrat mais l’ENTREPRISE CLIENTE,
+     * qui existe indépendamment de tout engagement. `contractRef` est donc
+     * transmis quand il existe, et omis sinon — la garde d’appartenance du
+     * contrat reste entière dans le premier cas, et la garde d’identité
+     * légale s’applique dans les deux.
+     */
+    const client = await customerEnsure({
+      definition: COMPOSEES.CUSTOMER, context, credentials, fetchImpl,
+      input: input.contractRef ? { contractRef: input.contractRef } : {},
+    });
+    customerId = client.customerId;
     params = intent.paramsFor({ taxRateId });
     if (customerId) params = { ...params, customer: customerId };
   }
@@ -741,6 +759,49 @@ const CUSTOMER = STRIPE_RESOURCE_TYPES.CUSTOMER;
  * d'entrée. Lier un identifiant sur la seule foi de celui qui le présente
  * transformerait le registre d'appartenance en registre de déclarations.
  */
+/**
+ * LE LIEN DU CLIENT — clé courante, puis clé héritée ADOPTÉE.
+ *
+ * ══ POURQUOI ELLE EST PARTAGÉE ════════════════════════════════════════════
+ *
+ * Deux lecteurs cherchent le client d’un projet : celui qui le GARANTIT
+ * (`customerEnsure`) et celui qui le LIT pour servir factures et portail
+ * (`ownedCustomerOfContract`). Si seul le premier savait adopter, une simple
+ * consultation de factures — qui n’écrit rien — refuserait un client que le
+ * prochain paiement retrouverait pourtant très bien. Deux réponses
+ * différentes à la même question d’appartenance, selon le verbe employé.
+ *
+ * ══ L’ADOPTION EST UNE ÉCRITURE, ET C’EST ASSUMÉ ══════════════════════════
+ *
+ * Elle a lieu même sur un chemin de lecture. Elle ne crée rien, ne supprime
+ * rien, ne change ni la ressource ni son propriétaire : elle met à jour la
+ * clé sous laquelle le lien répond. La faire au premier passage évite qu’elle
+ * dépende de l’ordre dans lequel un projet appelle ses capacités.
+ */
+async function lienClientAvecAdoption({ projectId, environment, intent }) {
+  const courant = await findBindingByOperation({
+    projectId, environment, resourceType: CUSTOMER, operationId: intent.operationId,
+  });
+  if (courant || !intent.legacyOperationId) return courant;
+
+  const herite = await findBindingByOperation({
+    projectId, environment, resourceType: CUSTOMER, operationId: intent.legacyOperationId,
+  });
+  if (!herite) return null;
+
+  /**
+   * Un lien RÉVOQUÉ n’est pas adopté : on ne réhabilite pas d’office une
+   * appartenance qu’un humain a retirée. Il est rendu tel quel, et l’appelant
+   * le refuse — c’est à un humain de trancher.
+   */
+  if (herite.revokedAt) return herite;
+
+  return await adoptBindingOperation({
+    projectId, environment, resourceType: CUSTOMER,
+    resourceId: herite.resourceId, toOperationId: intent.operationId,
+  }) ?? herite;
+}
+
 async function customerEnsure({ definition, context, credentials, input, fetchImpl }) {
   const { projectId, environment } = context;
 
@@ -748,9 +809,20 @@ async function customerEnsure({ definition, context, credentials, input, fetchIm
   const intent = await guard(definition, () => resolveCustomerIntent({ projectId, environment, input }));
 
   // ── BARRIÈRE 1 : LE LIEN ──────────────────────────────────────────────────
-  const connu = await findBindingByOperation({
-    projectId, environment, resourceType: CUSTOMER, operationId: intent.operationId,
-  });
+  /**
+   * ── LA CASCADE : CLÉ COURANTE, PUIS CLÉ HÉRITÉE, PUIS CRÉATION ──────────
+   *
+   * L’autorité du client Stripe est passée du CONTRAT à l’ENTREPRISE CLIENTE.
+   * Les liens écrits avant ce lot portent l’ancienne clé. Les ignorer créerait
+   * un second client pour la même personne morale — et scinderait en deux
+   * l’historique de facturation d’un abonnement en cours.
+   *
+   * On les ADOPTE donc : la ressource ne bouge pas, son propriétaire ne bouge
+   * pas, seule la question à laquelle le lien répond change. C’est la
+   * migration non destructive — aucune facture n’est réécrite, aucun
+   * abonnement n’est délié.
+   */
+  const connu = await lienClientAvecAdoption({ projectId, environment, intent });
   if (connu && !connu.revokedAt) {
     /**
      * On RELIT le client chez Stripe plutôt que de rendre l'identifiant tel
@@ -1521,9 +1593,7 @@ async function ownedCustomerOfContract({ definition, context, input }) {
    * un projet a plusieurs contrats, et servir le mauvais client ouvrirait les
    * factures d'un autre client au même projet.
    */
-  const lien = await findBindingByOperation({
-    projectId, environment, resourceType: CUSTOMER, operationId: intent.operationId,
-  });
+  const lien = await lienClientAvecAdoption({ projectId, environment, intent });
   if (!lien || lien.revokedAt) {
     throw capabilityResourceNotOwned(definition.code);
   }

@@ -434,7 +434,19 @@ const refundView = z.object({
  * pas, un jour, un repli « pendant qu'on y est ».
  */
 const customerEnsureInput = z.object({
-  contractRef: z.string().trim().min(1).max(64),
+  /**
+   * ── FACULTATIF DEPUIS QUE L’AUTORITÉ EST L’ENTREPRISE CLIENTE ─────────────
+   *
+   * Une prestation ponctuelle n’a pas de contrat. L’exiger revenait à interdire
+   * de la facturer — c’est-à-dire à émettre une facture sans destinataire
+   * juridique, ce que ce parc a précisément cessé de faire.
+   *
+   * Fourni, il reste VÉRIFIÉ : `resolveCustomerIntent` refuse un contrat qui
+   * n’est pas celui du projet, exactement comme avant. Le rendre facultatif
+   * n’ouvre donc aucune porte ; cela distingue « pas de contrat » de « pas le
+   * bon contrat », qui sont deux situations différentes.
+   */
+  contractRef: z.string().trim().min(1).max(64).optional(),
   customer: z.object({
     email: z.string().trim().toLowerCase().email().max(320).optional(),
     name: z.string().trim().min(1).max(160).optional(),

@@ -766,10 +766,29 @@ export const CAPABILITY_DEFINITIONS = Object.freeze({
     idempotency: IDEMPOTENCY.PROVIDER_IDEMPOTENT,
     requiredPermissions: [PERMISSIONS.BILLING_WRITE],
     correlationField: 'customerId',
-    deriveOperationId: (context, input) => customerOperationId({
-      environment: context.environment,
-      contractId: input.contractRef,
-    }),
+    /**
+     * ── L’ACTE EST NOMMÉ PAR L’ENTREPRISE CLIENTE, LUE EN BASE ────────────
+     *
+     * Elle ne vient PAS de la charge utile, et c’est tout l’intérêt : un
+     * projet qui pourrait désigner l’entreprise pourrait obtenir le client
+     * d’un autre. Le Panel la lit lui-même, depuis le rattachement du projet.
+     *
+     * `null` quand aucune entreprise n’est rattachée. La réservation est
+     * alors sautée, et l’adaptateur refuse quelques lignes plus loin avec un
+     * motif utile — « aucune entreprise cliente » — plutôt qu’avec une
+     * collision d’identité d’acte que personne ne saurait lire.
+     */
+    deriveOperationId: async (context) => {
+      const { clientCompanyOfProject } = await import(
+        '../clientCompany/clientCompanyReadiness.js'
+      );
+      const fiche = await clientCompanyOfProject(context.projectId);
+      if (!fiche?.clientCompanyId) return null;
+      return customerOperationId({
+        environment: context.environment,
+        clientCompanyId: fiche.clientCompanyId,
+      });
+    },
   }),
   /**
    * LA PREMIÈRE CAPACITÉ FINANCIÈRE RÉELLEMENT SERVIE (L6.2B).

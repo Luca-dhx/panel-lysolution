@@ -260,12 +260,41 @@ section('1. REGISTRE — code-first, et aligné avec les trois autorités');
   check('…le client d’un contrat', derivees.some((c) => c.code === 'billing.customer.ensure'));
   check('…et son tarif', derivees.some((c) => c.code === 'billing.price.ensure'));
   const client = derivees.find((c) => c.code === 'billing.customer.ensure');
-  check('…la dérivation est PURE (contexte + entrée, sans base)',
-    client.deriveOperationId({ environment: 'TEST' }, { contractRef: 'c-1' })
-    === 'stripe-customer:TEST:c-1');
-  check('…et le monde en fait partie',
-    client.deriveOperationId({ environment: 'PROD' }, { contractRef: 'c-1' })
-    !== client.deriveOperationId({ environment: 'TEST' }, { contractRef: 'c-1' }));
+  /**
+   * ── LA DÉRIVATION DU CLIENT N’EST PLUS PURE, ET C’EST NÉCESSAIRE ───────
+   *
+   * ══ CE QUE LA PURETÉ GARANTISSAIT, ET CE QU’ELLE COÛTAIT ═══════════════
+   *
+   * Une dérivation pure ne peut lire que la charge utile. Elle nommait donc
+   * l’acte par le CONTRAT — la seule identité que le projet transmet.
+   *
+   * Depuis que l’autorité du client Stripe est l’ENTREPRISE CLIENTE, la bonne
+   * identité vit en base, sur le rattachement du projet. Et elle ne DOIT PAS
+   * venir de la charge utile : un projet qui pourrait la désigner pourrait
+   * réclamer le client d’un autre.
+   *
+   * Rester pure aurait rendu `…:company:undefined` pour tout le parc — une
+   * seule identité d’acte partagée par tous les projets, donc un seul client
+   * Stripe pour tout le monde. C’est exactement la panne que ce contrôle
+   * existe pour empêcher, et la pureté l’aurait provoquée.
+   *
+   * Ce qui est vérifié à la place : la dérivation ne lit RIEN de la charge
+   * utile, et le MONDE en fait toujours partie.
+   */
+  check('…la dérivation du client est ASYNCHRONE (elle lit la base)',
+    client.deriveOperationId.constructor.name === 'AsyncFunction');
+  check('…elle n’attend RIEN de la charge utile',
+    client.deriveOperationId.length <= 1);
+
+  /**
+   * Sans entreprise rattachée, elle rend `null` : aucune réservation, et le
+   * refus tombe plus loin avec un motif lisible — « aucune entreprise
+   * cliente » — plutôt qu'avec une collision d'identité d'acte.
+   */
+  const sansEntreprise = await client.deriveOperationId({
+    environment: 'TEST', projectId: 'projet-sans-entreprise-cliente',
+  });
+  check('…sans entreprise rattachée, aucune identité d’acte', sansEntreprise === null);
   /**
    * Deux verbes distincts pour un même contrat ne doivent JAMAIS partager une
    * identité d'acte : le registre d'opérations les confondrait, et le second

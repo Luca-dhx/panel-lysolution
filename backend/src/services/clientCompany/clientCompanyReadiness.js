@@ -89,6 +89,31 @@ const BILLING_FIELDS = Object.freeze([
  * demande pour créer un signataire, et c'est ce que `buildSignerPayload` côté
  * projet exigeait déjà. La FONCTION (`jobTitle`) n'y figure pas — elle est une
  * mention de courtoisie sur le document, jamais une condition de validité.
+ *
+ * ── POURQUOI L'IDENTITÉ DE FACTURATION N'EST PAS EXIGÉE ICI ─────────────────
+ *
+ * C'est la question que ce lot a dû trancher explicitement : faut-il un SIREN
+ * et une adresse de facturation pour SIGNER ?
+ *
+ * Non, et pour une raison de fond : signer et facturer sont deux actes
+ * différents. Un contrat engage une personne morale nommée, représentée par une
+ * personne physique identifiée — c'est ce que le document doit porter. Une
+ * facture, elle, doit permettre à l'administration fiscale de rapprocher un
+ * encaissement d'un assujetti : d'où le SIREN, l'adresse et le numéro de TVA.
+ *
+ * Les fondre aurait produit un blocage sans justification métier : une
+ * entreprise dont le comptable n'a pas encore communiqué l'adresse de
+ * facturation ne peut effectivement pas être facturée, mais rien n'empêche son
+ * gérant de signer l'engagement qui déclenchera cette facturation.
+ *
+ * L'inverse est vrai aussi, et c'est le cas courant : une entreprise
+ * parfaitement facturable dont le gérant vient de partir doit continuer à
+ * régler ses échéances pendant qu'on désigne son successeur.
+ *
+ * `legalName` n'y figure pas non plus : le document de signature porte la
+ * raison sociale, mais elle est déjà OBLIGATOIRE sur toute fiche — c'est le
+ * seul champ requis du modèle. L'exiger ici décrirait une situation qui ne peut
+ * pas exister.
  */
 const SIGNER_FIELDS = Object.freeze([
   { path: 'contractualSigner.firstName', label: 'Signataire — prénom' },

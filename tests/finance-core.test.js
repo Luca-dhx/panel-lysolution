@@ -704,6 +704,16 @@ section('14. Performance : les agrégats ne remontent pas les documents');
     'deletedAt,effectiveDate',                // le livret global
     'sourceId,cycleKey',                      // L10.2 — l'unicité d'une occurrence
     /**
+     * À QUELLE PERSONNE MORALE — la question que le livret ne savait pas poser.
+     *
+     * L'axe financier était le PROJET. Il reste juste, mais il ne répond pas à
+     * « combien ce client nous a-t-il versé ? » : un client peut avoir plusieurs
+     * projets, et une prestation ponctuelle n'a même pas de contrat pour servir
+     * de fil. L'entreprise cliente, elle, est présente sur TOUT encaissement —
+     * c'est la condition pour encaisser.
+     */
+    'clientCompanyId',
+    /**
      * L10.3 — l'unicité d'un fait fournisseur.
      *
      * Il est DISTINCT de celui des occurrences récurrentes, et c'est tout

@@ -298,6 +298,58 @@ export async function findBindingByOperation({ projectId, environment, resourceT
  * Verdict d'appartenance, structuré. Ne lève pas : un écran de diagnostic doit
  * pouvoir expliquer un refus sans rejouer la logique.
  */
+/**
+ * ADOPTER UN LIEN SOUS UNE NOUVELLE CLÉ D’OPÉRATION.
+ *
+ * ══ POURQUOI CE VERBE EXISTE ═══════════════════════════════════════════════
+ *
+ * Quand l’AUTORITÉ d’une ressource change de porteur — le client Stripe est
+ * passé du contrat à l’entreprise cliente — les liens déjà écrits portent
+ * l’ancienne clé. Trois issues étaient possibles, deux sont mauvaises :
+ *
+ *   · ignorer l’ancien lien → un SECOND client Stripe pour la même personne
+ *     morale, et un historique de facturation scindé en deux ;
+ *   · supprimer l’ancien lien → l’abonnement en cours et ses factures
+ *     deviennent illisibles par les capacités du projet ;
+ *   · le RENOMMER → la ressource ne bouge pas, son propriétaire ne bouge
+ *     pas, seule la question à laquelle elle répond change.
+ *
+ * C’est la troisième. L’unicité `(environment, resourceType, resourceId)`
+ * l’impose d’ailleurs : il ne peut pas exister deux lignes pour un même
+ * `cus_…`, donc l’adoption ne peut être qu’une mise à jour.
+ *
+ * ══ CE QU’ELLE NE FAIT PAS ════════════════════════════════════════════════
+ *
+ * Elle ne change ni le projet propriétaire, ni la ressource, ni la source.
+ * Elle refuse si le lien est révoqué : on ne réhabilite pas d’office une
+ * appartenance qu’un humain a retirée.
+ */
+export async function adoptBindingOperation({
+  projectId, environment, resourceType, resourceId, toOperationId,
+}) {
+  assertBindArguments({ projectId, environment, resourceType, resourceId });
+  const cible = String(toOperationId ?? '').trim();
+  if (!cible) return null;
+
+  const adopte = await PanelStripeResourceBinding.findOneAndUpdate(
+    {
+      projectId, environment, resourceType,
+      resourceId: String(resourceId).trim(),
+      revokedAt: null,
+    },
+    { $set: { createdByOperationId: cible, updatedAt: nowIso() } },
+    { new: true },
+  ).lean();
+
+  if (adopte) {
+    logger.info(
+      `[stripe] lien ${maskResourceId(resourceId)} (${resourceType}) adopté sous `
+      + `« ${cible} » — même ressource, même propriétaire, autorité mise à jour.`,
+    );
+  }
+  return adopte;
+}
+
 export async function describeOwnership({ projectId, environment, resourceType, resourceId }) {
   const base = { allowed: false, resourceType, resourceId: String(resourceId ?? '').trim() };
 
@@ -414,6 +466,7 @@ export default {
   looksLikeResource,
   maskResourceId,
   bindResource,
+  adoptBindingOperation,
   findBinding,
   findBindingByOperation,
   describeOwnership,
