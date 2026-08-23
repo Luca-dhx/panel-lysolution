@@ -104,11 +104,84 @@ export const NETWORK_DECLARATION_SOURCES = Object.freeze({
  * @param {string} [args.declaredAt]  l'horloge du PROJET — informative
  * @returns {boolean} `true` si la fiche a changé.
  */
+/**
+ * ══ UNE ADRESSE « PUBLIQUE » DOIT ÊTRE JOIGNABLE DE L'EXTÉRIEUR ═════════════
+ *
+ * ── LE DÉFAUT OBSERVÉ À LA CERTIFICATION FACTORY ──────────────────────────
+ *
+ * Un projet appairé, lancé en LOCAL par un développeur, déclare au battement
+ * `http://localhost:6090`. Le Panel l'acceptait, la retenait comme adresse
+ * publique, et le service de destinations RETIRAIT le vrai domaine pour la
+ * remplacer par `localhost`.
+ *
+ * Trois conséquences, toutes silencieuses :
+ *   · le Panel rappelait `localhost` — c'est-à-dire lui-même — pour sonder le
+ *     projet ;
+ *   · l'appartenance du nom, qui se lit sur la destination ACTIVE, devenait
+ *     fausse : le DNS automatique refusait le vrai domaine du projet ;
+ *   · la fiche annonçait une adresse que personne au monde ne peut atteindre.
+ *
+ * Avec un parc, n'importe quel développeur qui lance un projet en local détruit
+ * ainsi ce que le Panel sait du domaine de production, sans que rien ne le dise.
+ *
+ * ── POURQUOI REFUSER PLUTÔT QUE CORRIGER ───────────────────────────────────
+ *
+ * La règle qui gouverne déjà cette fonction est « une valeur illisible est
+ * ignorée et l'ancienne reste : mieux vaut une adresse datée qu'une adresse
+ * fausse ». `localhost` n'est pas illisible — elle est LISIBLEMENT FAUSSE, et
+ * le même raisonnement s'applique avec plus de force encore.
+ *
+ * Le projet n'est pas en faute : il dit la vérité sur où il répond. C'est le
+ * Panel qui n'a pas à retenir, comme adresse PUBLIQUE, une adresse qui ne l'est
+ * pas.
+ */
+const HOTES_NON_PUBLICS = [
+  /^localhost$/i,
+  /^127\./,
+  /^0\.0\.0\.0$/,
+  /^\[?::1\]?$/,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,
+  /\.local$/i,
+  /\.localhost$/i,
+  /\.internal$/i,
+];
+
+/** Cette adresse peut-elle être atteinte depuis l'extérieur ? */
+export function isPubliclyRoutableBackendUrl(url) {
+  let hote;
+  try { hote = new URL(String(url)).hostname; } catch { return false; }
+  if (!hote) return false;
+  if (HOTES_NON_PUBLICS.some((re) => re.test(hote))) return false;
+  /**
+   * Un nom sans point n'est pas un nom de domaine : c'est un nom de machine sur
+   * un réseau local. Les adresses IP publiques, elles, en contiennent.
+   */
+  if (!hote.includes('.') && !hote.includes(':')) return false;
+  return true;
+}
+
 export function applyDeclaredNetwork(record, { backendUrl, source, declaredAt = null } = {}) {
   if (!record?.runtime) return false;
 
   const normalisee = normalizeBackendUrl(backendUrl);
   if (!normalisee) return false;
+
+  /**
+   * ON GARDE CE QU'ON SAVAIT. Refuser n'est pas ignorer : le refus est
+   * journalisé, parce qu'un projet qui annonce une adresse privée dit quelque
+   * chose de vrai sur lui — il tourne ailleurs que là où on croit.
+   */
+  if (!isPubliclyRoutableBackendUrl(normalisee)) {
+    logger.warn(
+      `[registry] ${record.projectId} — adresse publique REFUSÉE : « ${normalisee} » `
+      + `n'est pas joignable depuis l'extérieur (${source}). `
+      + `Le Panel conserve ${record.runtime.publicBackendUrl ?? 'aucune adresse'}.`,
+    );
+    return false;
+  }
 
   /**
    * LE BOOTSTRAP NE REVIENT PAS SUR UNE DÉCLARATION VIVANTE.

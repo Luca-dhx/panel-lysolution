@@ -49,6 +49,7 @@ const contract = await import('../backend/src/bridge/bridgeContract.js');
 const registry = await import('../backend/src/services/registry/projectRegistry.service.js');
 const {
   applyDeclaredNetwork,
+  isPubliclyRoutableBackendUrl,
   NETWORK_DECLARATION_SOURCES,
 } = await import('../backend/src/services/registry/projectNetworkDeclaration.js');
 const registryStore = (await import('../backend/src/services/registry/registryStore.js')).default;
@@ -308,6 +309,69 @@ section('8. L’ADRESSE EST DATÉE À LA RÉCEPTION, jamais sur l’horloge du p
     fiche.runtime.publicBackendUrlUpdatedAt !== horlogeFolle);
   check('…il est récent — c’est l’instant où le Panel l’a appris',
     Date.now() - new Date(fiche.runtime.publicBackendUrlUpdatedAt).getTime() < 10_000);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('UNE ADRESSE « PUBLIQUE » DOIT ÊTRE JOIGNABLE DE L’EXTÉRIEUR');
+{
+  /**
+   * ══ LE DÉFAUT OBSERVÉ À LA CERTIFICATION FACTORY ═══════════════════════
+   *
+   * Un projet appairé, lancé EN LOCAL par un développeur, déclare au battement
+   * `http://localhost:6090`. Le Panel l'acceptait comme adresse publique, et le
+   * service de destinations retirait le VRAI domaine pour la remplacer.
+   *
+   * Trois conséquences, toutes silencieuses : le Panel sondait `localhost`
+   * — c'est-à-dire lui-même ; l'appartenance du nom, qui se lit sur la
+   * destination ACTIVE, devenait fausse et le DNS automatique refusait le
+   * domaine du projet ; et la fiche annonçait une adresse que personne au
+   * monde ne peut atteindre.
+   *
+   * Avec un parc, n'importe quel développeur lançant un projet en local
+   * détruit ainsi ce que le Panel sait du domaine de production.
+   */
+  for (const refusee of [
+    'http://localhost:6090', 'https://127.0.0.1:8080', 'http://0.0.0.0:3000',
+    'https://10.1.2.3', 'https://192.168.1.10', 'https://172.16.0.9',
+    'https://169.254.1.1', 'https://poste-de-luca.local', 'https://api.internal',
+  ]) {
+    check(`refusée : ${refusee}`, !isPubliclyRoutableBackendUrl(refusee));
+  }
+  for (const acceptee of [ACTUEL, ANCIEN, 'https://195.35.0.211', 'https://api.factory.ly-solution.com']) {
+    check(`acceptée : ${acceptee}`, isPubliclyRoutableBackendUrl(acceptee));
+  }
+
+  /* ── ET SURTOUT : CE QU'ON SAVAIT N'EST PAS PERDU ────────────────────── */
+  const fiche = await ficheNeuve('projet-local');
+  applyDeclaredNetwork(fiche, { backendUrl: ACTUEL, source: NETWORK_DECLARATION_SOURCES.BOOTSTRAP });
+  check('le vrai domaine est retenu', fiche.runtime.publicBackendUrl === ACTUEL);
+  const horodatage = fiche.runtime.publicBackendUrlUpdatedAt;
+
+  const change = applyDeclaredNetwork(fiche, {
+    backendUrl: 'http://localhost:6090', source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
+  });
+  check('une déclaration LOCALE est REFUSÉE', change === false);
+  check('…et le vrai domaine est CONSERVÉ', fiche.runtime.publicBackendUrl === ACTUEL);
+  check('…la source n’est pas réécrite', fiche.runtime.publicBackendUrlSource === 'BOOTSTRAP');
+  check('…ni l’horodatage : rien n’a été appris', fiche.runtime.publicBackendUrlUpdatedAt === horodatage);
+
+  /**
+   * Un projet qui n'a JAMAIS déclaré d'adresse n'en gagne pas une fausse : le
+   * refus ne pose rien, il conserve ce qui existe — c'est-à-dire rien.
+   */
+  const vierge = await ficheNeuve('projet-vierge');
+  check('un projet sans adresse n’en reçoit pas une locale',
+    applyDeclaredNetwork(vierge, {
+      backendUrl: 'http://localhost:6090', source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
+    }) === false
+    && !vierge.runtime.publicBackendUrl);
+
+  /** Et un vrai déménagement reste possible : la garde ne fige rien. */
+  check('un vrai changement de domaine passe toujours',
+    applyDeclaredNetwork(fiche, {
+      backendUrl: FIXTURE_B, source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
+    }) === true
+    && fiche.runtime.publicBackendUrl === FIXTURE_B);
 }
 
 await stopMemoryMongo();
