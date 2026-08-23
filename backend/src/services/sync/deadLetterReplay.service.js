@@ -117,44 +117,41 @@ export async function replayDeadLetter({ projectId, writeId, actor = null } = {}
   const precedents = await PanelDeadLetterReplay.countDocuments({ projectId, replayOfWriteId: writeId });
 
   /**
-   * ── LA REPUBLICATION ──────────────────────────────────────────────────────
+   * ══ ON RÉSERVE AVANT DE PUBLIER, ET C'EST L'ORDRE QUI COMPTE ═════════════
    *
-   * `audience` est FORCÉE au projet demandeur, même si l'originale était une
-   * diffusion : on répare le blocage d'UN projet, pas de tout le parc. Les
-   * autres, s'ils l'ont appliquée, n'ont rien à recevoir.
-   */
-  const nouvelle = await emitChange({
-    entityType: origine.change.entityType,
-    entityId: origine.change.entityId,
-    deleted: origine.change.deleted === true,
-    payload: origine.change.payload ?? null,
-    modifiedAt: origine.change.modifiedAt,
-    audience: projectId,
-  });
-
-  /**
-   * ── LA TRACE, ÉCRITE APRÈS LA REPUBLICATION ──────────────────────────────
+   * La première version publiait puis écrivait la trace, en laissant l'index
+   * unique refuser la seconde. Le double clic rendait bien UN seul rejeu
+   * logique — mais DEUX entrées au journal, la perdante partant quand même
+   * vers le projet. Mesuré sur la pile déployée : `EN ATTENTE 2` pour un seul
+   * geste, et trois applications au lieu de deux.
    *
-   * Et c'est l'index unique qui rend le double clic inoffensif : deux demandes
-   * simultanées produisent deux `emitChange`, mais une seule trace survit.
-   * L'autre est refusée en E11000, et sa republication devient une entrée de
-   * journal inerte que le projet appliquera de façon idempotente — le prix
-   * d'une garantie portée par la base plutôt que par une lecture préalable.
+   * Inoffensif — les applicateurs sont idempotents — mais faux : un opérateur
+   * qui clique deux fois ne demande pas deux livraisons. On réserve donc la
+   * trace D'ABORD. Le perdant est refusé AVANT d'avoir publié quoi que ce
+   * soit, et il n'y a jamais qu'une entrée au journal.
    */
   const replayId = crypto.randomUUID();
+  const demandeA = nowIso();
   try {
     await PanelDeadLetterReplay.create({
       replayId,
       projectId,
       replayOfWriteId: writeId,
       replayOfSeq: origine.seq ?? null,
-      newWriteId: nouvelle.change.writeId,
-      newSeq: nouvelle.seq,
+      /**
+       * L'identité de la republication n'existe pas encore : la réservation
+       * porte des valeurs provisoires, remplacées dès l'émission faite. Les
+       * laisser vides ferait échouer la validation du modèle, et un modèle
+       * permissif « le temps de la réservation » finirait par tolérer une
+       * trace sans republication.
+       */
+      newWriteId: `en-attente:${replayId}`,
+      newSeq: -1,
       entityType: origine.change.entityType,
       entityId: origine.change.entityId,
       attempt: precedents + 1,
       status: REPLAY_STATUS.REPUBLISHED,
-      requestedAt: nowIso(),
+      requestedAt: demandeA,
       requestedBy: actor?.userEmail ?? actor?.userId ?? null,
     });
   } catch (err) {
@@ -170,6 +167,40 @@ export async function replayDeadLetter({ projectId, writeId, actor = null } = {}
     }
     throw err;
   }
+
+  /**
+   * ── LA REPUBLICATION ──────────────────────────────────────────────────────
+   *
+   * `audience` est FORCÉE au projet demandeur, même si l'originale était une
+   * diffusion : on répare le blocage d'UN projet, pas de tout le parc. Les
+   * autres, s'ils l'ont appliquée, n'ont rien à recevoir.
+   */
+  let nouvelle;
+  try {
+    nouvelle = await emitChange({
+      entityType: origine.change.entityType,
+      entityId: origine.change.entityId,
+      deleted: origine.change.deleted === true,
+      payload: origine.change.payload ?? null,
+      modifiedAt: origine.change.modifiedAt,
+      audience: projectId,
+    });
+  } catch (err) {
+    /**
+     * L'ÉMISSION A ÉCHOUÉ — on retire la réservation.
+     *
+     * La laisser bloquerait tout rejeu futur de cette écriture, pour une
+     * republication qui n'a jamais eu lieu. Une réservation qui survit à son
+     * échec est un verrou orphelin.
+     */
+    await PanelDeadLetterReplay.deleteOne({ replayId }).catch(() => null);
+    throw err;
+  }
+
+  await PanelDeadLetterReplay.updateOne(
+    { replayId },
+    { $set: { newWriteId: nouvelle.change.writeId, newSeq: nouvelle.seq } },
+  );
 
   logger.info(
     `[replay] ${projectId} : ${origine.change.entityType}/${origine.change.entityId} republié `
@@ -187,7 +218,7 @@ export async function replayDeadLetter({ projectId, writeId, actor = null } = {}
     entityId: origine.change.entityId,
     attempt: precedents + 1,
     status: REPLAY_STATUS.REPUBLISHED,
-    requestedAt: nowIso(),
+    requestedAt: demandeA,
   });
 }
 

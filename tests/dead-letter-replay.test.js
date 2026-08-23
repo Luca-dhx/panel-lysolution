@@ -142,7 +142,17 @@ section('2. LE CURSEUR N’EST JAMAIS REMIS EN ARRIÈRE');
     !/recordCursor|pullCursor\s*[:=]|cursor\s*=/.test(code));
   check('…il ne fait que le LIRE pour acquitter',
     /cursorSeq/.test(code) && /newSeq: \{ \$lte: cursorSeq \}/.test(code));
-  check('…et n’écrit rien chez le projet', !/updateOne|deleteOne|deleteMany/.test(code));
+  /**
+   *  et  portent ici sur la TRACE DE REJEU du Panel —
+   * la réservation, complétée après l'émission ou retirée si elle échoue. Ce
+   * qu'on vérifie est qu'aucune écriture ne vise l'état du PROJET : ni son
+   * curseur, ni ses lettres mortes, ni ses compteurs.
+   */
+  check('…et n’écrit rien de l’état du PROJET',
+    !/consumptionStore|deadLetters\s*[:=]|applyFailures/.test(code));
+  check('…ses seules écritures visent sa propre trace de rejeu',
+    [...code.matchAll(/(?:await\s+)?([A-Za-z]+)\.(?:updateOne|deleteOne|create)\(/g)]
+      .every((m) => m[1] === 'PanelDeadLetterReplay'));
   check('il ne fait qu’émettre au journal', /emitChange\(/.test(code));
 }
 
