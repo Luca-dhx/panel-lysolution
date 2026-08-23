@@ -28,7 +28,9 @@ import {
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { readProjectAccounts } from '../services/registry/projectAccounts.service.js';
 import { readProjectDeadLetters } from '../services/registry/projectDeadLetters.service.js';
-import { replayDeadLetter, listReplays } from '../services/sync/deadLetterReplay.service.js';
+import {
+  replayDeadLetter, listReplays, settleAcknowledgedReplays,
+} from '../services/sync/deadLetterReplay.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 import {
   clientCompanyOfProject,
@@ -77,6 +79,23 @@ export async function accounts(req, res) {
 }
 
 /**
+ * LE CURSEUR EST OPAQUE POUR LE PROJET, PAS POUR NOUS.
+ *
+ * C'est le Panel qui l'émet — une séquence de journal encodée. Le décoder ici
+ * n'est pas une indiscrétion : c'est relire notre propre production, exactement
+ * comme le fait la mesure de retard de la supervision.
+ */
+function decodeCursorSeq(cursor) {
+  if (typeof cursor !== 'string' || cursor === '') return 0;
+  try {
+    const clair = Buffer.from(cursor, 'base64url').toString('utf8');
+    return /^\d+$/.test(clair) ? Number(clair) : NaN;
+  } catch {
+    return NaN;
+  }
+}
+
+/**
  * `GET /api/projects/:projectId/dead-letters` — CE QUE LE PROJET A GARÉ.
  *
  * Lecture VIVANTE chez le projet, plus les rejeux déjà demandés par le Panel.
@@ -86,6 +105,30 @@ export async function accounts(req, res) {
 export async function deadLetters(req, res) {
   const record = await getProjectOrThrow(req.params.projectId);
   const lecture = await readProjectDeadLetters(record);
+
+  /**
+   * ══ ON ACQUITTE À LA LECTURE, PARCE QUE PERSONNE D'AUTRE NE LE FERA ═════
+   *
+   * Le curseur du projet EST l'accusé : dès qu'il dépasse la séquence d'un
+   * rejeu, ce rejeu a été appliqué. Mais rien n'écoute ce curseur — il arrive
+   * au battement, et le battement ne connaît pas les rejeux.
+   *
+   * Sans cette ligne, un rejeu consommé restait « en vol » à l'écran pour
+   * toujours, et l'index de double clic interdisait tout nouveau rejeu de la
+   * même écriture. Mesuré sur la pile déployée : curseur à 130, rejeu de
+   * séquence 128 toujours REPUBLISHED.
+   *
+   * À LA LECTURE, et non par un minuteur : c'est le moment où quelqu'un
+   * regarde, donc le seul où la fraîcheur a une valeur.
+   */
+  const curseur = decodeCursorSeq(
+    record?.runtime?.bridgeStats?.consumption?.cursor ?? null,
+  );
+  if (Number.isFinite(curseur)) {
+    await settleAcknowledgedReplays({ projectId: record.projectId, cursorSeq: curseur })
+      .catch(() => null);
+  }
+
   const rejeux = await listReplays({ projectId: record.projectId });
   res.set('Cache-Control', 'no-store, must-revalidate');
   return ok(res, { ...lecture, replays: rejeux });
