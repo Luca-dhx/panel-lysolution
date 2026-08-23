@@ -682,6 +682,41 @@ function DeveloperTab({
         écran entier. Chacun dit lequel il est, et de qui il tient son
         information — le Panel, ou le projet.
       */}
+      {/*
+        ── DEUX RUNTIMES DÉCLARENT CE PROJET ──────────────────────────────────
+        Posé AVANT la santé de synchronisation, parce qu'il la relativise
+        entièrement : tant que deux logiciels parlent, chaque voyant décrit
+        l'un OU l'autre, en alternance, sans qu'on sache lequel.
+
+        Le Panel n'en élit aucun — le jeton de pont est la seule identité, et
+        deux détenteurs légitimes sont indiscernables. Il nomme ; un humain
+        tranche. Même doctrine que l'enlisement d'un rejeu.
+      */}
+      {d.rivalRuntime ? (
+        <div className="alert alert-warning">
+          <p>
+            <strong>Deux runtimes déclarent ce projet.</strong> Les informations
+            ci-dessous décrivent tantôt l’un, tantôt l’autre.
+          </p>
+          <ul className="alert-list">
+            {d.rivalRuntime.identities.map((i, n) => (
+              <li key={`${i.softwareVersion ?? 'inconnu'}-${n}`}>
+                version logicielle <code className="inline-code">{i.softwareVersion ?? 'inconnue'}</code>
+                {' '}— vue le {formatDateTime(i.at)}
+              </li>
+            ))}
+          </ul>
+          <p className="muted">
+            {d.rivalRuntime.alternations} bascule(s) observée(s) depuis le{' '}
+            {formatDateTime(d.rivalRuntime.detectedAt)}. Cause habituelle : une
+            instance de développement lancée en local avec le jeton de pont de ce
+            projet. Le Panel ne peut pas la refuser — c’est ce même jeton qui
+            permet de redéployer sans réappairer. Arrêtez celle qui n’a pas lieu
+            d’être ; le constat se referme seul ensuite.
+          </p>
+        </div>
+      ) : null}
+
       <Card title="Santé de synchronisation">
         {/*
           QUATRE FAITS, QUATRE OUI/NON — et pas une chaîne de génération.

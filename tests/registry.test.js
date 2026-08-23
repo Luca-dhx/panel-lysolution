@@ -395,5 +395,117 @@ section('Le code d’appairage n’est consommé QU’AU succès, et une seule f
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LIGNÉE DE RUNTIME — un redémarrage n’est pas une rivalité');
+{
+  const { observerBattement, prolonge } = await import(
+    '../backend/src/services/registry/runtimeLineage.js');
+
+  const T0 = Date.parse('2026-08-23T10:00:00.000Z');
+  const t = (s) => new Date(T0 + s * 1000).toISOString();
+
+  /* ── Une seule instance : la lignée se prolonge, rien n’est signalé ────── */
+  let e = { lignee: null, ecartee: null, rival: null };
+  e = observerBattement({ ...e, battement: { softwareVersion: 'abc1234', uptimeSeconds: 1000, at: t(0) } });
+  check('le premier battement pose la lignée', e.lignee.uptimeSeconds === 1000);
+  check('…sans rien conclure', e.rival === null && e.evenement === null);
+
+  e = observerBattement({ ...e, battement: { softwareVersion: 'abc1234', uptimeSeconds: 1060, at: t(60) } });
+  check('un battement cohérent la PROLONGE', e.rival === null && e.lignee.uptimeSeconds === 1060);
+  check('…et n’écarte rien', e.ecartee === null);
+
+  /* ── Un REDÉMARRAGE : le compteur repart, et rien n’est signalé ────────── */
+  e = observerBattement({ ...e, battement: { softwareVersion: 'def5678', uptimeSeconds: 5, at: t(120) } });
+  check('UN REDÉMARRAGE n’est pas une rivalité', e.rival === null, JSON.stringify(e.rival));
+  check('…la lignée précédente est mise de côté, pas jetée', e.ecartee?.uptimeSeconds === 1060);
+  e = observerBattement({ ...e, battement: { softwareVersion: 'def5678', uptimeSeconds: 65, at: t(180) } });
+  check('…et la nouvelle se prolonge normalement', e.rival === null && e.lignee.uptimeSeconds === 65);
+  check('…l’ancienne, jamais revenue, est oubliée', e.ecartee === null);
+
+  /* ── DEUX RUNTIMES : la lignée abandonnée RESSUSCITE ───────────────────── */
+  let r = { lignee: null, ecartee: null, rival: null };
+  r = observerBattement({ ...r, battement: { softwareVersion: 'deploye', uptimeSeconds: 3000, at: t(0) } });
+  r = observerBattement({ ...r, battement: { softwareVersion: 'local', uptimeSeconds: 90000, at: t(30) } });
+  check('la seconde déclaration ne prolonge rien : on met de côté', r.rival === null);
+  r = observerBattement({ ...r, battement: { softwareVersion: 'deploye', uptimeSeconds: 3060, at: t(60) } });
+  check('LA LIGNÉE ABANDONNÉE RESSUSCITE → DEUX RUNTIMES', r.rival !== null);
+  check('…l’événement est levé UNE fois', r.evenement === 'RIVAL_DETECTE');
+  check('…les deux identités sont nommées',
+    r.rival.identities.map((i) => i.softwareVersion).sort().join(',') === 'deploye,local');
+  check('…et le compte de bascules démarre à 1', r.rival.alternations === 1);
+
+  r = observerBattement({ ...r, battement: { softwareVersion: 'local', uptimeSeconds: 90060, at: t(90) } });
+  r = observerBattement({ ...r, battement: { softwareVersion: 'deploye', uptimeSeconds: 3120, at: t(120) } });
+  check('les bascules suivantes montent le compte', r.rival.alternations === 3, `${r.rival.alternations}`);
+  check('…sans relever l’événement à chaque tour', r.evenement === null);
+
+  /* ── LA RIVALE DISPARAÎT : le constat se referme ───────────────────────── */
+  let seul = r;
+  const oublis = [];
+  for (const s of [180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780]) {
+    seul = observerBattement({ ...seul, battement: { softwareVersion: 'deploye', uptimeSeconds: 3000 + s, at: t(s) } });
+    if (seul.evenement) oublis.push({ s, e: seul.evenement });
+  }
+  check('la rivale n’étant plus revenue, le constat se REFERME', seul.rival === null);
+  check('…et l’oubli est un événement, pas un silence',
+    oublis.length === 1 && oublis[0].e === 'RIVAL_OUBLIE', JSON.stringify(oublis));
+  check('…prononcé une SEULE fois, pas à chaque battement ensuite', oublis.length === 1);
+
+  /* ── SANS TEMPS DE FONCTIONNEMENT, ON NE CONCLUT RIEN ──────────────────── */
+  let muet = { lignee: null, ecartee: null, rival: null };
+  muet = observerBattement({ ...muet, battement: { softwareVersion: 'v1', uptimeSeconds: undefined, at: t(0) } });
+  muet = observerBattement({ ...muet, battement: { softwareVersion: 'v2', uptimeSeconds: undefined, at: t(60) } });
+  check('un projet qui ne déclare pas son uptime ne déclenche AUCUNE alerte',
+    muet.rival === null && muet.evenement === null);
+
+  check('la tolérance absorbe une cadence irrégulière',
+    prolonge({ uptimeSeconds: 1000, at: t(0) }, { uptimeSeconds: 1055, at: t(60) }));
+  check('…mais pas un écart de plusieurs heures',
+    !prolonge({ uptimeSeconds: 1000, at: t(0) }, { uptimeSeconds: 90000, at: t(60) }));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LE CONSTAT DE RIVALITÉ REMONTE À LA FICHE, PAS SEULEMENT EN BASE');
+{
+  /**
+   * On relit LA FICHE ENCORE PRÉSENTE au registre : les sections précédentes
+   * révoquent et ré-appairent, et s'accrocher à un identifiant capturé au début
+   * ferait échouer ce test pour une raison qui n'est pas la sienne.
+   */
+  const toutes = await registryStore.list();
+  const record = toutes[0];
+  check('une fiche est disponible pour cette section', Boolean(record?.projectId));
+  const battement = (softwareVersion, uptimeSeconds) => ({
+    sentAt: new Date().toISOString(),
+    softwareVersion,
+    environment: 'TEST',
+    health: { status: 'OK', details: null },
+    bridgeStats: { outboxSize: 0 },
+    runtime: { uptimeSeconds },
+  });
+
+  await registry.recordHeartbeat(record, battement('deploye', 3000), '1.13.0');
+  await registry.recordHeartbeat(record, battement('local', 90000), '1.10.0');
+  await registry.recordHeartbeat(record, battement('deploye', 3001), '1.13.0');
+
+  check('la fiche PORTE le constat', record.runtime.rivalRuntime !== null);
+  const vue = registry.toPublicProject(record, Date.now());
+  check('…et la projection publique le rend',
+    vue.descriptor.rivalRuntime?.identities?.length === 2);
+  check('…avec le nombre de bascules', vue.descriptor.rivalRuntime.alternations >= 1);
+  check('…sans jeton ni adresse dans le constat',
+    !JSON.stringify(vue.descriptor.rivalRuntime).toLowerCase().includes('token')
+    && !JSON.stringify(vue.descriptor.rivalRuntime).includes('http'));
+
+  /**
+   * ── ET LA VERSION DE CONTRAT SUIT LE DERNIER QUI A PARLÉ ────────────────
+   *
+   * C'est exactement ce qui rendait le défaut invisible : chaque battement
+   * était valide, et la fiche affichait paisiblement l'état de l'un ou de
+   * l'autre. Elle le dit MAINTENANT.
+   */
+  check('la version reflète le dernier battement', record.runtime.contractVersion === '1.13.0');
+}
+
 await stopMemoryMongo();
 finish();

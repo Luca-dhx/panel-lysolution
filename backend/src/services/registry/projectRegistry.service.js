@@ -8,6 +8,7 @@ import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import registryStore from './registryStore.js';
+import { observerBattement } from './runtimeLineage.js';
 import {
   NETWORK_DECLARATION_SOURCES,
   applyDeclaredNetwork,
@@ -344,6 +345,21 @@ export async function updateManifest(projectId, manifestInput) {
   record.manifest = validation.manifest;
   record.manifestSource = 'MANUAL';
   await registryStore.save(record);
+
+  /**
+   * LE CONSTAT EST JOURNALISÉ UNE FOIS, À SA NAISSANCE — pas à chaque bascule.
+   *
+   * Une chronologie qui répéterait « deux runtimes » toutes les minutes
+   * deviendrait illisible, et c'est justement là qu'on cherche QUAND cela a
+   * commencé. Le compte d'alternances, lui, continue de monter sur la fiche.
+   */
+  if (observation.evenement === 'RIVAL_DETECTE') {
+    logger.warn(
+      `[runtime] ${record.projectId} : DEUX RUNTIMES déclarent ce projet — `
+      + `${observation.rival.identities.map((i) => i?.softwareVersion ?? '?').join(' et ')}. `
+      + 'Le Panel ne peut en élire aucun : le jeton de pont est la seule identité.',
+    );
+  }
   return { record, unknownFeatures: validation.unknownFeatures };
 }
 
@@ -405,6 +421,33 @@ export async function removeProject(projectId) {
 
 // Enregistre un heartbeat (fiche déjà authentifiée par le middleware de pont).
 export async function recordHeartbeat(record, heartbeat, contractVersion = null) {
+  /**
+   * ══ QUI PARLE, AU JUSTE ? ════════════════════════════════════════════════
+   *
+   * AVANT d'écraser quoi que ce soit : la fiche porte encore la déclaration
+   * PRÉCÉDENTE, et c'est le seul instant où l'on peut les comparer.
+   *
+   * Deux instances tenant le même jeton de pont sont, pour le Panel, le même
+   * projet — c'est ce qui permet de redéployer sans réappairer. Elles peuvent
+   * donc battre toutes les deux, et la fiche affiche alors, en alternance et
+   * sans le dire, l'état de deux logiciels différents. C'est arrivé.
+   *
+   * On ne peut en refuser aucune sans un critère qu'on n'a pas. On NOMME.
+   */
+  const observation = observerBattement({
+    lignee: record.runtime.lineage ?? null,
+    ecartee: record.runtime.lineageSetAside ?? null,
+    rival: record.runtime.rivalRuntime ?? null,
+    battement: {
+      softwareVersion: heartbeat.softwareVersion,
+      uptimeSeconds: heartbeat.runtime?.uptimeSeconds,
+      at: nowIso(),
+    },
+  });
+  record.runtime.lineage = observation.lignee;
+  record.runtime.lineageSetAside = observation.ecartee;
+  record.runtime.rivalRuntime = observation.rival;
+
   record.runtime.environment = heartbeat.environment;
   record.runtime.softwareVersion = heartbeat.softwareVersion;
   /**
@@ -940,6 +983,21 @@ export function describeProject(record) {
      * moment où elle change plutôt qu'au moment où on la regarde.
      */
     consumption: describeConsumptionDeclaration(runtime),
+    /**
+     * DEUX RUNTIMES POUR UN SEUL PROJET — remonté À LA FICHE, pas laissé en base.
+     *
+     * C'est le genre d'état qui n'existait que dans Mongo : la supervision
+     * affichait paisiblement la déclaration du dernier qui avait parlé. Un
+     * exploitant doit pouvoir le voir sans ouvrir une base.
+     */
+    rivalRuntime: runtime.rivalRuntime
+      ? {
+        detectedAt: runtime.rivalRuntime.detectedAt,
+        lastSeenAt: runtime.rivalRuntime.lastSeenAt,
+        alternations: runtime.rivalRuntime.alternations ?? 0,
+        identities: runtime.rivalRuntime.identities ?? [],
+      }
+      : null,
   };
 }
 

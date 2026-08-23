@@ -65,6 +65,53 @@ ProjectRecord
    ne l'invente jamais.
 3. `manifest` peut être `null` : un projet sans Manifest est un projet valide
    (capacités inconnues → le Panel n'affiche que le socle commun).
+4. **La version de contrat est un état RUNTIME, pas un état d'appairage.**
+   `pairing` fige ce qui a été observé le jour de l'appairage ;
+   `runtime.contractVersion` dit ce qui est **parlé maintenant**. Elle voyage
+   dans l'en-tête `x-bridge-contract-version` de **chaque** requête, où la garde
+   de compatibilité la lit déjà — aucun champ n'a été ajouté au corps du
+   battement, ce qui aurait créé une seconde source de vérité. Un projet monté
+   de 1.12 à 1.13 converge donc au premier battement : sans réappairage, sans
+   intervention en base, sans redémarrage du Panel. `null` ne remplace jamais
+   une valeur connue : l'absence d'information n'est pas l'information
+   « aucune version ». **La supervision décrit le vivant : elle lit
+   `runtime.contractVersion`.**
+
+### Deux runtimes pour un seul projet
+
+Le jeton de pont **est** l'identité. Deux processus qui le détiennent sont, pour
+le Panel, le même projet — et c'est voulu : c'est ce qui permet de redéployer
+sans réappairer.
+
+Conséquence observée en recette : une instance locale oubliée, sur du code
+périmé, battait vers le Panel de recette une fois par minute avec le jeton du
+projet déployé. La fiche affichait donc, **en alternance et sans le dire**,
+l'état de deux logiciels différents — elle annonçait un contrat 1.10.0 pendant
+que l'instance déployée parlait 1.13.0, et le mécanisme de convergence était
+pourtant correct. Chaque battement, pris isolément, était parfaitement valide :
+aucun écran ne pouvait révéler le problème.
+
+Le Panel **n'en élit aucun** — il lui faudrait un critère qu'il n'a pas, et le
+mauvais choix couperait un projet légitime. Il **détecte et nomme** ; un humain
+tranche. Même doctrine que l'enlisement d'un rejeu.
+
+**Comment on distingue un redémarrage d'une rivalité** — par la monotonie. Le
+temps de fonctionnement d'un runtime ne fait que croître ; un redémarrage le
+remet près de zéro et il recroît depuis là, et **une lignée abandonnée ne revient
+jamais**. Deux instances qui alternent font l'inverse : la lignée qu'on croyait
+morte **ressuscite** au battement suivant, avec un temps de fonctionnement
+cohérent avec sa propre histoire. C'est cette résurrection — et elle seule — qui
+prouve que deux logiciels vivent en même temps.
+
+Aucun champ n'a été ajouté au contrat : `softwareVersion` et
+`runtime.uptimeSeconds` sont déjà déclarés et suffisent. Un projet qui ne déclare
+pas son temps de fonctionnement ne déclenche **aucune** alerte — deviner à partir
+du seul numéro de version inventerait une rivalité à chaque redéploiement, et une
+alerte qui se trompe est une alerte qu'on apprend à ignorer.
+
+Le constat vit sur `runtime.rivalRuntime`, remonte à la projection publique et
+s'affiche en tête de l'onglet développeur. Il se referme seul lorsque la rivale
+n'est plus revenue depuis dix minutes.
 
 ## 3. Cycle de vie dans le registre
 

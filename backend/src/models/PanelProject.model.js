@@ -26,6 +26,22 @@ const runtimeSchema = new mongoose.Schema(
     softwareVersion: { type: String, default: null },
     contractVersion: { type: String, default: null },
     /**
+     * QUI PARLE — la lignée de runtime retenue, et celle qu'on a écartée.
+     *
+     * `Mixed` parce que ce sont des constats d'observation, pas un modèle
+     * métier : trois champs plats, remplacés en bloc à chaque battement.
+     */
+    lineage: { type: mongoose.Schema.Types.Mixed, default: null },
+    lineageSetAside: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
+     * DEUX RUNTIMES POUR UN SEUL PROJET — non nul = constat POSÉ.
+     *
+     * Le Panel n'en élit aucun : le jeton de pont est la seule identité, et
+     * deux détenteurs légitimes sont indiscernables. Il nomme, un humain
+     * tranche — même doctrine que l'enlisement d'un rejeu.
+     */
+    rivalRuntime: { type: mongoose.Schema.Types.Mixed, default: null },
+    /**
      * L'ADRESSE PUBLIQUE DE L'API — VIVANTE depuis le contrat 1.9.0.
      *
      * ══ CE QU'ELLE ÉTAIT, ET POURQUOI C'ÉTAIT FAUX ═══════════════════════════

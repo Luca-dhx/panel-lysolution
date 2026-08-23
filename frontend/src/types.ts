@@ -475,6 +475,21 @@ export interface ProjectDescriptor {
     lastActivityAt: string;
     manifestUpdatedAt: string | null;
   };
+  /**
+   * DEUX RUNTIMES DÉCLARENT CE PROJET — non nul = constat posé par le Panel.
+   *
+   * Le jeton de pont EST l'identité : deux détenteurs légitimes sont
+   * indiscernables, et le Panel n'en élit aucun. Il nomme, un humain tranche.
+   * Sans ce champ, la fiche affiche paisiblement, en alternance, l'état de deux
+   * logiciels différents — chaque battement pris isolément étant valide.
+   */
+  rivalRuntime: {
+    detectedAt: string;
+    lastSeenAt: string;
+    /** Combien de bascules observées. Il monte : la rivalité dure. */
+    alternations: number;
+    identities: Array<{ softwareVersion: string | null; at: string }>;
+  } | null;
 }
 
 /**
