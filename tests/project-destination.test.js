@@ -521,5 +521,59 @@ section('LE PANEL NE DÉPLOIE PAS — aucune surface ne le laisse croire');
     /publicBackendUrlSource/.test(fiche) && /publicBackendUrlUpdatedAt/.test(fiche));
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('UNE DESTINATION N’EST JAMAIS UNE ADRESSE PRIVÉE');
+{
+  /**
+   * ══ LE DÉFAUT OBSERVÉ À LA CERTIFICATION FACTORY ═══════════════════════
+   *
+   * Un projet appairé, lancé EN LOCAL, publie une présentation en
+   * `http://localhost:…`. L'annonce était traitée comme une MIGRATION : la
+   * destination réelle passait RETIRED, et `localhost` devenait la destination
+   * ACTIVE du projet.
+   *
+   * Or la destination active fonde l'APPARTENANCE D'UN NOM. Le DNS automatique
+   * refusait donc ensuite le vrai domaine (CAPABILITY_RESOURCE_NOT_OWNED), et
+   * plus rien ne disait pourquoi.
+   *
+   * La garde existe déjà sur l'adresse OPÉRATIONNELLE. Elle vit aussi ici
+   * parce que la destination arrive par un AUTRE canal : une garde posée sur
+   * une seule des deux portes n'est pas une garde.
+   */
+  await PanelProject.deleteMany({});
+  await PanelProjectDestination.deleteMany({});
+  const record = await creerProjet();
+
+  await destinations.announceDestination({
+    record, urls: urlsDe(ANCIEN), source: 'BOOTSTRAP',
+  });
+  const avant = await destinations.activeDestination('p-1', 'TEST');
+  check('le vrai domaine est actif', avant.host === ANCIEN);
+
+  const locale = await destinations.announceDestination({
+    record,
+    urls: {
+      backend: 'http://localhost:6090',
+      manager: 'http://localhost:6091',
+      website: 'http://localhost:6062',
+    },
+    source: 'PRESENTATION',
+  });
+  check('une annonce LOCALE est REFUSÉE', locale.applied === false, JSON.stringify(locale));
+  check('…avec un motif nommé', locale.reason === 'HOTE_NON_PUBLIC', locale.reason);
+
+  const apres = await destinations.activeDestination('p-1', 'TEST');
+  check('LA VRAIE DESTINATION EST CONSERVÉE', apres.host === ANCIEN);
+  check('…et n’a pas été retirée', apres.status === DESTINATION_STATUS.ACTIVE);
+  check('…aucune destination « localhost » n’a été créée',
+    (await PanelProjectDestination.countDocuments({ host: 'localhost' })) === 0);
+
+  /** Une vraie migration reste possible : la garde ne fige rien. */
+  const vraie = await destinations.announceDestination({
+    record, urls: urlsDe(NOUVEAU), source: 'PRESENTATION',
+  });
+  check('une vraie migration passe toujours', vraie.applied !== false, JSON.stringify(vraie).slice(0, 120));
+}
+
 await stopMemoryMongo();
 finish();

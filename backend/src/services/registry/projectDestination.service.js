@@ -32,6 +32,7 @@ import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { currentGeneration } from '../sync/projectGeneration.js';
+import { isPubliclyRoutableBackendUrl } from './projectNetworkDeclaration.js';
 
 /**
  * Les états du cycle de vie, réexportés depuis le modèle : les appelants du
@@ -338,6 +339,11 @@ export async function describeByEnvironment(projectId) {
  * @param {object} args.urls     { website, manager, backend } tels qu'annoncés
  * @param {string} args.source   BOOTSTRAP · PRESENTATION · MANIFEST · REPAIR
  */
+/** La même règle que pour l'adresse opérationnelle, appliquée à un nom d'hôte. */
+function isPubliclyRoutableHostname(host) {
+  return isPubliclyRoutableBackendUrl(`https://${host}`);
+}
+
 export async function announceDestination({ record, urls, source = null, actor = null }) {
   const projectId = record?.projectId;
   const environment = projectEnvironmentOf(record);
@@ -348,6 +354,39 @@ export async function announceDestination({ record, urls, source = null, actor =
   const propres = normalizeUrls(urls);
   const host = destinationHostOf(propres);
   if (!host) return { applied: false, reason: 'AUCUNE_URL_ABSOLUE' };
+
+  /**
+   * ══ UNE DESTINATION N'EST PAS UNE ADRESSE PRIVÉE ══════════════════════════
+   *
+   * ── LE DÉFAUT OBSERVÉ À LA CERTIFICATION FACTORY ────────────────────────
+   *
+   * Un projet appairé, lancé EN LOCAL, publie une présentation dont les URLs
+   * sont `http://localhost:…`. Cette annonce était traitée comme une MIGRATION
+   * ordinaire : la destination réelle passait `RETIRED`, et `localhost`
+   * devenait la destination ACTIVE du projet.
+   *
+   * La destination active est ce qui fonde l'APPARTENANCE D'UN NOM. Le DNS
+   * automatique refusait donc ensuite le vrai domaine du projet
+   * (`CAPABILITY_RESOURCE_NOT_OWNED`), et plus rien ne disait pourquoi.
+   *
+   * ── POURQUOI LA GARDE VIT AUSSI ICI ─────────────────────────────────────
+   *
+   * `applyDeclaredNetwork` refuse déjà une adresse privée sur l'adresse
+   * OPÉRATIONNELLE. Mais la destination arrive par un AUTRE canal — la
+   * projection de présentation — et une garde posée sur une seule des deux
+   * portes n'est pas une garde : c'est une porte fermée à côté d'une porte
+   * ouverte.
+   *
+   * On refuse, on NOMME, et on conserve : un projet en local ne déclare pas
+   * qu'il a déménagé, il dit seulement où il tourne aujourd'hui.
+   */
+  if (!isPubliclyRoutableHostname(host)) {
+    logger.warn(
+      `[destination] ${record.projectName ?? projectId} ${environment} : annonce REFUSÉE — `
+      + `« ${host} » n'est pas joignable depuis l'extérieur. La destination active est conservée.`,
+    );
+    return { applied: false, reason: 'HOTE_NON_PUBLIC' };
+  }
 
   const at = nowIso();
   // La génération D'UNE DESTINATION inclut son hôte — c'est-à-dire celui qu'on
