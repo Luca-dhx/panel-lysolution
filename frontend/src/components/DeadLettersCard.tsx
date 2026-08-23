@@ -155,6 +155,28 @@ export function DeadLettersCard({ projectId }: { projectId: string }) {
     }
   };
 
+  /**
+   * LES REJEUX QU'AUCUNE LETTRE MORTE AFFICHÉE NE PORTE.
+   *
+   * Deux cas, et le second est celui qui compte : le projet est injoignable, et
+   * la liste des lettres mortes est donc vide alors que le Panel, lui, sait
+   * parfaitement ce qu'il a republié. Groupés par écriture d'origine, la plus
+   * récente en tête — l'historique reste entier.
+   */
+  const orphelins = (() => {
+    const visibles = new Set((lecture?.deadLetters ?? []).map((d) => d.writeId));
+    const parEcriture = new Map<string, DeadLetterReplayView[]>();
+    for (const r of lecture?.replays ?? []) {
+      if (visibles.has(r.replayOfWriteId)) continue;
+      const liste = parEcriture.get(r.replayOfWriteId) ?? [];
+      liste.push(r);
+      parEcriture.set(r.replayOfWriteId, liste);
+    }
+    return [...parEcriture.entries()].map(([w, liste]) => [
+      w, [...liste].sort((x, y) => y.requestedAt.localeCompare(x.requestedAt)),
+    ] as [string, DeadLetterReplayView[]]);
+  })();
+
   const actives = lecture?.active ?? 0;
   const enlises = (lecture?.replays ?? []).filter((r) => r.status === 'STALLED').length;
 
@@ -337,6 +359,79 @@ export function DeadLettersCard({ projectId }: { projectId: string }) {
             Un rejeu republie le même fait par le pipeline normal ; il ne rembobine
             aucun curseur et ne contourne aucun applicateur.
           </p>
+        </>
+      ) : null}
+
+      {/*
+        ── LES REJEUX DONT L'ÉCRITURE N'EST PLUS VISIBLE ICI ──────────────────
+        Rendu MÊME quand la lecture du projet a échoué, et c'est tout l'intérêt :
+        un rejeu s'enlise justement quand le projet ne répond plus. Réserver
+        cette liste au cas où le projet va bien l'aurait cachée à la seule
+        minute où elle sert.
+
+        Ces traces appartiennent au PANEL : il les connaît sans demander l'avis
+        de personne. La lettre morte, elle, reste la propriété du projet — c'est
+        pourquoi seule la première moitié de cette carte peut être indisponible.
+      */}
+      {orphelins.length > 0 ? (
+        <>
+          <h4 className="card-subtitle">Rejeux sans écriture garée visible</h4>
+          <p className="muted">
+            {lecture?.available
+              ? 'L’écriture correspondante n’apparaît plus dans la liste du projet.'
+              : 'Le projet est injoignable : voici ce que le Panel a tenté, de son côté.'}
+          </p>
+          <ul className="team-list">
+            {orphelins.map(([writeId, traces]) => {
+              const dernier = traces[0];
+              const occupe = enCours === writeId;
+              return (
+                <li key={writeId} className="team-row dead-letter-row">
+                  <span className="team-row-main">
+                    <span className="team-row-name">
+                      {dernier.entityType ?? 'Écriture'}
+                      {dernier.entityId ? <span className="muted"> · {dernier.entityId}</span> : null}
+                    </span>
+                    <span className="muted">
+                      Rejeu n° {dernier.attempt}, demandé le {formatDateTime(dernier.requestedAt)}
+                      {dernier.stalledAt
+                        ? ` · enlisement constaté le ${formatDateTime(dernier.stalledAt)}`
+                        : null}
+                      {traces.length > 1 ? ` · ${traces.length} tentatives conservées` : null}
+                    </span>
+                  </span>
+                  <span className={ETAT_REJEU[dernier.status].classe}>
+                    {ETAT_REJEU[dernier.status].libelle}
+                  </span>
+                  {/*
+                    UN REJEU ENLISÉ SE RELANCE — c'est la raison d'être de l'état.
+                    Tant qu'il est « en vol », le serveur refuserait ; une fois
+                    acquitté, il n'y a plus rien à réparer.
+                  */}
+                  {dernier.status === 'STALLED' ? (
+                    <button
+                      type="button"
+                      className="btn btn-small btn-primary"
+                      disabled={occupe}
+                      onClick={() => setAConfirmer({
+                        writeId,
+                        entityType: dernier.entityType,
+                        entityId: dernier.entityId,
+                        reason: 'Rejeu précédent jamais consommé.',
+                        attempts: dernier.attempt,
+                        parkedAt: null,
+                        status: 'PARKED',
+                        resolvedAt: null,
+                        resolvedByWriteId: null,
+                      })}
+                    >
+                      {occupe ? 'Rejeu…' : 'Rejouer à nouveau'}
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
         </>
       ) : null}
 

@@ -252,6 +252,17 @@ code {
   margin-bottom: 0.75rem;
 }
 
+/*
+  Un intertitre DANS une carte : plus petit que son titre, détaché du bloc qui
+  précède. Une carte qui répond à deux questions distinctes a besoin de le dire,
+  sinon les deux listes se lisent comme une seule.
+*/
+.card-subtitle {
+  font-size: 0.95rem;
+  margin: var(--p-space-4) 0 var(--p-space-1);
+  color: var(--text);
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
