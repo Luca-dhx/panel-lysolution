@@ -624,6 +624,191 @@ rendra conforme, et cinq cycles perdus à le prouver ne servent personne.
 | livraison immédiate (push) | **non, et c'est voulu** | un accélérateur, jamais la garantie — le journal est le filet |
 | idempotence des livraisons poussées | **oui** depuis ce lot | c'était une `Map` mémoire ; un redémarrage la vidait, et la relivraison rendait `APPLIED` au lieu de `DUPLICATE` |
 
+### Le bail de consommation — qui a le droit de tirer, en ce moment
+
+Le curseur répond à « jusqu'où le projet a appliqué ». Il ne répond pas à
+« qui est en train de consommer ». Cette seconde question n'était pas posée :
+
+> « Le tirage est mono-consommateur **par construction** : un projet est une
+> instance, son curseur est un singleton persisté. »
+
+C'était vrai de la **configuration**, jamais du code. Le magasin de consommation
+du projet est un cache **mémoire par processus**, sauvegardé en écrasant le
+document entier. Deux runtimes du même projet sur la même base, c'est deux
+caches, et le dernier qui écrit gagne :
+
+```
+A tire 1..50, applique, sauvegarde curseur=50
+B (cache à 0) sauvegarde curseur=0         →  RÉGRESSION
+ou B à 100 écrase le curseur RETENU de A   →  écritures SAUTÉES
+```
+
+La seconde est le mensonge du curseur, revenu par une autre porte.
+
+```
+      N runtimes
+          │
+   claim atomique en base
+          │
+      1 consumer actif ──── renouvelle pendant qu'il travaille
+          │
+   pull / apply / curseur
+          │
+   release (arrêt propre)  ou  EXPIRATION (kill -9)
+```
+
+**Le bail n'est pas le curseur, et ils ne se touchent jamais.**
+
+| | rôle | survit à |
+|---|---|---|
+| `leaseOwner` | qui a le droit de consommer maintenant | rien : il expire |
+| `pullCursor` | jusqu'où le projet a réellement appliqué | tout, y compris le bail |
+
+Rendre le bail n'efface pas le curseur : un accusé ne dépend pas de qui l'a
+produit.
+
+#### La réclamation est atomique, et l'unicité en est la condition
+
+Un seul `findOneAndUpdate` : le filtre accepte un bail absent, le nôtre, ou un
+bail **expiré**. Deux runtimes qui réclament ensemble — le second ne matche plus
+rien, tente une insertion, et l'index unique la refuse. **Ce refus est la
+preuve** qu'un autre a gagné.
+
+Mesuré sur une base neuve : sans cet index, deux réclamations concurrentes ont
+créé **deux** documents `SINGLETON`, et les deux runtimes se sont crus
+propriétaires. L'exclusion était purement décorative. Le magasin pose donc
+l'index lui-même à l'hydratation, avant toute réclamation.
+
+#### Le propriétaire périmé ne peut rien acquitter
+
+C'est le cas qui rend le bail nécessaire — pas « deux runtimes démarrent
+ensemble », que la réclamation tranche, mais celui-ci :
+
+```
+A tient le bail  →  A ralentit  →  le bail expire  →  B reprend
+                 →  A finit son travail, SANS SAVOIR qu'il a perdu
+```
+
+Toute écriture d'état est donc **conditionnée à `leaseOwner`, en base** :
+curseur, compteurs d'échec, lettres mortes. C'est Mongo qui refuse, au bon
+instant — une vérification locale pourrait être périmée entre le test et
+l'écriture. Et le cache local est **remis en arrière** quand l'écriture est
+refusée : un cache qui ment est pire qu'une écriture refusée.
+
+La condition s'applique dès qu'un runtime a **tenté** une réclamation, gagnée ou
+perdue. Le perdant n'a pas de bail : si seuls les titulaires étaient
+conditionnés, il écrirait *sans condition* et écraserait le gagnant. Un runtime
+qui n'a jamais réclamé écrit librement — le comportement mono-processus reste
+intact.
+
+#### Durées
+
+| réglage | défaut | variable |
+|---|---|---|
+| durée du bail | 45 s | `BRIDGE_CONSUMER_LEASE_TTL_MS` |
+| renouvellement | TTL / 3 | dérivé |
+
+Un cycle de tirage enchaîne au plus dix pages de cent écritures, chacune
+appliquée par un `upsert` local : les cycles observés se comptent en centaines
+de millisecondes. 45 s est largement au-dessus du pire cas, et bien en dessous
+du délai qu'un exploitant tolérerait avant reprise. Le renouvellement au tiers
+laisse **deux** occasions de rattraper un cycle réseau lent ; à la moitié, il
+n'en resterait qu'une.
+
+#### L'arrêt propre est un confort, jamais la sûreté
+
+Un `kill -9` ne rend rien : c'est l'**expiration** qui débloque. Le drainage
+rend le bail pour éviter d'attendre un TTL, et rien de plus. Un mécanisme dont
+la sûreté reposerait sur un arrêt propre n'aurait de sûreté que le nom.
+
+#### Réappairage
+
+Un projet réappairé parle à un autre journal : son curseur ne veut plus rien
+dire, et le titulaire du bail consommait pour une relation qui n'existe plus.
+`hydrateConsumption` remet donc tout à zéro, **bail compris** — la seule
+écriture qui retire un bail sans en être titulaire, justifiée par un fait
+extérieur.
+
+La génération est une **condition positive** du filtre de réclamation : le bail
+n'est accordé que si le document n'a pas de génération ou porte exactement celle
+demandée. Une première version l'avait écrite comme échappatoire
+(`generation: {$ne: g}`) — elle était **symétrique**, et un runtime resté sur une
+ancienne génération reprenait le bail d'une génération vivante.
+
+### Rejeu d'une lettre morte
+
+Une écriture garée y restait pour toujours : « seule une nouvelle publication la
+ramènera ». Réparer le code ne suffisait pas — il fallait qu'un fait métier soit
+republié par hasard. Un opérateur n'avait aucun geste.
+
+**Ce que le rejeu n'est pas :**
+
+- pas un retour en arrière du curseur — cela relivrerait tout ce qui suit
+  l'écriture garée, des centaines d'applications déjà faites pour en réparer une ;
+- pas un chemin qui contourne les applicateurs — il ne prouverait rien ;
+- pas une suppression de la lettre morte — elle n'est résolue qu'**après**
+  application réelle.
+
+**Ce qu'il est :**
+
+```
+lettre morte  →  on relit le fait canonique AU JOURNAL DU PANEL
+              →  on le republie sous une NOUVELLE séquence, NOUVEAU writeId
+              →  le projet le tire, l'applique, son curseur avance
+              →  il résout lui-même la lettre morte, par identité MÉTIER
+```
+
+Le fait républié est le **même** : `entityType`, `entityId`, `payload`,
+`modifiedAt`. Seule l'identité **technique** change — une écriture déjà dépassée
+par le curseur ne serait jamais reservie sous son ancien identifiant.
+
+`modifiedAt` n'est **pas** rafraîchi : les applicateurs arbitrent au
+dernier-écrit-gagne, et le rafraîchir ferait gagner un fait ancien contre l'état
+courant. On réparerait un blocage en écrasant une vérité plus récente.
+
+#### La causalité vit côté Panel
+
+Le contrat de pont est `.strict()` des deux côtés : y glisser un
+`replayOfWriteId` exigerait une version, sur les deux dépôts, pour une
+information dont le projet n'a **aucun usage**. Elle reste donc chez celui qui
+décide : `PanelDeadLetterReplay` porte `replayOfWriteId`, `replayOfSeq`,
+`newWriteId`, `newSeq`, `attempt`, `requestedAt/By`, `acknowledgedAt`.
+
+Le projet, lui, résout par identité métier `(entityType, entityId)` : « ce qui
+était bloqué sur cette entité est passé », quel que soit le chemin.
+
+#### Double clic
+
+Un index partiel unique sur `(projectId, replayOfWriteId)` **restreint aux
+rejeux encore en vol**. Deux demandes simultanées : une seule trace survit,
+l'autre est refusée en nommant `PANEL_REPLAY_ALREADY_IN_FLIGHT`. Une fois
+acquitté, un second rejeu redevient légitime — une écriture peut se garer deux
+fois.
+
+#### Ce qui est refusé, et nommé
+
+| refus | pourquoi |
+|---|---|
+| `PROJECT_UNKNOWN` | pas au registre |
+| `PROJECT_NOT_PAIRED` | republier n'aurait aucun destinataire — un déchet qui compterait comme retard pour toujours |
+| `WRITE_UNKNOWN` | jamais émise par ce Panel |
+| `NOT_FOR_THIS_PROJECT` | écriture nommée pour un autre projet — le chemin par lequel on ferait fuiter la donnée d'un client |
+| `ALREADY_IN_FLIGHT` | un rejeu attend encore d'être consommé |
+
+#### Un rejeu peut échouer à son tour
+
+La nouvelle écriture se gare comme n'importe quelle autre, et **l'ancienne
+lettre morte n'est pas faussement résolue**. Deux garées pour la même entité :
+la causalité reste lisible, et aucune boucle automatique ne se déclenche.
+
+#### L'historique n'est jamais effacé
+
+Une lettre morte résolue passe en `RESOLVED`, datée, nommant la republication
+qui l'a débloquée. Elle **ne disparaît pas** : supprimer l'entrée effacerait
+l'incident, et on ne saurait plus qu'une écriture avait été perdue ni combien de
+temps. Seules les `PARKED` comptent dans `parkedChanges` — un compte permanent
+serait une alerte que tout le monde apprendrait à ignorer.
+
 ### Le projet ne détient aucune clé de fournisseur
 
 Il ne reçoit ni identifiant Stripe, ni autorité fournisseur, ni droit de relire

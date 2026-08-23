@@ -5,6 +5,8 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
   accounts,
+  deadLetters,
+  replayDeadLetterHandler,
   declare,
   cancelContract,
   contractDocument,
@@ -57,6 +59,20 @@ router.post(
  * fenêtre sur l'autorité voisine, pas une prise de contrôle.
  */
 router.get('/:projectId/accounts', requirePanelDev, asyncHandler(accounts));
+
+/**
+ * ÉCRITURES GARÉES — lecture pour les comptes DEV, rejeu aussi.
+ *
+ * Republier un fait vers un projet est un acte d'INFRASTRUCTURE : il fait
+ * apparaître une écriture dans le flux durable d'un client. La lecture l'est
+ * tout autant — elle nomme des entités métier d'un projet tiers.
+ */
+router.get('/:projectId/dead-letters', requirePanelDev, asyncHandler(deadLetters));
+router.post(
+  '/:projectId/dead-letters/:writeId/replay',
+  requirePanelDev,
+  asyncHandler(replayDeadLetterHandler),
+);
 router.post('/probe', requirePanelDev, asyncHandler(probe));
 
 router.post('/', requirePanelDev, asyncHandler(declare));

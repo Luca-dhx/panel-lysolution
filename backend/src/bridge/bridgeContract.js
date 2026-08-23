@@ -63,7 +63,7 @@ import { z } from 'zod';
 //   champ inconnu fait refuser le message ENTIER. Le projet ne les publie donc
 //   qu'à un Panel qui a ANNONCÉ savoir les lire (voir `panelSpeaks` côté
 //   projet). Compatible 1.0.x à 1.9.x.
-export const CONTRACT_VERSION = '1.12.0';
+export const CONTRACT_VERSION = '1.13.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -147,8 +147,36 @@ export const PROJECT_API_ROUTES = Object.freeze({
    * les trois défauts par une question posée à celui qui fait autorité.
    */
   accounts: '/api/project-bridge/v1/accounts',
+  /**
+   * LES ÉCRITURES GARÉES — lecture seule (contrat 1.13.0).
+   *
+   * Le battement ne porte qu'un COMPTE : c'est ce qu'il faut pour alerter, pas
+   * pour agir. Un opérateur qui veut rejouer doit NOMMER l'écriture, et seul le
+   * projet sait laquelle il n'a pas su appliquer.
+   *
+   * Ni charge utile, ni secret : un type, un identifiant, un motif tronqué, des
+   * tentatives, des dates.
+   */
+  deadLetters: '/api/project-bridge/v1/dead-letters',
   operations: '/api/project-bridge/v1/operations',
   operationInvoke: '/api/project-bridge/v1/operations/{operationId}/invoke',
+  /**
+   * LE DOCUMENT CONTRACTUEL — récupéré, jamais transporté (contrat 1.13.0).
+   *
+   * ── POURQUOI IL MANQUAIT AUX DEUX MIROIRS ────────────────────────────────
+   *
+   * Le projet SERT cette route depuis qu'un contrat porte un PDF, et le Panel
+   * la CONSOMME pour relayer le document à l'écran. Elle n'était déclarée nulle
+   * part : ni dans les registres de chemins, ni dans les specs. La garde qui
+   * aurait dû le voir — « miroir ↔ spec : ensembles identiques » — était
+   * elle-même en panne, et la dérive a vécu.
+   *
+   * Le document ne voyage JAMAIS dans la file de synchronisation : un PDF au
+   * journal durable serait rejoué à chaque rattrapage, et conservé sans durée
+   * de rétention. Le Panel va donc le chercher chez son propriétaire, avec son
+   * jeton de pont, au moment où quelqu'un le demande.
+   */
+  contractDocument: '/api/project-bridge/v1/contracts/{contractId}/document',
   unpair: '/api/project-bridge/v1/unpair',
 });
 

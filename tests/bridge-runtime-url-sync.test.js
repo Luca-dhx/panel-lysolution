@@ -90,8 +90,8 @@ section('1. LE CONTRAT AVANCE, ET L’EXTENSION RESTE ADDITIVE');
    * toujours valide, et un Panel antérieur ne la reçoit jamais. On épingle donc
    * la version COURANTE, et l'additivité est éprouvée juste en dessous.
    */
-  check(`la version du miroir est 1.12.0 (lu : ${contract.CONTRACT_VERSION})`,
-    contract.CONTRACT_VERSION === '1.12.0');
+  check(`la version du miroir est 1.13.0 (lu : ${contract.CONTRACT_VERSION})`,
+    contract.CONTRACT_VERSION === '1.13.0');
   check('un projet 1.8 reste COMPATIBLE (majeure identique)',
     contract.isContractCompatible('1.8.0') === true);
   check('un projet 1.9 est compatible', contract.isContractCompatible('1.9.0') === true);

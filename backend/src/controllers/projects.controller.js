@@ -27,6 +27,8 @@ import {
 } from '../services/contract/contractActions.service.js';
 import { getOutboundBridgeToken } from '../services/pairing/pairing.service.js';
 import { readProjectAccounts } from '../services/registry/projectAccounts.service.js';
+import { readProjectDeadLetters } from '../services/registry/projectDeadLetters.service.js';
+import { replayDeadLetter, listReplays } from '../services/sync/deadLetterReplay.service.js';
 import { PanelProjectContract } from '../models/PanelProjectProjection.model.js';
 import {
   clientCompanyOfProject,
@@ -72,6 +74,38 @@ export async function accounts(req, res) {
    */
   res.set('Cache-Control', 'no-store, must-revalidate');
   return ok(res, lecture);
+}
+
+/**
+ * `GET /api/projects/:projectId/dead-letters` — CE QUE LE PROJET A GARÉ.
+ *
+ * Lecture VIVANTE chez le projet, plus les rejeux déjà demandés par le Panel.
+ * Les deux ensemble répondent à la seule question qui intéresse un opérateur :
+ * « qu'est-ce qui bloque, et qu'a-t-on déjà tenté ? »
+ */
+export async function deadLetters(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const lecture = await readProjectDeadLetters(record);
+  const rejeux = await listReplays({ projectId: record.projectId });
+  res.set('Cache-Control', 'no-store, must-revalidate');
+  return ok(res, { ...lecture, replays: rejeux });
+}
+
+/**
+ * `POST /api/projects/:projectId/dead-letters/:writeId/replay` — REJOUER.
+ *
+ * Réservé aux comptes DEV : republier un fait vers un projet est un acte
+ * d'infrastructure, pas une lecture. Le contrôle vit ici, jamais dans un bouton
+ * masqué — le projet, lui, authentifie le PONT et non l'humain.
+ */
+export async function replayDeadLetterHandler(req, res) {
+  const record = await getProjectOrThrow(req.params.projectId);
+  const livraison = await replayDeadLetter({
+    projectId: record.projectId,
+    writeId: req.params.writeId,
+    actor: req.panelUser ?? null,
+  });
+  return ok(res, livraison);
 }
 
 /**

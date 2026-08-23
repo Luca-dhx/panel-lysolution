@@ -81,7 +81,13 @@ section('Chemins du contrat ProjectBridge (consommés par le Panel)');
 {
   const inSpec = specPaths(projectSpec, /^ {2}(\/api\/project-bridge\/v1\/[^\s:]+):\s*$/gm).sort();
   const inMirror = Object.values(contract.PROJECT_API_ROUTES).sort();
-  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 10);
+  /**
+   * 12 DEPUIS 1.13.0 — `/dead-letters` (les écritures garées) et
+   * `/contracts/{contractId}/document`, qui était servi et consommé sans être
+   * documenté nulle part. Le nombre reste écrit en dur : un chemin qui
+   * apparaît sans qu'on l'ait voulu doit faire échouer ce test.
+   */
+  check(`la spec expose ${inSpec.length} chemins`, inSpec.length === 12);
   check('miroir ↔ spec : ensembles identiques', JSON.stringify(inSpec) === JSON.stringify(inMirror));
   check('GET /manifest présent (ajout 1.1.0)', inMirror.includes('/api/project-bridge/v1/manifest'));
 }
@@ -280,7 +286,15 @@ section('ProjectManifest (ajout 1.1.0) : identique aux deux specs, miroir confor
 
 section('Client sortant : une méthode par opération du contrat');
 {
-  check('10 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 10);
+  /**
+   * 12 DEPUIS 1.13.0 — `listDeadLetters` (les écritures garées) et
+   * `fetchDocument` (le document contractuel, qui existait sans être déclaré).
+   *
+   * Le nombre reste écrit en dur : une méthode qui apparaît sans qu'on l'ait
+   * voulue doit faire échouer ce test, pas se fondre dans un comptage.
+   */
+  check('12 méthodes déclarées', PROJECT_BRIDGE_CLIENT_METHODS.length === 12,
+    `${PROJECT_BRIDGE_CLIENT_METHODS.length}`);
   const client = new ProjectBridgeClient({ baseUrl: 'https://exemple.invalid', bridgeToken: 'x' });
   check('chaque méthode existe sur le client',
     PROJECT_BRIDGE_CLIENT_METHODS.every((m) => typeof client[m] === 'function'));
@@ -319,6 +333,8 @@ section('Client sortant : la version de contrat part SUR LE FIL, à chaque appel
     listOperations: (c) => c.listOperations(),
     invokeOperation: (c) => c.invokeOperation('op.test', { invocationId: 'i-1', params: {} }),
     notifyUnpair: (c) => c.notifyUnpair(),
+    listDeadLetters: (c) => c.listDeadLetters(),
+    fetchDocument: (c) => c.fetchDocument('/api/project-bridge/v1/contracts/c1/document'),
   };
 
   check('un jeu d’arguments pour CHAQUE méthode du contrat',

@@ -112,7 +112,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.12.0
+  version: 1.13.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).
@@ -432,6 +432,40 @@ paths:
                 code: BRIDGE_OPERATION_FAILED
                 message: L'opération a été refusée par le moteur local.
         '503': { $ref: '#/components/responses/NotPaired' }
+
+  /api/project-bridge/v1/dead-letters:
+    get:
+      tags: [ProjectBridge]
+      summary: Les ecritures que ce projet a GAREES (>= 1.13.0)
+      description: >
+        Lecture seule. Le battement declare un COMPTE d'ecritures garees : de
+        quoi ALERTER, jamais de quoi AGIR. Un operateur qui veut rejouer doit
+        NOMMER l'ecriture, et seul le projet sait laquelle il n'a pas su
+        appliquer. Aucune charge utile ne sort d'ici.
+      security: [{ BridgeToken: [] }]
+      responses:
+        '200': { description: Liste des ecritures garees, actives et resolues }
+        '401': { description: Jeton de pont invalide }
+
+  /api/project-bridge/v1/contracts/{contractId}/document:
+    get:
+      tags: [ProjectBridge]
+      summary: Le document contractuel, recupere a la demande
+      description: >
+        Le PDF ne voyage JAMAIS dans la file de synchronisation : il serait
+        rejoue a chaque rattrapage et conserve sans duree de retention. Le Panel
+        va le chercher chez son proprietaire, avec son jeton de pont, au moment
+        ou quelqu'un le demande.
+      security: [{ BridgeToken: [] }]
+      parameters:
+        - name: contractId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Le document }
+        '401': { description: Jeton de pont invalide }
+        '404': { description: Aucun document publie }
 
   /api/project-bridge/v1/unpair:
     post:

@@ -23,6 +23,15 @@ export const PROJECT_BRIDGE_CLIENT_METHODS = Object.freeze([
   'getHealth',
   'getManifest',
   'getAccounts',
+  'listDeadLetters',
+  /**
+   * LE DOCUMENT CONTRACTUEL — récupéré par son chemin, jamais transporté.
+   *
+   * Elle n'était pas déclarée : le Panel l'appelait, le projet la servait, et
+   * aucun registre ne la nommait. La garde qui aurait dû le voir — « autant de
+   * méthodes que de chemins » — était elle-même en panne.
+   */
+  'fetchDocument',
   'deliverChanges',
   'readLocalChanges',
   'listOperations',
@@ -166,6 +175,18 @@ export class ProjectBridgeClient {
    */
   getAccounts() {
     return this.#request('GET', PROJECT_API_ROUTES.accounts);
+  }
+
+  /**
+   * LES ÉCRITURES QUE CE PROJET A GARÉES — lecture vivante, jamais un cache.
+   *
+   * Le battement porte un COMPTE : de quoi alerter. Pour AGIR, il faut nommer
+   * l'écriture, et seul le projet sait laquelle il n'a pas su appliquer.
+   *
+   * Aucun paramètre : le projet dont on parle est celui du jeton de pont.
+   */
+  listDeadLetters() {
+    return this.#request('GET', PROJECT_API_ROUTES.deadLetters);
   }
 
   // -- sync ------------------------------------------------------------------
