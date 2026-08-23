@@ -21,6 +21,9 @@ import {
 import { refreshAllowedOrigins } from './middlewares/cors.middleware.js';
 import { resolveBackendUrl } from './services/network/networkConfig.service.js';
 import { startEventScheduler, stopEventScheduler } from './services/events/eventScheduler.js';
+import {
+  startReplayStallScheduler, stopReplayStallScheduler,
+} from './services/sync/replayStallScheduler.js';
 import { recoverAbandonedWebhookEvents } from './services/webhooks/webhookRecovery.js';
 import { migrateLegacyWebhookEvents } from './services/webhooks/webhookEventMigration.js';
 import {
@@ -409,6 +412,21 @@ async function start() {
   startRecurringCostScheduler();
 
   /**
+   * REJEUX ENLISÉS — le seul incident dont le signal est le SILENCE.
+   *
+   * L'acquittement d'un rejeu vit au battement du projet, qui porte déjà le
+   * curseur. L'enlisement ne peut pas : le cas qui compte est celui d'un projet
+   * ÉTEINT, et attendre son battement pour constater qu'il ne bat plus
+   * laisserait son rejeu « en vol » pour toujours — donc l'écriture à jamais
+   * non rejouable, par l'index d'unicité.
+   *
+   * Premier passage AU DÉMARRAGE : un Panel redémarré après une nuit constate
+   * les enlisements de la nuit avant qu'aucun écran ne soit ouvert. Il NOMME,
+   * il ne rejoue rien.
+   */
+  startReplayStallScheduler();
+
+  /**
    * ══ L'ÉTAT READY — POSÉ ICI, ET NULLE PART AILLEURS ══════════════════════
    *
    * Tout ce dont une route métier a besoin est fait : base connectée, comptes
@@ -466,6 +484,7 @@ async function start() {
      */
     markDraining();
     stopEventScheduler();
+    stopReplayStallScheduler();
     stopRecurringCostScheduler();
     server.close(async () => {
       await disconnectDatabase();

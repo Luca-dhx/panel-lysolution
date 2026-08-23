@@ -858,6 +858,29 @@ Les deux traces coexistent : rejeu n° 1 `STALLED`, rejeu n° 2 `ACKNOWLEDGED`. 
 seconde ne remplace pas la première — sinon l'incident disparaîtrait au moment
 même où il est réparé.
 
+#### Le constat d'enlisement ne peut pas voyager sur le battement
+
+Première version : l'enlisement se constatait au battement, comme
+l'acquittement. La preuve sur l'infrastructure réelle a montré le trou — le
+battement est celui **du projet concerné**, et le cas qui compte est celui d'un
+projet qui s'est **tu**. Un projet éteint ne bat plus, ne déclenchait donc jamais
+le constat, et son rejeu restait `REPUBLISHED` pour toujours : l'index d'unicité
+condamnait alors l'écriture à ne plus jamais être rejouable. Le piège refermé
+d'un côté, rouvert par la porte d'à côté.
+
+Le balayage est donc **global et autonome** (`sweepStalledReplays`, lancé par
+`replayStallScheduler`, premier passage au démarrage, cadence une minute).
+
+Ce n'est pas la cadence dupliquée que l'on s'interdit :
+
+| fait | qui le porte | où on le constate |
+|---|---|---|
+| le projet a consommé | le battement, via `consumption.cursor` | au battement — l'information est **transportée** |
+| le projet ne dit rien | *rien* | un veilleur — **aucun message n'annonce un silence** |
+
+Le veilleur **ne rejoue rien**. Il change un état, et cet état rouvre le geste
+pour un humain.
+
 #### L'écran, parce qu'un geste que personne ne peut faire n'existe pas
 
 « Écritures en échec », dans l'onglet développeur de la fiche projet — avec le

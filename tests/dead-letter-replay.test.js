@@ -435,4 +435,84 @@ section('11. REJOUER APRÈS UN ENLISEMENT — le geste redevient possible');
   check('…soit deux traces pour une seule écriture garée', apres.length === 2);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('12. UN PROJET ÉTEINT — le silence doit quand même être constaté');
+{
+  /**
+   * ══ CE QUE LA PREUVE SUR L'INFRASTRUCTURE RÉELLE A MONTRÉ ═══════════════
+   *
+   * L'enlisement se constatait au battement, comme l'acquittement. Mais le
+   * battement est celui DU PROJET CONCERNÉ — et le cas qui compte est celui
+   * d'un projet qui s'est TU. Un projet éteint ne bat plus, ne déclenchait
+   * donc jamais le constat, et son rejeu restait `REPUBLISHED` pour toujours :
+   * l'index d'unicité condamnait alors l'écriture à ne plus jamais être
+   * rejouable. Le piège refermé d'un côté, rouvert par la porte d'à côté.
+   *
+   * Le balayage est donc GLOBAL et autonome. Il ne double aucune cadence :
+   * aucun message n'annonce un silence.
+   */
+  const w = await emitChange({
+    entityType: 'DIAGNOSTIC', entityId: uuid(12), payload: { v: 1 }, audience: PROJET,
+  });
+  const r = await replay.replayDeadLetter({ projectId: PROJET, writeId: w.change.writeId, actor: ACTEUR });
+
+  /** Le projet ne bat plus : personne n'appelle `settleAcknowledgedReplays`. */
+  const plusTard = Date.now() + replay.REPLAY_STALL_AFTER_MS + 1000;
+
+  const balayage = await replay.sweepStalledReplays({ now: plusTard });
+  check('LE BALAYAGE GLOBAL constate l’enlisement SANS battement du projet',
+    balayage.stalled >= 1, `${balayage.stalled}`);
+  const apres = await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean();
+  check('…le rejeu du projet muet est ENLISÉ', apres.status === REPLAY_STATUS.STALLED);
+  check('…et daté', typeof apres.stalledAt === 'string');
+
+  /** Idempotent lui aussi : le filtre porte sur l'état de départ. */
+  const encore = await replay.sweepStalledReplays({ now: plusTard + 60_000 });
+  check('un second balayage ne change plus rien', encore.stalled === 0, `${encore.stalled}`);
+  check('…et ne redate pas le constat',
+    (await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean()).stalledAt
+      === apres.stalledAt);
+
+  /** Un rejeu JEUNE n'est jamais emporté par le balayage. */
+  const w2 = await emitChange({
+    entityType: 'DIAGNOSTIC', entityId: uuid(13), payload: { v: 1 }, audience: PROJET,
+  });
+  const jeune = await replay.replayDeadLetter({ projectId: PROJET, writeId: w2.change.writeId, actor: ACTEUR });
+  const rien = await replay.sweepStalledReplays();
+  check('le balayage ne touche PAS un rejeu récent', rien.stalled === 0, `${rien.stalled}`);
+  check('…qui reste en vol',
+    (await PanelDeadLetterReplay.findOne({ replayId: jeune.replayId }).lean()).status
+      === REPLAY_STATUS.REPUBLISHED);
+
+  /** Et il ne rejoue toujours RIEN : il nomme. */
+  const avant = await PanelDeadLetterReplay.countDocuments({});
+  await replay.sweepStalledReplays({ now: plusTard });
+  check('LE VEILLEUR NE REPUBLIE JAMAIS RIEN',
+    (await PanelDeadLetterReplay.countDocuments({})) === avant);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('13. LE VEILLEUR EST LANCÉ AU DÉMARRAGE, ET ARRÊTÉ PROPREMENT');
+{
+  const serveur = await import('node:fs/promises')
+    .then((fs) => fs.readFile('backend/src/server.js', 'utf8'));
+  check('le balayage des enlisements démarre avec le serveur',
+    /startReplayStallScheduler\(\)/.test(serveur));
+  check('…et s’arrête avec lui', /stopReplayStallScheduler\(\)/.test(serveur));
+
+  const { runReplayStallCycle, startReplayStallScheduler, stopReplayStallScheduler } =
+    await import('../backend/src/services/sync/replayStallScheduler.js');
+
+  const cycle = await runReplayStallCycle();
+  check('un cycle rend un compte, jamais une exception',
+    typeof cycle?.stalled === 'number' || cycle?.skipped === true);
+
+  const t = startReplayStallScheduler({ intervalMs: 60_000 });
+  check('le minuteur démarre', Boolean(t));
+  check('…un second appel ne crée PAS un deuxième minuteur',
+    startReplayStallScheduler({ intervalMs: 60_000 }) === t);
+  check('…il s’arrête', stopReplayStallScheduler() === true);
+  check('…et un second arrêt ne fait rien', stopReplayStallScheduler() === false);
+}
+
 finish();

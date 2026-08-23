@@ -310,6 +310,53 @@ export async function settleAcknowledgedReplays({ projectId, cursorSeq, now = Da
   return { acknowledged: n, stalled: m };
 }
 
+/**
+ * ══ LE BALAYAGE DES ENLISEMENTS — GLOBAL, ET IL LUI FAUT SA PROPRE CADENCE ══
+ *
+ * ── CE QUE LA PREUVE SUR L'INFRASTRUCTURE RÉELLE A MONTRÉ ──────────────────
+ *
+ * L'enlisement était constaté au battement, comme l'acquittement. Or le
+ * battement est celui DU PROJET CONCERNÉ — et le cas qui compte est justement
+ * celui d'un projet qui s'est tu. Un projet éteint ne bat plus, donc ne
+ * déclenchait jamais le constat, donc son rejeu restait `REPUBLISHED` pour
+ * toujours, et l'index d'unicité condamnait l'écriture à ne plus jamais être
+ * rejouable. Le piège même que ce lot ferme, rouvert par la porte d'à côté.
+ *
+ * ── POURQUOI CE MINUTEUR N'EST PAS CELUI QU'ON INTERDIT ────────────────────
+ *
+ * On ne double aucune cadence existante. L'acquittement reste au battement,
+ * parce que le battement PORTE le curseur : lui inventer un minuteur aurait
+ * créé une seconde source pour une information déjà transportée.
+ *
+ * L'enlisement, lui, n'est porté par aucun message : le signal EST LE SILENCE.
+ * Aucun canal ne peut annoncer qu'il ne dira rien. Un veilleur autonome est
+ * donc le seul observateur possible — exactement comme les échéances
+ * d'événements, qui ne peuvent pas dépendre d'un onglet ouvert.
+ *
+ * ── ET IL NE REJOUE TOUJOURS RIEN ─────────────────────────────────────────
+ *
+ * Il NOMME. Il ne republie pas, ne relance pas, ne réveille personne. La seule
+ * chose qu'il change est l'état — ce qui rouvre le geste pour un humain.
+ *
+ * @returns {Promise<{stalled: number}>}
+ */
+export async function sweepStalledReplays({ now = Date.now() } = {}) {
+  const limite = new Date(now - REPLAY_STALL_AFTER_MS).toISOString();
+  const enlises = await PanelDeadLetterReplay.updateMany(
+    { status: REPLAY_STATUS.REPUBLISHED, requestedAt: { $lte: limite } },
+    { $set: { status: REPLAY_STATUS.STALLED, stalledAt: new Date(now).toISOString() } },
+  );
+  const m = enlises?.modifiedCount ?? 0;
+  if (m > 0) {
+    logger.warn(
+      `[replay] ${m} rejeu(x) ENLISÉ(S) — republiés depuis plus de `
+      + `${Math.round(REPLAY_STALL_AFTER_MS / 60_000)} min sans être consommés. `
+      + 'Aucun rejeu automatique : un opérateur décide.',
+    );
+  }
+  return { stalled: m };
+}
+
 /** Les rejeux d'un projet — pour l'écran. Jamais la charge utile. */
 export async function listReplays({ projectId, limit = 50 } = {}) {
   const lignes = await PanelDeadLetterReplay.find({ projectId })
@@ -338,4 +385,7 @@ export function describeReplay(r) {
   };
 }
 
-export default { replayDeadLetter, settleAcknowledgedReplays, listReplays, REPLAY_REFUSAL };
+export default {
+  replayDeadLetter, settleAcknowledgedReplays, sweepStalledReplays,
+  listReplays, REPLAY_REFUSAL,
+};
