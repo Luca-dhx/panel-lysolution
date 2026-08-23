@@ -591,6 +591,76 @@ export interface ProjectAccountView {
   createdAt: string | null;
 }
 
+/* ── ÉCRITURES GARÉES ET REJEUX ─────────────────────────────────────────────
+ *
+ * Deux objets, deux autorités, et ils ne fusionnent pas :
+ *
+ *  · la LETTRE MORTE appartient au PROJET — lui seul sait ce qu'il n'a pas su
+ *    appliquer, et cette lecture est vivante, jamais recopiée ici ;
+ *  · le REJEU appartient au PANEL — c'est notre décision de republier, avec sa
+ *    causalité et son historique.
+ *
+ * Les afficher côte à côte est le service rendu à l'opérateur ; les confondre
+ * dans un seul type ferait croire qu'une seule autorité en répond.
+ */
+
+/** Une écriture que le projet a renoncé à appliquer. Jamais de charge utile. */
+export interface ProjectDeadLetterView {
+  writeId: string | null;
+  entityType: string | null;
+  entityId: string | null;
+  /** Motif tronqué à 200 caractères par le serveur. Diagnostic, pas trace brute. */
+  reason: string;
+  attempts: number;
+  parkedAt: string | null;
+  /**
+   * `RESOLVED` n'est pas « moins urgent » : c'est CLOS. Le fait a fini par être
+   * appliqué, par identité métier. Une résolue ne compte dans aucune alerte.
+   */
+  status: 'PARKED' | 'RESOLVED';
+  resolvedAt: string | null;
+  resolvedByWriteId: string | null;
+}
+
+/** Une demande de rejeu, telle que le Panel la conserve. */
+export interface DeadLetterReplayView {
+  replayId: string;
+  projectId: string;
+  replayOfWriteId: string;
+  replayOfSeq: number | null;
+  newWriteId: string;
+  newSeq: number;
+  entityType: string | null;
+  entityId: string | null;
+  /** Combien de fois on s'est acharné sur cette écriture. Il monte, on corrige. */
+  attempt: number;
+  /**
+   * `STALLED` : republié, jamais consommé, et ça dure. L'état est POSÉ par le
+   * serveur au battement, jamais déduit d'un âge calculé à l'affichage — sans
+   * quoi il n'existerait que pour celui qui regarde.
+   */
+  status: 'REPUBLISHED' | 'ACKNOWLEDGED' | 'STALLED';
+  requestedAt: string;
+  requestedBy: string | null;
+  acknowledgedAt: string | null;
+  stalledAt: string | null;
+}
+
+/** Ce que rend la lecture des écritures garées d'un projet. */
+export interface ProjectDeadLettersRead {
+  available: boolean;
+  deadLetters: ProjectDeadLetterView[];
+  /** Comptés PAR LE SERVEUR : `active` n'inclut jamais les résolues. */
+  active: number;
+  resolved: number;
+  /** L'heure de lecture chez le PROJET. Absente si la lecture a échoué. */
+  readAt: string | null;
+  reason: string | null;
+  message: string | null;
+  /** L'historique COMPLET des rejeux du Panel — les acquittés compris. */
+  replays: DeadLetterReplayView[];
+}
+
 /** Ce que rend la lecture vivante des comptes d'un projet. */
 export interface ProjectAccountsRead {
   available: boolean;

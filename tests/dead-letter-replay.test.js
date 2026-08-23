@@ -141,7 +141,7 @@ section('2. LE CURSEUR N’EST JAMAIS REMIS EN ARRIÈRE');
   check('le service n’ÉCRIT aucun curseur',
     !/recordCursor|pullCursor\s*[:=]|cursor\s*=/.test(code));
   check('…il ne fait que le LIRE pour acquitter',
-    /cursorSeq/.test(code) && /newSeq: \{ \$lte: cursorSeq \}/.test(code));
+    /cursorSeq/.test(code) && /newSeq: \{ \$lte: cursorSeq/.test(code));
   /**
    *  et  portent ici sur la TRACE DE REJEU du Panel —
    * la réservation, complétée après l'émission ou retirée si elle échoue. Ce
@@ -281,6 +281,158 @@ section('7. LA PROJECTION D’ÉCRAN NE PORTE RIEN DE SENSIBLE');
     && champs.has('entityType') && champs.has('attempt'));
   check('…et JAMAIS la charge utile',
     !champs.has('payload') && !champs.has('change'));
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('8. LA CONVERGENCE EST AUTONOME — aucune lecture d’écran requise');
+{
+  /**
+   * ══ CE QUE CETTE SECTION VERROUILLE ══════════════════════════════════════
+   *
+   * `settleAcknowledgedReplays` était appelée à la LECTURE de la fiche projet.
+   * Un rejeu ne passait donc `ACKNOWLEDGED` que si quelqu'un ouvrait un écran —
+   * et tant que personne ne le faisait, l'index d'unicité interdisait tout
+   * nouveau rejeu de la même écriture.
+   *
+   * Une lecture qui MUTE est un piège de deux façons : l'état dépend de
+   * l'attention d'un humain, et la consultation cesse d'être gratuite.
+   */
+  const source = await import('node:fs/promises')
+    .then((fs) => fs.readFile('backend/src/controllers/projects.controller.js', 'utf8'));
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  check('LA ROUTE DE LECTURE N’APPELLE PLUS LA CONVERGENCE',
+    !/settleAcknowledgedReplays/.test(code));
+
+  const battement = await import('node:fs/promises')
+    .then((fs) => fs.readFile('backend/src/services/registry/projectRegistry.service.js', 'utf8'));
+  check('…c’est le BATTEMENT qui la déclenche',
+    /settleAcknowledgedReplays|settleReplaysFromHeartbeat/.test(battement));
+  const apresSave = battement.indexOf('settleReplaysFromHeartbeat(record)')
+    > battement.indexOf('await registryStore.save(record);');
+  check('…APRÈS la persistance du curseur — un acquittement sur une valeur non persistée serait effacé par un redémarrage',
+    apresSave);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('9. IDEMPOTENCE — dix battements, une seule transition');
+{
+  const w = await emitChange({
+    entityType: 'DIAGNOSTIC', entityId: uuid(10), payload: { v: 1 }, audience: PROJET,
+  });
+  const r = await replay.replayDeadLetter({ projectId: PROJET, writeId: w.change.writeId, actor: ACTEUR });
+
+  const premier = await replay.settleAcknowledgedReplays({ projectId: PROJET, cursorSeq: r.newSeq });
+  check('le premier passage acquitte', premier.acknowledged >= 1, `${premier.acknowledged}`);
+  const trace = await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean();
+  const dateInitiale = trace.acknowledgedAt;
+  check('…et date l’acquittement', typeof dateInitiale === 'string');
+
+  /** NEUF passages de plus, avec un curseur toujours au-delà. */
+  let mutations = 0;
+  for (let i = 0; i < 9; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const encore = await replay.settleAcknowledgedReplays({
+      projectId: PROJET, cursorSeq: r.newSeq + 100,
+    });
+    mutations += encore.acknowledged;
+  }
+  check('NEUF battements de plus ne changent RIEN', mutations === 0, `${mutations}`);
+
+  const apres = await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean();
+  check('…la date d’acquittement est INCHANGÉE', apres.acknowledgedAt === dateInitiale);
+  check('…et le statut aussi', apres.status === REPLAY_STATUS.ACKNOWLEDGED);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('10. ENLISEMENT — nommé, jamais rejoué tout seul');
+{
+  const w = await emitChange({
+    entityType: 'DIAGNOSTIC', entityId: uuid(11), payload: { v: 1 }, audience: PROJET,
+  });
+  const r = await replay.replayDeadLetter({ projectId: PROJET, writeId: w.change.writeId, actor: ACTEUR });
+
+  check(`le seuil est configurable (${Math.round(replay.REPLAY_STALL_AFTER_MS / 60_000)} min)`,
+    replay.REPLAY_STALL_AFTER_MS === 20 * 60_000, `${replay.REPLAY_STALL_AFTER_MS}`);
+
+  /** Le projet ne consomme pas : curseur en deçà, et le rejeu est encore jeune. */
+  const jeune = await replay.settleAcknowledgedReplays({ projectId: PROJET, cursorSeq: r.newSeq - 1 });
+  check('un rejeu récent n’est PAS déclaré enlisé', jeune.stalled === 0);
+  check('…et reste REPUBLISHED',
+    (await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean()).status
+      === REPLAY_STATUS.REPUBLISHED);
+
+  /** On avance l'horloge du seuil : le temps est injecté, jamais attendu. */
+  const plusTard = Date.now() + replay.REPLAY_STALL_AFTER_MS + 1000;
+  const vieux = await replay.settleAcknowledgedReplays({
+    projectId: PROJET, cursorSeq: r.newSeq - 1, now: plusTard,
+  });
+  check('passé le seuil, il est déclaré ENLISÉ', vieux.stalled === 1, `${vieux.stalled}`);
+
+  const enlise = await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean();
+  check('…son état le DIT', enlise.status === REPLAY_STATUS.STALLED);
+  check('…et l’instant du constat est daté', typeof enlise.stalledAt === 'string');
+  check('…il n’a PAS été acquitté au passage', enlise.acknowledgedAt === null);
+
+  /**
+   * ── AUCUN REJEU AUTOMATIQUE ─────────────────────────────────────────────
+   *
+   * Une lettre morte est DÉJÀ un renoncement après plusieurs échecs. La
+   * rejouer parce qu'un rejeu a échoué produirait la boucle même que la lettre
+   * morte existe pour arrêter.
+   */
+  const avant = await PanelDeadLetterReplay.countDocuments({ projectId: PROJET });
+  for (let i = 0; i < 5; i += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await replay.settleAcknowledgedReplays({ projectId: PROJET, cursorSeq: 0, now: plusTard });
+  }
+  check('CINQ passages de plus ne créent AUCUN rejeu',
+    (await PanelDeadLetterReplay.countDocuments({ projectId: PROJET })) === avant);
+  check('…et l’enlisement n’est pas redaté à chaque fois',
+    (await PanelDeadLetterReplay.findOne({ replayId: r.replayId }).lean()).stalledAt
+      === enlise.stalledAt);
+
+  globalThis.__enlise = { replayId: r.replayId, writeId: w.change.writeId };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('11. REJOUER APRÈS UN ENLISEMENT — le geste redevient possible');
+{
+  const { writeId } = globalThis.__enlise;
+
+  /**
+   * C'était la doctrine à corriger : une trace `REPUBLISHED` bloquait à VIE
+   * tout nouveau rejeu de la même écriture. L'index d'unicité ne contraint que
+   * les rejeux EN VOL — passer en `STALLED` rouvre donc le geste, sans rien
+   * relâcher tant que le rejeu est encore dans sa fenêtre normale.
+   */
+  const second = await replay.replayDeadLetter({ projectId: PROJET, writeId, actor: ACTEUR });
+  check('un rejeu ENLISÉ peut être relancé', second.replayOfWriteId === writeId);
+  check('…et le compte de tentatives monte', second.attempt === 2, `${second.attempt}`);
+
+  const historique = await replay.listReplays({ projectId: PROJET });
+  const pour = historique.filter((x) => x.replayOfWriteId === writeId);
+  check('L’HISTORIQUE GARDE LES DEUX — la première n’est pas remplacée',
+    pour.length === 2, `${pour.length}`);
+  check('…la première reste ENLISÉE',
+    pour.some((x) => x.status === REPLAY_STATUS.STALLED && x.attempt === 1));
+  check('…la seconde est en vol',
+    pour.some((x) => x.status === REPLAY_STATUS.REPUBLISHED && x.attempt === 2));
+
+  /** Tant que la seconde est en vol, une troisième est refusée. */
+  const troisieme = await refuse(
+    () => replay.replayDeadLetter({ projectId: PROJET, writeId, actor: ACTEUR }),
+  );
+  check('…mais une TROISIÈME est refusée tant que la seconde est en vol',
+    troisieme?.code === replay.REPLAY_REFUSAL.ALREADY_IN_FLIGHT, troisieme?.code);
+
+  /** Et la causalité tient : la seconde acquittée, l'historique reste complet. */
+  await replay.settleAcknowledgedReplays({ projectId: PROJET, cursorSeq: second.newSeq });
+  const apres = (await replay.listReplays({ projectId: PROJET }))
+    .filter((x) => x.replayOfWriteId === writeId);
+  check('la seconde est ACQUITTÉE', apres.some((x) => x.status === REPLAY_STATUS.ACKNOWLEDGED));
+  check('…et la première est TOUJOURS visible, enlisée',
+    apres.some((x) => x.status === REPLAY_STATUS.STALLED));
+  check('…soit deux traces pour une seule écriture garée', apres.length === 2);
 }
 
 finish();

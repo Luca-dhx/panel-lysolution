@@ -40,6 +40,7 @@ import { getProjectDataFreshness } from '@/lib/projectFreshness';
 import { toPairingRow } from '@/lib/projectConnections';
 import { ConnectionStatusDot } from '@/components/connections';
 import { ConnectionActions } from '@/components/ConnectionActions';
+import { DeadLettersCard } from '@/components/DeadLettersCard';
 import type {
   ProjectAccountView, ProjectAccountsRead,
   ProjectDestination, ProjectDestinationsByEnvironment, PublicProject,
@@ -667,6 +668,13 @@ function DeveloperTab({
       <ConnectionSection project={project} />
 
       <ServedActionsCard />
+
+      {/*
+        LES ÉCRITURES EN ÉCHEC VIVENT AVEC LA SUPERVISION, PAS AILLEURS.
+        Une page dédiée aurait supposé qu'on sache déjà qu'un incident existe
+        pour aller le chercher — or c'est précisément ce qu'on ignore.
+      */}
+      <DeadLettersCard projectId={project.projectId} />
 
       {/*
         ── LES QUATRE HORODATAGES NE FUSIONNENT JAMAIS ───────────────────────

@@ -6,6 +6,7 @@ import { deriveLiveness, LIVENESS, secondsSinceLastHeartbeat } from '../supervis
 import { buildProjectHealth } from '../supervision/health.service.js';
 import { newBridgeId, nowIso } from '../../bridge/bridgeContract.js';
 import ApiError from '../../utils/ApiError.js';
+import logger from '../../utils/logger.js';
 import registryStore from './registryStore.js';
 import {
   NETWORK_DECLARATION_SOURCES,
@@ -455,6 +456,53 @@ export async function recordHeartbeat(record, heartbeat, contractVersion = null)
   }
 
   await registryStore.save(record);
+
+  /**
+   * ══ LA CONVERGENCE DES REJEUX — ICI, ET PAS À LA LECTURE D'UN ÉCRAN ══════
+   *
+   * Elle se faisait à l'ouverture de la fiche projet. Un rejeu ne passait donc
+   * `ACKNOWLEDGED` que si quelqu'un regardait — et tant que personne ne
+   * regardait, l'index d'unicité interdisait tout nouveau rejeu de la même
+   * écriture. Une consultation doit être purement observatrice.
+   *
+   * Le battement porte déjà le curseur déclaré par le projet, il arrive à
+   * cadence fixe, et il n'a besoin de personne. Aucun minuteur parallèle n'a
+   * été créé : en créer un aurait dupliqué une cadence qui existe.
+   *
+   * APRÈS `save` : la convergence lit ce que la fiche vient d'enregistrer. Un
+   * acquittement décidé sur une valeur non persistée serait un acquittement
+   * qu'un redémarrage effacerait.
+   *
+   * BEST-EFFORT : un battement ne doit jamais échouer à cause d'une table
+   * annexe. Le projet serait déclaré injoignable pour une raison qui ne le
+   * concerne pas, et le passage suivant rattraperait de toute façon.
+   */
+  await settleReplaysFromHeartbeat(record).catch((err) => {
+    logger.warn(`[replay] convergence impossible pour ${record.projectId} : ${err.message}`);
+  });
+}
+
+/**
+ * Le curseur que le projet vient de déclarer, décodé.
+ *
+ * Il est opaque POUR LE PROJET, pas pour nous : c'est le Panel qui l'émet, une
+ * séquence de journal encodée. Le relire est relire notre propre production,
+ * exactement comme le fait la mesure de retard de la supervision.
+ */
+async function settleReplaysFromHeartbeat(record) {
+  const brut = record?.runtime?.bridgeStats?.consumption?.cursor ?? null;
+  let seq = null;
+  if (typeof brut === 'string' && brut !== '') {
+    const clair = Buffer.from(brut, 'base64url').toString('utf8');
+    if (/^\d+$/.test(clair)) seq = Number(clair);
+  }
+  /**
+   * `cursorSeq: null` reste un appel LÉGITIME : l'enlisement se constate même
+   * quand le projet ne déclare aucun curseur — c'est précisément le cas d'un
+   * projet qui ne consomme plus.
+   */
+  const { settleAcknowledgedReplays } = await import('../sync/deadLetterReplay.service.js');
+  return settleAcknowledgedReplays({ projectId: record.projectId, cursorSeq: seq });
 }
 
 

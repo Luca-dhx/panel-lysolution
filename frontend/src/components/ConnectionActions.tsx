@@ -21,63 +21,15 @@
  * confirmation renforcée en production. Il pose la question de la même façon
  * dans les deux cas, alors que ce sont deux gestes de gravité très différente.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { api, errorMessage } from '@/lib/api';
 import { CopyField } from '@/components/ui';
+import { Modale } from '@/components/Modale';
 import { formatDateTime } from '@/lib/format';
 import type { PairingRow } from '@/lib/projectConnections';
 
 /** La phrase à recopier pour révoquer une PRODUCTION. Jamais pour une recette. */
 const PHRASE_PROD = 'RÉVOQUER LA PRODUCTION';
-
-/**
- * MODALE — une seule, réutilisée par les deux actions.
- *
- * `Escape` ferme, le focus entre dedans à l'ouverture et revient d'où il
- * venait à la fermeture. Le fond ne défile pas derrière.
- */
-function Modale({
-  titre,
-  children,
-  onClose,
-}: {
-  titre: string;
-  children: React.ReactNode;
-  onClose: () => void;
-}) {
-  const boite = useRef<HTMLDivElement>(null);
-  const rendreLeFocus = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    rendreLeFocus.current = document.activeElement as HTMLElement | null;
-    boite.current?.focus();
-    document.body.classList.add('no-scroll');
-    const auClavier = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', auClavier);
-    return () => {
-      window.removeEventListener('keydown', auClavier);
-      document.body.classList.remove('no-scroll');
-      rendreLeFocus.current?.focus?.();
-    };
-  }, [onClose]);
-
-  return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div
-        className="modal-box"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="modal-titre"
-        tabIndex={-1}
-        ref={boite}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="modal-title" id="modal-titre">{titre}</h2>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 export function ConnectionActions({
   row,

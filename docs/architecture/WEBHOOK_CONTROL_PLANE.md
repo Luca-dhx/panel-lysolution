@@ -809,6 +809,75 @@ l'incident, et on ne saurait plus qu'une écriture avait été perdue ni combien
 temps. Seules les `PARKED` comptent dans `parkedChanges` — un compte permanent
 serait une alerte que tout le monde apprendrait à ignorer.
 
+#### La convergence est autonome — aucun écran n'en est le moteur
+
+Un rejeu passe `ACKNOWLEDGED` quand le curseur du projet dépasse sa nouvelle
+séquence. Cette comparaison se faisait **à la lecture de la fiche projet** : le
+rejeu ne convergeait donc que si un humain ouvrait un écran, et tant que
+personne ne l'ouvrait, l'index d'unicité interdisait tout nouveau rejeu de la
+même écriture. Une capacité de réparation suspendue à l'attention de quelqu'un
+n'en est pas une.
+
+La convergence vit désormais dans `recordHeartbeat` — le **seul canal qui parle
+en permanence**, que le Panel soit ouvert ou non. Le battement porte déjà le
+curseur (`bridgeStats.consumption.cursor`) : ajouter un minuteur parallèle
+aurait créé une seconde source pour la même information, avec sa propre dérive.
+
+Elle est appelée **après** la persistance du battement. Acquitter sur un curseur
+non encore écrit produirait un état qu'un redémarrage démentirait.
+
+La route `GET /api/projects/:id/dead-letters` est **purement observatrice** :
+elle ne mute rien. La consulter deux fois n'a pas plus d'effet que la consulter
+zéro fois.
+
+L'opération est idempotente par construction : le filtre porte sur l'**état de
+départ** (`status: REPUBLISHED`), jamais sur l'existence du document. Dix
+battements successifs avec un curseur au-delà produisent **une** transition,
+**un** `acknowledgedAt` — et neuf passages qui n'écrivent rien.
+
+#### `STALLED` — quand le rejeu n'arrive jamais
+
+Projet éteint, pont rompu, applicateur toujours défaillant : le rejeu reste
+`REPUBLISHED` indéfiniment, et l'index le fait tenir en otage l'écriture entière.
+
+Passé `REPLAY_STALL_AFTER_MS` (20 min par défaut, réglable au runtime), le même
+passage de battement le déclare `STALLED`, daté par `stalledAt`.
+
+**Pourquoi un état, et pas un âge calculé à l'affichage** — un âge calculé
+n'existe que pour celui qui regarde. Un état durable, lui, **débloque le
+geste** : l'index d'unicité ne contraint que les rejeux `REPUBLISHED`, donc
+passer en `STALLED` rend l'écriture rejouable à nouveau. Sans quoi une trace en
+vol la condamnerait à vie.
+
+**Il n'est jamais rejoué tout seul.** Une lettre morte est déjà un renoncement
+après plusieurs échecs ; la rejouer parce qu'un rejeu a échoué produirait
+exactement la boucle que la lettre morte existe pour arrêter. Le système
+**détecte et supervise** ; un humain décide.
+
+Les deux traces coexistent : rejeu n° 1 `STALLED`, rejeu n° 2 `ACKNOWLEDGED`. La
+seconde ne remplace pas la première — sinon l'incident disparaîtrait au moment
+même où il est réparé.
+
+#### L'écran, parce qu'un geste que personne ne peut faire n'existe pas
+
+« Écritures en échec », dans l'onglet développeur de la fiche projet — avec le
+reste de la supervision, et non sur une page dédiée : une page isolée aurait
+supposé qu'on sache déjà qu'un incident existe pour aller le chercher.
+
+Elle met côte à côte deux autorités qui ne fusionnent pas : la **lettre morte**,
+lue vivante chez le projet, et le **rejeu**, conservé par le Panel. Le badge ne
+compte que les `PARKED` — une résolue est close, et un voyant permanent est un
+voyant qu'on apprend à ignorer.
+
+Le bouton est désactivé pendant l'envoi **et** tant qu'un rejeu est en vol ; le
+serveur tient la même règle par son index. Les deux existent parce qu'aucune ne
+couvre l'autre : le bouton ne protège pas de deux onglets, l'index ne protège
+pas d'un double clic déjà parti. Un `ALREADY_IN_FLIGHT` s'affiche comme une
+**information**, pas comme une panne : il dit que le geste a déjà abouti.
+
+Aucune charge utile n'y apparaît — le projet n'en conserve aucune, et un écran
+de diagnostic n'est pas un endroit où déverser des données nominatives.
+
 ### Le projet ne détient aucune clé de fournisseur
 
 Il ne reçoit ni identifiant Stripe, ni autorité fournisseur, ni droit de relire

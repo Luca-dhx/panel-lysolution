@@ -116,6 +116,24 @@ section('Le transport réseau vers les projets est exclusif');
      * ce qu'elle rapporte, et c'est tout l'objet du lot.
      */
     'backend/src/services/registry/projectAccounts.service.js',
+    /**
+     * LOT REJEU — la LECTURE des écritures garées d'un projet.
+     *
+     * Même nature exactement que la lecture des comptes ci-dessus, et admise
+     * pour les mêmes raisons : un seul GET, synchrone, sans aucune écriture ni
+     * chez le projet ni chez nous. Le Panel ne conserve rien de ce qu'elle
+     * rapporte — la lettre morte reste la propriété du projet, qui seul sait
+     * ce qu'il n'a pas su appliquer.
+     *
+     * ── ET LE REJEU, LUI, NE PASSE PAS PAR ICI ────────────────────────────
+     *
+     * Republier n'est pas lire. Le rejeu n'appelle aucun projet : il écrit au
+     * journal de synchronisation, et c'est le dispatcher déclaré plus haut qui
+     * porte l'écriture jusqu'au projet, par le chemin NORMAL. Un client posé
+     * dans le service de rejeu serait le premier pas vers une livraison
+     * spéciale qui contournerait les applicateurs.
+     */
+    'backend/src/services/registry/projectDeadLetters.service.js',
   ];
   const unexpected = clientImporters.map(rel).filter((file) => !allowed.includes(file));
   check(`seuls les détenteurs prévus utilisent le client${unexpected.length ? ` — ${unexpected}` : ''}`,

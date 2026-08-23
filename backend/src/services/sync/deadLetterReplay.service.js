@@ -40,6 +40,7 @@ import PanelDeadLetterReplay, { REPLAY_STATUS } from '../../models/PanelDeadLett
 import { registryStore } from '../registry/registryStore.js';
 import { emitChange } from './syncCore.service.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
+import config from '../../config/env.js';
 
 /** Codes de refus — stables, pour l'écran et le diagnostic. */
 export const REPLAY_REFUSAL = Object.freeze({
@@ -223,22 +224,90 @@ export async function replayDeadLetter({ projectId, writeId, actor = null } = {}
 }
 
 /**
- * ACQUITTER LES REJEUX QUE LE PROJET A CONSOMMÉS.
+ * ══ LE SEUIL D'ENLISEMENT — 20 MINUTES, ET VOICI POURQUOI ═══════════════
  *
- * Le curseur du projet est l'accusé : dès qu'il dépasse la séquence d'un rejeu,
- * ce rejeu a été appliqué. On lit donc la même valeur que la supervision, et
- * on ne demande rien de plus au projet.
+ * Mesures réelles sur la pile déployée :
  *
- * Appelé à la lecture de la fiche : un rejeu ne doit pas rester « en vol » à
- * l'écran parce que personne n'a rafraîchi une table.
+ *   cadence de tirage observée     ~35 s entre l'émission et l'acquittement
+ *   redémarrage complet d'un projet ~2 à 4 min (déploiement, services.start)
+ *   coupure réseau passagère        quelques cycles de tirage
+ *
+ * 20 minutes valent donc environ TRENTE-QUATRE cycles de tirage : un projet
+ * sain ne peut pas les manquer tous. Les deux bornes comptent :
+ *
+ *   trop COURT  →  un projet en cours de redéploiement est déclaré enlisé, et
+ *                  l'opérateur rejoue une écriture qui allait arriver seule.
+ *   trop LONG   →  une écriture métier reste absente une demi-journée sans que
+ *                  personne ne puisse agir, la trace en vol bloquant tout
+ *                  nouveau rejeu.
  */
-export async function settleAcknowledgedReplays({ projectId, cursorSeq }) {
-  if (!projectId || !Number.isFinite(cursorSeq)) return { acknowledged: 0 };
-  const r = await PanelDeadLetterReplay.updateMany(
-    { projectId, status: REPLAY_STATUS.REPUBLISHED, newSeq: { $lte: cursorSeq } },
-    { $set: { status: REPLAY_STATUS.ACKNOWLEDGED, acknowledgedAt: nowIso() } },
+export const REPLAY_STALL_AFTER_MS = config.replayStallAfterMs;
+
+/**
+ * ══ LA CONVERGENCE D'UN REJEU — AUTONOME, ET C'EST TOUT LE LOT ═══════════
+ *
+ * ── OÙ ELLE SE FAISAIT, ET POURQUOI C'ÉTAIT UN DÉFAUT ───────────────────
+ *
+ * À LA LECTURE de la fiche projet. Un rejeu ne passait donc `ACKNOWLEDGED` que
+ * si quelqu'un ouvrait un écran — et tant qu'il ne le faisait pas, l'index
+ * d'unicité interdisait tout nouveau rejeu de la même écriture.
+ *
+ * Une lecture qui MUTE est un piège de deux façons : l'état dépend de
+ * l'attention d'un humain, et la consultation cesse d'être gratuite. Une
+ * consultation doit être purement observatrice.
+ *
+ * ── OÙ ELLE SE FAIT MAINTENANT ───────────────────────────────────
+ *
+ * AU BATTEMENT, après la persistance du curseur déclaré. C'est le seul canal
+ * qui parle en permanence, il porte déjà l'information, et il n'a besoin de
+ * personne. Aucun minuteur parallèle n'a été créé : en créer un aurait
+ * dupliqué une cadence qui existe.
+ *
+ * ── STRICTEMENT IDEMPOTENTE ────────────────────────────────────
+ *
+ * Les filtres portent sur l'ÉTAT DE DÉPART. Dix battements avec un curseur
+ * déjà dépassé ne trouvent plus rien à changer : une seule transition
+ * logique, un seul `acknowledgedAt`, aucune écriture inutile.
+ *
+ * @returns {Promise<{acknowledged: number, stalled: number}>}
+ */
+export async function settleAcknowledgedReplays({ projectId, cursorSeq, now = Date.now() }) {
+  if (!projectId) return { acknowledged: 0, stalled: 0 };
+
+  const acquittes = Number.isFinite(cursorSeq)
+    ? await PanelDeadLetterReplay.updateMany(
+      {
+        projectId,
+        status: REPLAY_STATUS.REPUBLISHED,
+        newSeq: { $lte: cursorSeq, $gt: 0 },
+      },
+      { $set: { status: REPLAY_STATUS.ACKNOWLEDGED, acknowledgedAt: new Date(now).toISOString() } },
+    )
+    : { modifiedCount: 0 };
+
+  /**
+   * L'ENLISEMENT SE CONSTATE APRÈS L'ACQUITTEMENT, ET PAS AVANT.
+   *
+   * Un rejeu que le battement vient d'acquitter ne doit pas être déclaré
+   * enlisé dans le même passage parce qu'il est vieux : il vient d'arriver.
+   * L'ordre évite un état qui clignoterait entre deux battements.
+   */
+  const limite = new Date(now - REPLAY_STALL_AFTER_MS).toISOString();
+  const enlises = await PanelDeadLetterReplay.updateMany(
+    { projectId, status: REPLAY_STATUS.REPUBLISHED, requestedAt: { $lte: limite } },
+    { $set: { status: REPLAY_STATUS.STALLED, stalledAt: new Date(now).toISOString() } },
   );
-  return { acknowledged: r?.modifiedCount ?? 0 };
+
+  const n = acquittes?.modifiedCount ?? 0;
+  const m = enlises?.modifiedCount ?? 0;
+  if (m > 0) {
+    logger.warn(
+      `[replay] ${projectId} : ${m} rejeu(x) ENLISÉ(S) — republiés depuis plus de `
+      + `${Math.round(REPLAY_STALL_AFTER_MS / 60_000)} min sans être consommés. `
+      + 'Aucun rejeu automatique : un opérateur décide.',
+    );
+  }
+  return { acknowledged: n, stalled: m };
 }
 
 /** Les rejeux d'un projet — pour l'écran. Jamais la charge utile. */
@@ -264,6 +333,8 @@ export function describeReplay(r) {
     requestedAt: r.requestedAt,
     requestedBy: r.requestedBy ?? null,
     acknowledgedAt: r.acknowledgedAt ?? null,
+    /** Daté SEULEMENT si le rejeu n'est jamais arrivé : l'écran le dit, sans le calculer. */
+    stalledAt: r.stalledAt ?? null,
   };
 }
 

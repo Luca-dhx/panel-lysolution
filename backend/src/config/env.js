@@ -315,6 +315,14 @@ export const config = {
   webhookLeaseTtlMs: positiveInt('WEBHOOK_LEASE_TTL_MS', 120_000),
   webhookStaleReceivedMs: positiveInt('WEBHOOK_STALE_RECEIVED_MS', 120_000),
   webhookMaxAttempts: positiveInt('WEBHOOK_MAX_ATTEMPTS', 5),
+
+  /**
+   * AU BOUT DE COMBIEN DE TEMPS UN REJEU EST-IL RÉPUTÉ ENLISÉ.
+   *
+   * Justifié dans `deadLetterReplay.service.js` : ~34 cycles de tirage, bien
+   * au-delà d'un redéploiement ou d'une coupure passagère.
+   */
+  replayStallAfterMs: positiveInt('REPLAY_STALL_AFTER_MS', 20 * 60_000),
   debug: process.env.PANEL_DEBUG === '1',
   /**
    * DIAGNOSTIC DE DÉPLOIEMENT — réglages du journal forensique.

@@ -9,6 +9,8 @@ import type {
   PanelUserRow,
   PanelVersion,
   ProjectAccountsRead,
+  ProjectDeadLettersRead,
+  DeadLetterReplayView,
   ProjectAccessMode,
   Role,
   PublicProject,
@@ -858,6 +860,36 @@ export const api = {
    */
   getProjectAccounts: (projectId: string) =>
     request<ProjectAccountsRead>(`/api/projects/${projectId}/accounts`, { retries: 0 }),
+
+  /**
+   * LES ÉCRITURES GARÉES D'UN PROJET — supervision, réservée aux DEV.
+   *
+   * `retries: 0` pour la même raison que les comptes : c'est un aller-retour
+   * vers un autre service, et le réessai masquerait l'indisponibilité que
+   * l'écran doit annoncer.
+   *
+   * Cette lecture est purement OBSERVATRICE. Elle ne fait converger aucun
+   * rejeu — c'est le battement qui s'en charge, en continu, que quelqu'un
+   * regarde ou non.
+   */
+  getProjectDeadLetters: (projectId: string) =>
+    request<ProjectDeadLettersRead>(`/api/projects/${projectId}/dead-letters`, { retries: 0 }),
+
+  /**
+   * REJOUER une écriture garée — republication du MÊME fait, nouvelle identité.
+   *
+   * ── `retries: 0`, ET C'EST UNE RÈGLE DE SÛRETÉ ─────────────────────────────
+   *
+   * Un réessai automatique sur un POST non idempotent produirait deux
+   * republications pour un seul geste. Le serveur tient bien l'unicité par un
+   * index partiel — mais une garde qui délègue sa propre discipline au serveur
+   * n'est pas une garde ; elle est un pari sur l'ordre d'arrivée.
+   */
+  replayProjectDeadLetter: (projectId: string, writeId: string) =>
+    request<DeadLetterReplayView>(
+      `/api/projects/${projectId}/dead-letters/${encodeURIComponent(writeId)}/replay`,
+      { method: 'POST', retries: 0 },
+    ),
 
   listPanelUsers: () => request<PanelUserRow[]>('/api/panel-users'),
   listAccessibleProjects: () => request<AccessibleProject[]>('/api/panel-users/projects'),

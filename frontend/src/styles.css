@@ -1811,6 +1811,26 @@ textarea:focus {
 
 .project-avatar-small { width: 2rem; height: 2rem; font-size: 0.75rem; }
 
+/* ---------- Écritures garées (supervision développeur) ---------- */
+/*
+  La ligne réutilise `.team-row` : mêmes rythme, séparateurs et hauteur que les
+  autres listes du Panel. Elle enroule, parce qu'un badge de plus ne doit pas
+  écraser le libellé — et le détail occupe toute la largeur sous sa ligne.
+*/
+.dead-letter-row { flex-wrap: wrap; align-items: center; row-gap: var(--p-space-2); }
+
+.dead-letter-detail {
+  flex-basis: 100%;
+  margin-top: var(--p-space-2);
+  padding: var(--p-space-3) var(--p-space-4);
+  border-left: 3px solid var(--border);
+  background: var(--p-surface-sunken);
+  border-radius: var(--p-radius-sm);
+}
+
+/* Les identifiants techniques ne doivent jamais élargir la carte. */
+.dead-letter-detail code { overflow-wrap: anywhere; }
+
 /* ---------- Agenda et événements ---------- */
 .event-list { list-style: none; margin: 0; padding: 0; }
 

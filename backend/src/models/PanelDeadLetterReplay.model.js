@@ -28,6 +28,27 @@ export const REPLAY_STATUS = Object.freeze({
   REPUBLISHED: 'REPUBLISHED',
   /** Le projet l'a consommée — son curseur a dépassé la nouvelle séquence. */
   ACKNOWLEDGED: 'ACKNOWLEDGED',
+  /**
+   * ══ LE REJEU N'ARRIVE PAS, ET ÇA DURE ══════════════════════════════
+   *
+   * Projet éteint, pont rompu, applicateur toujours défaillant, ou écriture
+   * garée une seconde fois : le rejeu reste `REPUBLISHED` indéfiniment.
+   *
+   * ── POURQUOI UN ÉTAT, ET PAS UN ÂGE CALCULÉ À L'ÉCRAN ──────────────────
+   *
+   * Un âge calculé à l'affichage n'existe que pour celui qui regarde. Un ÉTAT
+   * durable, lui, débloque le geste : l'index d'unicité ne contraint que les
+   * rejeux `REPUBLISHED`, donc passer en `STALLED` rend l'écriture rejouable à
+   * nouveau — sans quoi une trace en vol la condamnerait à vie.
+   *
+   * ── IL N'EST JAMAIS REJOUÉ TOUT SEUL ───────────────────────────────
+   *
+   * Une lettre morte est déjà un renoncement après plusieurs échecs. La
+   * rejouer automatiquement parce qu'un rejeu a échoué produirait exactement la
+   * boucle que la lettre morte existe pour arrêter. Le système DÉTECTE et
+   * SUPERVISE ; c'est un humain qui décide.
+   */
+  STALLED: 'STALLED',
 });
 
 export const REPLAY_STATUS_VALUES = Object.freeze(Object.values(REPLAY_STATUS));
@@ -63,6 +84,8 @@ const replaySchema = new mongoose.Schema(
     requestedAt: { type: String, required: true },
     requestedBy: { type: String, default: null },
     acknowledgedAt: { type: String, default: null },
+    /** Quand on a constaté que le rejeu n'arrivait pas. Diagnostic, et écran. */
+    stalledAt: { type: String, default: null },
   },
   { minimize: false, versionKey: false },
 );
