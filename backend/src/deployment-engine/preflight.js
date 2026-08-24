@@ -24,8 +24,29 @@ import { sonde } from './remoteCommand.js';
  * La distinction remonte jusqu'à l'interface : l'opérateur sait immédiatement
  * s'il doit agir sur sa machine ou sur l'infrastructure.
  */
-function check(id, label, ok, { required = true, detail = null } = {}) {
-  return { id, label, ok: Boolean(ok), required, detail, scope: 'remote' };
+function check(id, label, ok, { required = true, detail = null, whenMissing = null } = {}) {
+  /**
+   * ══ UN CONTRÔLE QUI ÉCHOUE NE DOIT PAS SE LIRE COMME UNE RÉUSSITE ═════════
+   *
+   * Le libellé décrit ce qu'on VÉRIFIE — « MongoDB accessible » — et il servait
+   * aussi de message quand la vérification échouait. Chaque déploiement
+   * affichait donc, en avertissement, une phrase affirmant exactement le
+   * contraire de ce qui venait d'être constaté.
+   *
+   * L'effet est pire qu'un texte maladroit : un opérateur apprend à ignorer les
+   * avertissements de cet écran, et le jour où l'un d'eux compte, il passe
+   * inaperçu. `whenMissing` dit ce que l'ABSENCE signifie, et pourquoi elle est
+   * normale quand elle l'est.
+   */
+  const echoue = !ok;
+  return {
+    id,
+    label: echoue && whenMissing ? whenMissing : label,
+    ok: Boolean(ok),
+    required,
+    detail,
+    scope: 'remote',
+  };
 }
 
 /**
@@ -114,7 +135,15 @@ export async function runPreflight({
   // (manager.<host>, deux niveaux) exige un certificat DÉDIÉ non couvert par le
   // wildcard *.base.
   checks.push(check('certbot', 'Certbot présent (Let’s Encrypt)', hasCertbot, { required: true }));
-  checks.push(check('mongo', 'MongoDB accessible (mongod/mongosh)', hasMongo, { required: false }));
+  /**
+   * MongoDB n'est PAS attendu sur le serveur : les bases vivent chez Atlas.
+   * Le contrôle reste, parce qu'une installation locale signale une
+   * configuration à comprendre — mais son absence est l'état NORMAL.
+   */
+  checks.push(check('mongo', 'MongoDB accessible (mongod/mongosh)', hasMongo, {
+    required: false,
+    whenMissing: 'MongoDB non installé sur le serveur — normal : les bases vivent chez Atlas.',
+  }));
 
   // 3. Build nginx : la configuration existante est-elle valide ? (`nginx -t`)
   const nginxTest = await sonde(transport, 'preflight.probe_nginx_config', 'nginx -t 2>&1 || sudo nginx -t 2>&1');

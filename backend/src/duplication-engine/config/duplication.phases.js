@@ -151,6 +151,34 @@ export const DUPLICATION_PHASES = Object.freeze([
     blocking: true,
   },
   {
+    /**
+     * LA COPIE EST-ELLE PROPRE ? — la seule phase qui relit ce qui a été fait.
+     *
+     * ══ POURQUOI ELLE EXISTE, ET POURQUOI ICI ═════════════════════════════
+     *
+     * Les phases précédentes DÉCLARENT : on exclut des dossiers, on réécrit une
+     * identité. Une exclusion qui rate et une réécriture qui n'ancre pas
+     * échouent en silence — et la première duplication réelle a livré un clone
+     * portant 7 006 documents contractuels du client source, sans qu'une seule
+     * ligne de journal s'en émeuve.
+     *
+     * Elle vient APRÈS `config` parce qu'elle contrôle les deux à la fois : ce
+     * qui n'aurait pas dû être copié, et ce qui aurait dû être renommé. Elle
+     * vient AVANT `dependencies` parce qu'il est absurde de passer trois
+     * minutes à installer un dossier qu'on va jeter.
+     *
+     * Bloquante, évidemment : c'est tout son objet.
+     */
+    id: 'cleanliness',
+    order: 55,
+    label: 'Contrôle de propreté du clone',
+    icon: 'ShieldCheck',
+    group: PHASE_GROUPS.FILES,
+    dynamic: false,
+    required: true,
+    blocking: true,
+  },
+  {
     id: 'discover',
     order: 60,
     label: 'Détection des sous-projets',

@@ -24,6 +24,8 @@ import {
   NETWORK_DECLARATION_SOURCES,
   applyDeclaredNetwork,
 } from '../registry/projectNetworkDeclaration.js';
+import { resolveFrontendUrl } from '../network/networkConfig.service.js';
+import { isPubliclyReachableUrl } from '../../utils/normalizeAppUrl.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 
@@ -340,10 +342,47 @@ export async function bootstrap(dto) {
   // la configuration au premier pull.
   const discovery = await buildDiscoveryPayload(record);
 
+  /**
+   * ══ OÙ LE PANEL ENVOIE UN NAVIGATEUR — déclaré, jamais deviné ═════════════
+   *
+   * Le projet connaît l'adresse par laquelle il NOUS APPELLE : c'est celle
+   * qu'on lui a donnée dans son `.env`. Il ne connaît pas, et ne peut pas
+   * connaître, l'adresse où un HUMAIN trouve nos écrans — notamment
+   * `/federation/authorize`, qui est une page du frontal.
+   *
+   * Chez nous, l'hôte du frontal proxifie aussi `/api` : les deux valeurs
+   * « marchent » pour le pont, et une seule marche pour la fédération. Le
+   * premier projet dupliqué avait reçu l'adresse d'API, et son bouton
+   * « Se connecter avec L.Y Solution » répondait « Route inconnue ». Ce
+   * n'était pas au projet de deviner : c'est à nous de le dire.
+   *
+   * Champ de PREMIER NIVEAU, et c'est délibéré : `bootstrapResponseDataSchema`
+   * est `passthrough()` à la racine mais `strict()` sur son objet `panel`.
+   * Enrichir `panel` ferait ÉCHOUER le bootstrap de tout projet déjà déployé —
+   * l'exact contraire d'une évolution additive. À la racine, un projet ancien
+   * l'ignore, un projet récent le lit.
+   *
+   * `null` si aucune adresse publique n'est résolue : le projet déduira, et le
+   * dira dans son journal. Mieux vaut ne rien annoncer qu'annoncer localhost.
+   */
+  const panelFrontendUrl = await resolveFrontendUrl()
+    .then((r) => {
+      /**
+       * On n'annonce QUE ce qu'un projet distant peut réellement ouvrir. En
+       * recette, `resolveUrl` accepte un repli local — utile pour travailler
+       * seul, absurde à transmettre : le navigateur d'un opérateur devant un
+       * projet en ligne n'ira jamais sur le `localhost` du Panel.
+       */
+      const url = r?.url ?? null;
+      return url && isPubliclyReachableUrl(url) ? url : null;
+    })
+    .catch(() => null);
+
   return {
     projectId: record.projectId,
     bridgeToken,
     panel: { name: config.panelName, contractVersion: CONTRACT_VERSION },
+    panelFrontendUrl,
     ...discovery,
   };
 }

@@ -346,20 +346,6 @@ export async function updateManifest(projectId, manifestInput) {
   record.manifestSource = 'MANUAL';
   await registryStore.save(record);
 
-  /**
-   * LE CONSTAT EST JOURNALISÉ UNE FOIS, À SA NAISSANCE — pas à chaque bascule.
-   *
-   * Une chronologie qui répéterait « deux runtimes » toutes les minutes
-   * deviendrait illisible, et c'est justement là qu'on cherche QUAND cela a
-   * commencé. Le compte d'alternances, lui, continue de monter sur la fiche.
-   */
-  if (observation.evenement === 'RIVAL_DETECTE') {
-    logger.warn(
-      `[runtime] ${record.projectId} : DEUX RUNTIMES déclarent ce projet — `
-      + `${observation.rival.identities.map((i) => i?.softwareVersion ?? '?').join(' et ')}. `
-      + 'Le Panel ne peut en élire aucun : le jeton de pont est la seule identité.',
-    );
-  }
   return { record, unknownFeatures: validation.unknownFeatures };
 }
 
@@ -447,6 +433,31 @@ export async function recordHeartbeat(record, heartbeat, contractVersion = null)
   record.runtime.lineage = observation.lignee;
   record.runtime.lineageSetAside = observation.ecartee;
   record.runtime.rivalRuntime = observation.rival;
+
+  /**
+   * ══ LE CONSTAT EST JOURNALISÉ ICI, ET NULLE PART AILLEURS ═════════════════
+   *
+   * Ce bloc vivait dans `updateManifest`, où `observation` n'existe pas : il ne
+   * pouvait qu'y lever une `ReferenceError` — après l'enregistrement de la
+   * fiche, donc sur une écriture déjà commise. Le canal de secours de saisie
+   * manuelle d'un Manifest répondait 500 en ayant travaillé.
+   *
+   * Et pendant ce temps, le battement — le seul endroit qui produit une
+   * observation — ne journalisait RIEN : la détection de deux runtimes
+   * concurrents fonctionnait, mais restait muette. Un déplacement, deux défauts.
+   *
+   * Une fois à sa naissance, pas à chaque bascule : une chronologie qui
+   * répéterait « deux runtimes » toutes les minutes deviendrait illisible, et
+   * c'est justement là qu'on cherche QUAND cela a commencé. Le compte
+   * d'alternances, lui, continue de monter sur la fiche.
+   */
+  if (observation.evenement === 'RIVAL_DETECTE') {
+    logger.warn(
+      `[runtime] ${record.projectId} : DEUX RUNTIMES déclarent ce projet — `
+      + `${observation.rival.identities.map((i) => i?.softwareVersion ?? '?').join(' et ')}. `
+      + 'Le Panel ne peut en élire aucun : le jeton de pont est la seule identité.',
+    );
+  }
 
   record.runtime.environment = heartbeat.environment;
   record.runtime.softwareVersion = heartbeat.softwareVersion;

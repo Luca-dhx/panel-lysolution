@@ -68,6 +68,50 @@ export async function runPipeline({ transport, target, artifact, options, versio
     remoteEnv,
     health = {},
   } = options || {};
+  /**
+   * ══ LES VALEURS CRITIQUES SONT EXIGÉES ICI, AVANT TOUTE MUTATION DISTANTE ══
+   *
+   * ── CE QUI EST ARRIVÉ ─────────────────────────────────────────────────────
+   *
+   * Un appelant a omis `options` en entier. Le pipeline est allé jusqu'à
+   * `nginx.configure` avant d'écrire `proxy_pass http://127.0.0.1:undefined`.
+   * Le moteur a refusé sa propre configuration (`nginx -t`), désactivé le site
+   * qu'il venait d'écrire et arrêté le déploiement avant toute bascule : le
+   * service en ligne n'a jamais été touché.
+   *
+   * C'est un bon comportement, et il ne suffit pas. Nginx a rattrapé une faute
+   * qui n'était pas la sienne, APRÈS six étapes distantes — connexion, envoi de
+   * l'artefact, installation des dépendances, migration des médias. Une absence
+   * critique doit coûter zéro écriture, et se lire dans son propre message.
+   *
+   * ── POURQUOI ICI, ET PAS DANS CHAQUE APPELANT ────────────────────────────
+   *
+   * Parce qu'il y a deux appelants — la route HTTP et le pilote console — et
+   * qu'ils ont déjà divergé trois fois : DNS, capacités média, environnement du
+   * run. Une exigence répétée à deux endroits n'est pas une exigence : c'est
+   * deux exigences dont l'une finira par manquer.
+   *
+   * ── POURQUOI `backendPort` SEUL ──────────────────────────────────────────
+   *
+   * `remoteRoot` et `env` sont déstructurés avec un défaut, quelques lignes
+   * plus haut : ils ne peuvent pas être vides ici. Les inscrire dans cette
+   * garde donnerait trois noms à lire et une seule vérification réelle — une
+   * promesse qui ne peut jamais se tenir parce qu'elle ne peut jamais se
+   * rompre. On ne garde que ce qui peut manquer.
+   *
+   * `backendPort`, lui, n'a pas de défaut, et il ne doit pas en avoir : un
+   * port inventé serait pris ailleurs sur un serveur partagé.
+   */
+  if (backendPort === undefined || backendPort === null || backendPort === '') {
+    const { DeploymentError } = await import('./errors.js');
+    throw new DeploymentError(
+      'CONFIGURATION_ERROR',
+      'Déploiement refusé avant toute écriture distante : `backendPort` manque dans la '
+      + 'configuration de destination. Le port est attribué par le registre, jamais deviné.',
+      { step: 'preflight', missing: ['backendPort'] },
+    );
+  }
+
   const healthLocalOpts = { retries: health.localRetries, delayMs: health.localDelayMs };
   const healthPublicOpts = { retries: health.publicRetries, delayMs: health.publicDelayMs };
 

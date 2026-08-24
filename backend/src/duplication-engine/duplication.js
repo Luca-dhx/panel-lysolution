@@ -26,21 +26,39 @@ import { normalizeGithubRepositoryUrl } from '../utils/githubRepositoryUrl.js';
 import { NETWORK_DEFAULTS } from '../utils/constants.js';
 import { isDerivedFromEmail, isUniversalSecret } from '../utils/universalSecrets.js';
 import { ENV_KEYS, ENV_KEYS_TO_STRIP, FIRST_ADMIN, SECRETS_TO_GENERATE } from './config/duplication.profile.js';
+import {
+  DENIED_DIRECTORY_NAMES,
+  EMPTY_ONLY_PATHS,
+  assertCleanTree,
+  isEmptyOnlyPath,
+} from './config/duplication.tree.js';
+import { readProjectIdentity, rewriteProjectIdentity, scanResidualSourceIdentity } from './identity.js';
 import { createPhaseTracker } from './phaseTracker.js';
 
-/** Dossiers/fichiers jamais copiés (régénérés) : lourds ou spécifiques à l'instance. */
-export const COPY_DENYLIST = new Set([
-  'node_modules',
-  '.git',
-  'build',
-  '.cache',
-  '.vite',
-  'dist',
-  'coverage',
-  '.turbo',
-  '.next',
-  'migration-reports',
-]);
+/**
+ * ══ CE QU'UNE COPIE HÉRITE — DÉCLARÉ AILLEURS, ET UNE SEULE FOIS ════════════
+ *
+ * Ces deux ensembles étaient écrits ici, à la main, sans motif. Ils sont
+ * désormais DÉRIVÉS du registre d'arborescence, où chaque dossier porte un
+ * verdict explicite et la raison qui l'a fait choisir. Le moteur ne décide plus
+ * de ce qu'est `storage` ou `uploads` : il applique une politique qui se lit.
+ *
+ * Ils restent exportés sous leur nom d'origine — le moteur, ses tests et les
+ * appelants les connaissent ainsi.
+ */
+export const COPY_DENYLIST = new Set(DENIED_DIRECTORY_NAMES);
+
+/**
+ * LES CHEMINS RECRÉÉS VIDES — la structure, jamais le contenu.
+ *
+ * Ils sont désormais désignés par CHEMIN (`backend/storage`) et non par NOM
+ * (`storage`). La nuance a compté : un nom vide tout dossier qui le porte, où
+ * qu'il soit — y compris un `logs` légitime au milieu du code d'une
+ * bibliothèque. Le registre nomme les quatre dossiers du projet, et eux seuls.
+ *
+ * Le motif de chacun se lit dans `config/duplication.tree.js`.
+ */
+export const COPY_EMPTY_ONLY = new Set(EMPTY_ONLY_PATHS);
 
 /** Dossiers ignorés lors de la découverte des sous-projets Node. */
 export const NODE_PROJECT_DISCOVERY_DENYLIST = new Set([
@@ -278,6 +296,69 @@ export function sanitizeFolderName(name) {
     .replace(/[^a-zA-Z0-9._-]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 100);
+}
+
+/**
+ * ══ L'IDENTITÉ TECHNIQUE D'UNE COPIE — DÉRIVÉE, JAMAIS HÉRITÉE ══════════════
+ *
+ * `project.profile.js` est le SEUL fichier du moteur de déploiement qui
+ * connaisse le projet : son slug (préfixe des processus PM2, des dossiers de
+ * staging et de l'arborescence de sauvegardes) et son identifiant de build
+ * (celui que `/api/version` publie).
+ *
+ * La duplication réécrivait le `.env` et oubliait ce fichier. Toute copie
+ * repartait donc en `sbauto` / `sbauto06` : dix projets clients auraient tous
+ * annoncé `sbauto06` à `/api/version`, et déposé leurs sauvegardes dans le même
+ * `/var/backups/sbauto`. Rien n'aurait cassé — c'est le pire des cas : chaque
+ * projet aurait menti sur son identité, en silence, dès le premier clone.
+ *
+ * ── POURQUOI DÉRIVER, ET NE PAS DEMANDER ─────────────────────────────────
+ *
+ * Un champ de plus à saisir est un champ de plus à saisir FAUX, et deux projets
+ * finiraient par partager un slug par distraction. Le nom du projet est déjà
+ * saisi, déjà validé, déjà unique par construction (le dossier cible ne doit
+ * pas exister). Le slug en découle mécaniquement.
+ */
+export function deriveProjectIdentity(projectName) {
+  const base = String(projectName ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (!base) throw new ValidationError('Nom de projet inexploitable pour dériver une identité technique.');
+  /**
+   * Le slug sert de préfixe à des noms de processus et de chemins : on le borne
+   * court, et on garantit qu'il commence par une lettre — un nom de service qui
+   * commence par un chiffre se comporte mal dans plus d'un outil.
+   */
+  const slug = (/^[a-z]/.test(base) ? base : `p-${base}`).slice(0, 32).replace(/-+$/g, '');
+  return { slug, projectId: slug };
+}
+
+/**
+ * RÉÉCRIT le profil de projet de la COPIE.
+ *
+ * Deux constantes, remplacées par ancrage sur leur déclaration exacte. Si l'une
+ * des deux n'est pas trouvée, on LÈVE : une copie qui repartirait avec
+ * l'identité de sa source est précisément ce que cette fonction existe pour
+ * empêcher, et un remplacement silencieusement raté serait pire que pas de
+ * remplacement du tout.
+ */
+export function rewriteProjectProfile(content, { slug, projectId }) {
+  let out = String(content);
+  const remplacer = (cle, valeur) => {
+    const re = new RegExp(`(export const ${cle} = )'[^']*'`);
+    if (!re.test(out)) {
+      throw new ValidationError(
+        `Profil de projet illisible : \`export const ${cle}\` introuvable. `
+        + 'La copie porterait l’identité technique de sa source.'
+      );
+    }
+    out = out.replace(re, `$1'${valeur}'`);
+  };
+  remplacer('PROJECT_SLUG', slug);
+  remplacer('PROJECT_ID', projectId);
+  return out;
 }
 
 /**
@@ -809,6 +890,22 @@ export async function copyProject(srcRoot, destRoot, { onLog = () => {} } = {}) 
     const entries = await fs.readdir(src, { withFileTypes: true });
     for (const entry of entries) {
       if (COPY_DENYLIST.has(entry.name)) continue;
+      /**
+       * LE DOSSIER, PAS SON CONTENU. On le crée et on passe : la copie a la
+       * structure dont son runtime a besoin, sans un seul fichier d'un autre
+       * client.
+       *
+       * La reconnaissance se fait sur le CHEMIN relatif à la racine du projet,
+       * jamais sur le seul nom : `backend/storage` désigne un dossier précis,
+       * là où « storage » viderait n'importe quel dossier homonyme rencontré en
+       * chemin — y compris dans du code tiers.
+       */
+      const relatif = path.relative(srcRoot, path.join(src, entry.name));
+      if (entry.isDirectory() && isEmptyOnlyPath(relatif)) {
+        await fs.mkdir(path.join(dest, entry.name), { recursive: true });
+        dirs += 1;
+        continue;
+      }
       const s = path.join(src, entry.name);
       const d = path.join(dest, entry.name);
       if (entry.isDirectory()) {
@@ -821,6 +918,23 @@ export async function copyProject(srcRoot, destRoot, { onLog = () => {} } = {}) 
   };
   onLog(`[duplicate] copie ${srcRoot} -> ${destRoot}`);
   await walk(srcRoot, destRoot);
+
+  /**
+   * ══ LES DOSSIERS VIERGES EXISTENT, MÊME ABSENTS DE LA SOURCE ═════════════
+   *
+   * `backend/storage` et `backend/logs` sont intégralement ignorés par git :
+   * un checkout FRAIS de la source ne les contient pas. Se contenter de les
+   * vider quand on les rencontre laisserait donc une copie sans eux — et le
+   * runtime, qui y écrit dès son premier démarrage, échouerait sur un dossier
+   * manquant, pour la seule raison que la source avait été clonée proprement.
+   *
+   * On les crée donc TOUJOURS. C'est le sens du verdict : la structure est due,
+   * le contenu ne l'est jamais.
+   */
+  for (const relatif of EMPTY_ONLY_PATHS) {
+    await fs.mkdir(path.join(destRoot, ...relatif.split('/')), { recursive: true });
+    dirs += 1;
+  }
   return { files, dirs };
 }
 
@@ -1129,6 +1243,21 @@ export async function duplicateProject(input, ctx = {}) {
     /* n'existe pas : OK */
   }
 
+  /**
+   * L'IDENTITÉ DE LA SOURCE, LUE AVANT TOUT — et avant la moindre écriture.
+   *
+   * Elle ne sert pas à écrire : elle sert à VÉRIFIER. Sans elle, on saurait
+   * poser la nouvelle identité sur la copie, mais pas démontrer que l'ancienne
+   * a disparu — et c'est exactement la démonstration qui manquait quand le
+   * premier clone réel a continué de s'appeler « sbauto » dans ses paquets et
+   * dans ses manifestes.
+   *
+   * Lue ici, en tête : un profil illisible doit coûter une seconde, pas trois
+   * minutes d'installation sur un dossier qu'il faudra supprimer.
+   */
+  const sourceIdentity = await readProjectIdentity(safePaths.sourceRoot);
+  onLog(`[duplicate] identité de la source : ${sourceIdentity.slug} / ${sourceIdentity.projectId}`);
+
   // 1. Connexion Mongo.
   tracker.phase('mongo', 'running');
   onLog('[duplicate] test connexion Mongo…');
@@ -1255,7 +1384,104 @@ export async function duplicateProject(input, ctx = {}) {
         + `(${secretsResiduels.length} ligne(s)). Aucune copie ne doit naître avec un mot de passe partagé.`
     );
   }
+  /**
+   * ── L'IDENTITÉ TECHNIQUE DE LA COPIE, ÉCRITE AU MÊME MOMENT QUE SON .env ──
+   *
+   * Même phase, parce que c'est la même question : « qui est ce projet ? ». La
+   * séparer aurait créé un instant où la copie a ses bases et son dépôt, mais
+   * annonce encore le nom de sa source.
+   */
+  const profilPath = path.join(
+    safePaths.destRoot, 'backend', 'src', 'deployment-engine', 'config', 'project.profile.js',
+  );
+  const identite = deriveProjectIdentity(clean.projectName);
+  const profilSource = await fs.readFile(profilPath, 'utf8');
+  const profilReecrit = rewriteProjectProfile(profilSource, identite);
+  const profilTmp = `${profilPath}.tmp`;
+  await fs.writeFile(profilTmp, profilReecrit, 'utf8');
+  await fs.rename(profilTmp, profilPath);
+
+  /** Vérification POST-ÉCRITURE, sur le fichier réellement écrit. */
+  const profilEcrit = await fs.readFile(profilPath, 'utf8');
+  /**
+   * La déclaration attendue est COMPOSÉE à partir du nom de la constante, et
+   * non épelée : le cœur d'un moteur ne doit contenir aucune ligne ressemblant
+   * à une identité en dur — voir `identity.js`, `lireConstante`.
+   */
+  const declaration = (nom, valeur) => `export const ${nom} = '${valeur}'`;
+  if (!profilEcrit.includes(declaration('PROJECT_SLUG', identite.slug))
+    || !profilEcrit.includes(declaration('PROJECT_ID', identite.projectId))) {
+    throw new ValidationError(
+      'Vérification du profil dupliqué échouée : la copie porte encore une autre identité technique.',
+    );
+  }
+  /**
+   * ══ ET TOUTES LES AUTRES AUTORITÉS D'IDENTITÉ, AU MÊME INSTANT ═══════════
+   *
+   * Le profil n'était pas le seul endroit à porter le nom du projet — il était
+   * seulement le seul qu'on réécrivait. Manifestes de moteur, noms de paquets
+   * et de lockfiles, titres d'onglet, bannière de démarrage : tout cela
+   * annonçait encore la source dans le premier clone réel.
+   *
+   * `identite.source` est lue AVANT la copie : sans elle, on saurait écrire la
+   * nouvelle identité mais pas VÉRIFIER que l'ancienne a disparu.
+   */
+  const identiteEtendue = await rewriteProjectIdentity(
+    safePaths.destRoot,
+    { ...identite, projectName: clean.projectName },
+    { source: sourceIdentity },
+  );
+
+  emitStructuredDuplicateLog(onLog, {
+    step: 'identity',
+    slug: identite.slug,
+    projectId: identite.projectId,
+    rewritten: identiteEtendue.rewritten.map((r) => r.file),
+    toReview: identiteEtendue.toReview,
+  });
+  for (const r of identiteEtendue.rewritten) onLog(`[duplicate] identité réécrite — ${r.file} (${r.field})`);
+  for (const t of identiteEtendue.toReview) onLog(`[duplicate] à personnaliser — ${t}`);
+
   tracker.phase('config', 'ok');
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     LA COPIE EST-ELLE PROPRE ? — on relit, on ne suppose pas.
+     ══════════════════════════════════════════════════════════════════════════ */
+  tracker.phase('cleanliness', 'running');
+  let proprete;
+  try {
+    proprete = await assertCleanTree(safePaths.destRoot);
+  } catch (err) {
+    tracker.phase('cleanliness', 'error');
+    throw new ValidationError(
+      `Duplication interrompue — le clone n’est pas propre. ${err.message}`,
+      { blocker: err.code ?? 'DUPLICATION_TREE_NOT_CLEAN', ...(err.details ?? {}) },
+    );
+  }
+  /**
+   * LE BALAYAGE RÉSIDUEL NE BLOQUE PAS, ET C'EST RAISONNÉ.
+   *
+   * Le nom d'un projet apparaît légitimement dans un dépôt : un commentaire qui
+   * raconte un incident, une fixture de test, une adresse d'exemple. Bloquer
+   * là-dessus apprendrait à effacer des commentaires utiles pour obtenir du
+   * vert. Ce qui bloque est la vérification des fichiers d'identité, faite
+   * juste au-dessus ; ceci informe l'opérateur, qui décide.
+   */
+  const residuel = await scanResidualSourceIdentity(safePaths.destRoot, sourceIdentity);
+  onLog(
+    `[duplicate] propreté — ${proprete.checked.length} dossier(s) vierge(s) vérifié(s) ; `
+    + `identité de la source : ${residuel.code.length} occurrence(s) hors commentaires `
+    + `sur ${residuel.occurrences.length} au total (${residuel.files} fichiers balayés).`,
+  );
+  emitStructuredDuplicateLog(onLog, {
+    step: 'cleanliness',
+    emptyDirectories: proprete.checked,
+    residualIdentity: { total: residuel.occurrences.length, inCode: residuel.code.length },
+  });
+  tracker.phase('cleanliness', 'ok', {
+    emptyDirectories: proprete.checked.length,
+    residualIdentityInCode: residuel.code.length,
+  });
 
   tracker.phase('discover', 'running');
   const nodeProjects = await discoverNodeProjects(safePaths.destRoot);
@@ -1333,6 +1559,25 @@ export async function duplicateProject(input, ctx = {}) {
     dbTest: { name: clean.dbTest, ...dbTest },
     dbProd: { name: clean.dbProd, ...dbProd },
     copy,
+    /**
+     * L'IDENTITÉ EFFECTIVEMENT POSÉE — et celle qu'on a remplacée.
+     *
+     * Le rapport disait ce qui avait été copié et installé, jamais QUI la copie
+     * est devenue. Un opérateur devait ouvrir un fichier pour le savoir, et une
+     * recette ne pouvait rien en affirmer.
+     */
+    identity: { ...identite, projectName: clean.projectName, replaced: sourceIdentity },
+    /** Ce que la réécriture d'identité a touché, et ce qui reste à un humain. */
+    identityRewrite: identiteEtendue,
+    /** Ce que le contrôle de propreté a réellement constaté sur la copie. */
+    cleanliness: {
+      emptyDirectories: proprete.checked,
+      residualIdentity: {
+        total: residuel.occurrences.length,
+        inCode: residuel.code.length,
+        skippedTokens: residuel.skippedTokens ?? [],
+      },
+    },
     nodeProjects: nodeProjects.map(summarizeNodeProject),
     dependencyInstalls,
     validation,
