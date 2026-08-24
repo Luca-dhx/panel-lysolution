@@ -304,8 +304,27 @@ section('ISOLATION D’AUDIENCE — une écriture nominative ne franchit pas la 
    * métier, écarté par la garde de version de l'applicateur.
    */
   const tirageBeta = await beta.pull();
+  /**
+   * ── DEUX ENTRÉES, ET LA RÉPARTITION N'EST PAS LA PROPRIÉTÉ ──────────────
+   *
+   * Ce contrôle exigeait `applied === 2`. Il contredisait le commentaire
+   * ci-dessus, qui dit déjà que la seconde entrée porte la MÊME version et
+   * qu'elle est « écartée par la garde de version de l'applicateur » —
+   * c'est-à-dire SKIPPED, pas APPLIED.
+   *
+   * Il passait parce que la livraison poussée n'aboutissait jamais dans ce
+   * harnais : les deux entrées dormaient dans le journal jusqu'au tirage.
+   * Depuis que les recettes peuvent observer de vrais projets sur la boucle
+   * locale, la poussée fonctionne — l'une arrive avant le tirage, et le tirage
+   * l'écarte comme un non-événement. C'est exactement ce que le commentaire
+   * décrit ; c'est l'assertion qui décrivait autre chose.
+   *
+   * Ce qui doit être vrai : bêta reçoit les DEUX écritures, et son état final
+   * est le bon — les trois contrôles suivants s'en chargent.
+   */
   check('bêta tire la diffusion générale ET la rediffusion qui la vise',
-    tirageBeta.applied === 2);
+    tirageBeta.applied + tirageBeta.skipped === 2,
+    JSON.stringify(tirageBeta));
   const etatBeta = await beta.state();
   check('…sans que sa configuration soit dupliquée', etatBeta.configurationCount === 1);
   check(`…sa configuration porte la version ${suivante}`, etatBeta.company?.version === suivante);
@@ -430,8 +449,33 @@ section('HORS LIGNE PUIS REPRISE — le retard n’invente aucune version');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('LA FRONTIÈRE TEST/PROD — pourquoi les deux instances sont en recette');
+section('LA FRONTIÈRE TEST/PROD — un Panel de recette PILOTE une production');
 {
+  /**
+   * ══ CE QUE CETTE SECTION AFFIRMAIT, ET POURQUOI ELLE A CHANGÉ ════════════
+   *
+   * Elle prouvait qu'un projet en PRODUCTION ne pouvait pas s'appairer à ce
+   * Panel, qui sert la recette. C'était la doctrine : `dto.environment` devait
+   * égaler `config.env`.
+   *
+   * Elle interdisait du même geste ce qu'un plan de contrôle doit savoir faire —
+   * ADMINISTRER une production. Les deux dimensions étaient soudées :
+   *
+   *     PANEL_ENV     le monde où tourne le PLAN DE CONTRÔLE
+   *     PROJECT_ENV   le monde où tourne le PROJET administré
+   *
+   * L'appairage compare désormais l'environnement annoncé à celui ÉPINGLÉ SUR
+   * LA FICHE — que le Panel écrit et que le projet ne touche jamais. Le refus
+   * d'origine survit donc entier (voir la seconde moitié de cette section) ;
+   * seule sa référence a changé.
+   *
+   * ══ CE QUI RESTE UNE FRONTIÈRE ══════════════════════════════════════════
+   *
+   * La DONNÉE MÉTIER du Panel. Elle est partitionnée par le monde du Panel, et
+   * la livrer à un projet d'un autre monde poserait les mentions légales d'une
+   * entreprise de recette sur un site en production. C'est ce que la dernière
+   * moitié de la section constate, et c'est le vrai sujet.
+   */
   const gamma = await demarrer({ dbName: 'sbauto_gamma', env: 'PROD', projectName: 'SB Auto Gamma' });
   const declared = await registre.declareProject({
     publicBackendUrl: gamma.publicBackendUrl, projectName: 'SB Auto Gamma', environment: 'PROD',
@@ -446,19 +490,52 @@ section('LA FRONTIÈRE TEST/PROD — pourquoi les deux instances sont en recette
     refus = err;
   }
 
-  check('un projet qui se déclare en PROD ne s’appaire PAS à un Panel de recette',
-    refus !== null);
-  check('…et le refus est nommé, pas silencieux',
-    refus?.code === 'BRIDGE_ENVIRONMENT_MISMATCH');
-  check('…la fiche déclarée reste non appairée',
-    (await registryStore.getById(declared.record.projectId)).pairing.status !== 'PAIRED');
+  check('un projet en PRODUCTION s’appaire à un Panel de recette',
+    refus === null, String(refus?.code ?? ''));
+  const ficheGamma = await registryStore.getById(declared.record.projectId);
+  check('…la fiche est appairée', ficheGamma.pairing.status === 'PAIRED');
+  check('…et son monde ÉPINGLÉ est bien PROD', ficheGamma.declaredEnvironment === 'PROD');
 
+  /* ── LA DONNÉE MÉTIER, ELLE, NE TRAVERSE PAS ─────────────────────────── */
   const d = await diffusion();
-  check('une instance non appairée ne fait pas échouer le parc', d.global === 'UP_TO_DATE');
-  check('…et elle est nommée NOT_PAIRED, pas « en retard »',
-    etatDe(d, declared.record.projectId).state === 'NOT_PAIRED');
-  check('…donc elle n’est jamais visée par une rediffusion',
+  const etatGamma = etatDe(d, declared.record.projectId);
+  check('la production appairée est nommée HORS PÉRIMÈTRE, pas « en retard »',
+    etatGamma.state === 'OUT_OF_SCOPE', JSON.stringify(etatGamma));
+  check('…son monde est annoncé tel qu’il est', etatGamma.environment === 'PROD');
+  check('…le parc reste sain', d.global === 'UP_TO_DATE', d.global);
+  check('…et elle n’est jamais visée par une rediffusion de ce Panel',
     !d.pendingProjectIds.includes(declared.record.projectId));
+
+  /* ── ET L'ACCIDENT D'ORIGINE RESTE INTERDIT ──────────────────────────── */
+  /**
+   * Une fiche enregistrée en RECETTE à laquelle une PRODUCTION se présente :
+   * c'est l'`.env` recopié d'un monde à l'autre, et il est toujours attrapé.
+   */
+  const delta = await demarrer({ dbName: 'sbauto_delta', env: 'PROD', projectName: 'SB Auto Delta' });
+  const ficheTest = await registre.declareProject({
+    publicBackendUrl: delta.publicBackendUrl, projectName: 'SB Auto Delta', environment: 'TEST',
+  });
+  let refusDelta = null;
+  try {
+    await delta.pair({
+      panelUrl, pairingCode: ficheTest.pairingCode, publicBackendUrl: delta.publicBackendUrl,
+    });
+  } catch (err) { refusDelta = err; }
+
+  check('une PRODUCTION présentée à une fiche enregistrée en RECETTE est REFUSÉE',
+    refusDelta !== null);
+  check('…et le refus est nommé, pas silencieux',
+    refusDelta?.code === 'BRIDGE_ENVIRONMENT_MISMATCH');
+  check('…la fiche déclarée reste non appairée',
+    (await registryStore.getById(ficheTest.record.projectId)).pairing.status !== 'PAIRED');
+  check('…et elle est nommée NOT_PAIRED, pas « en retard »',
+    etatDe(await diffusion(), ficheTest.record.projectId).state === 'NOT_PAIRED');
+  /**
+   * On ne l'arrête PAS ici : `demarrer` inscrit chaque instance dans
+   * `instances`, et le démontage global les ferme toutes. Un second `stop()`
+   * écrit dans un canal IPC déjà fermé et fait tomber la suite APRÈS son
+   * dernier contrôle — un rouge qui ne parle d'aucun défaut du produit.
+   */
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

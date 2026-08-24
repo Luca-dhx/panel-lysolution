@@ -212,6 +212,37 @@ const isTestProcess = isAutomatedTestProcess({
 });
 const liveRecipe = liveRecipeRequested(process.env[LIVE_RECIPE_VARIABLE]);
 
+/**
+ * ══ CE PROCESSUS EST-IL UN RUNTIME DE HARNAIS DE TEST ? ═════════════════════
+ *
+ * La question sert à UN invariant, décrit en entier dans `testHarnessRuntime.js`
+ * — la seule adresse de boucle locale qu'une destination de projet ait le droit
+ * d'être, et uniquement quand c'est une suite qui observe.
+ *
+ * ── POURQUOI LA LECTURE VIT ICI, ET PAS LÀ-BAS ────────────────────────────
+ *
+ * Parce que ce fichier est le SEUL lecteur de `process.env`, et que la garde
+ * voisine le dit sans détour : « un module qui lirait `process.env` de son côté
+ * rouvrirait une seconde porte ». La règle valait aussi pour celui-ci — écrire
+ * la lecture ailleurs, puis inscrire le fichier sur une liste de dérogations,
+ * aurait été affaiblir l'invariant pour épargner un import.
+ *
+ * ── POURQUOI UNE FONCTION, ET PAS UNE CONSTANTE ───────────────────────────
+ *
+ * Tout le reste de cette configuration est figé au chargement, et c'est ce qu'il
+ * faut : une valeur qui change en cours de route est une valeur dont personne ne
+ * peut raisonner. Celle-ci est l'exception, et pour une raison précise : la
+ * suite qui l'éprouve doit pouvoir constater les DEUX réponses — sous la marque
+ * et sans elle, en TEST et en PROD. Une constante rendrait l'invariant
+ * indémontrable, et un invariant qu'on ne peut pas démontrer n'en est pas un.
+ *
+ * Le coût est une lecture d'objet ; le gain est une garde vérifiable.
+ */
+export function testHarnessRuntimeRequested() {
+  if (String(process.env.ENV ?? '').trim().toUpperCase() === 'PROD') return false;
+  return process.env[TEST_PROCESS_VARIABLE] === '1';
+}
+
 export const config = {
   env,
   isProd,

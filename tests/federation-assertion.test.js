@@ -405,13 +405,54 @@ section('8 · L’émission refuse, et dit pourquoi');
   }));
   check('projet inconnu → refus', inconnu?.reasonCode === E.PROJECT_UNKNOWN);
 
-  // ENVIRONNEMENT
-  await PanelProject.updateOne({ projectId: PROJET_A }, { $set: { 'runtime.environment': 'PROD' } });
+  /**
+   * ══ ENVIRONNEMENT — CE QUI EST REFUSÉ A CHANGÉ DE NATURE ════════════════
+   *
+   * On refusait toute fiche dont le monde différait de celui du Panel. Depuis
+   * qu'un plan de contrôle de recette ADMINISTRE une production (05_PAIRING
+   * §9), cette règle aurait fermé la connexion fédérée de tout projet en
+   * production — c'est-à-dire la seule porte d'entrée de son Manager.
+   *
+   * L'assertion est émise POUR UN PROJET : elle porte le monde du PROJET,
+   * épinglé sur sa fiche. Ce qui reste refusé, c'est l'INCERTITUDE — une fiche
+   * qui ANNONCE un monde différent de celui qui y est épinglé nous laisse sans
+   * savoir pour qui l'on signe, et l'on n'émet pas un droit d'entrée au jugé.
+   */
+  const AVANT = (await PanelProject.findOne({ projectId: PROJET_A }).lean()).declaredEnvironment;
+
+  // 1. Une PRODUCTION cohérente : elle passe, et l'assertion porte PROD.
+  await PanelProject.updateOne({ projectId: PROJET_A }, {
+    $set: { declaredEnvironment: 'PROD', 'runtime.environment': 'PROD' },
+  });
+  const prod = await federation.issueProjectAssertion({
+    panelUserId: DEV.userId, projectId: PROJET_A,
+  });
+  check('un projet PROD obtient une assertion depuis ce Panel TEST',
+    typeof prod?.assertion === 'string');
+  check('…et l’assertion porte le monde du PROJET, pas celui du Panel',
+    jwt.decode(prod.assertion).environment === 'PROD');
+
+  // 2. Une fiche qui se CONTREDIT : refus nommé.
+  await PanelProject.updateOne({ projectId: PROJET_A }, {
+    $set: { declaredEnvironment: 'TEST', 'runtime.environment': 'PROD' },
+  });
   const monde = await refus(() => federation.issueProjectAssertion({
     panelUserId: DEV.userId, projectId: PROJET_A,
   }));
-  check('une fiche qui déclare un autre monde → refus', monde?.reasonCode === E.ENVIRONMENT_MISMATCH);
-  await PanelProject.updateOne({ projectId: PROJET_A }, { $set: { 'runtime.environment': null } });
+  check('une fiche qui se CONTREDIT → refus', monde?.reasonCode === E.ENVIRONMENT_MISMATCH);
+
+  // 3. Et l'annonce seule ne promeut rien : épinglée TEST, elle signe TEST.
+  await PanelProject.updateOne({ projectId: PROJET_A }, {
+    $set: { declaredEnvironment: 'TEST', 'runtime.environment': 'TEST' },
+  });
+  const test = await federation.issueProjectAssertion({
+    panelUserId: DEV.userId, projectId: PROJET_A,
+  });
+  check('une fiche épinglée TEST signe TEST', jwt.decode(test.assertion).environment === 'TEST');
+
+  await PanelProject.updateOne({ projectId: PROJET_A }, {
+    $set: { declaredEnvironment: AVANT ?? null, 'runtime.environment': null },
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

@@ -33,6 +33,9 @@ import jwt from 'jsonwebtoken';
 import logger from '../../utils/logger.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { runtimeEnvironment } from '../integratedApi/environment.js';
+import {
+  authoritativeEnvironmentOf, environmentContradicted,
+} from '../registry/projectEnvironment.js';
 import { PROJECT_ACCESS_MODES, getStoredUserById } from '../auth/panelUsers.service.js';
 import { FEDERATED_PROJECT_ROLE, grantsProjectFederation } from '../auth/panelRoles.js';
 import PanelProject from '../../models/PanelProject.model.js';
@@ -214,18 +217,45 @@ export async function issueProjectAssertion({ panelUserId, projectId, requestedB
     );
   }
 
-  // ── 7. LES MONDES CONCORDENT-ILS ? ────────────────────────────────────────
-  // Même règle que la passerelle de capacités : on ne bloque que sur une valeur
-  // PRÉSENTE et DIFFÉRENTE — un projet qui n'a jamais parlé n'est pas en
-  // désaccord, il est muet.
+  /**
+   * ── 7. POUR QUEL MONDE SIGNE-T-ON ? ──────────────────────────────────────
+   *
+   * ══ CE QUI ÉTAIT COMPARÉ, ET POURQUOI C'ÉTAIT DEVENU FAUX ═══════════════
+   *
+   * On confrontait l'annonce du projet au `config.env` du Panel, et l'on
+   * refusait toute divergence. La règle était juste tant qu'un Panel ne pouvait
+   * appairer que des projets de son propre monde.
+   *
+   * Depuis qu'un plan de contrôle de recette ADMINISTRE une production
+   * (05_PAIRING §9), cette confrontation refusait purement et simplement la
+   * connexion fédérée de tout projet en production — c'est-à-dire la seule
+   * façon d'entrer dans son Manager. Le lot qui ouvre le pilotage aurait fermé
+   * la porte d'entrée.
+   *
+   * ══ CE QU'ON COMPARE MAINTENANT ════════════════════════════════════════
+   *
+   * L'assertion est émise POUR UN PROJET : le monde qu'elle porte est celui du
+   * PROJET, épinglé sur sa fiche — pas celui de l'instance qui la signe.
+   *
+   * Ce qui reste refusé, c'est l'INCERTITUDE : un projet qui ANNONCE un monde
+   * différent de celui épinglé sur sa fiche nous laisse sans savoir pour qui
+   * l'on signe. L'épingle fait autorité partout ailleurs ; ici, où l'on émet un
+   * droit d'entrée, la contradiction elle-même suffit à refuser.
+   */
   const served = runtimeEnvironment();
-  const declared = project.runtime?.environment ?? null;
-  if (declared && declared !== served) {
+  if (environmentContradicted(project)) {
     return deny(
       E.ENVIRONMENT_MISMATCH,
-      `Cette instance sert ${served}, la fiche du projet déclare ${declared}.`,
+      `La fiche de ce projet est enregistrée en ${project.declaredEnvironment} `
+      + `alors qu’il annonce ${project.runtime?.environment}. `
+      + 'Aucune assertion n’est émise tant que les deux ne concordent pas.',
     );
   }
+  /**
+   * Le monde PORTÉ par l'assertion. `served` ne sert que de repli pour une
+   * fiche antérieure à l'épinglage, dont le projet n'a jamais parlé.
+   */
+  const monde = authoritativeEnvironmentOf(project) ?? served;
 
   // ── 8. Y A-T-IL UNE CLÉ POUR SIGNER ? ─────────────────────────────────────
   await ensureActiveKey();
@@ -271,7 +301,7 @@ export async function issueProjectAssertion({ panelUserId, projectId, requestedB
        * qu'il a ouverte repose encore sur une identité valable.
        */
       tokenVersion: user.tokenVersion ?? 0,
-      environment: served,
+      environment: monde,
       jti,
     },
     key.privateKeyPem,

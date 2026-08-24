@@ -483,33 +483,76 @@ section('PUSH_DISPATCHER_BOUNDED_CONCURRENCY — 50 destinataires');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('TEST/PROD — fail closed, jamais de correction automatique');
+section('LA DONNÉE MÉTIER NE TRAVERSE PAS LES MONDES');
 {
+  /**
+   * ══ CE QUE CETTE SECTION AFFIRMAIT, ET CE QU'ELLE AFFIRME MAINTENANT ══════
+   *
+   * Elle plaçait `runtime.environment` à `PROD` — l'ANNONCE du projet — et
+   * attendait un refus de classe `SECURITY`. Deux choses ont changé sous elle :
+   *
+   *   · l'annonce du projet ne fait plus autorité. C'est l'ENVIRONNEMENT
+   *     ÉPINGLÉ de la fiche qui décide, précisément pour qu'un projet ne puisse
+   *     pas se promouvoir d'un champ (voir `panel-instance-environment`) ;
+   *   · un Panel de recette PILOTE désormais une production. La combinaison
+   *     n'est plus un incident, donc plus une affaire de `SECURITY`.
+   *
+   * Ce qui demeure — et qui est le vrai sujet — c'est que le Panel ne livre pas
+   * SES PROPRES enregistrements métier à un projet d'un autre monde : ce
+   * seraient les mentions légales d'une entreprise de recette posées sur un
+   * site en production. C'est une FRONTIÈRE, de classe `SCOPE`.
+   */
   const { registryStore } = await import('../backend/src/services/registry/registryStore.js');
-  const record = await registryStore.getById(A.projectId);
-  const memoire = record.runtime.environment;
-  record.runtime.environment = 'PROD';       // ce Panel sert TEST
-  await registryStore.save(record);
+
+  const change = (writeId) => ({
+    audience: A.projectId,
+    originProjectId: null,
+    change: { writeId, entityType: 'DEV_COMPANY', entityId: companyId,
+      deleted: false, payload: {}, modifiedAt: new Date().toISOString(), emitter: 'PANEL' },
+  });
 
   let requetes = 0;
   livraison.configureDeliveryTransport(() => ({
     deliverChanges: async () => { requetes += 1; return { results: [] }; },
   }));
 
-  const traces = await livraison.deliverEntry({
-    audience: A.projectId,
-    originProjectId: null,
-    change: { writeId: 'env-write', entityType: 'DEV_COMPANY', entityId: companyId,
-      deleted: false, payload: {}, modifiedAt: new Date().toISOString(), emitter: 'PANEL' },
-  });
+  /* ── 1. UNE FICHE RÉELLEMENT ÉPINGLÉE EN PRODUCTION ─────────────────────── */
+  const record = await registryStore.getById(A.projectId);
+  const memoireEpingle = record.declaredEnvironment;
+  const memoireAnnonce = record.runtime.environment;
+  record.declaredEnvironment = 'PROD';       // ce Panel sert TEST
+  record.runtime.environment = 'PROD';
+  await registryStore.save(record);
+
+  const traces = await livraison.deliverEntry(change('env-write'));
 
   check('AUCUNE requête n’est partie vers un projet d’un autre monde', requetes === 0);
   check('…l’issue est nommée', traces[0]?.outcome === 'ENVIRONMENT_MISMATCH');
-  check('…et classée SÉCURITÉ', traces[0]?.errorClass === 'SECURITY');
+  check('…et classée comme une FRONTIÈRE, non comme un incident',
+    traces[0]?.errorClass === 'SCOPE');
+
+  /* ── 2. UNE ANNONCE NE SUFFIT PAS À DÉPLACER UNE FICHE ───────────────────── */
+  /**
+   * La réciproque, et c'est elle qui ferme le chemin d'élévation : une fiche
+   * épinglée en recette qui ANNONCE `PROD` n'est pas traitée comme une
+   * production. Elle reste dans son monde, et la livraison a lieu.
+   */
+  const bis = await registryStore.getById(A.projectId);
+  bis.declaredEnvironment = 'TEST';
+  bis.runtime.environment = 'PROD';          // ce que le projet PRÉTEND
+  await registryStore.save(bis);
+
+  requetes = 0;
+  const traces2 = await livraison.deliverEntry(change('env-write-2'));
+  check('une fiche épinglée TEST qui annonce PROD reste dans son monde',
+    traces2[0]?.outcome !== 'ENVIRONMENT_MISMATCH');
+  check('…et la livraison n’est plus barrée par l’environnement',
+    traces2[0]?.errorClass !== 'SCOPE', `outcome=${traces2[0]?.outcome} requetes=${requetes}`);
 
   livraison.configureDeliveryTransport(null);
   const remis = await registryStore.getById(A.projectId);
-  remis.runtime.environment = memoire;
+  remis.declaredEnvironment = memoireEpingle;
+  remis.runtime.environment = memoireAnnonce;
   await registryStore.save(remis);
 }
 

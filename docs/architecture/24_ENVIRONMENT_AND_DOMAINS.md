@@ -190,6 +190,34 @@ Aucune combinaison connue de développement ne peut donc devenir une valeur de
 production. Après le premier déploiement, changer le mot de passe du compte
 seed depuis l'interface et retirer `SEED_DEV_PASSWORD` du `.env` distant.
 
+## 6bis. `ENV` du Panel ≠ environnement des projets qu'il administre
+
+> **CONTROL PLANE ENVIRONMENT IS NOT PROJECT ENVIRONMENT.**
+>
+> **PROJECT ENVIRONMENT SELECTS PROJECT-SCOPED PROVIDER ENVIRONMENT.**
+
+`ENV` décide de **la base de ce Panel** et de son propre monde fournisseur. Il ne
+décide **pas** du monde des projets qu'il pilote.
+
+```
+PANEL_ENV     ce fichier, cette base, ce Panel
+PROJECT_ENV   épinglé sur la fiche de CHAQUE projet
+```
+
+Un projet en **PRODUCTION peut être administré par un Panel en RECETTE**, et il
+consomme alors les fournisseurs de **production** — c'est le monde du projet qui
+décide, jamais celui du plan de contrôle. Les quatre combinaisons et leurs
+conséquences sont dans [05_PAIRING.md §9](05_PAIRING.md).
+
+Deux conséquences d'exploitation :
+
+- **les identifiants fournisseur se saisissent dans le Panel qui administre.**
+  Pour piloter une production depuis un Panel de recette, il faut les clés
+  **PROD** dans ce Panel-là — chaque instance ne détient que ce qu'on y saisit ;
+- **les données métier du Panel ne traversent pas les mondes.** Entreprise
+  cliente, mentions légales, contrat et équipe restent partitionnés par `ENV` :
+  elles ne sont pas livrées à un projet d'un autre monde (§9.4 de 05_PAIRING).
+
 ## 7. Passer de TEST à PROD
 
 1. sur le serveur cible, poser un `.env` **dédié** : `ENV=PROD`, `DB_PROD`

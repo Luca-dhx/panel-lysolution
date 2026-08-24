@@ -23,7 +23,7 @@
 // à la base ni au code.
 import {
   check, connectTestDatabase, finish, section, setTestEnv,
-  startMemoryMongo, startServer, stopMemoryMongo,
+  startMemoryMongo, startServer, stopMemoryMongo, viderLimitesAuth,
 } from './helpers/harness.js';
 import { startSbAutoInstance } from './helpers/sbauto-remote.js';
 
@@ -577,6 +577,24 @@ section('9 · L’accès accordé prend effet dans la session Panel déjà ouver
   await panelCall('PATCH', `/api/panel-users/${DEV.userId}`, {
     headers: OPS, body: { projectAccess: { mode: 'ALL_PAIRED' } },
   });
+  /**
+   * ── LA SUITE A FINI PAR RESSEMBLER À UNE ATTAQUE ────────────────────────
+   *
+   * Cette recette enchaîne des dizaines d'ouvertures de session légitimes en
+   * quelques secondes. Le limiteur de tentatives — une vraie garde de
+   * production — finissait par répondre `429` sur `/federated/panel/start`, et
+   * le contrôle rougissait sur la fonctionnalité qu'il venait de valider vingt
+   * fois.
+   *
+   * On vide les seaux, on ne desserre RIEN : ni plafond, ni fenêtre, ni
+   * dérogation « en test ». Les deux middlewares n'en savent rien.
+   *
+   * DEUX SEAUX, parce que le parcours traverse DEUX programmes : le `start` est
+   * servi par le PROJET, dans sa propre base, et c'est celui-là qui débordait.
+   * Ne vider que celui du Panel donnait la satisfaction d'avoir agi et le même
+   * `429` — la leçon coûte une base de données de distance.
+   */
+  await viderLimitesAuth({ basesProjet: ['federation_e2e_projet'] });
   check('l’accès rendu refonctionne, toujours sans reconnexion',
     (await parcoursFedere({ session: SESSION })).status === 200);
 }

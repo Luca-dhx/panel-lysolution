@@ -28,6 +28,7 @@
 import crypto from 'node:crypto';
 
 import { runtimeEnvironment } from '../integratedApi/environment.js';
+import { authoritativeEnvironmentOf } from '../registry/projectEnvironment.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
@@ -183,22 +184,35 @@ export function assertProjectScope(authenticatedProjectId, payload = {}) {
  *
  * ── CE QUI LA REMPLACE ─────────────────────────────────────────────────────
  *
- * La fiche parle. `runtime.environment` vient du registre du Panel, constaté à
- * l'appairage et tenu à jour par le battement — **jamais** d'un champ de la
- * requête. Un projet TEST qui écrirait `environment: PROD` dans son corps ne
- * serait pas cru : ce champ n'est pas lu ici, et ne l'a jamais été.
+ * La fiche parle — et c'est la PART DE LA FICHE QUE LE PANEL ÉCRIT.
  *
- * ── ET SI LE PROJET N'A JAMAIS PARLÉ ? ─────────────────────────────────────
+ * On lisait ici `runtime.environment`, c'est-à-dire ce que le projet annonce à
+ * chaque battement. Refuser le champ du CORPS de la requête pour croire le
+ * champ du BATTEMENT ne protège de rien : les deux viennent du projet, sur des
+ * chemins que le projet contrôle. La garde était la bonne, sa source ne l'était
+ * pas.
  *
- * `null` n'est pas un désaccord, c'est une absence — un projet appairé qui
- * n'a pas encore déclaré son monde. On retombe alors sur celui du Panel, faute
- * de mieux, et c'est la seule substitution qui subsiste. Elle est étroite,
- * nommée, et disparaît au premier battement.
+ * L'autorité est donc l'ENVIRONNEMENT ÉPINGLÉ : déclaré par l'opérateur en
+ * créant le projet, ou fixé à l'appairage — le seul instant où le projet prouve
+ * son identité par un code à usage unique — et immuable ensuite. Un projet
+ * enregistré en recette qui annoncerait `PROD` obtient un avertissement au
+ * journal, et les identifiants de RECETTE. Voir `projectEnvironment.js`.
+ *
+ * Ce n'était pas exploitable tant que l'appairage exigeait que le projet vive
+ * dans le monde du Panel. Ça l'est devenu le jour où un Panel de recette a pu
+ * administrer une production : la même lecture, inoffensive la veille, devenait
+ * un chemin d'élévation de privilège.
+ *
+ * ── ET SI LA FICHE NE PORTE RIEN ? ─────────────────────────────────────────
+ *
+ * `null` n'est pas un désaccord, c'est une absence — une fiche appairée avant
+ * l'épinglage et dont le projet n'a jamais parlé. On retombe alors sur le monde
+ * du Panel, faute de mieux. Substitution étroite, nommée, et qu'aucune fiche
+ * neuve n'emprunte.
  */
 export function resolveInstanceEnvironment(panelProject) {
   const served = runtimeEnvironment();
-  const declared = panelProject?.runtime?.environment ?? null;
-  return declared ?? served;
+  return authoritativeEnvironmentOf(panelProject) ?? served;
 }
 
 /**

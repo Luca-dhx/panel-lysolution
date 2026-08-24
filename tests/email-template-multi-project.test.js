@@ -169,85 +169,86 @@ const q = (scope) => (scope.scopeType === 'PANEL' ? '' : `?scope=PROJECT&project
 /* ══════════════════════════════════════════════════════════════════════════
    1 · PARITÉ DES REGISTRES — le contrôle que l'audit réclamait « immédiatement ».
    ══════════════════════════════════════════════════════════════════════════ */
-section('1 · Les deux registres de variables ne peuvent plus diverger en silence');
+section('1 · Aucun modèle consommé par un projet ne peut être inconnu du Panel');
 {
   /**
-   * ══ POURQUOI CE TEST EXISTE ═══════════════════════════════════════════════
+   * ══ CE QUE CETTE SECTION VÉRIFIAIT, ET POURQUOI ELLE NE LE PEUT PLUS ══════
    *
-   * Deux registres coexistent : 11 codes côté Panel, 6 côté projet. Ils sont
-   * identiques aujourd'hui — l'audit l'a vérifié clé par clé — et RIEN ne le
-   * garantissait. Ce sont deux copies manuelles ; le registre du Panel se
-   * déclare lui-même comme un déplacement d'autorité dont l'exemplaire d'origine
-   * « partira le jour où l'envoi projet sera retiré ». Ce jour n'est pas venu.
+   * Elle comparait DEUX registres de variables — 11 codes côté Panel, 6 côté
+   * projet — deux copies manuelles qu'aucune garde ne tenait ensemble. Le
+   * registre du Panel s'annonçait lui-même comme un déplacement d'autorité dont
+   * l'exemplaire d'origine « partira le jour où l'envoi projet sera retiré ».
    *
-   * La dérive est une question de temps, et son symptôme serait un REFUS
-   * D'ENVOI EN PRODUCTION sur une variable requise ajoutée d'un seul côté —
-   * c'est-à-dire découvert chez un destinataire.
+   * CE JOUR EST VENU. Le lot L12.1 a supprimé le registre du projet : le Panel
+   * est la seule autorité d'édition, le projet n'a plus de base de modèles, et
+   * son validateur a cessé d'énumérer les codes — précisément pour ne pas
+   * recopier le registre du Panel, « la duplication même que le lot supprime ».
+   *
+   * Le contrôle cherchait donc un fichier retiré exprès, et rougissait sur une
+   * absence qui est la RÉUSSITE d'un lot antérieur. Un test qui punit la
+   * correction qu'il réclamait ne défend plus rien.
+   *
+   * ══ CE QUI RESTE VRAI, ET QUI EST LE VRAI SUJET ═══════════════════════════
+   *
+   * Le projet ne déclare plus quels modèles EXISTENT — il déclare ceux qu'il
+   * CONSOMME (`projectEmailTemplateUsage.js`). Et un code consommé qu'aucun
+   * Panel ne connaîtrait produirait un `PANEL_EMAIL_TEMPLATE_UNKNOWN` au
+   * premier événement métier réel, c'est-à-dire chez un destinataire.
+   *
+   * C'est cette relation-là qui doit tenir, et c'est celle qu'on éprouve.
    *
    * ══ POURQUOI ON LIT LE FICHIER, ET PAS UN IMPORT ══════════════════════════
    *
-   * Le registre du projet vit dans un AUTRE dépôt : l'importer lierait la suite
-   * du Panel à l'arborescence d'un client. On le lit s'il est là, et l'on
-   * DÉCLARE le contrôle non exécuté s'il ne l'est pas — plutôt que de le
-   * déclarer vert, ce qui est le seul résultat inacceptable.
+   * Le projet vit dans un AUTRE dépôt : l'importer lierait la suite du Panel à
+   * l'arborescence d'un client. On le lit s'il est là, et l'on DÉCLARE le
+   * contrôle non exécuté s'il ne l'est pas — plutôt que de le déclarer vert,
+   * ce qui reste le seul résultat inacceptable.
    */
   const ici = path.dirname(fileURLToPath(import.meta.url));
-  const cheminProjet = path.resolve(
-    ici, '../../SB Auto 06/backend/src/utils/emailTemplateRegistry.js',
+  const cheminUsage = path.resolve(
+    ici, '../../SB Auto 06/backend/src/utils/projectEmailTemplateUsage.js',
   );
 
-  if (!fs.existsSync(cheminProjet)) {
-    check('⚠ registre projet absent — parité NON VÉRIFIÉE (et non « verte »)', false);
+  if (!fs.existsSync(cheminUsage)) {
+    check('⚠ déclaration d’usage projet absente — parité NON VÉRIFIÉE (et non « verte »)', false);
   } else {
-    const projet = await import(`file://${cheminProjet.replace(/\\/g, '/')}`);
+    const projet = await import(`file://${cheminUsage.replace(/\\/g, '/')}`);
+    const consommes = projet.CONSUMED_TEMPLATE_CODES ?? [];
 
-    const communs = panelRegistry.EMAIL_TEMPLATE_IDS
-      .filter((code) => projet.isKnownTemplateId(code));
+    check(`le projet déclare ce qu’il consomme (${consommes.length} codes)`,
+      Array.isArray(consommes) && consommes.length > 0);
+
     /**
      * ══ PAS DE NOMBRE EN DUR ═════════════════════════════════════════════
      *
-     * Un « === 7 » rougit à chaque code ajouté légitimement, et la correction
-     * réflexe est d'incrémenter le chiffre — ce qui ne vérifie plus rien.
-     * Ce qui doit être vrai, c'est la RELATION : tout code que le projet
-     * connaît est connu du Panel, donc l'intersection vaut exactement le
-     * registre du projet. C'est le contrôle « orphelins » vu par l'autre bout,
-     * et il ne se périme pas.
+     * Un « === 6 » rougirait à chaque modèle légitimement branché, et la
+     * correction réflexe serait d'incrémenter le chiffre — ce qui ne vérifie
+     * plus rien. Ce qui doit être vrai, c'est la RELATION : tout ce que le
+     * projet consomme, le Panel le connaît. Elle ne se périme pas.
      */
-    check(
-      `l'intersection couvre TOUT le registre projet (${communs.length}/${projet.EMAIL_TEMPLATE_IDS.length})`,
-      communs.length === projet.EMAIL_TEMPLATE_IDS.length,
-    );
-
-    const divergences = [];
-    for (const code of communs) {
-      const ici2 = panelRegistry.variablesFor(code);
-      const la = projet.variablesFor(code);
-
-      if (ici2.length !== la.length) {
-        divergences.push(`${code} : ${ici2.length} variables ici, ${la.length} là-bas`);
-        continue;
-      }
-      for (let i = 0; i < ici2.length; i += 1) {
-        for (const champ of ['key', 'type', 'required']) {
-          if (ici2[i][champ] !== la[i][champ]) {
-            divergences.push(`${code}.${ici2[i].key}.${champ} : ${ici2[i][champ]} ≠ ${la[i][champ]}`);
-          }
-        }
-      }
-    }
-
-    check(`parité STRICTE des ${communs.length} contrats communs (${divergences.join(' | ') || 'aucune divergence'})`,
-      divergences.length === 0);
+    const inconnus = consommes.filter((code) => !panelRegistry.isKnownTemplateId(code));
+    check(`aucun modèle consommé n’est inconnu du Panel (${inconnus.join(', ') || 'aucun'})`,
+      inconnus.length === 0);
 
     /**
-     * L'AUTRE SENS : un code que le projet connaît et que le Panel ignore
-     * produirait un envoi refusé en `PANEL_EMAIL_TEMPLATE_UNKNOWN`, découvert
-     * au premier événement métier réel.
+     * Et chaque code consommé a un CONTRAT DE VARIABLES chez le Panel. Un code
+     * connu sans contrat s'enverrait avec un corps vide — la panne la plus
+     * discrète de la chaîne.
      */
-    const orphelins = projet.EMAIL_TEMPLATE_IDS
-      .filter((code) => !panelRegistry.isKnownTemplateId(code));
-    check(`aucun code projet inconnu du Panel (${orphelins.join(', ') || 'aucun'})`,
-      orphelins.length === 0);
+    const sansContrat = consommes.filter((code) => {
+      const v = panelRegistry.variablesFor(code);
+      return !Array.isArray(v) || v.length === 0;
+    });
+    check(`chaque modèle consommé porte un contrat de variables (${sansContrat.join(', ') || 'tous'})`,
+      sansContrat.length === 0);
+
+    /**
+     * L'AUTRE SENS N'EST PLUS UNE ERREUR. Le Panel connaît plus de codes que ce
+     * projet n'en consomme — il en sert plusieurs. Un code du Panel qu'aucun
+     * projet n'appelle n'est pas un défaut : c'est un modèle disponible.
+     */
+    check('le Panel peut connaître plus de modèles que ce projet n’en consomme',
+      panelRegistry.EMAIL_TEMPLATE_IDS.length >= consommes.length);
   }
 }
 
@@ -554,28 +555,59 @@ section('7 · Aucun projet ne lit, n’écrit ni ne restaure chez un autre');
     memeUrlDepuisB.json?.data?.subject.startsWith('GARAGE B —')
     && memeUrlDepuisB.json?.data?.scope?.scopeId === B.projectId);
 
-  // Écrire depuis A n'atteint jamais B.
-  await call('PUT', '/bridge/v1/email-templates/PASSWORD_RESET_REQUEST', {
+  /**
+   * ══ UN PROJET N'ÉCRIT PLUS DU TOUT — c'est plus fort qu'un refus ══════════
+   *
+   * Ce bloc éprouvait deux refus d'ÉCRITURE : « écrire depuis A ne touche rien
+   * chez B », puis « nommer une autre portée dans le corps est refusé ». Les
+   * deux supposaient qu'un projet PUISSE écrire, et qu'on borne ce qu'il écrit.
+   *
+   * Le lot L12.1 a retiré cette possibilité : le Panel est la seule autorité
+   * d'édition, le projet n'a plus de base de modèles, et le verbe a disparu du
+   * pont. Le test réclamait donc un `400` bien élevé à une route qui répond
+   * `404` — et il rougissait sur la version la PLUS sûre du produit.
+   *
+   * On éprouve ce qui est vrai : la porte n'existe pas. Une portée qu'on ne
+   * peut pas forcer parce qu'aucune écriture n'est offerte est mieux gardée
+   * qu'une portée validée à l'entrée.
+   */
+  const ecritureA = await call('PUT', '/bridge/v1/email-templates/PASSWORD_RESET_REQUEST', {
     headers: A.auth,
     body: { subject: 'SB AUTO — réécrit par le projet {{company.name}}' },
   });
-  const bIntact = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', SCOPE_B);
-  check('écrire depuis A ne touche RIEN chez B', bIntact.subject.startsWith('GARAGE B —'));
-  const panelIntact = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', PANEL);
-  check('…ni chez le PANEL', panelIntact.subject.startsWith('PANEL —'));
+  check('un projet ne dispose d’AUCUNE écriture sur les modèles',
+    ecritureA.status === 404);
 
-  // Tenter de FORCER une portée dans le corps : refus sec.
   const force = await call('PUT', '/bridge/v1/email-templates/PASSWORD_RESET_REQUEST', {
     headers: A.auth,
     body: { projectId: B.projectId, subject: 'Tentative' },
   });
-  check('un projet qui tente de nommer une autre portée est REFUSÉ',
-    force.status === 400 && force.json?.code === 'PANEL_EMAIL_TEMPLATE_SCOPE_IN_BODY');
+  check('…y compris en nommant une autre portée dans le corps', force.status === 404);
 
-  // Un code PANEL n'est pas atteignable depuis un pont projet.
+  const bIntact = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', SCOPE_B);
+  check('rien n’a bougé chez B', bIntact.subject.startsWith('GARAGE B —'));
+  const panelIntact = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', PANEL);
+  check('…ni chez le PANEL', panelIntact.subject.startsWith('PANEL —'));
+  const aIntact = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', SCOPE_A);
+  check('…ni même chez A, qui a pourtant émis la requête',
+    aIntact.subject.startsWith('SB AUTO —') && !aIntact.subject.includes('réécrit par le projet'));
+
+  /**
+   * ══ UN CODE DU PANEL RESTE INUTILISABLE DEPUIS UN PROJET ═════════════════
+   *
+   * Le refus n'est plus un `400` : la lecture répond `200` en DÉCRIVANT
+   * pourquoi le modèle n'est pas utilisable dans cette portée. C'est le bon
+   * choix pour un catalogue — un écran qui liste des modèles a besoin d'une
+   * raison affichable, pas d'une exception — et ce qui compte est inchangé :
+   * le code n'est ni utilisable, ni listé.
+   */
   const codePanel = await call('GET', '/bridge/v1/email-templates/PAYMENT_REQUEST_CREATED', { headers: A.auth });
-  check('un code PANEL est INATTEIGNABLE depuis un projet',
-    codePanel.status === 400 && codePanel.json?.code === 'PANEL_EMAIL_TEMPLATE_SCOPE_FORBIDDEN_FOR_CODE');
+  check('un code PANEL lu depuis un projet est déclaré INUTILISABLE',
+    codePanel.json?.data?.usable === false);
+  check('…et la raison nomme la portée, pas une panne',
+    String(codePanel.json?.data?.unusableReason ?? '').includes('SCOPE'));
+  check('…aucun contenu du Panel ne fuit au passage',
+    !codePanel.json?.data?.subject && !codePanel.json?.data?.html);
 
   const catalogueA = await call('GET', '/bridge/v1/email-templates', { headers: A.auth });
   check('le catalogue d’un projet ne contient QUE des codes qui lui appartiennent',
@@ -584,18 +616,31 @@ section('7 · Aucun projet ne lit, n’écrit ni ne restaure chez un autre');
   check('…et chaque ligne porte SA portée',
     catalogueA.json.data.every((t) => t.scope.scopeId === A.projectId));
 
-  // HISTORIQUE ET RESTAURATION — §12, cross-tenant obligatoire.
+  /**
+   * ══ HISTORIQUE ET RESTAURATION — HORS DE PORTÉE D'UN PROJET ══════════════
+   *
+   * Ces deux verbes accompagnaient l'écriture, et ils sont partis avec elle
+   * (L12.1). Restaurer une version, c'est écrire ; un projet qui ne peut pas
+   * écrire ne peut pas non plus revenir en arrière.
+   *
+   * Le contrôle qui suivait — « une restauration chez A ne touche ni B ni le
+   * PANEL » — supposait la restauration possible. Ce qu'il protégeait reste
+   * protégé, et plus simplement : la route n'existe pas.
+   *
+   * L'ISOLEMENT PHYSIQUE DES HISTORIQUES, lui, garde tout son sens et se
+   * vérifie juste en dessous, en base — c'est là qu'il vit.
+   */
   const versionsA = await call('GET', '/bridge/v1/email-templates/PASSWORD_RESET_REQUEST/versions', { headers: A.auth });
-  check('A voit son propre historique', versionsA.json.data.length >= 2);
+  check('un projet ne lit pas l’historique par le pont', versionsA.status === 404);
 
   const avantB = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', SCOPE_B);
   const restaure = await call('POST', '/bridge/v1/email-templates/PASSWORD_RESET_REQUEST/versions/1/restore', {
     headers: A.auth,
   });
-  check('A restaure SA v1', restaure.status === 200);
+  check('…et ne restaure aucune version', restaure.status === 404);
   const apresB = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', SCOPE_B);
   const apresPanel = await templates.resolveTemplate('PASSWORD_RESET_REQUEST', PANEL);
-  check('une restauration chez A ne touche NI B NI le PANEL',
+  check('la tentative n’a touché NI B NI le PANEL',
     apresB.version === avantB.version && apresB.subject === avantB.subject
     && apresPanel.subject.startsWith('PANEL —'));
 
@@ -753,33 +798,46 @@ section('10 · Un projet dupliqué obtient SES PROPRES documents');
     apresRejeu.subject === 'Garage D — contact {{contact.name}}');
 
   /**
-   * L'IMPORT DU CONTENU LOCAL — le chemin par lequel le HTML rédigé dans un
-   * projet entre dans le Panel sans être perdu (§5.1).
+   * ══ L'IMPORT ÉTAIT UNE MIGRATION, ET UNE MIGRATION SE TERMINE ════════════
+   *
+   * `POST /bridge/v1/email-templates/import` servait à rapatrier, une fois, le
+   * HTML rédigé dans un projet avant que le Panel ne devienne l'autorité
+   * d'édition (§5.1). Le parc migré, la route a été retirée avec l'écriture
+   * projet (L12.1) — et c'est cohérent : garder ouvert un verbe d'écriture
+   * pour un besoin qui n'existe plus, c'est garder une porte pour personne.
+   *
+   * Le test l'appelait encore et lisait `.created` sur une réponse `404`. On
+   * éprouve donc ce qui est vrai aujourd'hui : la porte est fermée, et un
+   * projet fraîchement dupliqué obtient malgré tout SES propres documents —
+   * ce qui est le sujet de cette section.
    */
   const E = await appairer('garage-e', 'Garage E');
   const importe = await call('POST', '/bridge/v1/email-templates/import', {
     headers: E.auth,
-    body: {
-      templates: [
-        {
-          templateCode: 'CONTACT_ADMIN_NOTIFICATION',
-          subject: 'Garage E — HTML rapatrié {{contact.name}}',
-        },
-        { templateCode: 'PAYMENT_REQUEST_CREATED', subject: 'Ne doit pas passer' },
-      ],
-    },
+    body: { templates: [{ templateCode: 'CONTACT_ADMIN_NOTIFICATION', subject: 'Tentative' }] },
   });
-  check('un projet importe SON contenu par le pont', importe.status === 200);
-  check('…les codes qui lui appartiennent sont posés',
-    importe.json.data.created.includes('CONTACT_ADMIN_NOTIFICATION'));
-  check('…et un code PANEL est REFUSÉ, sans faire échouer la migration entière',
-    importe.json.data.refused.some((r) => r.templateCode === 'PAYMENT_REQUEST_CREATED'));
+  check('le chemin d’import du parc est refermé', importe.status === 404);
 
-  const contenuE = await templates.resolveTemplate(
-    'CONTACT_ADMIN_NOTIFICATION', scopes.projectScope(E.projectId),
-  );
-  check('le contenu rapatrié est bien celui du projet',
-    contenuE.subject === 'Garage E — HTML rapatrié {{contact.name}}');
+  /**
+   * ET LE PROJET NEUF NE SE SERT PAS AILLEURS.
+   *
+   * Sans catalogue posé, il n'a AUCUN contenu — et la résolution le dit au lieu
+   * de retomber sur celui du Panel. C'est l'invariant qui compte : le vide d'un
+   * projet reste le vide d'un projet, il n'est jamais comblé par le voisin.
+   */
+  let refusE = null;
+  try {
+    await templates.resolveTemplate('CONTACT_ADMIN_NOTIFICATION', scopes.projectScope(E.projectId));
+  } catch (e) { refusE = e; }
+  check('un projet sans catalogue posé n’a AUCUN contenu', refusE !== null);
+  check('…et le refus dit pourquoi, sans emprunter celui du Panel',
+    String(refusE?.message ?? '').includes('jamais remplacé par celui du Panel'));
+
+  const catalogueE = await call('GET', '/bridge/v1/email-templates', { headers: E.auth });
+  check('…son catalogue ne porte que SA portée',
+    catalogueE.json.data.every((t) => t.scope.scopeId === E.projectId));
+  check('…sans aucun code réservé au Panel',
+    !catalogueE.json.data.some((t) => t.templateId === 'PAYMENT_REQUEST_CREATED'));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

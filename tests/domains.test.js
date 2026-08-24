@@ -135,7 +135,26 @@ section('Aucun domaine codé en dur dans le code applicatif');
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.name.endsWith('.js')) {
-        const content = fs.readFileSync(full, 'utf8');
+        const brut = fs.readFileSync(full, 'utf8');
+        /**
+         * ══ ON JUGE LE CODE, PAS LA PROSE ═══════════════════════════════════
+         *
+         * La règle lisait le fichier ENTIER, commentaires compris. Or les
+         * commentaires qui expliquent ces gardes CITENT précisément ce qu'elles
+         * refusent — « un projet lancé en local déclare `http://localhost:6090`,
+         * le Panel l'acceptait » — et se dénonçaient donc eux-mêmes.
+         *
+         * Une suite qui rougit parce qu'on a documenté un invariant enseigne à
+         * ne plus le documenter. Elle devient un coût, et le prochain la
+         * contournera en retirant la phrase plutôt qu'en retirant l'appel.
+         *
+         * Une adresse dans un commentaire n'est jamais composée par personne.
+         * Seul le code exécutable est jugé — même arbitrage que
+         * `panel-instance-environment.test.js`, pour la même raison.
+         */
+        const content = brut
+          .replace(/\/\*[\s\S]*?\*\//g, ' ')
+          .replace(/\/\/[^\r\n]*/g, ' ');
         const rel = path.relative(path.join(root, 'backend', 'src'), full);
         if (ENGINE_DIRS.includes(rel.split(path.sep)[0])) continue;
         if (/ly-solution\.com|sb-?auto|sbauto/i.test(content)) {

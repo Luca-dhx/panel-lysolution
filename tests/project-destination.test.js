@@ -30,7 +30,7 @@
 //  · le Panel n'expose aucune action de déploiement.
 import {
   check, connectTestDatabase, finish, rejectsWith, section, setTestEnv,
-  startMemoryMongo, stopMemoryMongo,
+  startMemoryMongo, stopMemoryMongo, horsHarnais,
 } from './helpers/harness.js';
 
 setTestEnv();
@@ -254,8 +254,33 @@ section('RÉSOLVEUR UNIQUE — toutes les vues lisent la même chose');
   check('sans destination active, aucune URL n’est inventée',
     sansDest.urls === null && sansDest.primaryDomain === null);
   check('…et la raison est dite', sansDest.networkSource === 'AUCUNE_DESTINATION_ACTIVE');
-  check('…l’ancien manifeste n’est PAS ressorti en secours',
-    destinations.outboundBaseUrl(orphelin) === null);
+  /**
+   * ══ CE QUI NE DOIT JAMAIS RESSORTIR, ET CE QUI PEUT ═══════════════════════
+   *
+   * Ce contrôle exigeait `null` et se nommait « l'ancien MANIFESTE n'est pas
+   * ressorti en secours ». Les deux ne disent pas la même chose, et la
+   * différence compte.
+   *
+   * LE MANIFESTE est une photographie, parfois saisie à la main : le ressortir
+   * ferait appeler un domaine que plus personne ne sert. Il reste interdit.
+   *
+   * L'ADRESSE OPÉRATIONNELLE — « c'est ICI que je réponds » — est autre chose.
+   * Sans elle en dernier recours, un projet fraîchement appairé, qui n'a pas
+   * encore publié de présentation et n'a donc aucune destination, était
+   * INJOIGNABLE : ni découverte, ni première livraison. Le Panel refusait de
+   * l'appeler en tenant dans la main l'adresse par laquelle ce projet venait
+   * de le joindre.
+   *
+   * On éprouve donc les deux : le manifeste ne sort pas, l'opérationnelle sert
+   * de dernier recours, et la destination l'emporte dès qu'elle existe.
+   */
+  check('l’adresse opérationnelle sert de dernier recours',
+    destinations.outboundBaseUrl(orphelin) === orphelin.runtime.publicBackendUrl);
+  check('…et JAMAIS le manifeste',
+    destinations.outboundBaseUrl(orphelin) !== orphelin.manifest?.project?.publicBackendUrl
+    && !String(destinations.outboundBaseUrl(orphelin) ?? '').includes('manifest'));
+  check('…sans adresse opérationnelle non plus, « inconnu » reste la réponse',
+    destinations.outboundBaseUrl({ ...orphelin, runtime: { ...orphelin.runtime, publicBackendUrl: null } }) === null);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -550,7 +575,20 @@ section('UNE DESTINATION N’EST JAMAIS UNE ADRESSE PRIVÉE');
   const avant = await destinations.activeDestination('p-1', 'TEST');
   check('le vrai domaine est actif', avant.host === ANCIEN);
 
-  const locale = await destinations.announceDestination({
+  /**
+   * ══ ON INTERROGE LE RUNTIME DE PRODUCTION, PAS CELUI DE LA SUITE ════════
+   *
+   * Une suite tourne sous `PANEL_TEST_PROCESS` : cette marque autorise les
+   * recettes de bout en bout à observer de vrais projets sur des ports
+   * éphémères de la boucle locale (`config/testHarnessRuntime.js`).
+   *
+   * Ce bloc a le travail INVERSE — prouver qu'une adresse locale est refusée.
+   * Sous la marque il éprouverait le runtime de harnais, et conclurait que la
+   * garde a disparu alors qu'elle est intacte. On retire donc la marque le
+   * temps de l'appel : c'est la seule façon d'interroger, depuis une suite, le
+   * programme qui n'en est pas une.
+   */
+  const locale = await horsHarnais(() => destinations.announceDestination({
     record,
     urls: {
       backend: 'http://localhost:6090',
@@ -558,8 +596,8 @@ section('UNE DESTINATION N’EST JAMAIS UNE ADRESSE PRIVÉE');
       website: 'http://localhost:6062',
     },
     source: 'PRESENTATION',
-  });
-  check('une annonce LOCALE est REFUSÉE', locale.applied === false, JSON.stringify(locale));
+  }));
+  check('une annonce LOCALE est REFUSÉE hors harnais', locale.applied === false, JSON.stringify(locale));
   check('…avec un motif nommé', locale.reason === 'HOTE_NON_PUBLIC', locale.reason);
 
   const apres = await destinations.activeDestination('p-1', 'TEST');

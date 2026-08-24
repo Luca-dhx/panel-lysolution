@@ -326,7 +326,24 @@ section('8. Le sélecteur thémé : ouverture, clavier, sortie');
   check('flèches, Début et Fin parcourent la liste',
     /'ArrowDown'/.test(tselect) && /'ArrowUp'/.test(tselect)
     && /'Home'/.test(tselect) && /'End'/.test(tselect));
-  check('Entrée et Espace choisissent', /e\.key === 'Enter' \|\| e\.key === ' '/.test(tselect));
+  /**
+   * ══ ON ÉPROUVE LA RÈGLE, PAS LA FORME DE LA LIGNE ═══════════════════════
+   *
+   * Ce contrôle exigeait littéralement `e.key === 'Enter' || e.key === ' '`.
+   * Le composant a depuis SÉPARÉ les deux touches, et pour une bonne raison :
+   * dans un menu CHERCHABLE l'espace appartient à la saisie — le faire choisir
+   * empêcherait d'écrire « Garage du Port ».
+   *
+   * Le test rougissait donc sur un raffinement d'accessibilité. Une assertion
+   * qui décrit une expression plutôt qu'un comportement finit toujours par
+   * punir l'amélioration qu'elle était censée protéger.
+   */
+  check('Entrée choisit l’option survolée',
+    /e\.key === 'Enter'/.test(tselect) && /choisir\(option\)/.test(tselect));
+  check('…l’Espace aussi, mais seulement hors menu cherchable',
+    /e\.key === ' ' && !searchable/.test(tselect));
+  check('…et les deux ouvrent la liste quand elle est fermée',
+    /\['Enter', ' ', 'ArrowDown', 'ArrowUp'\]\.includes\(e\.key\)/.test(tselect));
   check('Échap ferme et rend le focus', /e\.key === 'Escape'[\s\S]{0,120}fermer\(true\)/.test(tselect));
   check('un clic à côté ferme', /document\.addEventListener\('mousedown', dehors\)/.test(tselect));
   check('…et l’écouteur est retiré', /removeEventListener\('mousedown', dehors\)/.test(tselect));

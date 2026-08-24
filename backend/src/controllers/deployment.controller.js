@@ -499,7 +499,31 @@ export async function runStream(req, res) {
       if (terminal && cursor >= batch.lastSeq) { write({ kind: 'end', status: batch.status, seq: cursor }); break; }
       if (Date.now() - lastWrite > IDLE_KEEPALIVE_MS) { write({ kind: 'ping', seq: cursor }); lastWrite = Date.now(); }
       await new Promise((r) => { setTimeout(r, TICK_MS); });
-      batch = await readEventsSince(runId, cursor);
+      /**
+       * ── ON RELIT `closed` APRÈS L'ATTENTE, PAS SEULEMENT AVANT ────────────
+       *
+       * Le client peut partir PENDANT les 250 ms de sommeil. La boucle
+       * interrogeait alors la base une fois de plus pour un destinataire qui
+       * n'écoutait plus — et si la base n'était plus là non plus, l'exception
+       * remontait jusqu'au gestionnaire d'erreurs, qui tentait d'écrire un
+       * statut sur une réponse déjà commencée : `ERR_HTTP_HEADERS_SENT`, une
+       * pile illisible pour un client parti depuis longtemps.
+       */
+      if (closed) break;
+      /**
+       * ── ET UNE LECTURE QUI ÉCHOUE TERMINE LE FLUX, ELLE NE L'EXPLOSE PAS ──
+       *
+       * Les en-têtes sont partis à la première ligne : à partir de là, il n'y a
+       * plus de code de statut à négocier. La seule fin correcte est de fermer
+       * le flux. On le DIT au client — `kind: 'error'` — plutôt que de couper
+       * le tuyau sans un mot, ce qui lui laisserait croire à une fin normale.
+       */
+      try {
+        batch = await readEventsSince(runId, cursor);
+      } catch (err) {
+        if (!closed) write({ kind: 'error', reason: 'journal illisible', seq: cursor });
+        break;
+      }
       if (!batch) break;
     }
   } finally {

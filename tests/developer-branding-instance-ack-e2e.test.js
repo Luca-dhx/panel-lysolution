@@ -52,11 +52,16 @@ async function partirDeZero() {
 }
 
 /** Une INSTANCE appairée — jeton propre, runtime propre, environnement propre. */
-async function instance({ id, environment, vivante = true }) {
+async function instance({ id, environment, vivante = true, cle = null }) {
   const at = new Date().toISOString();
   await registryStore.insert({
     projectId: id,
-    projectKey: `${CLE}-${environment.toLowerCase()}`,
+    /**
+     * La clé technique dérivait de l'ENVIRONNEMENT. Deux instances du même monde
+     * — la situation normale d'un parc — entraient alors en collision d'index.
+     * Elle dérive de l'identifiant, qui est justement ce qui les distingue.
+     */
+    projectKey: cle ?? `${CLE}-${id}`,
     projectKeySource: 'BRIDGE_KEY',
     logicalProjectKey: CLE,
     declaredEnvironment: environment,
@@ -152,11 +157,34 @@ section('UNE VERSION EN RETARD N’EST JAMAIS PRISE POUR UNE VERSION APPLIQUÉE'
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('SCÉNARIO B — TEST + PROD : deux instances, deux états indépendants');
+section('SCÉNARIO B — deux instances du même monde, deux états indépendants');
 {
+  /**
+   * ══ POURQUOI LA SECONDE INSTANCE N'EST PLUS « PROD » ═══════════════════════
+   *
+   * Ce scénario opposait une instance TEST et une instance PROD sur un Panel
+   * servant la recette, et attendait que la PROD soit comptée EN ATTENTE puis
+   * visée par une rediffusion.
+   *
+   * Le Panel émettait donc, à chaque tour, une écriture destinée à une instance
+   * à laquelle il REFUSAIT ensuite de livrer : `syncDelivery` écarte depuis
+   * toujours une fiche d'un autre monde — les données métier du Panel sont
+   * partitionnées par `ENV`, et les livrer poserait les mentions légales d'une
+   * entreprise de recette sur un site en production.
+   *
+   * La vue et la livraison se contredisaient. Le test ne voyait rien parce
+   * qu'il vérifiait l'ÉMISSION, jamais l'arrivée. Une instance d'un autre monde
+   * serait restée « en retard » pour toujours, et le parc `PARTIAL` en
+   * permanence — une alerte pour une situation supportée (05_PAIRING §9.4).
+   *
+   * Elle est donc `OUT_OF_SCOPE`, et la dernière moitié de cette section le
+   * constate. Ce que le scénario voulait vraiment prouver — deux instances
+   * acquittent indépendamment — se prouve avec deux instances du MÊME monde,
+   * ce qui est aussi la seule situation où la rediffusion a un destinataire.
+   */
   const companyId = await partirDeZero();
   await instance({ id: 'sb-test', environment: 'TEST' });
-  await instance({ id: 'sb-prod', environment: 'PROD' });
+  await instance({ id: 'sb-test-2', environment: 'TEST' });
 
   for (const n of ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) {
     await societe.saveCompany(companyId, { identity: { name: `Agence ${n}` } }, ACTEUR);
@@ -165,48 +193,73 @@ section('SCÉNARIO B — TEST + PROD : deux instances, deux états indépendants
   check('dix enregistrements donnent la version 10', fiche.publishedVersion === 10);
 
   await declareApplique('sb-test', 10);
-  await declareApplique('sb-prod', 10);
+  await declareApplique('sb-test-2', 10);
 
   const onze = await societe.saveCompany(companyId, { identity: { name: 'Agence Onze' } }, ACTEUR);
   check('une modification donne la version 11', onze.version === 11);
 
   /* ── CAS A — les deux acquittent ─────────────────────────────────────── */
   await declareApplique('sb-test', 11);
-  await declareApplique('sb-prod', 11);
+  await declareApplique('sb-test-2', 11);
   let d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
   check('CAS A : les deux instances sont APPLIED',
-    etatDe(d, 'sb-test').state === 'APPLIED' && etatDe(d, 'sb-prod').state === 'APPLIED');
+    etatDe(d, 'sb-test').state === 'APPLIED' && etatDe(d, 'sb-test-2').state === 'APPLIED');
   check('CAS A : global À JOUR', d.global === 'UP_TO_DATE');
 
   /* ── CAS B — PROD reste en arrière ───────────────────────────────────── */
-  await declareApplique('sb-prod', 10);
+  await declareApplique('sb-test-2', 10);
   d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
 
-  check('CAS B : TEST reste APPLIED', etatDe(d, 'sb-test').state === 'APPLIED');
-  check('CAS B : PROD est EN ATTENTE', etatDe(d, 'sb-prod').state === 'PENDING');
+  check('CAS B : la première reste APPLIED', etatDe(d, 'sb-test').state === 'APPLIED');
+  check('CAS B : la seconde est EN ATTENTE', etatDe(d, 'sb-test-2').state === 'PENDING');
   check('CAS B : global PARTIEL', d.global === 'PARTIAL');
-  check('CAS B : seule PROD est visée',
-    d.pendingProjectIds.length === 1 && d.pendingProjectIds[0] === 'sb-prod');
+  check('CAS B : seule la seconde est visée',
+    d.pendingProjectIds.length === 1 && d.pendingProjectIds[0] === 'sb-test-2');
 
   /* ── LE RETRY CIBLE ──────────────────────────────────────────────────── */
   await PanelSyncJournalEntry.deleteMany({});
   const retry = await societe.republishCurrentConfiguration(companyId);
 
   check('la rediffusion ne vise qu’une instance', retry.recipients === 1);
-  check('…et c’est PROD', retry.targeted.join() === 'sb-prod');
+  check('…et c’est la seconde', retry.targeted.join() === 'sb-test-2');
   check('…la version reste 11', retry.version === 11);
 
   const emises = await PanelSyncJournalEntry.find({}).lean();
   check('UNE seule écriture a été émise', emises.length === 1);
-  check('…nominativement adressée à PROD', emises[0].audience === 'sb-prod');
-  check('…TEST n’a rien reçu', !emises.some((e) => e.audience === 'sb-test'));
+  check('…nominativement adressée à la seconde', emises[0].audience === 'sb-test-2');
+  check('…la première n’a rien reçu', !emises.some((e) => e.audience === 'sb-test'));
   check('…et la charge utile porte bien la version 11',
     emises[0].change.payload.version === 11);
 
-  /* ── PROD acquitte à son tour ────────────────────────────────────────── */
-  await declareApplique('sb-prod', 11);
+  /* ── la seconde acquitte à son tour ────────────────────────────────────────── */
+  await declareApplique('sb-test-2', 11);
   d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
   check('après acquittement, global À JOUR', d.global === 'UP_TO_DATE');
+
+  /* ── UNE INSTANCE D'UN AUTRE MONDE EST HORS PÉRIMÈTRE ────────────────── */
+  /**
+   * Elle est appairée, vivante, et ce Panel l'administre — mais il ne lui livre
+   * pas SES enregistrements métier. La compter « en retard » condamnerait le
+   * parc à un `PARTIAL` perpétuel et ferait viser, à chaque rediffusion, une
+   * destinataire qui ne recevra jamais rien.
+   */
+  await instance({ id: 'sb-production', environment: 'PROD' });
+  d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
+
+  check('une instance PROD sur un Panel TEST est HORS PÉRIMÈTRE',
+    etatDe(d, 'sb-production').state === 'OUT_OF_SCOPE',
+    JSON.stringify(etatDe(d, 'sb-production')));
+  check('…son monde est annoncé tel qu’il est',
+    etatDe(d, 'sb-production').environment === 'PROD');
+  check('…le parc reste À JOUR', d.global === 'UP_TO_DATE', d.global);
+  check('…et aucune rediffusion ne la vise',
+    !d.pendingProjectIds.includes('sb-production'));
+
+  await PanelSyncJournalEntry.deleteMany({});
+  const horsMonde = await societe.republishCurrentConfiguration(companyId);
+  check('…une rediffusion n’a plus personne à servir', horsMonde.recipients === 0);
+  check('…et n’émet aucune écriture vers un autre monde',
+    (await PanelSyncJournalEntry.countDocuments({ audience: 'sb-production' })) === 0);
 
   /* ── L'INVARIANT DE VERSION ──────────────────────────────────────────── */
   fiche = await PanelCompany.findOne({ companyId }).lean();
@@ -256,34 +309,45 @@ section('CAS C — une instance NON APPAIRÉE ne met personne en échec');
 /* ══════════════════════════════════════════════════════════════════════════ */
 section('OFFLINE — reliée, en retard, et plus aucun signe de vie');
 {
+  /**
+   * ── L'INSTANCE MUETTE EST DU MONDE DE CE PANEL ──────────────────────────
+   *
+   * Elle était en PROD. Depuis qu'une instance d'un autre monde est
+   * `OUT_OF_SCOPE` — elle ne reçoit pas les enregistrements métier de ce Panel
+   * et n'a donc aucune version à appliquer — elle ne pouvait plus être
+   * `OFFLINE` : « hors ligne » suppose qu'on attendait quelque chose d'elle.
+   *
+   * Le silence d'une instance et son APPARTENANCE À UN AUTRE MONDE sont deux
+   * situations distinctes, et cette section parle de la première.
+   */
   const companyId = await partirDeZero();
   await instance({ id: 'sb-test', environment: 'TEST' });
-  await instance({ id: 'sb-prod', environment: 'PROD', vivante: false });
+  await instance({ id: 'sb-muette', environment: 'TEST', vivante: false });
 
   await societe.saveCompany(companyId, { identity: { name: 'Agence Un' } }, ACTEUR);
   await declareApplique('sb-test', 1);
-  await declareApplique('sb-prod', 1);
+  await declareApplique('sb-muette', 1);
   await societe.saveCompany(companyId, { identity: { name: 'Agence Deux' } }, ACTEUR);
-  // TEST est vivante : elle applique et le declare. PROD, muette, reste en 1.
+  // TEST est vivante : elle applique et le declare. la seconde, muette, reste en 1.
   await declareApplique('sb-test', 2);
 
   let d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
-  const prod = etatDe(d, 'sb-prod');
+  const prod = etatDe(d, 'sb-muette');
   check('une instance muette et en retard est HORS LIGNE', prod.state === 'OFFLINE');
   check('…on conserve la version attendue', prod.expectedVersion === 2);
   check('…ET la version précédemment appliquée', prod.appliedVersion === 1);
   check('…le global est partiel', d.global === 'PARTIAL');
 
   /**
-   * PROD revient : la rediffusion lui envoie la version COURANTE, et rien
+   * L’instance muette revient : la rediffusion lui envoie la version COURANTE, et rien
    * d'autre. Aucune version nouvelle n'est fabriquée par ce retour.
    */
   const avant = await PanelCompanyVersion.countDocuments({ companyId });
   await societe.republishCurrentConfiguration(companyId);
-  await declareApplique('sb-prod', 2);
+  await declareApplique('sb-muette', 2);
 
   d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
-  check('après son retour, PROD est APPLIED', etatDe(d, 'sb-prod').state === 'APPLIED');
+  check('après son retour, elle est APPLIED', etatDe(d, 'sb-muette').state === 'APPLIED');
   check('…le global redevient à jour', d.global === 'UP_TO_DATE');
   check('…et AUCUNE version n’a été créée entre-temps',
     (await PanelCompanyVersion.countDocuments({ companyId })) === avant);

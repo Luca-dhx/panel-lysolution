@@ -453,10 +453,23 @@ function buildServices() {
  * projet hors de ce chemin.
  */
 function buildClient(record, { timeoutMs }) {
-  if (!outboundBaseUrl(record)) return null;
+  /**
+   * ── L'ADRESSE DU PREMIER CONTACT, PARCE QU'UN MOTEUR D'ACTIONS DÉCOUVRE ──
+   *
+   * Les actions servies ici — découvrir, sonder la santé, relire un manifeste —
+   * s'adressent aussi à des projets qui n'ont PAS encore publié de destination.
+   * Exiger la destination refusait précisément l'action qui sert à apprendre
+   * qui est ce projet, alors que le Panel connaît l'adresse par laquelle il
+   * vient de le joindre.
+   *
+   * La destination reste prioritaire dès qu'elle existe : le repli n'ouvre que
+   * le cas où la réponse était `null`.
+   */
+  const baseUrl = outboundBaseUrl(record);
+  if (!baseUrl) return null;
   const bridgeToken = getOutboundBridgeToken(record);
   if (!bridgeToken) return null;
-  return new ProjectBridgeClient({ baseUrl: outboundBaseUrl(record), bridgeToken, timeoutMs });
+  return new ProjectBridgeClient({ baseUrl, bridgeToken, timeoutMs });
 }
 
 /**

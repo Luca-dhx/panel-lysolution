@@ -104,6 +104,10 @@ const TESTS = [
   'project-identity.test.js',
   'project-destination.test.js',
   'project-creation.test.js',
+  // POINT DE TERMINAISON DE HARNAIS — la seule exception à la garde « une
+  // destination n'est jamais privée », et la preuve qu'elle est inforgeable
+  // depuis une requête et inopérante en production.
+  'test-harness-endpoint.test.js',
   'domains.test.js',
   'persistence.test.js',
   'bridge-http.test.js',

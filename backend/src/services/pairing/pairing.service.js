@@ -20,6 +20,7 @@ import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
 import registryStore from '../registry/registryStore.js';
 import { normalizeBackendUrl } from '../registry/projectIdentity.js';
+import { normalizeEnvironment } from '../registry/projectEnvironment.js';
 import {
   NETWORK_DECLARATION_SOURCES,
   applyDeclaredNetwork,
@@ -94,7 +95,70 @@ export async function bootstrap(dto) {
   }
 
   /**
-   * ══ L'ENVIRONNEMENT DOIT CONCORDER — et la question se pose EN PREMIER ═════
+   * ══ L'ENVIRONNEMENT DOIT CONCORDER AVEC LA FICHE — pas avec le Panel ══════
+   *
+   * ── CE QUI A CHANGÉ, ET POURQUOI CE N'EST PAS UN AFFAIBLISSEMENT ──────────
+   *
+   * La règle comparait l'environnement annoncé par le projet à `config.env`,
+   * celui du processus Panel. Elle empêchait bien l'accident qu'elle visait —
+   * une adresse de Panel recopiée d'un monde à l'autre — mais elle interdisait
+   * du même geste la seule chose qu'un plan de contrôle doit savoir faire :
+   * PILOTER UNE PRODUCTION. Un Panel de recette ne pouvait pas administrer un
+   * projet en production, alors même que l'administration n'est pas une action
+   * métier et ne consomme aucun monde fournisseur.
+   *
+   * Les deux dimensions étaient confondues :
+   *
+   *   PANEL_ENV   — le monde où tourne le PLAN DE CONTRÔLE
+   *   PROJECT_ENV — le monde où tourne le PROJET
+   *
+   * Elles sont indépendantes. Ce qu'il fallait, ce n'était pas les égaliser,
+   * c'était ANCRER la seconde ailleurs que dans un `.env` de processus.
+   *
+   * ── OÙ ELLE EST ANCRÉE MAINTENANT ────────────────────────────────────────
+   *
+   * Dans la FICHE, que le Panel écrit et que le projet ne touche jamais.
+   * L'opérateur déclare l'environnement en créant le projet ; à défaut — fiches
+   * antérieures, déclaration sans monde — il est ÉPINGLÉ ici, au seul instant
+   * où le projet prouve son identité par un code à usage unique.
+   *
+   * Le refus d'origine survit donc entièrement : une production qui se
+   * présenterait avec le code d'une fiche déclarée TEST est toujours rejetée,
+   * et l'`.env` recopié est toujours attrapé. Ce qui disparaît, c'est
+   * seulement l'exigence que le PANEL vive dans le même monde que ce qu'il
+   * administre.
+   *
+   * ── ET CE QUE CELA NE CHANGE PAS ─────────────────────────────────────────
+   *
+   * Rien du côté fournisseur. Une capacité exercée POUR UN PROJET se résout
+   * toujours sur le monde du PROJET (`resolveIntegratedApiEnvironment`). Un
+   * Panel TEST qui administre une production consomme les identifiants de
+   * PRODUCTION — c'est le projet qui décide, et il décidait déjà.
+   */
+  const epingle = normalizeEnvironment(record.declaredEnvironment);
+  if (epingle && dto.environment !== epingle) {
+    throw new BridgeError(
+      BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH,
+      `Ce projet se declare en ${dto.environment} alors que sa fiche dans le Panel est `
+      + `enregistree en ${epingle}. Verifiez l'adresse du Panel configuree dans le projet, `
+      + 'ou declarez une seconde fiche pour cet environnement.',
+    );
+  }
+
+  /**
+   * L'ÉPINGLE, quand la fiche n'en portait pas.
+   *
+   * C'est le seul moment où le Panel peut croire un projet sur parole : il
+   * vient de présenter un code à usage unique, émis par l'opérateur, pour cette
+   * fiche précise. Au-delà, la valeur est FIGÉE — un battement ne la déplace
+   * plus (voir `applyHeartbeat`). Sans quoi un projet enregistré en recette
+   * pourrait se promouvoir en production d'un simple champ, et repartir avec
+   * les identifiants du monde réel.
+   */
+  record.declaredEnvironment = dto.environment;
+
+  /**
+   * ══ NOTE HISTORIQUE — la doctrine précédente, et ce qu'elle protégeait ════
    *
    * ── POURQUOI CE CONTRÔLE A REMONTÉ ────────────────────────────────────────
    * Il venait après la réconciliation de la clé technique. Or une production
@@ -136,15 +200,18 @@ export async function bootstrap(dto) {
    * environnement. Un écran qui regrouperait « la recette et la production
    * d'un même client » ne pourrait donc jamais afficher deux fiches vivantes :
    * la seconde serait toujours une fiche jamais appairée.
+   *
+   * ── CE QUI RESTE VRAI DE TOUT CELA ───────────────────────────────────────
+   * Tout, sauf la conclusion. Une URL prouve bien quelle machine répond et
+   * jamais à quel monde elle appartient ; on ne devine toujours rien depuis un
+   * nom d'hôte ; on refuse toujours sans jamais rapprocher les deux valeurs
+   * « pour que ça marche ». Seule la référence a changé : ce n'est plus le
+   * monde du Panel qui sert d'étalon, c'est la fiche du projet.
+   *
+   * La doctrine mono-instance tombe, elle, et c'était son défaut : une seule
+   * instance de Panel peut désormais tenir la recette ET la production d'un
+   * même client, en deux fiches, chacune dans son monde.
    */
-  if (dto.environment !== config.env) {
-    throw new BridgeError(
-      BRIDGE_ERROR_CODES.ENVIRONMENT_MISMATCH,
-      `Ce projet se declare en ${dto.environment} alors que cette instance du Panel sert `
-      + `${config.env}. Verifiez l'adresse du Panel configuree dans le projet : chaque `
-      + 'environnement a la sienne.',
-    );
-  }
 
   // ── RÉCONCILIATION DE LA CLÉ ─────────────────────────────────────────────
   // Le PROJET est propriétaire de sa clé : il la dérive de son propre nom et

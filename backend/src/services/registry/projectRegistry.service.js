@@ -14,6 +14,11 @@ import {
   applyDeclaredNetwork,
 } from './projectNetworkDeclaration.js';
 import { issuePairingCode } from '../pairing/pairing.service.js';
+import {
+  normalizeEnvironment,
+  authoritativeEnvironmentOf,
+  environmentContradicted,
+} from './projectEnvironment.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
@@ -47,11 +52,12 @@ function assertValidManifestOrThrow(manifestInput) {
  * entre deux requêtes simultanées : ce sont cinq chemins vers la même
  * situation. Cinq messages différents feraient croire à cinq problèmes.
  */
-/** `TEST` / `PROD`, ou `null` — jamais une valeur d'ambiance. */
-export function normalizeEnvironment(valeur) {
-  const brut = String(valeur ?? '').trim().toUpperCase();
-  return brut === 'TEST' || brut === 'PROD' ? brut : null;
-}
+/**
+ * La règle vit dans `projectEnvironment.js` — un module FEUILLE, que
+ * l'appairage peut importer sans refermer un cycle sur ce fichier-ci. Elle est
+ * réexportée pour les appelants historiques.
+ */
+export { normalizeEnvironment };
 
 /**
  * L'ENVIRONNEMENT D'UNE FICHE — DÉCLARÉ PAR LE PROJET, ou inconnu.
@@ -77,7 +83,20 @@ export function normalizeEnvironment(valeur) {
  */
 export function declaredEnvironmentOf(record) {
   if (record?.pairing?.status !== 'PAIRED') return null;
-  return normalizeEnvironment(record?.runtime?.environment);
+  /**
+   * L'ÉPINGLE DE LA FICHE, PLUS L'ANNONCE DU PROJET.
+   *
+   * Cette fonction lisait `runtime.environment` — ce que le projet dit de
+   * lui-même à chaque battement. Elle alimente l'affichage, la livraison des
+   * synchronisations, et par `resolveInstanceEnvironment` le choix du MONDE
+   * FOURNISSEUR. Tant que l'appairage imposait l'égalité avec `config.env`,
+   * l'annonce ne pouvait rien valoir d'autre que le monde du Panel.
+   *
+   * Maintenant qu'un Panel de recette peut administrer une production, s'y
+   * fier reviendrait à laisser un projet choisir son propre monde — donc ses
+   * propres identifiants — en changeant un champ. Voir `projectEnvironment.js`.
+   */
+  return authoritativeEnvironmentOf(record);
 }
 
 function dejaDeclare(existant) {
@@ -459,7 +478,31 @@ export async function recordHeartbeat(record, heartbeat, contractVersion = null)
     );
   }
 
+  /**
+   * ══ L'ANNONCE EST ENREGISTRÉE, ELLE NE PROMEUT PAS ═══════════════════════
+   *
+   * `runtime.environment` reste le CONSTAT du dernier battement : c'est utile
+   * au diagnostic, et l'écran doit pouvoir montrer ce que le projet dit de
+   * lui-même. Mais il ne décide plus de rien — l'autorité est l'épingle posée
+   * sur la fiche à l'appairage (`projectEnvironment.js`).
+   *
+   * Sans cette séparation, un projet enregistré en recette n'aurait eu qu'à
+   * annoncer `PROD` au battement suivant pour obtenir les identifiants
+   * fournisseur du monde réel. Le champ est écrit par le projet, sur un chemin
+   * que le projet contrôle : il ne peut pas être sa propre preuve.
+   *
+   * On le DIT, plutôt que d'ignorer en silence. Une contradiction est soit une
+   * promotion faite sans déclarer la seconde fiche, soit une tentative
+   * d'élévation ; dans les deux cas elle mérite mieux qu'un champ écrasé.
+   */
   record.runtime.environment = heartbeat.environment;
+  if (environmentContradicted(record)) {
+    logger.warn(
+      `[runtime] ${record.projectId} : le projet annonce ${record.runtime.environment} `
+      + `alors que sa fiche est epinglee en ${record.declaredEnvironment}. `
+      + "L'epingle fait autorite ; aucun identifiant de l'autre monde ne sera servi.",
+    );
+  }
   record.runtime.softwareVersion = heartbeat.softwareVersion;
   /**
    * LA VERSION DE CONTRAT SUIT LE PROJET, elle ne fige pas à l'appairage.
@@ -891,7 +934,32 @@ export function describeProject(record) {
      * S'en servir revenait à laisser un opérateur décider de l'environnement
      * d'une instance qui n'avait jamais parlé.
      */
-    environment: paired ? (runtime.environment ?? null) : null,
+    environment: paired ? declaredEnvironmentOf(record) : null,
+    /**
+     * ── LE MONDE DU PLAN DE CONTRÔLE, DIT SÉPARÉMENT ─────────────────────
+     *
+     * Une fiche PROD administrée depuis un Panel TEST est désormais une
+     * situation SUPPORTÉE, pas une anomalie. L'écran doit pouvoir écrire
+     * « Projet : PROD · Plan de contrôle : TEST » — donc disposer des deux
+     * valeurs, plutôt que de déduire la seconde du serveur qui l'a servie.
+     *
+     * Sans ce champ, la seule façon d'afficher la nuance aurait été de
+     * comparer l'environnement du projet à une constante du frontend : une
+     * règle métier de plus, dans la couche qui a le moins de titres à la
+     * porter.
+     */
+    controlPlaneEnvironment: config.env,
+    /**
+     * Ce que le projet ANNONCE, quand cela contredit l'épingle de sa fiche.
+     *
+     * `null` la plupart du temps — les deux concordent. Non nul, c'est une
+     * promotion faite sans déclarer de seconde fiche, ou une tentative
+     * d'élévation. L'épingle a tenu dans les deux cas ; l'écran mérite de
+     * pouvoir le dire au lieu de laisser la contradiction muette.
+     */
+    observedEnvironmentConflict: paired && environmentContradicted(record)
+      ? (runtime.environment ?? null)
+      : null,
     /**
      * ── LES URLs VIENNENT DE LA DESTINATION ACTIVE, ET DE NULLE PART AILLEURS ──
      *

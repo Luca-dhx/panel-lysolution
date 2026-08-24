@@ -198,28 +198,42 @@ export async function deliverToProject(record, changes) {
   };
 
   /**
-   * ── FAIL CLOSED SUR L'ENVIRONNEMENT ───────────────────────────────────────
+   * ── LA DONNÉE MÉTIER NE TRAVERSE PAS LES MONDES ───────────────────────────
    *
-   * Une instance de Panel ne sert qu'un monde. Si la fiche déclare un autre
-   * environnement que celui que nous servons, la situation est anormale — un
-   * `.env` recopié, une promotion mal faite — et la bonne réponse est de NE
-   * PAS livrer. Corriger automatiquement produirait exactement l'accident
-   * qu'on cherche à rendre impossible : les mentions légales d'un client
-   * réel sur un site de recette.
+   * Ce qui part d'ici n'est pas de l'administration : ce sont les PROPRES
+   * ENREGISTREMENTS du Panel — entreprise cliente, mentions légales, contrat,
+   * équipe. Ils sont partitionnés par le monde du Panel (`PanelClientCompany`
+   * porte `environment: config.env`), et cette partition n'a pas changé.
    *
-   * On ne touche pas au journal pour autant : le projet, lui, refusera cette
-   * configuration à l'application (`ENVIRONMENT_MISMATCH`), et l'anomalie
-   * reste visible des deux côtés.
+   * ── CE QUI A CHANGÉ AUTOUR, ET POURQUOI CETTE GARDE RESTE ────────────────
+   *
+   * Un Panel de recette peut désormais APPAIRER et PILOTER un projet de
+   * production : le battement, la supervision, le déploiement et les capacités
+   * fournisseur fonctionnent, ces dernières sur le monde du PROJET.
+   *
+   * Livrer pour autant les fiches de ce Panel-ci serait poser les mentions
+   * légales d'une entreprise de recette sur un site en production. Ce n'est pas
+   * une limite de plomberie : la donnée demandée n'existe pas dans ce monde, et
+   * aucune valeur de substitution ne serait honnête.
+   *
+   * ── CE N'EST PLUS UNE ANOMALIE, C'EST UNE FRONTIÈRE ──────────────────────
+   *
+   * La classe `SECURITY` disait « quelqu'un s'est trompé de Panel ». Depuis que
+   * la combinaison est supportée, elle ne dit plus la vérité : le plus souvent
+   * l'opérateur sait exactement ce qu'il fait. On garde donc le refus — au mot
+   * près le même — et on cesse de le présenter comme un incident.
    */
   const environnement = declaredEnvironmentOf(record);
   if (environnement && environnement !== config.env) {
     const trace = {
       ...base, outcome: DELIVERY_OUTCOME.ENVIRONMENT_MISMATCH,
-      errorClass: 'SECURITY', durationMs: Date.now() - debut,
+      errorClass: 'SCOPE', durationMs: Date.now() - debut,
     };
     tracer(trace);
-    logger.warn(
-      `[sync-delivery] ${projectId} : livraison refusée — le projet déclare ${environnement}, ce Panel sert ${config.env}.`,
+    logger.info(
+      `[sync-delivery] ${projectId} : donnees metier non livrees — le projet est en ${environnement}, `
+      + `ce Panel tient les fiches ${config.env}. Le pilotage reste actif ; seule la synchronisation `
+      + "metier est hors perimetre de ce plan de controle.",
     );
     return trace;
   }

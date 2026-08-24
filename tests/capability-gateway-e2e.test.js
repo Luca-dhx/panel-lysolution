@@ -98,11 +98,26 @@ section('1. Le coffre du Panel porte les DEUX mondes');
   check('…et AUCUNE clé n’apparaît en clair, même au repos', propre(brut));
 
   // Validation par le VRAI chemin L1 — un appel HTTP réel au faux fournisseur.
+  /**
+   * ── ON DÉSIGNE L'APPEL, ON NE PREND PAS LE DERNIER ──────────────────────
+   *
+   * Ces contrôles lisaient `appelsFournisseur.at(-1)` : le dernier appel reçu
+   * par le faux fournisseur, quel qu'il soit. Seul dans son processus, la suite
+   * est le seul appelant et « le dernier » est bien le sien.
+   *
+   * Dans la chaîne, où d'autres traitements vivent en parallèle, « le dernier »
+   * devient une course : l'assertion tombait par intermittence, sur un produit
+   * qui venait de faire exactement ce qu'on lui demandait.
+   *
+   * On note donc l'index AVANT de provoquer l'appel, et on lit celui-là.
+   */
+  const avant = appelsFournisseur.length;
   const verdict = await controlPlane.validateCredentialSet('BREVO', 'TEST', { actor: ACTEUR });
   check('le jeu TEST est validé par un appel réel', verdict.validation.status === 'VALID');
-  check('…et c’est bien la clé TEST qui est partie',
-    appelsFournisseur.at(-1).apiKey === CLE_TEST);
-  check('…sur l’URL de base du coffre', appelsFournisseur.at(-1).url === '/v3/account');
+  const appel = appelsFournisseur[avant];
+  check('…un appel a bien été émis par cette validation', Boolean(appel));
+  check('…et c’est bien la clé TEST qui est partie', appel?.apiKey === CLE_TEST);
+  check('…sur l’URL de base du coffre', appel?.url === '/v3/account');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -227,7 +242,8 @@ section('4. Le chemin complet : projet → pont → passerelle → coffre → fo
 
   check('UN appel fournisseur a bien eu lieu', appelsFournisseur.length === avant + 1);
   // LE POINT CENTRAL : le projet n'a jamais tenu cette clé, et c'est elle qui part.
-  check('la clé partie est celle du COFFRE, en TEST', appelsFournisseur.at(-1).apiKey === CLE_TEST);
+  check('la clé partie est celle du COFFRE, en TEST',
+    appelsFournisseur[avant]?.apiKey === CLE_TEST);
   check('la clé PROD n’est JAMAIS partie', appelsFournisseur.every((a) => a.apiKey !== CLE_PROD));
 
   check('l’environnement rendu est celui de l’instance', succes.data.environment === 'TEST');

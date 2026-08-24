@@ -34,6 +34,7 @@
  * cycle, et un cycle se paie toujours plus tard.
  */
 import logger from '../../utils/logger.js';
+import { isTestHarnessEndpoint } from '../../config/testHarnessRuntime.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { normalizeBackendUrl } from './projectIdentity.js';
 
@@ -173,8 +174,19 @@ export function applyDeclaredNetwork(record, { backendUrl, source, declaredAt = 
    * ON GARDE CE QU'ON SAVAIT. Refuser n'est pas ignorer : le refus est
    * journalisé, parce qu'un projet qui annonce une adresse privée dit quelque
    * chose de vrai sur lui — il tourne ailleurs que là où on croit.
+   *
+   * ── L'UNIQUE EXCEPTION, ET CE QUI LA REND SÛRE ───────────────────────────
+   *
+   * Un Panel démarré PAR UNE SUITE DE TEST accepte une adresse de boucle
+   * locale : c'est là que vivent les vrais projets que les recettes de bout en
+   * bout lancent, et sans quoi elles n'éprouveraient plus rien.
+   *
+   * La distinction ne porte pas sur l'adresse mais sur le RUNTIME qui la
+   * reçoit, et elle vient d'une marque de processus qu'aucune requête ne peut
+   * poser — la même qui interdit à une suite d'écrire dans une base partagée.
+   * Un Panel de production refuse, marque ou pas. Voir `testHarnessRuntime.js`.
    */
-  if (!isPubliclyRoutableBackendUrl(normalisee)) {
+  if (!isPubliclyRoutableBackendUrl(normalisee) && !isTestHarnessEndpoint(normalisee)) {
     logger.warn(
       `[registry] ${record.projectId} — adresse publique REFUSÉE : « ${normalisee} » `
       + `n'est pas joignable depuis l'extérieur (${source}). `

@@ -389,11 +389,28 @@ export async function publishConfiguration(companyId, { reason } = {}, actor = {
  *
  * ══ LES CINQ ÉTATS ══════════════════════════════════════════════════════════
  *
- *   NOT_PAIRED — aucun lien : ce n'est pas une erreur, c'est une absence ;
- *   APPLIED    — l'instance a confirmé la version attendue ;
- *   PENDING    — reliée, vivante, mais pas encore à jour ;
- *   OFFLINE    — reliée, pas à jour, et plus aucun signe de vie ;
- *   UNKNOWN    — reliée mais n'a jamais déclaré de version appliquée.
+ *   NOT_PAIRED   — aucun lien : ce n'est pas une erreur, c'est une absence ;
+ *   OUT_OF_SCOPE — reliée, mais d'un AUTRE MONDE que ce plan de contrôle ;
+ *   APPLIED      — l'instance a confirmé la version attendue ;
+ *   PENDING      — reliée, vivante, mais pas encore à jour ;
+ *   OFFLINE      — reliée, pas à jour, et plus aucun signe de vie ;
+ *   UNKNOWN      — reliée mais n'a jamais déclaré de version appliquée.
+ *
+ * ══ POURQUOI `OUT_OF_SCOPE` EXISTE ═════════════════════════════════════════
+ *
+ * Un Panel de recette peut désormais ADMINISTRER une production : battement,
+ * supervision, déploiement, capacités fournisseur. Il ne lui livre pas pour
+ * autant SES enregistrements métier — ce seraient les mentions légales d'une
+ * entreprise de recette sur un site en production (05_PAIRING §9.4).
+ *
+ * Sans cet état, une telle instance serait comptée « en retard » — pour
+ * toujours, puisqu'elle ne recevra jamais rien. Le parc basculerait en
+ * `PARTIAL` de façon permanente, une rediffusion la viserait à chaque tour, et
+ * l'écran afficherait une alerte pour une situation SUPPORTÉE.
+ *
+ * Le même raisonnement que pour `NOT_PAIRED`, un cran plus loin : compter comme
+ * un échec ce qui est une absence VOULUE fait clignoter le parc pour rien, et
+ * un tableau de bord qui clignote toujours ne signale plus rien.
  */
 export async function describeCompanyDistribution(company) {
   const { listProjects, deriveLiveness, declaredEnvironmentOf } = await import(
@@ -409,8 +426,16 @@ export async function describeCompanyDistribution(company) {
     const paired = p.pairing?.status === 'PAIRED';
     const liveness = deriveLiveness(p, maintenant);
 
+    /**
+     * Le monde de l'instance, tel qu'ÉPINGLÉ sur sa fiche — jamais ce qu'elle
+     * annonce. Une instance d'un autre monde que ce Panel ne reçoit pas ses
+     * données métier, et n'a donc aucune version à appliquer.
+     */
+    const monde = declaredEnvironmentOf(p);
+
     let state;
     if (!paired) state = 'NOT_PAIRED';
+    else if (monde && monde !== config.env) state = 'OUT_OF_SCOPE';
     else if (appliedVersion === null) state = 'UNKNOWN';
     else if (expectedVersion !== null && appliedVersion >= expectedVersion) state = 'APPLIED';
     else if (liveness === 'ONLINE' || liveness === 'STALE') state = 'PENDING';
@@ -421,7 +446,7 @@ export async function describeCompanyDistribution(company) {
       projectName: p.projectName,
       // Une instance = une fiche. Aucune identité logique n'est republiée :
       // l'écran n'a rien à regrouper, il rend une ligne par instance.
-      environment: declaredEnvironmentOf(p),
+      environment: monde,
       paired,
       liveness,
       expectedVersion,
@@ -433,12 +458,17 @@ export async function describeCompanyDistribution(company) {
   });
 
   /**
-   * LE VERDICT GLOBAL — et une instance non appairée n'y pèse pas.
+   * LE VERDICT GLOBAL — et deux catégories n'y pèsent pas.
    *
-   * Un projet sans production déclarée est un projet normal. Le compter comme
-   * un échec ferait clignoter la moitié du parc pour une absence voulue.
+   * Une instance NON APPAIRÉE : un projet sans production déclarée est un projet
+   * normal ; le compter comme un échec ferait clignoter la moitié du parc pour
+   * une absence voulue.
+   *
+   * Une instance D'UN AUTRE MONDE : elle ne recevra jamais les enregistrements
+   * métier de ce Panel, et ce n'est pas une panne — c'est la frontière. La
+   * compter reviendrait à déclarer le parc éternellement incomplet.
    */
-  const concernees = instances.filter((i) => i.paired);
+  const concernees = instances.filter((i) => i.paired && i.state !== 'OUT_OF_SCOPE');
   const enRetard = concernees.filter((i) => i.state !== 'APPLIED');
 
   let global;

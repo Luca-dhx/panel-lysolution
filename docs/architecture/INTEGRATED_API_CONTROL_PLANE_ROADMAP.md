@@ -367,52 +367,74 @@ Deux exceptions demandent un vrai travail :
 
 ## 7. Routage d'environnement
 
-### 7.1 L'autorité existe déjà
+### 7.1 L'autorité, et où elle est ancrée — ÉTAT LIVRÉ
 
-Le Panel n'a pas à inventer comment connaître l'environnement d'une instance :
-il le sait depuis l'appairage, il le refuse s'il ne concorde pas, et il ne
-livre pas si la fiche diverge.
+> Cette section décrivait un PLAN. Elle décrit désormais ce qui tourne, et la
+> conclusion du plan a changé en route. Le §7.3 ci-dessous est conservé comme
+> trace de l'arbitrage ; il ne décrit plus le produit.
 
-```
-pairing.bootstrap                 syncDelivery.deliverToProject
-  dto.environment !== config.env    record.runtime.environment !== config.env
-        │                                   │
-        ▼                                   ▼
-  BRIDGE_ENVIRONMENT_MISMATCH (409)   outcome ENVIRONMENT_MISMATCH, rien livré
-```
-
-Sources : [pairing.service.js:134](../../backend/src/services/pairing/pairing.service.js#L134),
-[syncDelivery.service.js:211](../../backend/src/services/sync/syncDelivery.service.js#L211).
-Couvert par `tests/panel-instance-environment.test.js` et
-`tests/project-connections.test.js`.
-
-### 7.2 La règle pour les capacités
+L'environnement d'un projet est **épinglé sur sa fiche Panel** — déclaré par
+l'opérateur, ou fixé à l'appairage, le seul instant où le projet prouve son
+identité par un code à usage unique. Il ne bouge plus ensuite : aucun battement
+ne le déplace.
 
 ```
-environnement effectif d'un appel = config.env de l'instance de Panel
+pairing.bootstrap                     syncDelivery.deliverToProject
+  dto.environment !== épingle fiche      record épinglé ≠ config.env
+        │                                       │
+        ▼                                       ▼
+  BRIDGE_ENVIRONMENT_MISMATCH (409)       outcome ENVIRONMENT_MISMATCH
+                                          errorClass SCOPE — une FRONTIÈRE,
+                                          pas un incident
 ```
 
-Et rien d'autre. Pas le domaine, pas un paramètre de la requête, pas un
-en-tête, pas un réglage d'écran. Le `config.env` du processus Panel est déjà la
-valeur contre laquelle l'appairage a été validé : la réutiliser ferme la boucle
-sans introduire de seconde vérité.
+`config.env` **n'entre plus** dans la décision d'appairage : un Panel de recette
+peut administrer une production. Voir [05_PAIRING.md §9](05_PAIRING.md).
 
-Une conséquence agréable : **le contrôle est gratuit**. Si le Panel TEST ne
-détient que les credentials TEST, un appel PROD est impossible par construction,
-pas par vérification. La vérification explicite reste, en défense en
-profondeur :
+Sources : `services/registry/projectEnvironment.js` (l'autorité),
+`services/pairing/pairing.service.js` (l'épingle),
+`services/capabilities/invocationContext.js` (la lecture).
+Couvert par `tests/panel-instance-environment.test.js`,
+`tests/integrated-api-environment-routing.test.js`.
+
+### 7.2 La règle pour les capacités — ÉTAT LIVRÉ
 
 ```
-INTEGRATED_API_ENVIRONMENT_MISMATCH   409
-  « Capacité refusée : cette instance de Panel sert TEST,
-    le credential set demandé est PROD. »
+environnement effectif d'un appel = PROJECT_ENV ?? PANEL_ENV
 ```
 
-**Fail closed.** Aucun repli sur l'autre environnement, aucun défaut. Si le
-credential set de l'environnement courant est absent, la réponse est
-`INTEGRATED_API_NOT_CONFIGURED` (409), jamais un basculement silencieux.
+| Panel | Projet | Stripe / Brevo / OpenSign |
+|---|---|---|
+| TEST | TEST | **TEST** |
+| TEST | PROD | **PROD** |
+| PROD | TEST | **TEST** |
+| PROD | PROD | **PROD** |
 
-### 7.3 Le point dur : la doctrine actuelle dit l'inverse
+Le monde du **PROJET** décide. Celui du Panel ne tranche que pour les capacités
+qu'il exerce **pour lui-même** — là où son monde est effectivement le sujet.
+
+Ni le domaine, ni un paramètre de requête, ni un en-tête, ni un réglage d'écran
+n'entrent dans cette décision : la valeur vient de la fiche, que le Panel écrit
+et que le projet ne touche jamais.
+
+**Pourquoi l'ancrage compte.** Tant que l'appairage exigeait l'égalité avec
+`config.env`, lire l'annonce du projet était sans conséquence — il ne pouvait
+vivre que dans le monde de son Panel. Cette contrainte levée, la même lecture
+devenait un chemin d'ÉLÉVATION : annoncer `PROD` à un battement pour repartir
+avec les clés du monde réel. D'où l'épingle, posée avant.
+
+Un fournisseur à **compte unique** (`PANEL_GLOBAL`) n'a pas de monde : `null`,
+dans les quatre cases. On ne lui en invente pas un pour faire tenir le tableau.
+
+**Fail closed.** Si le jeu d'identifiants du monde résolu est absent, la réponse
+est `INTEGRATED_API_NOT_CONFIGURED` (409) — jamais un basculement silencieux vers
+l'autre monde.
+
+> **NOTE D'EXPLOITATION.** Chaque instance de Panel ne détient que ce qu'on y
+> saisit. Pour piloter une production depuis un Panel de recette, les
+> identifiants **PROD** doivent être renseignés **dans ce Panel-là**.
+
+### 7.3 Le point dur — TRACE HISTORIQUE de l'arbitrage
 
 C'est **la contradiction majeure de cet audit**, et elle est explicite,
 documentée et testée.

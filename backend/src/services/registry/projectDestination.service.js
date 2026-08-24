@@ -30,6 +30,7 @@ import PanelProjectDestination, {
 } from '../../models/PanelProjectDestination.model.js';
 import ApiError from '../../utils/ApiError.js';
 import logger from '../../utils/logger.js';
+import { isTestHarnessEndpoint } from '../../config/testHarnessRuntime.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { currentGeneration } from '../sync/projectGeneration.js';
 import { isPubliclyRoutableBackendUrl } from './projectNetworkDeclaration.js';
@@ -239,12 +240,40 @@ export async function resolveProjectBackendUrl(record) {
  * était injoignable ou dégradé, alors qu'il tournait parfaitement ailleurs — et
  * il téléchargeait les contrats depuis un serveur périmé.
  *
- * La fiche arrive déjà résolue par `registryStore` : on lit la destination
- * active, et rien d'autre. `null` quand aucune n'est connue — les appelants
- * refusent alors explicitement, ce qui vaut mieux qu'appeler la mauvaise.
+ * La fiche arrive déjà résolue par `registryStore` : la DESTINATION ACTIVE
+ * prime, toujours. C'est elle qui suit les déménagements.
+ *
+ * ── LE REPLI, ET CE QU'IL N'EST PAS ────────────────────────────────────────
+ *
+ * « Aucune destination » ne veut pas dire « aucune adresse ». Une destination
+ * naît de la projection de PRÉSENTATION, que le projet publie quand il en a
+ * une : un projet fraîchement appairé n'en a donc aucune, alors que le Panel
+ * connaît parfaitement l'adresse par laquelle ce projet vient de le joindre.
+ *
+ * Le Panel répondait « ce projet ne peut pas être contacté » en tenant dans la
+ * main l'adresse à composer. Deux gestes en mouraient : la DÉCOUVERTE, dont
+ * c'est justement le rôle d'aller demander à un projet neuf qui il est, et la
+ * LIVRAISON de sa première configuration.
+ *
+ * Le repli est `runtime.publicBackendUrl` — l'adresse OPÉRATIONNELLE, « c'est
+ * ICI que je réponds ». Ce n'est PAS le manifeste, qui est une photographie
+ * parfois saisie à la main : celui-là n'est jamais ressorti en secours, et
+ * c'est la garde que le bloc ci-dessus a établie.
+ *
+ * ── LE RISQUE, NOMMÉ ───────────────────────────────────────────────────────
+ *
+ * Cette adresse peut être PÉRIMÉE si elle date du bootstrap d'un projet qui a
+ * déménagé depuis et n'a plus battu. Le repli la ressusciterait alors le temps
+ * qu'une destination réapparaisse. C'est le moindre mal, pour deux raisons :
+ * depuis 1.9.0 le battement la rafraîchit à chaque passage — un projet vivant
+ * l'a donc juste — et un projet mort ne répondra de toute façon nulle part.
+ *
+ * L'ordre est ce qui rend cela sûr : la destination gagne dès qu'elle existe,
+ * et le repli n'ouvre que le cas où la réponse était `null`. Il ne détourne
+ * aucun appel ; il en rend possible qui échouaient.
  */
 export function outboundBaseUrl(record) {
-  return record?.activeNetwork?.backend ?? null;
+  return record?.activeNetwork?.backend ?? record?.runtime?.publicBackendUrl ?? null;
 }
 
 /** Toutes les destinations d'un projet, la plus récente d'abord. */
@@ -341,6 +370,16 @@ export async function describeByEnvironment(projectId) {
  */
 /** La même règle que pour l'adresse opérationnelle, appliquée à un nom d'hôte. */
 function isPubliclyRoutableHostname(host) {
+  /**
+   * La MÊME exception que sur l'adresse opérationnelle, et pour la même raison :
+   * un Panel démarré par une suite de test observe de vrais projets sur des
+   * ports éphémères de la boucle locale. La marque vient du processus, jamais
+   * d'une requête, et un Panel de production refuse malgré elle.
+   *
+   * Écrite ici AUSSI parce qu'une garde posée sur une seule des deux portes
+   * n'est pas une garde — c'est ce que dit déjà le commentaire de l'appelant.
+   */
+  if (isTestHarnessEndpoint(`http://${host}`)) return true;
   return isPubliclyRoutableBackendUrl(`https://${host}`);
 }
 

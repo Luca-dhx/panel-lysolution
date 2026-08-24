@@ -148,37 +148,63 @@ section('BACKEND — après appairage, l’environnement vient DU PROJET');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('BACKEND — un Panel ne sert QU’UN environnement (fondement de la doctrine)');
+section('BACKEND — un Panel sert PLUSIEURS mondes, une fiche par monde');
 {
+  /**
+   * ══ LA DOCTRINE MONO-INSTANCE EST TOMBÉE ═══════════════════════════════
+   *
+   * Cette section prouvait qu'un Panel de recette refusait une production, et
+   * en tirait que deux « sœurs » ne pouvaient jamais coexister appairées — donc
+   * qu'une carte « TEST + PROD » n'avait rien à afficher.
+   *
+   * L'appairage ne compare plus l'environnement annoncé à `config.env` mais à
+   * celui ÉPINGLÉ SUR LA FICHE, que le Panel écrit et que le projet ne touche
+   * jamais (05_PAIRING §9). Un plan de contrôle de recette peut donc
+   * ADMINISTRER une production — ce qui est son métier — tandis que le refus
+   * d'origine, lui, survit entier : il est éprouvé en seconde moitié.
+   */
   await registryStore.clear();
-  const recette = await declarer({ url: 'https://api.iso-test.fr', name: 'Iso Recette' });
+  const recette = await declarer({ url: 'https://api.iso-test.fr', name: 'Iso Recette', environment: 'TEST' });
   await pairing.bootstrap({
-    contractVersion: '1.4.0', projectKey: 'iso', projectName: 'Iso',
+    contractVersion: '1.4.0', projectKey: 'iso-test', projectName: 'Iso',
     environment: 'TEST', softwareVersion: '1.0.0',
     publicBackendUrl: 'https://api.iso-test.fr', pairingCode: recette.pairingCode,
   });
 
-  const production = await declarer({ url: 'https://api.iso-prod.fr', name: 'Iso Production' });
-  check('ONE_PANEL_SERVES_ONE_ENVIRONMENT : la production est refusée ici',
+  const production = await declarer({ url: 'https://api.iso-prod.fr', name: 'Iso Production', environment: 'PROD' });
+  const jetonProd = await pairing.bootstrap({
+    contractVersion: '1.4.0', projectKey: 'iso-prod', projectName: 'Iso',
+    environment: 'PROD', softwareVersion: '1.0.0',
+    publicBackendUrl: 'https://api.iso-prod.fr', pairingCode: production.pairingCode,
+  });
+  check('la production s’appaire à ce Panel de recette',
+    typeof jetonProd.bridgeToken === 'string');
+
+  const fiches = await registryStore.list();
+  check('les deux fiches vivent côte à côte',
+    fiches.filter((f) => f.pairing.bridgeTokenHash).length === 2);
+  check('…chacune avec son monde épinglé',
+    fiches.find((f) => f.projectKey === 'iso-test')?.declaredEnvironment === 'TEST'
+    && fiches.find((f) => f.projectKey === 'iso-prod')?.declaredEnvironment === 'PROD');
+
+  /* ── ET L'ACCIDENT D'ORIGINE RESTE INTERDIT ─────────────────────────── */
+  /**
+   * L'`.env` recopié d'un monde à l'autre : une production se présente avec le
+   * code d'une fiche enregistrée en recette. Toujours refusé, et toujours en
+   * nommant le VRAI problème plutôt qu'une collision de clé.
+   */
+  const piege = await declarer({ url: 'https://api.iso-piege.fr', name: 'Iso Piège', environment: 'TEST' });
+  check('une PRODUCTION présentée à une fiche de RECETTE est refusée',
     await rejectsWith(
       () => Promise.resolve(pairing.bootstrap({
-        contractVersion: '1.4.0', projectKey: 'iso', projectName: 'Iso',
+        contractVersion: '1.4.0', projectKey: 'iso-piege', projectName: 'Iso',
         environment: 'PROD', softwareVersion: '1.0.0',
-        publicBackendUrl: 'https://api.iso-prod.fr', pairingCode: production.pairingCode,
+        publicBackendUrl: 'https://api.iso-piege.fr', pairingCode: piege.pairingCode,
       })),
       'BRIDGE_ENVIRONMENT_MISMATCH',
     ));
-  check('…et le refus nomme le VRAI problème, pas une collision de clé',
-    (await registryStore.getById(production.record.projectId)).pairing.status === 'DECLARED');
-
-  /**
-   * C'est ce refus qui rend la doctrine mono-instance NÉCESSAIRE, et non
-   * seulement souhaitable : une carte « TEST + PROD » ne pourrait, dans ce
-   * Panel, jamais afficher deux fiches vivantes.
-   */
-  const fiches = await registryStore.list();
-  check('un seul jeton existe sur cette instance',
-    fiches.filter((f) => f.pairing.bridgeTokenHash).length === 1);
+  check('…et la fiche reste non appairée',
+    (await registryStore.getById(piege.record.projectId)).pairing.status === 'DECLARED');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

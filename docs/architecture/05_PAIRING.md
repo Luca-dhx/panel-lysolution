@@ -162,8 +162,8 @@ redémarrage — c'est vérifié par un test de redémarrage simulé.
    UNCONFIGURED/STANDALONE est un état normal, pas une erreur.
 5. La duplication d'un projet ne copie jamais un appairage : chaque projet
    fait son propre bootstrap avec son propre code.
-6. **L'environnement du projet doit concorder avec celui de l'instance de
-   Panel.** Voir §9.
+6. **L'environnement du projet doit concorder avec celui de sa FICHE** — pas
+   avec celui de l'instance de Panel, qui peut différer. Voir §9.
 7. **Un appairage = une fiche = une instance.** Voir §10.
 
 ## 10. Un appairage, une fiche, une instance
@@ -172,14 +172,15 @@ C'est la cardinalité que tout le reste du Panel suppose, et elle se lit mal
 parce que le Manager et le Panel ne comptent pas la même chose.
 
 ```
-MANAGER / SB AUTO                    PANEL (une instance = un environnement)
+MANAGER / SB AUTO                    PANEL (une FICHE = un environnement)
 
 Projet SB Auto                       ┌── PanelProject — projectId · TEST
 ├── destination TEST  ───────────────┘   1 appairage · 1 destination
 ├── destination PROD                     1 état métier
 └── … d'autres
-                                     La production s'appaire à l'AUTRE Panel,
-UN projet, N destinations.           avec son propre code et son propre jeton.
+                                     La production est une SECONDE fiche,
+UN projet, N destinations.           avec son propre code et son propre jeton —
+                                     sur ce Panel-ci ou sur un autre (§9).
 ```
 
 ```
@@ -204,11 +205,13 @@ environnement, aucune destination, aucun écran.
 
 **`logicalProjectKey` n'est plus écrit.** L'appairage le posait, pour
 regrouper à l'écran la recette et la production d'un même client. Cette
-écriture était sans emploi réel : le contrôle de concordance d'environnement
-(§9) interdit à un Panel de recette d'appairer une instance de production, de
-sorte que deux « sœurs » ne pouvaient jamais coexister appairées dans le même
-Panel. Le champ reste en base sur les fiches historiques ; plus rien ne
-l'écrit ni ne le lit.
+écriture était sans emploi réel TANT QUE le contrôle de concordance
+d'environnement interdisait à un Panel de recette d'appairer une instance de
+production : deux « sœurs » ne pouvaient jamais coexister appairées dans le même
+Panel. Depuis §9, elles le peuvent — mais le regroupement se lit désormais sur
+l'environnement ÉPINGLÉ de chaque fiche, pas sur une clé logique dupliquée. Le
+champ reste en base sur les fiches historiques ; plus rien ne l'écrit ni ne le
+lit.
 
 Aucun repli inter-fiche n'existe : quand une instance n'a pas de destination
 active, on écrit « aucune destination active » — on n'emprunte jamais celle
@@ -243,42 +246,123 @@ jamais écraser une projection reçue.
 
 ---
 
-## 9. Concordance d'environnement — le domaine choisit, l'`ENV` valide
+## 9. `PANEL_ENV` n'est pas `PROJECT_ENV`
 
-Un projet choisit son instance de Panel par l'URL qu'il appelle :
+> **UN PROJET EN PRODUCTION PEUT ÊTRE PILOTÉ PAR UN PANEL DE RECETTE.**
+>
+> Cela ne signifie **pas** « des fournisseurs de recette ». Pour une capacité
+> exercée **pour un projet**, c'est le monde du **PROJET** qui décide.
+
+Deux dimensions, indépendantes :
 
 ```
-projet TEST  →  PANEL_URL = https://panel-test.exemple.com
-projet PROD  →  PANEL_URL = https://panel.exemple.com
+PANEL_ENV     le monde où tourne le PLAN DE CONTRÔLE   (config.env)
+PROJECT_ENV   le monde où tourne le PROJET administré  (épinglé sur la fiche)
 ```
 
-C'est le bon mécanisme : deux instances déployées, deux domaines, deux bases.
-**Mais une URL ne prouve pas un environnement.** C'est une chaîne saisie dans
-un `.env` : elle dit quelle machine répond, jamais à quel monde elle
-appartient. Une adresse recopiée d'un projet à l'autre, une variable oubliée
-lors d'une promotion TEST → PROD, et la production d'un client s'appaire au
-Panel de recette. Rien n'échouerait : jetons valides, battements reçus,
-projections appliquées — et le Panel de recette afficherait durablement les
-contrats et l'équipe d'un site en production.
+Elles étaient soudées par une égalité imposée au bootstrap. Administrer n'est
+pas agir au nom de : la règle interdisait au plan de contrôle son métier —
+piloter une production — pour se protéger d'un accident qui se traite
+autrement.
 
-Le bootstrap compare donc les deux valeurs **déclarées** :
+### 9.1 Où l'environnement d'un projet est ancré
 
-| Projet | Instance de Panel | Résultat |
-|---|---|---|
-| TEST | Panel TEST | ✅ appairé |
-| PROD | Panel PROD | ✅ appairé |
-| TEST | Panel PROD | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
-| PROD | Panel TEST | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
+Sur la **fiche**, que le Panel écrit et que le projet ne touche jamais :
 
-Règles :
+1. l'opérateur le **déclare** en créant le projet dans le Panel ;
+2. à défaut, il est **épinglé au bootstrap** — le seul instant où le projet
+   prouve son identité, par un code à usage unique émis pour cette fiche ;
+3. ensuite **il ne bouge plus**. Aucun battement ne le déplace.
+
+Le bootstrap compare donc l'environnement annoncé à celui de la **FICHE** :
+
+| Projet annonce | Fiche enregistrée | Panel | Résultat |
+|---|---|---|---|
+| TEST | TEST | TEST | ✅ appairé |
+| PROD | PROD | **TEST** | ✅ appairé — c'est la nouveauté |
+| TEST | TEST | PROD | ✅ appairé |
+| PROD | PROD | PROD | ✅ appairé |
+| PROD | **TEST** | indifférent | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
+| TEST | **PROD** | indifférent | ❌ `BRIDGE_ENVIRONMENT_MISMATCH` |
+
+Le refus d'origine **survit entièrement** : une production qui se présente avec
+le code d'une fiche enregistrée en recette est toujours rejetée, et l'`.env`
+recopié toujours attrapé. Seule la référence a changé.
+
+Règles inchangées :
 
 - **fail closed, dans les deux sens.** Aucune correction automatique :
   rapprocher TEST de PROD « pour que ça marche » produirait exactement
   l'accident qu'on empêche ;
-- **le code n'est pas consommé** par ce refus. L'opérateur corrige l'adresse
-  du Panel dans son `.env` et rejoue le même code ;
+- **le code n'est pas consommé** par ce refus. L'opérateur corrige son `.env`
+  et rejoue le même code ;
 - **on ne devine jamais depuis un nom de domaine.**
   `hostname.includes('test')` classerait la production de « Garage Test SARL »
   en recette. Les deux côtés le déclarent, et on compare ce qui est dit.
+
+### 9.2 Pourquoi l'épingle, et pas l'annonce du battement
+
+`runtime.environment` porte ce que le projet a annoncé à son **dernier
+battement**. C'est une **observation** : elle vient du projet, sur un chemin que
+le projet contrôle.
+
+Tant que le bootstrap exigeait l'égalité avec `config.env`, s'y fier était sans
+conséquence — un projet ne pouvait de toute façon vivre que dans le monde de son
+Panel. **Cette contrainte levée, la même lecture devient un chemin
+d'élévation** : un projet enregistré en recette annoncerait `PROD` au battement
+suivant et repartirait avec les identifiants Stripe, Brevo et OpenSign du monde
+réel. Un champ à changer.
+
+D'où la séparation stricte, dans `services/registry/projectEnvironment.js` :
+
+| Fonction | Rend | Fait autorité |
+|---|---|---|
+| `authoritativeEnvironmentOf(fiche)` | l'épingle | ✅ **oui** — c'est elle qui entre dans la résolution fournisseur |
+| `observedEnvironmentOf(fiche)` | l'annonce du battement | ❌ constat, affichage, diagnostic |
+| `environmentContradicted(fiche)` | les deux divergent | rend la contradiction visible plutôt que muette |
+
+Une contradiction n'est pas ignorée en silence : elle est journalisée et remonte
+à l'écran par `observedEnvironmentConflict`.
+
+### 9.3 Ce que cela change pour les fournisseurs — rien
+
+`resolveIntegratedApiEnvironment` rend `projectEnvironment ?? runtime` :
+
+| Panel | Projet | Stripe / Brevo / OpenSign |
+|---|---|---|
+| TEST | TEST | **TEST** |
+| TEST | PROD | **PROD** |
+| PROD | TEST | **TEST** |
+| PROD | PROD | **PROD** |
+
+`PANEL_ENV` ne remplace **jamais** `PROJECT_ENV` pour une capacité de projet. Il
+ne décide que pour les capacités que le Panel exerce **pour lui-même**, où son
+monde est effectivement le sujet.
+
+Un fournisseur à **compte unique** (`PANEL_GLOBAL`, ex. Hostinger) n'a pas de
+monde : la réponse est `null`, dans les quatre cases. On ne lui invente pas un
+TEST/PROD pour faire tenir un tableau.
+
+### 9.4 La frontière qui subsiste — les données métier du Panel
+
+Un Panel de recette **pilote** une production : battement, supervision, URLs,
+génération, curseur, déploiement, capacités fournisseur. Tout fonctionne.
+
+Il ne lui **livre pas** ses propres enregistrements métier — entreprise cliente,
+mentions légales, contrat, équipe. Ceux-ci sont partitionnés par le monde du
+Panel (`PanelClientCompany.environment = config.env`), et les livrer poserait
+les mentions légales d'une entreprise de recette sur un site en production.
+
+La livraison est donc refusée avec `DELIVERY_OUTCOME.ENVIRONMENT_MISMATCH`,
+désormais de classe `SCOPE` et non plus `SECURITY` : ce n'est plus un incident,
+c'est une frontière. Pour synchroniser aussi le métier, la fiche doit vivre sur
+le Panel du même monde.
+
+### 9.5 La doctrine mono-instance tombe
+
+Une instance de Panel pouvait ne tenir que des fiches de son propre monde : deux
+« sœurs » — la recette et la production d'un même client — ne pouvaient jamais
+coexister appairées. Elles le peuvent, en deux fiches, chacune avec son jeton,
+son monde épinglé et sa résolution fournisseur.
 
 Vérifié par `tests/panel-instance-environment.test.js`.

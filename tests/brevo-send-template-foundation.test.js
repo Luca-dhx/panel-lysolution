@@ -151,6 +151,23 @@ section('1 · Les codes de modèle sont canoniques et code-first');
     // Panel. Portée PANEL : elle nomme un client à quelqu'un d'autre, et n'est
     // jamais provisionnée chez un projet.
     'PROJECT_PAYMENT_CONFIRMED_SUPER_ADMIN',
+    /**
+     * ── SUPERVISION DU PONT — la paire ouverture / fermeture ────────────────
+     *
+     * Ces deux modèles étaient au registre sans être inscrits ici : le contrôle
+     * « aucun modèle non déclaré » les a nommés, et il avait raison — c'est
+     * exactement ce pour quoi il existe. On les REVOIT, on ne les tolère pas.
+     *
+     * Ils préviennent les SUPER_ADMIN du Panel qu'un projet du parc ne consomme
+     * plus les écritures qui lui sont destinées, puis referment le cycle quand
+     * il repart. Portée PANEL, `provisionForProjects: false` : ils nomment un
+     * client à quelqu'un d'autre et ne descendent jamais chez un projet.
+     *
+     * La paire est indissociable — une alerte sans son acquittement laisse un
+     * incident ouvert pour toujours dans la boîte de qui l'a reçue.
+     */
+    'PROJECT_BRIDGE_DEGRADED_SUPER_ADMIN',
+    'PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN',
   ];
 
   const codes = templates.listTemplateCodes();

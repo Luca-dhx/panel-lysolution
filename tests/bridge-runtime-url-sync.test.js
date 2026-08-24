@@ -34,6 +34,7 @@ import {
   check,
   connectTestDatabase,
   finish,
+  horsHarnais,
   section,
   setTestEnv,
   startMemoryMongo,
@@ -342,15 +343,31 @@ section('UNE ADRESSE « PUBLIQUE » DOIT ÊTRE JOIGNABLE DE L’EXTÉRIEUR');
   }
 
   /* ── ET SURTOUT : CE QU'ON SAVAIT N'EST PAS PERDU ────────────────────── */
+  /**
+   * ══ CE BLOC INTERROGE LE RUNTIME DE PRODUCTION, PAS CELUI-CI ════════════
+   *
+   * Une suite tourne sous `PANEL_TEST_PROCESS`, la marque qui autorise les
+   * recettes de bout en bout à observer de vrais projets sur des ports
+   * éphémères de la boucle locale (`config/testHarnessRuntime.js`).
+   *
+   * Or ce bloc a le travail exactement INVERSE : prouver qu'une adresse locale
+   * est refusée. Le laisser tourner sous la marque lui ferait éprouver le
+   * runtime de harnais et conclure que la garde a disparu — alors qu'elle est
+   * intacte, simplement pas celle qu'il interrogeait.
+   *
+   * `horsHarnais` retire la marque le temps de l'appel. Ce n'est pas un
+   * contournement : c'est la seule façon d'interroger, depuis une suite, le
+   * programme qui n'en est pas une.
+   */
   const fiche = await ficheNeuve('projet-local');
   applyDeclaredNetwork(fiche, { backendUrl: ACTUEL, source: NETWORK_DECLARATION_SOURCES.BOOTSTRAP });
   check('le vrai domaine est retenu', fiche.runtime.publicBackendUrl === ACTUEL);
   const horodatage = fiche.runtime.publicBackendUrlUpdatedAt;
 
-  const change = applyDeclaredNetwork(fiche, {
+  const change = await horsHarnais(() => applyDeclaredNetwork(fiche, {
     backendUrl: 'http://localhost:6090', source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
-  });
-  check('une déclaration LOCALE est REFUSÉE', change === false);
+  }));
+  check('une déclaration LOCALE est REFUSÉE hors harnais', change === false);
   check('…et le vrai domaine est CONSERVÉ', fiche.runtime.publicBackendUrl === ACTUEL);
   check('…la source n’est pas réécrite', fiche.runtime.publicBackendUrlSource === 'BOOTSTRAP');
   check('…ni l’horodatage : rien n’a été appris', fiche.runtime.publicBackendUrlUpdatedAt === horodatage);
@@ -361,10 +378,28 @@ section('UNE ADRESSE « PUBLIQUE » DOIT ÊTRE JOIGNABLE DE L’EXTÉRIEUR');
    */
   const vierge = await ficheNeuve('projet-vierge');
   check('un projet sans adresse n’en reçoit pas une locale',
-    applyDeclaredNetwork(vierge, {
+    (await horsHarnais(() => applyDeclaredNetwork(vierge, {
       backendUrl: 'http://localhost:6090', source: NETWORK_DECLARATION_SOURCES.HEARTBEAT,
-    }) === false
+    }))) === false
     && !vierge.runtime.publicBackendUrl);
+
+  /**
+   * ── ET SOUS LA MARQUE, LA MÊME ADRESSE EST ADMISE ───────────────────────
+   *
+   * Le pendant du contrôle précédent, et ce qui prouve que la dérogation existe
+   * VRAIMENT — sans quoi les recettes de bout en bout resteraient cassées et
+   * personne ne le saurait avant la prochaine chaîne complète.
+   */
+  const harnais = await ficheNeuve('projet-harnais');
+  check('sous la marque, un point de terminaison local est admis',
+    applyDeclaredNetwork(harnais, {
+      backendUrl: 'http://127.0.0.1:6090', source: NETWORK_DECLARATION_SOURCES.BOOTSTRAP,
+    }) === true
+    && harnais.runtime.publicBackendUrl === 'http://127.0.0.1:6090');
+  check('…mais jamais une adresse de réseau privé, même sous la marque',
+    applyDeclaredNetwork(await ficheNeuve('projet-prive'), {
+      backendUrl: 'http://192.168.1.20', source: NETWORK_DECLARATION_SOURCES.BOOTSTRAP,
+    }) === false);
 
   /** Et un vrai déménagement reste possible : la garde ne fige rien. */
   check('un vrai changement de domaine passe toujours',
