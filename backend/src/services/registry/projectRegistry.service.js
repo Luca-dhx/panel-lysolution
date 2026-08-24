@@ -60,26 +60,32 @@ function assertValidManifestOrThrow(manifestInput) {
 export { normalizeEnvironment };
 
 /**
- * L'ENVIRONNEMENT D'UNE FICHE — DÉCLARÉ PAR LE PROJET, ou inconnu.
- *
- * ══ CE QUI A CHANGÉ, ET POURQUOI ════════════════════════════════════════════
- *
- * Cette fonction rendait `runtime.environment` puis, à défaut,
- * `declaredEnvironment` — l'intention saisie au moment de la déclaration. Une
- * fiche jamais appairée affichait donc « TEST » ou « PROD » avec la même
- * assurance qu'une fiche vivante, alors que RIEN ne le prouvait : personne
- * n'avait encore parlé. L'écran présentait une intention comme un constat.
+ * L'ENVIRONNEMENT D'UNE FICHE — ÉPINGLÉ SUR ELLE, ou inconnu.
  *
  * ══ LA RÈGLE ════════════════════════════════════════════════════════════════
  *
- * Avant appairage : `null`. Il n'y a pas d'environnement « supposé » — pas de
- * repli sur le nom, sur le domaine, sur le manifeste ni sur l'intention.
- * Après appairage : la valeur que le PROJET a annoncée à son bootstrap et
- * réaffirme à chaque battement, et elle seule.
+ * AVANT APPAIRAGE : `null`. Il n'y a pas d'environnement « supposé » — pas de
+ * repli sur le nom, sur le domaine, ni sur le manifeste. Une fiche jamais
+ * appairée qui afficherait « TEST » présenterait une intention comme un constat.
  *
- * `declaredEnvironment` reste en base : il est écrit à la déclaration et sert
- * UNIQUEMENT à départager deux clés techniques identiques (anti-collision).
- * Il ne pilote plus aucun affichage, aucun regroupement, aucun périmètre.
+ * APRÈS APPAIRAGE : l'ÉPINGLE de la fiche — déclarée par l'opérateur, ou fixée
+ * à l'appairage, le seul instant où le projet prouve son identité par un code à
+ * usage unique. Immuable ensuite.
+ *
+ * ══ POURQUOI L'ÉPINGLE, ET PLUS L'ANNONCE DU BATTEMENT ══════════════════════
+ *
+ * Cette fonction a longtemps rendu `runtime.environment` : ce que le projet dit
+ * de lui-même, à chaque battement. C'était sans conséquence tant que l'appairage
+ * exigeait l'égalité avec le monde du Panel — un projet ne pouvait de toute
+ * façon vivre que dans celui-là.
+ *
+ * Depuis qu'un Panel de recette ADMINISTRE une production (05_PAIRING §9), la
+ * même lecture serait un chemin d'ÉLÉVATION : cette valeur alimente l'affichage,
+ * la livraison des synchronisations et, par `resolveInstanceEnvironment`, le
+ * choix du MONDE FOURNISSEUR. Un projet enregistré en recette n'aurait eu qu'à
+ * annoncer `PROD` pour repartir avec les clés du monde réel.
+ *
+ * L'autorité est donc ce que le Panel a ÉCRIT. Voir `projectEnvironment.js`.
  */
 export function declaredEnvironmentOf(record) {
   if (record?.pairing?.status !== 'PAIRED') return null;
@@ -634,6 +640,28 @@ export function toPublicProject(record, now = Date.now(), projections = {}, dest
      * historiques ; il ne franchit plus l'API.
      */
     environment: declaredEnvironmentOf(record),
+    /**
+     * ── LE MONDE DU PLAN DE CONTRÔLE, DIT SÉPARÉMENT ───────────────────
+     *
+     * Une fiche PROD administrée depuis un Panel TEST est une situation
+     * SUPPORTÉE (05_PAIRING §9), pas une anomalie. L'écran doit pouvoir
+     * écrire « Projet : PROD · Plan de contrôle : TEST » — donc disposer des
+     * deux valeurs, plutôt que de déduire la seconde du serveur qui l'a
+     * servie ou de la comparer à une constante du frontend. Une règle métier
+     * de moins dans la couche qui a le moins de titres à la porter.
+     */
+    controlPlaneEnvironment: config.env,
+    /**
+     * Ce que le projet ANNONCE, quand cela contredit l'épingle de sa fiche.
+     *
+     * `null` la plupart du temps — les deux concordent. Non nul, c'est une
+     * promotion faite sans déclarer de seconde fiche, ou une tentative
+     * d'élévation. L'épingle a tenu dans les deux cas ; l'écran mérite de
+     * pouvoir le dire au lieu de laisser la contradiction muette.
+     */
+    observedEnvironmentConflict: environmentContradicted(record)
+      ? (record.runtime?.environment ?? null)
+      : null,
     projectName: record.projectName,
     /**
      * ── À QUELLE ENTREPRISE CLIENTE CE PROJET APPARTIENT-IL ? ───────────
