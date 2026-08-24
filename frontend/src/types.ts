@@ -154,6 +154,27 @@ export interface PublicProject {
    * lieu. L'écran doit afficher « non connu », jamais une valeur devinée.
    */
   environment: 'TEST' | 'PROD' | null;
+  /**
+   * LE MONDE DU PLAN DE CONTRÔLE — celui de l'instance qui sert cette fiche.
+   *
+   * Il est distinct de celui du projet, et depuis peu il PEUT en différer : un
+   * projet en production se pilote depuis un Panel de recette. L'écran écrit
+   * alors « Projet : PROD · Plan de contrôle : TEST ».
+   *
+   * Le backend l'envoie plutôt que de laisser le frontend le comparer à une
+   * constante : ce serait une règle métier de plus, dans la couche qui a le
+   * moins de titres à la porter.
+   */
+  controlPlaneEnvironment: 'TEST' | 'PROD';
+  /**
+   * Ce que le projet ANNONCE, quand cela contredit l'épingle de sa fiche.
+   *
+   * `null` la plupart du temps — les deux concordent. Non nul, c'est une
+   * promotion faite sans déclarer de seconde fiche, ou une tentative
+   * d'élévation. L'épingle a tenu dans les deux cas ; l'écran a de quoi le dire
+   * au lieu de laisser la contradiction muette.
+   */
+  observedEnvironmentConflict: 'TEST' | 'PROD' | null;
   projectName: string;
   createdAt: string;
   updatedAt: string;
