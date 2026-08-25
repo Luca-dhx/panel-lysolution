@@ -4164,10 +4164,29 @@ body {
   gap: var(--p-space-3);
 }
 
+/*
+  L'EN-TÊTE DE SECTION SE REPLIE — défaut constaté au navigateur, à 390 px.
+
+  ── LE PIÈGE CLASSIQUE DE FLEXBOX, ET IL NE SE VOIT PAS AU BUREAU ─────────
+
+  Trois éléments sur une rangée : le numéro, le titre, les trois boutons
+  d'ordre. Le titre portait `flex: 1 1 auto` SANS `min-width: 0` — or la
+  largeur minimale par défaut d'un élément flex est sa taille INTRINSÈQUE, et
+  un `<input>` en revendique une confortable. Il refusait donc de rétrécir et
+  poussait les boutons hors de l'écran : 24 px de débordement horizontal sur
+  toute la page de l'éditeur, à 390 px.
+
+  Redimensionner une fenêtre de bureau ne le montre pas — seul le vrai
+  viewport le révèle. D'où le contrôle navigateur qui l'a trouvé.
+
+  `min-width: 0` autorise le titre à rétrécir ; `flex-wrap` laisse les outils
+  passer à la ligne quand il ne reste plus de place utile.
+*/
 .legal-section-head {
   display: flex;
   align-items: center;
   gap: var(--p-space-2);
+  flex-wrap: wrap;
 }
 
 .legal-section-index {
@@ -4184,8 +4203,12 @@ body {
   flex: none;
 }
 
-.legal-section-heading { flex: 1 1 auto; font-weight: 600; }
-.legal-section-tools { display: flex; gap: 0.15rem; }
+.legal-section-heading {
+  flex: 1 1 12rem;
+  min-width: 0;
+  font-weight: 600;
+}
+.legal-section-tools { display: flex; gap: 0.15rem; margin-left: auto; }
 
 .legal-block {
   border: 1px solid var(--border);
@@ -4210,7 +4233,8 @@ body {
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
-.legal-block-hint { flex: 1 1 auto; font-size: var(--p-text-xs); }
+/* Même piège : sans min-width, l indice pousse le bouton de suppression. */
+.legal-block-hint { flex: 1 1 auto; min-width: 0; font-size: var(--p-text-xs); }
 
 .legal-block-add { display: flex; gap: var(--p-space-2); flex-wrap: wrap; }
 
