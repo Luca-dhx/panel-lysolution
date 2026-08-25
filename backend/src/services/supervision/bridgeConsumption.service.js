@@ -110,6 +110,32 @@ export const CONSUMPTION_REASONS = Object.freeze({
    * renoncement, et il n'y en a jamais « un peu ».
    */
   CHANGES_PARKED: 'CHANGES_PARKED',
+  /**
+   * LE CONSOMMATEUR EST RETENU SUR UNE ÉCRITURE QU'IL NE SAIT PAS TRAITER
+   * (contrat >= 1.15.0).
+   *
+   * ══ L'INCIDENT QUI A CRÉÉ CE MOTIF ═══════════════════════════════════════
+   *
+   * Le Panel est monté en 1.14.0 et a publié `LEGAL_DOCUMENT` vers des projets
+   * encore en 1.13.0. Ils ont SAUTÉ le type inconnu — leur curseur a dépassé
+   * les écritures — et le Panel a vu un retard nul, une fiche verte, et une
+   * synchronisation « réussie ». Les documents n'existaient nulle part.
+   *
+   * Depuis 1.15.0, un consommateur qui ne sait pas traiter une écriture RETIENT
+   * son curseur et le DÉCLARE. Ce motif est la lecture de cette déclaration, et
+   * il empêche le seul verdict qu'on ne peut pas se permettre ici : « tout va
+   * bien ».
+   *
+   * ══ CE N'EST PAS `CHANGES_PARKED` ═══════════════════════════════════════
+   *
+   * Une écriture GARÉE est un renoncement : elle est passée sous le curseur, et
+   * seule une republication la ramènera. Une écriture RETENUE est une attente :
+   * elle est toujours dans le journal, à sa place, et la mise à niveau du
+   * runtime la fera passer SEULE. Les confondre ferait republier ce qui n'a
+   * jamais été perdu — et surtout, ferait chercher un correctif de données là
+   * où il faut un déploiement.
+   */
+  CONSUMER_BLOCKED: 'CONSUMER_BLOCKED',
 });
 
 function decodeCursor(cursor) {
@@ -199,6 +225,19 @@ export async function describeConsumptionHealth({ projectId, runtime = {}, now =
   const parked = Number(consumption.parkedChanges ?? 0);
   if (parked > 0) reasons.push(CONSUMPTION_REASONS.CHANGES_PARKED);
 
+  /**
+   * LE BLOCAGE DÉCLARÉ PRIME SUR TOUT LE RESTE.
+   *
+   * Un consommateur retenu a un curseur qui ne bouge plus. Sans cette lecture,
+   * le retard finirait par déclencher `BACKLOG_STALE` — un motif VRAI mais
+   * TROMPEUR : il fait chercher une panne de transport là où le transport
+   * fonctionne parfaitement et où la cause est un runtime en retard de version.
+   *
+   * Le seuil est UN. Il n'y a pas de « un peu bloqué ».
+   */
+  const blocked = consumption.blocked ?? null;
+  if (blocked) reasons.push(CONSUMPTION_REASONS.CONSUMER_BLOCKED);
+
   const backlog = await measureBacklog(projectId, consumption.cursor ?? null);
   const age = ageMinutes(backlog.oldestModifiedAt, now);
   if (backlog.pending > 0 && age !== null && age >= CONSUMPTION_THRESHOLDS.BACKLOG_AGE_MINUTES) {
@@ -230,6 +269,14 @@ export async function describeConsumptionHealth({ projectId, runtime = {}, now =
       lastSuccessfulApplyAt: consumption.lastSuccessfulApplyAt ?? null,
       appliedTotal: consumption.appliedTotal ?? null,
       declaredState: consumption.state ?? null,
+      /**
+       * CE QUI RETIENT LE CONSOMMATEUR — rendu ENTIER, pas résumé.
+       *
+       * Le type, l'identité, le motif et l'ancienneté sont exactement ce qu'un
+       * exploitant doit lire pour décider : « INCOMPATIBLE sur LEGAL_DOCUMENT
+       * depuis 2 h » se répare en déployant, et rien d'autre ne le répare.
+       */
+      blockedChange: blocked,
     },
   };
 }
@@ -253,6 +300,15 @@ export function explainConsumptionReasons(reasons = [], detail = {}) {
       `${detail.parkedChanges} écriture(s) ont été GARÉES par le projet après épuisement `
       + 'de ses tentatives d’application — elles ne repartiront pas toutes seules, '
       + 'seule une nouvelle publication les ramènera',
+    );
+  }
+  if (reasons.includes(CONSUMPTION_REASONS.CONSUMER_BLOCKED)) {
+    const b = detail.blockedChange ?? {};
+    phrases.push(
+      `le projet est RETENU sur une écriture ${b.entityType ?? 'inconnue'} qu'il ne sait `
+      + `pas traiter (${b.reason ?? 'INCOMPATIBLE'}, contrat local ${b.contractVersion ?? '?'}) `
+      + '— rien n’est perdu, l’écriture attend dans le journal, mais elle ne passera '
+      + 'que lorsque ce projet aura été mis à niveau',
     );
   }
   if (reasons.includes(CONSUMPTION_REASONS.BACKLOG_STALE)) {

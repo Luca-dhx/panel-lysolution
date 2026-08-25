@@ -112,7 +112,7 @@ info:
     repreneur). Sens des appels : PANEL -> PROJET. Catalogue FERMÉ
     d'opérations — pas de requête libre, pas d'écriture sur les données
     locales (catégorie 1), pas de code distant.
-  version: 1.14.0
+  version: 1.15.0
 servers:
   - url: https://api.example-project.com
     description: URL publique du backend du projet (déclarée au bootstrap).

@@ -349,7 +349,54 @@ const PRIVACY_POLICY_CONTENT = {
           "{{host.legalName}}, hébergeur du site, dont les serveurs utilisés pour ce site sont situés en France.",
           "Un prestataire de messagerie transactionnelle établi dans l'Union européenne, chargé de l'acheminement des e-mails de notification.",
           "{{developer.name}}, qui assure la conception et la maintenance technique du site et peut, à ce titre, accéder aux données lors d'une intervention.",
+          "Google Ireland Limited et Google LLC, au titre des polices de caractères et de la carte de localisation intégrées au site — voir la section « Services tiers et contenus intégrés ».",
         ),
+      ],
+    },
+    {
+      /**
+       * ══ LA SECTION QUI MANQUAIT, ET QUI RENDAIT LE DOCUMENT FAUX ═════════
+       *
+       * ── CE QUE LE TEXTE AFFIRMAIT ───────────────────────────────────────
+       *
+       *   « Ce site ne dépose […] aucun traceur tiers. »
+       *   « Nous ne procédons à aucun transfert de vos données en dehors de
+       *     l'Union européenne. »
+       *
+       * ── CE QUE LE CODE FAIT RÉELLEMENT ──────────────────────────────────
+       *
+       * Chaque vitrine du parc charge ses polices depuis `fonts.googleapis.com`
+       * et `fonts.gstatic.com` (`index.html` + `lib/theme.ts`), et la page
+       * « Contact » intègre une carte `google.com/maps?output=embed`.
+       *
+       * Ces deux requêtes partent du NAVIGATEUR DU VISITEUR vers Google. Elles
+       * transmettent donc son adresse IP — une donnée personnelle — à un tiers,
+       * et potentiellement hors de l'Union européenne. Les deux affirmations
+       * ci-dessus étaient, à la lettre, inexactes.
+       *
+       * ── POURQUOI ON CORRIGE LE TEXTE PLUTÔT QUE LE SITE ─────────────────
+       *
+       * Héberger les polices localement et remplacer la carte par un lien
+       * seraient de vraies améliorations, et elles restent souhaitables. Mais
+       * supprimer une fonctionnalité utile POUR RESTER COMPATIBLE AVEC UN
+       * DOCUMENT est exactement l'inversion que la doctrine « legal compliance
+       * by change » interdit : le document décrit le produit, pas l'inverse.
+       *
+       * ── POURQUOI CETTE SECTION EST DANS LE TEMPLATE STANDARD ────────────
+       *
+       * Parce que ce n'est la particularité d'aucun client : les trois vitrines
+       * du parc chargent les mêmes polices et la même carte. En faire un
+       * template dédié aurait laissé le standard faux pour tout le monde.
+       */
+      heading: 'Services tiers et contenus intégrés',
+      blocks: [
+        p("Certaines ressources affichées sur ce site sont fournies par des tiers. Votre navigateur les demande directement à ces services, qui reçoivent alors votre adresse IP et les informations techniques que tout navigateur transmet lors d'une requête (type d'appareil, système, langue, page d'origine)."),
+        list(
+          "Google Fonts — les polices de caractères du site sont chargées depuis les serveurs de Google à chaque visite. Aucun cookie n'est déposé par ce service.",
+          "Google Maps — la carte de localisation n'est chargée QUE sur la page « Contact », et uniquement lorsque vous l'ouvrez. Google est susceptible d'y déposer ses propres cookies et traceurs, sur lesquels nous n'avons aucun contrôle.",
+        ),
+        p("Nous n'avons accès à aucune des données collectées par ces services, et nous ne leur transmettons volontairement aucune information vous concernant. Leur utilisation relève de leurs propres politiques de confidentialité."),
+        p("Le site n'intègre aucun autre service tiers : ni mesure d'audience, ni pixel publicitaire, ni chat en ligne, ni captcha externe, ni plateforme de réservation."),
       ],
     },
     {
@@ -365,14 +412,17 @@ const PRIVACY_POLICY_CONTENT = {
     {
       heading: "Transferts hors de l'Union européenne",
       blocks: [
-        p("Nous ne procédons à aucun transfert de vos données en dehors de l'Union européenne. Les serveurs utilisés pour ce site sont situés en France, et le prestataire de messagerie est établi dans l'Union européenne."),
+        p("Les données que VOUS NOUS TRANSMETTEZ — formulaire de contact, échanges directs — ne quittent pas l'Union européenne : les serveurs utilisés pour ce site sont situés en France, et le prestataire de messagerie est établi dans l'Union européenne."),
+        p("Les services tiers décrits plus haut (polices de caractères et carte de localisation) sont opérés par Google, dont l'entité européenne est Google Ireland Limited. Ces services sont susceptibles de transférer certaines données techniques, dont votre adresse IP, vers des serveurs situés en dehors de l'Union européenne. Ces transferts relèvent des garanties mises en place par Google, notamment les clauses contractuelles types de la Commission européenne, et nous n'en sommes pas responsables."),
+        p("Si vous souhaitez éviter ces requêtes, la plupart des navigateurs et extensions de blocage permettent de s'y opposer ; le site reste consultable, avec des polices de substitution et sans carte intégrée."),
       ],
     },
     {
       heading: 'Cookies et traceurs',
       blocks: [
-        p("Ce site ne dépose aucun cookie publicitaire, aucun cookie de mesure d'audience et aucun traceur tiers. Il n'utilise ni Google Analytics, ni service équivalent, ni pixel de suivi."),
-        p("Le site conserve deux informations dans le stockage local de votre navigateur, pour des raisons strictement techniques : la palette de couleurs du site, afin d'éviter un changement d'apparence à l'ouverture, et le fait qu'un bandeau d'information a été fermé, afin de ne pas le réafficher. Ces informations ne quittent jamais votre appareil, ne nous sont jamais transmises et ne permettent aucun suivi. C'est la raison pour laquelle aucun bandeau de consentement ne vous est présenté."),
+        p("Ce site ne dépose lui-même AUCUN cookie : ni cookie publicitaire, ni cookie de mesure d'audience, ni traceur. Il n'utilise ni Google Analytics, ni service équivalent, ni pixel de suivi, et ne pratique aucun profilage."),
+        p("La seule exception ne vient pas de nous : la carte de localisation intégrée à la page « Contact » est chargée depuis Google, qui peut y déposer ses propres cookies. Elle n'est chargée que sur cette page. Les autres pages du site n'émettent aucune requête vers un tiers en dehors des polices de caractères, qui ne déposent rien."),
+        p("Le site conserve deux informations dans le stockage local de votre navigateur, pour des raisons strictement techniques : la palette de couleurs du site, afin d'éviter un changement d'apparence à l'ouverture, et le fait qu'un bandeau d'information a été fermé, afin de ne pas le réafficher. Ces informations ne quittent jamais votre appareil, ne nous sont jamais transmises et ne permettent aucun suivi."),
       ],
     },
     {

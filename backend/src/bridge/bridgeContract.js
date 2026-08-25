@@ -81,7 +81,7 @@ import { z } from 'zod';
 //   Un projet antérieur à 1.14 écarte l'entité proprement (`CHANGE_UNREADABLE`)
 //   et n'affiche simplement pas les pages : la perte est bornée à elles, et
 //   elle se voit.
-export const CONTRACT_VERSION = '1.14.0';
+export const CONTRACT_VERSION = '1.15.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -854,6 +854,41 @@ export const heartbeatSchema = z
             parkedChanges: z.number().int().min(0).optional(),
             lastParkedAt: isoDate.nullable().optional(),
             appliedTotal: z.number().int().min(0).optional(),
+            /**
+             * CE QUI RETIENT LE CURSEUR (>= 1.15.0) — le champ qui empêche
+             * « synchronisé » de mentir.
+             *
+             * ══ L'INCIDENT QUI L'A RENDU NÉCESSAIRE ═════════════════════════
+             *
+             * Le Panel est monté en 1.14.0 et a publié LEGAL_DOCUMENT vers des
+             * projets encore en 1.13.0. Ils ont SAUTÉ le type inconnu et leur
+             * curseur a dépassé les écritures : les documents étaient réputés
+             * consommés alors qu'ils n'existaient nulle part. Le Panel voyait un
+             * retard nul et une fiche verte.
+             *
+             * Un consommateur retenu déclare désormais CE QUI le retient. Le
+             * Panel en tire « projet incompatible — mise à niveau requise »,
+             * plutôt qu'un vert trompeur.
+             *
+             * Aucune charge utile : un type, une identité, un motif, des dates.
+             * OPTIONNEL — un projet antérieur ne l'envoie pas, et son absence se
+             * lit « rien ne bloque », ce qui est vrai pour lui : son runtime ne
+             * sait pas retenir.
+             */
+            blocked: z
+              .object({
+                entityType: z.string().min(1).max(60).nullable().optional(),
+                entityId: z.string().min(1).max(120).nullable().optional(),
+                writeId: z.string().min(1).max(120).nullable().optional(),
+                reason: z.string().min(1).max(60).nullable().optional(),
+                contractVersion: z.string().min(1).max(20).nullable().optional(),
+                since: isoDate.nullable().optional(),
+                lastSeenAt: isoDate.nullable().optional(),
+                attempts: z.number().int().min(0).optional(),
+              })
+              .strict()
+              .nullable()
+              .optional(),
             state: z.string().min(1).max(40).nullable().optional(),
           })
           .strict()

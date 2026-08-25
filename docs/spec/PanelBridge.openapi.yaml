@@ -126,7 +126,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.14.0
+  version: 1.15.0
 servers:
   - url: https://panel.example.com
     description: >
