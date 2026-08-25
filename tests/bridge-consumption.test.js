@@ -249,24 +249,93 @@ section('5. L’alerte — une fois, puis silence');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('6. Le rétablissement — il se dit, et il referme');
+section('6. Le rétablissement — il se CONFIRME avant de se dire');
 {
   const fiche = await PanelProject.findOne({ projectId: PROJET });
   /* Le projet rattrape : son curseur passe la tête du journal. */
-  fiche.runtime.bridgeStats = {
-    consumption: declaration({
-      cursor: await currentCursor(),
-      consecutivePullFailures: 0,
-      lastSuccessfulApplyAt: new Date().toISOString(),
-      appliedTotal: 3,
-    }),
-  };
+  const saine = declaration({
+    cursor: await currentCursor(),
+    consecutivePullFailures: 0,
+    lastSuccessfulApplyAt: new Date().toISOString(),
+    appliedTotal: 3,
+  });
+  fiche.runtime.bridgeStats = { consumption: saine };
   await fiche.save();
 
-  const retour = await alerting.evaluateBridgeConsumption(
+  /**
+   * ══ LE PREMIER BATTEMENT SAIN NE REFERME RIEN ═════════════════════════════
+   *
+   * C'est la correction du battement d'alertes : deux runtimes du même projet
+   * alternaient, un battement sur deux disait DEGRADED et l'autre HEALTHY, et
+   * le Panel annonçait un rétablissement À CHAQUE bascule — un courriel par
+   * minute pendant une demi-heure.
+   */
+  const promesse = await alerting.evaluateBridgeConsumption(
     await PanelProject.findOne({ projectId: PROJET }).lean(),
   );
-  check('le pont est de nouveau SAIN', retour.status === 'HEALTHY');
+  check('le pont est constaté SAIN', promesse.status === 'HEALTHY');
+  check('…mais le rétablissement n’est pas encore annoncé', promesse.notified === false);
+  check('…et la raison le dit', promesse.reason === 'RECOVERY_PENDING');
+
+  const enAttente = await PanelProject.findOne({ projectId: PROJET }).lean();
+  check('l’alerte reste OUVERTE, en attente de confirmation',
+    enAttente.runtime.bridgeAlert?.state === 'RECOVERING');
+  check('…et elle note DEPUIS QUAND la santé tient',
+    typeof enAttente.runtime.bridgeAlert.healthySince === 'string');
+
+  const rien = await PanelEvent.find({
+    projectId: PROJET, type: 'PROJECT_BRIDGE_RECOVERED',
+  }).lean();
+  check('rien n’est écrit dans la chronologie tant que ce n’est pas confirmé', rien.length === 0);
+
+  /**
+   * ══ LA DÉGRADATION REVIENT AVANT LA FIN DE LA FENÊTRE ═════════════════════
+   *
+   * C'est le cœur du battement : la promesse est annulée, et RIEN n'est
+   * expédié — ni rétablissement (il n'a pas eu lieu), ni nouvelle alerte
+   * (celle-ci n'a jamais été refermée, son refroidissement court toujours).
+   */
+  const rechute = await PanelProject.findOne({ projectId: PROJET });
+  rechute.runtime.bridgeStats = {
+    consumption: declaration({ cursor: null, consecutivePullFailures: 9 }),
+  };
+  await rechute.save();
+
+  await alerting.evaluateBridgeConsumption(
+    await PanelProject.findOne({ projectId: PROJET }).lean(),
+  );
+  const apresRechute = await PanelProject.findOne({ projectId: PROJET }).lean();
+  check('la rechute annule la promesse', apresRechute.runtime.bridgeAlert.state === 'DEGRADED');
+  check('…sans effacer l’instant d’ouverture',
+    apresRechute.runtime.bridgeAlert.since === enAttente.runtime.bridgeAlert.since);
+  const ouvertures = await PanelEvent.find({
+    projectId: PROJET, type: 'PROJECT_BRIDGE_DEGRADED',
+  }).lean();
+  check('…et la chronologie n’enregistre PAS une seconde panne', ouvertures.length === 1);
+  const toujoursRien = await PanelEvent.find({
+    projectId: PROJET, type: 'PROJECT_BRIDGE_RECOVERED',
+  }).lean();
+  check('…et aucun rétablissement n’a été annoncé', toujoursRien.length === 0);
+
+  /**
+   * ══ LA SANTÉ TIENT : ON ANNONCE, ET ON REFERME ════════════════════════════
+   *
+   * `now` est injecté pour franchir la fenêtre sans attendre dix minutes — la
+   * même injection que celle qu'emploie la mesure du retard, plus haut.
+   */
+  const guerie = await PanelProject.findOne({ projectId: PROJET });
+  guerie.runtime.bridgeStats = { consumption: saine };
+  await guerie.save();
+
+  await alerting.evaluateBridgeConsumption(
+    await PanelProject.findOne({ projectId: PROJET }).lean(),
+  );
+  const plusTard = Date.now() + alerting.RECOVERY_CONFIRMATION_MS + 1000;
+  const retour = await alerting.evaluateBridgeConsumption(
+    await PanelProject.findOne({ projectId: PROJET }).lean(),
+    { now: plusTard },
+  );
+  check('le rétablissement est CONFIRMÉ', retour.status === 'HEALTHY');
 
   const evenement = await PanelEvent.find({
     projectId: PROJET, type: 'PROJECT_BRIDGE_RECOVERED',
@@ -281,6 +350,7 @@ section('6. Le rétablissement — il se dit, et il referme');
   /** Un second passage sain n'annonce pas un second rétablissement. */
   await alerting.evaluateBridgeConsumption(
     await PanelProject.findOne({ projectId: PROJET }).lean(),
+    { now: plusTard + 60_000 },
   );
   const encore = await PanelEvent.find({
     projectId: PROJET, type: 'PROJECT_BRIDGE_RECOVERED',

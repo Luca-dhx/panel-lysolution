@@ -67,6 +67,43 @@ export const BRIDGE_RECOVERED_TEMPLATE = 'PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN';
 export const ALERT_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 
 /**
+ * LA FENÊTRE DE CONFIRMATION D'UN RÉTABLISSEMENT — dix minutes.
+ *
+ * ══ L'INCIDENT QUI A CRÉÉ CETTE CONSTANTE ═══════════════════════════════════
+ *
+ * Un projet du parc a expédié UN COURRIEL DE RÉTABLISSEMENT PAR MINUTE pendant
+ * une demi-heure. Il n'était pas tombé trente fois : deux runtimes du même
+ * projet battaient en alternance, et l'un des deux décrivait une consommation
+ * qui n'était plus la sienne (voir, côté projet,
+ * `consumptionIsAuthoritative`). Un battement sur deux disait DEGRADED,
+ * l'autre HEALTHY.
+ *
+ * Le refroidissement de six heures ne protégeait pas de ça : il borne les
+ * RAPPELS d'une alerte OUVERTE. Or ici l'alerte était refermée à chaque
+ * bascule — et une alerte refermée se rouvre sans délai, puis s'annonce
+ * immédiatement puisque plus rien ne se souvient du dernier envoi.
+ *
+ * ══ CE QUE LA FENÊTRE CHANGE ════════════════════════════════════════════════
+ *
+ * Un retour à la santé n'est plus une FERMETURE, c'est une PROMESSE : l'état
+ * passe à `RECOVERING`, et il faut qu'il tienne dix minutes pour que le
+ * rétablissement soit annoncé et l'alerte refermée. Une dégradation qui revient
+ * entre-temps annule la promesse SANS rien expédier — l'alerte n'a jamais été
+ * refermée, donc son refroidissement continue de courir.
+ *
+ * Un battement de pont arrive chaque minute : dix minutes valent dix constats
+ * concordants. Assez pour qu'un battement isolé ne décide de rien, assez peu
+ * pour qu'un exploitant qui vient de réparer voie la confirmation arriver
+ * pendant qu'il regarde encore.
+ *
+ * La cause première est corrigée côté projet ; cette fenêtre est ce qui
+ * IMMUNISE le Panel — elle vaut pour tout le parc, y compris les runtimes qui
+ * n'ont pas encore été redéployés, et pour les causes de battement qu'on n'a
+ * pas encore rencontrées.
+ */
+export const RECOVERY_CONFIRMATION_MS = 10 * 60 * 1000;
+
+/**
  * L'IDENTITÉ DURABLE D'UN ENVOI — sans horloge, sans compteur.
  *
  * ══ POURQUOI ELLE PORTE L'INSTANT D'OUVERTURE ET NON L'INSTANT D'ENVOI ══════
@@ -124,12 +161,12 @@ async function envoyer({ templateRef, recipient, variables, operationId }) {
  * @param {object} record  la fiche du registre, DÉJÀ mise à jour par le battement
  * @returns {Promise<{evaluated: boolean, status?: string, notified?: boolean, reason?: string}>}
  */
-export async function evaluateBridgeConsumption(record) {
+export async function evaluateBridgeConsumption(record, { now = Date.now() } = {}) {
   try {
     const projectId = record?.projectId;
     if (!projectId) return { evaluated: false, reason: 'NO_PROJECT' };
 
-    const sante = await describeConsumptionHealth({ projectId, runtime: record.runtime ?? {} });
+    const sante = await describeConsumptionHealth({ projectId, runtime: record.runtime ?? {}, now });
 
     /**
      * `UNKNOWN` NE DÉCLENCHE RIEN, ET NE REFERME RIEN.
@@ -144,12 +181,12 @@ export async function evaluateBridgeConsumption(record) {
     }
 
     const alerte = record.runtime?.bridgeAlert ?? null;
-    const maintenant = Date.now();
+    const maintenant = now;
 
     if (sante.status === CONSUMPTION_STATUS.DEGRADED) {
       return ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant });
     }
-    return refermer({ record, projectId, alerte });
+    return refermer({ record, projectId, alerte, maintenant });
   } catch (err) {
     logger.warn(
       `[bridge-alert] évaluation impossible pour ${record?.projectId ?? 'projet inconnu'} : `
@@ -170,6 +207,13 @@ async function memoriser(projectId, bridgeAlert) {
 async function ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant }) {
   const phrases = explainConsumptionReasons(sante.reasons, sante.detail);
   const resume = phrases.join(' ; ');
+  /**
+   * `RECOVERING` N'EST PAS UNE ALERTE FERMÉE — c'est une alerte ouverte dont la
+   * réparation n'est pas encore confirmée. Une dégradation qui revient pendant
+   * la fenêtre reprend donc son `since`, son `lastNotifiedAt` et son compteur :
+   * rien n'est rouvert, rien n'est réexpédié, et le refroidissement continue de
+   * courir. C'est très exactement ce qui coupe le battement.
+   */
   const nouveau = !alerte?.since;
   const since = nouveau ? nowIso() : alerte.since;
 
@@ -195,7 +239,9 @@ async function ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant }
   const doitNotifier = maintenant - dernier >= ALERT_COOLDOWN_MS;
 
   if (!doitNotifier) {
-    await memoriser(projectId, { ...alerte, since, state: 'DEGRADED', reasons: sante.reasons });
+    await memoriser(projectId, {
+      ...alerte, since, state: 'DEGRADED', reasons: sante.reasons, healthySince: null,
+    });
     return { evaluated: true, status: sante.status, notified: false, reason: 'COOLDOWN' };
   }
 
@@ -214,7 +260,9 @@ async function ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant }
       `[bridge-alert] ${projectId} dégradé, non notifié — `
       + `${destinataires.length === 0 ? 'aucun SUPER_ADMIN joignable' : 'aucune URL publique du Panel'}.`,
     );
-    await memoriser(projectId, { ...alerte, since, state: 'DEGRADED', reasons: sante.reasons });
+    await memoriser(projectId, {
+      ...alerte, since, state: 'DEGRADED', reasons: sante.reasons, healthySince: null,
+    });
     return { evaluated: true, status: sante.status, notified: false, reason: 'NO_CHANNEL' };
   }
 
@@ -249,6 +297,7 @@ async function ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant }
     reasons: sante.reasons,
     lastNotifiedAt: nowIso(),
     notifiedCount: rappel + 1,
+    healthySince: null,
   });
 
   const envoyes = resultats.filter((r) => r.ok).length;
@@ -258,18 +307,67 @@ async function ouvrirOuRappeler({ record, projectId, sante, alerte, maintenant }
   return { evaluated: true, status: CONSUMPTION_STATUS.DEGRADED, notified: envoyes > 0 };
 }
 
-async function refermer({ record, projectId, alerte }) {
+/**
+ * LE RETOUR À LA SANTÉ — une promesse d'abord, une annonce ensuite.
+ *
+ * ══ POURQUOI IL NE REFERME PLUS TOUT DE SUITE ═══════════════════════════════
+ *
+ * Parce qu'un battement isolé ne prouve rien. Deux runtimes du même projet qui
+ * alternent, un cycle de tirage qui réussit entre deux échecs, une écriture qui
+ * passe puis rebloque : dans les trois cas, le Panel voyait une réparation là
+ * où il n'y avait qu'une respiration — et il l'annonçait, à chaque fois.
+ *
+ * L'état passe donc par `RECOVERING`, et il faut que la santé TIENNE
+ * `RECOVERY_CONFIRMATION_MS` pour que le rétablissement soit écrit et expédié.
+ * Tant qu'elle n'a pas tenu, l'alerte reste OUVERTE : c'est ce qui fait que la
+ * dégradation suivante ne se réannonce pas non plus.
+ */
+async function refermer({ record, projectId, alerte, maintenant }) {
   /** Rien d'ouvert : il n'y a rien à refermer, et rien à annoncer. */
-  if (!alerte?.since || alerte.state !== 'DEGRADED') {
+  if (!alerte?.since) {
     return { evaluated: true, status: CONSUMPTION_STATUS.HEALTHY, notified: false };
   }
+
+  /**
+   * PREMIER BATTEMENT SAIN — on note l'instant, et on attend.
+   *
+   * Aucun événement de chronologie n'est écrit ici : une chronologie qui
+   * enregistrerait un rétablissement révoqué la minute suivante deviendrait
+   * illisible, et c'est précisément là qu'on vient chercher QUAND une panne a
+   * commencé et fini.
+   */
+  if (alerte.state !== 'RECOVERING') {
+    await memoriser(projectId, { ...alerte, state: 'RECOVERING', healthySince: nowIso() });
+    return {
+      evaluated: true,
+      status: CONSUMPTION_STATUS.HEALTHY,
+      notified: false,
+      reason: 'RECOVERY_PENDING',
+    };
+  }
+
+  const depuis = alerte.healthySince ? new Date(alerte.healthySince).getTime() : 0;
+  if (!depuis || maintenant - depuis < RECOVERY_CONFIRMATION_MS) {
+    return {
+      evaluated: true,
+      status: CONSUMPTION_STATUS.HEALTHY,
+      notified: false,
+      reason: 'RECOVERY_PENDING',
+    };
+  }
+
+  /* ── LA SANTÉ A TENU : on annonce, et on referme. ─────────────────────── */
 
   await recordEvent({
     projectId,
     type: EVENT_TYPES.PROJECT_BRIDGE_RECOVERED,
     source: 'PANEL',
     summary: 'Le pont consomme à nouveau les écritures du Panel.',
-    data: { degradedSince: alerte.since, reasons: alerte.reasons ?? [] },
+    data: {
+      degradedSince: alerte.since,
+      reasons: alerte.reasons ?? [],
+      confirmedAfterMs: RECOVERY_CONFIRMATION_MS,
+    },
   });
 
   /**
@@ -309,12 +407,13 @@ async function refermer({ record, projectId, alerte }) {
   }
 
   await memoriser(projectId, null);
-  logger.info(`[bridge-alert] ${projectId} — le pont consomme à nouveau.`);
+  logger.info(`[bridge-alert] ${projectId} — le pont consomme à nouveau (confirmé).`);
   return { evaluated: true, status: CONSUMPTION_STATUS.HEALTHY, notified: true };
 }
 
 export default {
   ALERT_COOLDOWN_MS,
+  RECOVERY_CONFIRMATION_MS,
   BRIDGE_DEGRADED_TEMPLATE,
   BRIDGE_RECOVERED_TEMPLATE,
   bridgeAlertOperationId,
