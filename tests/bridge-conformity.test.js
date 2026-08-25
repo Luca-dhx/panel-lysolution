@@ -182,7 +182,7 @@ section('Types d’entités synchronisées');
    * seul. Distincte de `DEV_COMPANY`, qui porte l'identité du PRESTATAIRE et se
    * diffuse à tout le parc.
    */
-  check('21 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 21);
+  check('22 entityTypes au miroir', contract.SYNC_ENTITY_TYPES.length === 22);
   check('tous présents dans la spec PanelBridge',
     contract.SYNC_ENTITY_TYPES.every((t) => panelSpec.includes(`- ${t}`)));
   check('tous présents dans la spec ProjectBridge',

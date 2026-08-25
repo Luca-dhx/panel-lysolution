@@ -19,6 +19,8 @@ import { FinancesPage } from '@/pages/FinancesPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { FederationAuthorizePage } from '@/pages/FederationAuthorizePage';
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
+import { HostCompanyPage } from '@/pages/HostCompanyPage';
+import { LegalDocumentsPage } from '@/pages/LegalDocumentsPage';
 import { OverviewPage } from '@/pages/OverviewPage';
 import { ExecutionPage } from '@/pages/ExecutionPage';
 import { ProjectActionsPage } from '@/pages/ProjectActionsPage';
@@ -108,6 +110,17 @@ export default function App() {
         */}
         <Route path="/clients" element={<ClientCompaniesPage />} />
         <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
+        {/*
+          DOCUMENTS LÉGAUX — en GESTION, comme les clients et l'entreprise.
+
+          Ce sont des contenus métier : ce qui s'y écrit s'affiche sur le site
+          d'un client, sous sa responsabilité juridique. Les réserver aux
+          comptes DEV aurait fait du développeur le seul lecteur des mentions
+          légales du parc. L'ÉCRITURE, elle, reste réservée aux comptes DEV —
+          côté backend, qui est la seule barrière.
+        */}
+        <Route path="/documents-legaux" element={<LegalDocumentsPage />} />
+        <Route path="/hebergeur" element={<HostCompanyPage />} />
         {/*
           MON PROFIL — accessible à TOUT compte du Panel, ADMIN compris.
 

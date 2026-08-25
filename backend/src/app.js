@@ -24,6 +24,7 @@ import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
 import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
+import legalTemplatesRoutes, { hostCompaniesRouter } from './routes/legalTemplates.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
 import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
 import providerWebhooksRoutes from './routes/providerWebhooks.routes.js';
@@ -194,6 +195,24 @@ export function createApp() {
    * l'ACHETEUR, et une facture distingue les deux.
    */
   app.use('/api/client-companies', clientCompaniesRoutes);
+  /**
+   * LES DOCUMENTS LÉGAUX — le référentiel des textes que les sites publient.
+   *
+   * Volontairement HORS de `/api/company` ET de `/api/client-companies` : un
+   * template de mentions légales n'appartient ni à L.Y Solution ni à un client.
+   * C'est un CONTENU commun, cité par les deux, et le monter sous l'une des
+   * deux racines aurait laissé croire qu'il en dépend — c'est-à-dire qu'il
+   * faudrait le dupliquer par client, ce que ce chantier existe pour éviter.
+   */
+  app.use('/api/legal-templates', legalTemplatesRoutes);
+  /**
+   * L'ENTREPRISE HÉBERGEUSE — la troisième autorité des documents légaux.
+   *
+   * Ni nous, ni le client : un tiers dont l'identité est citée sur chaque page
+   * de mentions légales du parc. Sa propre racine, parce qu'elle n'appartient à
+   * aucune des deux autres.
+   */
+  app.use('/api/host-companies', hostCompaniesRouter);
   // Plan de contrôle IntegratedAPI (L1). Volontairement HORS de /api/company :
   // ce n'est pas une donnée d'entreprise, c'est l'infrastructure d'accès aux
   // fournisseurs — et l'ancien coffre (/api/company/integrated-apis) reste en

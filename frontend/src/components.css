@@ -3955,3 +3955,572 @@ body {
   max-width: 22rem;
   margin-top: 0;
 }
+
+/* ==========================================================================
+   DOCUMENTS LÉGAUX — catalogue, éditeur, aperçu, hébergeur.
+   --------------------------------------------------------------------------
+   Aucune couleur en dur : tout vient des tokens du thème, comme le reste du
+   Panel. Un écran qui poserait ses propres teintes cesserait de suivre le
+   thème éditable — c'est exactement la dette que `tokens.css` a soldée.
+   ========================================================================== */
+
+/* ── Onglets de catégorie ─────────────────────────────────────────────────
+   Deux ONGLETS et non un filtre : « Mentions légales » et « Politique de
+   confidentialité » sont deux documents distincts dans la tête de celui qui
+   vient les écrire. Un menu déroulant les aurait présentés comme une nuance. */
+.legal-tabs {
+  display: flex;
+  gap: var(--p-space-3);
+  flex-wrap: wrap;
+}
+
+.legal-tab {
+  flex: 1 1 18rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  padding: var(--p-space-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--p-motion, 160ms) ease, background var(--p-motion, 160ms) ease;
+}
+
+.legal-tab:hover { border-color: var(--border-strong); }
+
+.legal-tab.is-active {
+  border-color: var(--accent);
+  background: var(--p-primary-soft);
+}
+
+.legal-tab-label { font-weight: 600; }
+.legal-tab-hint { font-size: var(--p-text-sm); color: var(--text-muted); }
+
+/* ── Catalogue ──────────────────────────────────────────────────────────── */
+.legal-catalogue-actions { margin-bottom: var(--p-space-4); }
+
+.legal-create-row {
+  display: flex;
+  gap: var(--p-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.legal-create-row input { flex: 1 1 22rem; }
+
+.legal-row-desc { margin: 0.2rem 0 0; font-size: var(--p-text-xs); }
+
+.legal-row-actions {
+  display: flex;
+  gap: var(--p-space-2);
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+}
+.link-button:hover { text-decoration: underline; }
+
+/* ── Pastilles d'état ─────────────────────────────────────────────────────
+   Plus discrètes qu'un `badge` : elles qualifient une ligne déjà porteuse
+   d'un badge de statut, et deux badges côte à côte se disputeraient l'œil. */
+.legal-chip {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: var(--p-radius-full);
+  font-size: var(--p-text-xs);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.legal-chip.is-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.legal-ok {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.3rem 0 0;
+  color: var(--ok);
+  font-size: var(--p-text-sm);
+}
+
+/* ── Éditeur ────────────────────────────────────────────────────────────── */
+.legal-editor { display: flex; flex-direction: column; gap: var(--p-space-4); }
+
+.legal-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--p-space-4);
+  flex-wrap: wrap;
+}
+
+.legal-editor-head-main {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-3);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.legal-editor-head-actions { display: flex; gap: var(--p-space-2); }
+
+/* Le NOM est un champ, pas un titre : on le corrige là où on le lit. */
+.legal-editor-name {
+  font-size: var(--p-text-xl);
+  font-weight: 600;
+  min-width: 16rem;
+  flex: 1 1 22rem;
+}
+
+.legal-editor-description { width: 100%; }
+
+/* ── Onboarding — deux phrases, au moment où l'on en a besoin ───────────── */
+.legal-howto {
+  display: flex;
+  gap: var(--p-space-3);
+  padding: var(--p-space-4);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+.legal-howto p { margin: 0.25rem 0 0; color: var(--text-muted); font-size: var(--p-text-sm); }
+
+/* ── Deux colonnes : on écrit à gauche, on relit à droite ─────────────────
+   Elles se replient sous 1100 px. Sous cette largeur, deux colonnes ne
+   laisseraient plus assez de place au texte pour être relu — et relire est
+   l'essentiel du travail sur un document juridique. */
+.legal-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--p-space-5);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .legal-split { grid-template-columns: minmax(0, 1fr); }
+}
+
+.legal-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+  min-width: 0;
+}
+
+.legal-pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--p-space-3);
+  flex-wrap: wrap;
+}
+.legal-pane-head h2 { font-size: var(--p-text-lg); }
+.legal-pane-hint { margin: 0; font-size: var(--p-text-sm); }
+
+/* L'aperçu reste visible pendant qu'on descend dans l'éditeur : c'est ce qui
+   permet de vérifier une phrase sans perdre sa place. */
+.legal-pane-preview {
+  position: sticky;
+  top: var(--p-space-4);
+  max-height: calc(100vh - 6rem);
+  overflow: auto;
+}
+@media (max-width: 1100px) {
+  .legal-pane-preview { position: static; max-height: none; }
+}
+
+.legal-preview-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+  min-width: 0;
+}
+.legal-preview-picker > :last-child { min-width: 14rem; }
+
+/* ── Sections et blocs ──────────────────────────────────────────────────── */
+.legal-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--p-space-4);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-3);
+}
+
+.legal-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+
+.legal-section-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: var(--p-radius-full);
+  background: var(--p-primary-soft);
+  color: var(--accent);
+  font-size: var(--p-text-xs);
+  font-weight: 600;
+  flex: none;
+}
+
+.legal-section-heading { flex: 1 1 auto; font-weight: 600; }
+.legal-section-tools { display: flex; gap: 0.15rem; }
+
+.legal-block {
+  border: 1px solid var(--border);
+  border-radius: var(--p-radius-sm);
+  padding: var(--p-space-3);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+.legal-block-head {
+  display: flex;
+  align-items: center;
+  gap: var(--p-space-2);
+}
+
+.legal-block-type {
+  font-size: var(--p-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.legal-block-hint { flex: 1 1 auto; font-size: var(--p-text-xs); }
+
+.legal-block-add { display: flex; gap: var(--p-space-2); flex-wrap: wrap; }
+
+.legal-list-items { display: flex; flex-direction: column; gap: var(--p-space-2); }
+.legal-list-item { display: flex; align-items: flex-start; gap: var(--p-space-2); }
+.legal-list-item > :nth-child(2) { flex: 1 1 auto; min-width: 0; }
+.legal-list-bullet { color: var(--accent); line-height: 2; }
+
+.legal-fields-items { display: flex; flex-direction: column; gap: var(--p-space-2); }
+.legal-fields-row {
+  display: grid;
+  grid-template-columns: minmax(6rem, 14rem) minmax(0, 1fr) auto;
+  gap: var(--p-space-2);
+  align-items: start;
+}
+@media (max-width: 620px) {
+  .legal-fields-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── Le champ à jetons ────────────────────────────────────────────────────
+   Un textarea au texte transparent, posé sur un miroir qui habille les
+   variables. Les deux DOIVENT partager police, taille, interligne, marges et
+   césure : la moindre différence désaligne le curseur du texte affiché.
+   Toute modification ici doit être appliquée aux DEUX règles. */
+.legal-token-field {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.legal-token-mirror,
+.legal-token-input {
+  font-family: inherit;
+  font-size: var(--p-text-sm);
+  line-height: 1.55;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--p-radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  letter-spacing: normal;
+  tab-size: 4;
+  margin: 0;
+}
+
+.legal-token-mirror {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-input);
+  color: var(--text);
+  overflow: hidden;
+  pointer-events: none;
+  border-color: transparent;
+}
+
+.legal-token-input {
+  position: relative;
+  display: block;
+  width: 100%;
+  background: transparent;
+  /* Le texte est invisible, le CURSEUR ne l'est pas : c'est ce qui rend
+     l'illusion utilisable. */
+  color: transparent;
+  caret-color: var(--text);
+  resize: none;
+  overflow: hidden;
+}
+
+.legal-token-input::placeholder { color: var(--p-text-faint); }
+.legal-token-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.legal-token-field.is-single .legal-token-input,
+.legal-token-field.is-single .legal-token-mirror {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Le JETON — même texte, donc même largeur : le miroir reste aligné. Le
+   libellé humain est servi par l'infobulle. */
+.legal-token {
+  background: var(--p-primary-soft);
+  color: var(--accent);
+  border-radius: var(--p-radius-sm);
+  padding: 0.05em 0.1em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.legal-token.is-unknown {
+  background: var(--danger-bg);
+  color: var(--danger);
+  text-decoration: underline wavy;
+}
+
+/* ── Palette de variables ─────────────────────────────────────────────────
+   Groupée par AUTORITÉ — la question qu'on se pose en écrivant est « de qui
+   je parle ici ? », pas « quel est le nom du champ ? ». */
+.legal-insert-btn { white-space: nowrap; }
+
+.legal-palette {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  width: min(28rem, 100%);
+  display: flex;
+  flex-direction: column;
+  max-height: 26rem;
+}
+
+.legal-palette-head {
+  display: flex;
+  gap: var(--p-space-2);
+  padding: var(--p-space-3);
+  border-bottom: 1px solid var(--border);
+}
+.legal-palette-head input { flex: 1 1 auto; }
+
+.legal-palette-body { overflow: auto; padding: var(--p-space-2); }
+
+.legal-palette-group + .legal-palette-group { margin-top: var(--p-space-3); }
+
+.legal-palette-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.3rem;
+  font-size: var(--p-text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.legal-palette-group ul { list-style: none; margin: 0; padding: 0; }
+
+.legal-palette-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.5rem;
+  border: none;
+  border-radius: var(--p-radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.legal-palette-item:hover { background: var(--p-primary-soft); }
+.legal-palette-item-head { display: flex; align-items: center; gap: 0.2rem; flex-wrap: wrap; }
+.legal-palette-item-desc { font-size: var(--p-text-xs); }
+
+/* ── Complétude ──────────────────────────────────────────────────────────
+   AVANT le document, jamais après : un bloc retiré est invisible, et sans ce
+   bandeau rien ne distinguerait « ce template ne parle pas de TVA » de « la
+   TVA de ce client n'est pas renseignée ». */
+.legal-completeness {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--p-space-3);
+  margin-bottom: var(--p-space-4);
+  background: var(--bg-elevated);
+}
+.legal-completeness.is-ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+.legal-completeness.is-warn { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
+
+.legal-completeness-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  flex-wrap: wrap;
+}
+.legal-completeness-head span:last-child { color: var(--text-muted); font-size: var(--p-text-sm); }
+
+.legal-completeness-list {
+  margin: var(--p-space-2) 0 0;
+  padding-left: 1.1rem;
+  font-size: var(--p-text-sm);
+}
+.legal-completeness-note { margin: var(--p-space-2) 0 0; font-size: var(--p-text-xs); }
+.legal-completeness-actions { display: flex; gap: var(--p-space-2); margin-top: var(--p-space-2); flex-wrap: wrap; }
+
+/* ── Le document rendu ───────────────────────────────────────────────────
+   Largeur de lecture confortable et hiérarchie franche. Il n'imite AUCUNE
+   vitrine : chaque site a son design, et l'imiter ferait croire que le
+   document en dépend. Ce qu'on vérifie ici est le contenu, pas la typographie
+   du client. */
+.legal-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: var(--p-space-7) var(--p-space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  text-align: center;
+  color: var(--text-muted);
+}
+.legal-preview-empty p { margin: 0; }
+
+.legal-doc {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  padding: var(--p-space-5);
+  max-width: 46rem;
+}
+
+.legal-doc-head { margin-bottom: var(--p-space-5); }
+.legal-doc-head h1 { font-size: var(--p-text-xl); }
+.legal-doc-head p { margin: 0.2rem 0 0; font-size: var(--p-text-sm); }
+
+.legal-doc-section + .legal-doc-section { margin-top: var(--p-space-5); }
+.legal-doc-section h2 {
+  font-size: var(--p-text-base);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin-bottom: var(--p-space-2);
+}
+.legal-doc-section p { margin: 0 0 var(--p-space-2); line-height: 1.65; }
+.legal-doc-section ul { margin: 0 0 var(--p-space-2); padding-left: 1.2rem; line-height: 1.65; }
+
+.legal-doc-fields { margin: 0 0 var(--p-space-2); display: flex; flex-direction: column; gap: 0.2rem; }
+.legal-doc-fields > div {
+  display: grid;
+  grid-template-columns: minmax(8rem, 16rem) minmax(0, 1fr);
+  gap: var(--p-space-2);
+}
+@media (max-width: 620px) {
+  .legal-doc-fields > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+.legal-doc-fields dt { color: var(--text-muted); font-size: var(--p-text-sm); }
+.legal-doc-fields dd { margin: 0; }
+
+/* ── Section « Documents légaux » de la fiche projet ─────────────────────
+   Deux menus, un bouton. Tout ce qui pourrait être réglé ici l'est ailleurs :
+   le TEXTE dans le template, les DONNÉES dans la fiche entreprise. */
+.legal-assign-row {
+  border-top: 1px solid var(--border);
+  padding-top: var(--p-space-3);
+  margin-top: var(--p-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+.legal-assign-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--p-space-2);
+  flex-wrap: wrap;
+}
+
+.legal-assign-route { font-size: var(--p-text-xs); color: var(--text-muted); }
+
+.legal-assign-control {
+  display: flex;
+  gap: var(--p-space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.legal-assign-control > :first-child { flex: 1 1 20rem; min-width: 0; }
+
+.legal-assign-state { display: flex; flex-direction: column; gap: 0.2rem; }
+.legal-assign-alert { margin: 0; font-size: var(--p-text-sm); }
+
+.legal-assign-actions {
+  display: flex;
+  gap: var(--p-space-2);
+  align-items: center;
+  margin-top: var(--p-space-4);
+  flex-wrap: wrap;
+}
+
+.legal-project-preview {
+  margin-top: var(--p-space-4);
+  padding-top: var(--p-space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Entreprise hébergeuse ──────────────────────────────────────────────── */
+.legal-host.is-archived { opacity: 0.7; }
+
+.legal-host-head { display: flex; gap: var(--p-space-2); align-items: center; margin-bottom: var(--p-space-3); }
+
+.legal-host-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--p-space-3);
+  margin: 0;
+}
+.legal-host-fact.is-wide { grid-column: 1 / -1; }
+.legal-host-fact dt { font-size: var(--p-text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.legal-host-fact dd { margin: 0.1rem 0 0; overflow-wrap: anywhere; }
+
+.legal-host-actions { display: flex; gap: var(--p-space-2); margin-top: var(--p-space-4); flex-wrap: wrap; }
+
+.legal-host-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--p-space-3);
+  margin-bottom: var(--p-space-4);
+}
+.legal-host-form .field.is-wide { grid-column: 1 / -1; }
+
+/* Les chevrons servent de flèches : une icône par direction aurait ajouté
+   quatre tracés à la table pour une rotation. */
+.icon-flip { transform: rotate(180deg); }
+.icon-flip-y { transform: rotate(180deg); }

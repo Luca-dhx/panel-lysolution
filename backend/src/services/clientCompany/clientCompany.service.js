@@ -203,6 +203,12 @@ export function describeClientCompany(fiche) {
     siret: fiche.siret ?? null,
     vatNumber: fiche.vatNumber ?? null,
     registrationCity: fiche.registrationCity ?? null,
+    // Les trois champs cités par les mentions légales. Exposés à l'écran
+    // interne comme les autres : c'est là qu'on les corrige quand le document
+    // signale qu'ils manquent.
+    shareCapital: fiche.shareCapital ?? null,
+    publicationDirector: fiche.publicationDirector ?? null,
+    publicEmail: fiche.publicEmail ?? null,
     registeredOffice: fiche.registeredOffice ?? null,
     billingAddress: fiche.billingAddress ?? null,
     billingAddressEffective: effectiveBillingAddress(fiche),
@@ -363,6 +369,14 @@ export async function updateClientCompany(clientCompanyId, patch, actor = {}) {
     siret: 'siret' in patch ? patch.siret : existante.siret,
     vatNumber: 'vatNumber' in patch ? patch.vatNumber : existante.vatNumber,
     registrationCity: 'registrationCity' in patch ? patch.registrationCity : existante.registrationCity,
+    // Les trois champs des mentions légales suivent la même règle que les
+    // autres : `in patch` et non `??`, pour qu'un effacement volontaire
+    // (`null`) se distingue d'un champ simplement absent du formulaire.
+    shareCapital: 'shareCapital' in patch ? patch.shareCapital : existante.shareCapital,
+    publicationDirector: 'publicationDirector' in patch
+      ? patch.publicationDirector
+      : existante.publicationDirector,
+    publicEmail: 'publicEmail' in patch ? patch.publicEmail : existante.publicEmail,
     registeredOffice: patch.registeredOffice ?? existante.registeredOffice,
     billingAddress: 'billingAddress' in patch ? patch.billingAddress : existante.billingAddress,
     billingEmail: 'billingEmail' in patch ? patch.billingEmail : existante.billingEmail,
@@ -623,6 +637,29 @@ export async function linkProjectToClientCompany(projectId, clientCompanyId, act
    */
   if (precedent) await tombstoneOnProject(projectId, precedent);
 
+  /**
+   * ── LES DOCUMENTS LÉGAUX SONT RECALCULÉS POUR LE NOUVEAU LOCATAIRE ──────
+   *
+   * C'est le point le plus sensible du chantier multi-tenant, et il est ICI.
+   *
+   * Un projet rattaché à l'entreprise A détient un document résolu portant le
+   * SIREN, l'adresse et le directeur de publication de A. Le rattacher à B sans
+   * republier laisserait CE DOCUMENT EN PLACE : le site de B afficherait les
+   * mentions légales de A. C'est très exactement le mélange de locataires que
+   * l'incident FJ / KleenPro a rendu inacceptable.
+   *
+   * La republication écrase le document précédent — l'`entityId` est dérivé du
+   * couple (projet, type), jamais du client — et le remplacement est donc total.
+   *
+   * Non bloquant, pour la même raison qu'à la diffusion : le rattachement est ce
+   * qui débloque paiements et signatures, et une file durable rattrape le reste.
+   */
+  await import('../legal/legalDocumentPublisher.js')
+    .then((m) => m.publishAllForProject(projectId))
+    .catch((err) => {
+      logger.warn(`[legal] Documents de ${projectId} non recalculés : ${err.message}`);
+    });
+
   const contrat = await contratCourantDe(projectId);
   return {
     linked: true,
@@ -663,6 +700,27 @@ export async function unlinkProjectFromClientCompany(projectId, actor = {}) {
   });
 
   await tombstoneOnProject(projectId, precedent);
+
+  /**
+   * LES DOCUMENTS LÉGAUX SONT RECALCULÉS — donc VIDÉS de leur locataire.
+   *
+   * Sans entreprise cliente, les variables `client.*` ne se résolvent plus :
+   * la règle de conditionnalité retire les blocs concernés, et un document
+   * qui n'a plus aucune section n'est pas publié (le publieur refuse
+   * `DOCUMENT_EMPTY`). Le site conserve alors son dernier document valide —
+   * ce qui est le bon comportement : détacher une fiche de gestion ne doit pas
+   * effacer une page opposable.
+   *
+   * Ce qui compte ici est l'inverse : que le document ne soit JAMAIS republié
+   * avec les données du client détaché sur un projet qui ne lui appartient
+   * plus. Le recalcul est ce qui le garantit.
+   */
+  await import('../legal/legalDocumentPublisher.js')
+    .then((m) => m.publishAllForProject(projectId))
+    .catch((err) => {
+      logger.warn(`[legal] Documents de ${projectId} non recalculés : ${err.message}`);
+    });
+
   return { unlinked: true, unchanged: false, projectId, previousClientCompanyId: precedent };
 }
 
@@ -832,6 +890,47 @@ export async function broadcastToLinkedProjects(clientCompanyId) {
     // eslint-disable-next-line no-await-in-loop
     await publishToProject(projet.projectId, fiche);
   }
+
+  /**
+   * ── LES DOCUMENTS LÉGAUX SUIVENT L'IDENTITÉ ─────────────────────────────
+   *
+   * ══ POURQUOI ILS NE PEUVENT PAS S'EN PASSER ═══════════════════════════════
+   *
+   * Un document légal est un RENDU : le SIREN et l'adresse y sont déjà
+   * substitués au moment où le Panel l'émet. Corriger l'adresse d'un client
+   * sans republier laisserait donc l'ancienne adresse sur ses mentions
+   * légales — indéfiniment, et sans qu'aucun écran ne le signale, puisque le
+   * Panel affiche la fiche corrigée et que le projet affiche le document reçu.
+   * Les deux côtés paraîtraient cohérents avec eux-mêmes.
+   *
+   * C'est la contrepartie du choix de résoudre au Panel plutôt qu'au projet
+   * (voir la doctrine de `LEGAL_DOCUMENT` au contrat), et elle se paie ici, en
+   * un seul endroit.
+   *
+   * ══ POURQUOI L'IMPORT EST DIFFÉRÉ ════════════════════════════════════════
+   *
+   * `legalDocumentPublisher` lit l'entreprise cliente pour résoudre ses
+   * documents. S'importer mutuellement au chargement créerait un cycle, que
+   * Node résout par un module à moitié initialisé — donc par une fonction
+   * `undefined` au premier appel, en production, sur le geste qui met une
+   * identité juridique à jour.
+   *
+   * ══ NON BLOQUANT ════════════════════════════════════════════════════════
+   *
+   * L'identité juridique, elle, EST partie : c'est la donnée qui débloque
+   * paiements et signatures. Faire échouer son enregistrement parce qu'un
+   * document légal n'a pas pu être recalculé inverserait les priorités. La
+   * republication a par ailleurs sa propre file durable et son rattrapage.
+   */
+  await import('../legal/legalDocumentPublisher.js')
+    .then((m) => m.republishForClientCompany(clientCompanyId))
+    .catch((err) => {
+      logger.warn(
+        `[legal] Republication des documents de ${clientCompanyId} incomplète : ${err.message}`,
+      );
+      return 0;
+    });
+
   return { recipients: projets.length };
 }
 

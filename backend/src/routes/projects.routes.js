@@ -5,7 +5,10 @@ import asyncHandler from '../utils/asyncHandler.js';
 import { requirePanelDev, requirePanelUser } from '../middlewares/panelAuth.middleware.js';
 import {
   accounts,
+  assignLegalDocuments,
   deadLetters,
+  legalDocuments,
+  resyncLegalDocuments,
   replayDeadLetterHandler,
   declare,
   cancelContract,
@@ -29,6 +32,25 @@ router.use(asyncHandler(requirePanelUser));
 
 router.get('/', asyncHandler(list));
 router.get('/:projectId', asyncHandler(detail));
+
+/**
+ * ── DOCUMENTS LÉGAUX DU PROJET ──────────────────────────────────────────────
+ *
+ * LECTURE pour tout compte du Panel : savoir ce qu'un site publie en mentions
+ * légales est une information de gestion, pas une opération technique.
+ *
+ * ÉCRITURE réservée aux comptes DEV, pour la même raison que la protection
+ * contractuelle : ce qui est écrit ici s'affiche PUBLIQUEMENT sur le site d'un
+ * client, sous sa responsabilité juridique — et prend effet immédiatement, sans
+ * redéploiement. Un bouton masqué n'aurait rien gardé : la barrière est ici.
+ */
+router.get('/:projectId/legal-documents', asyncHandler(legalDocuments));
+router.put('/:projectId/legal-documents', requirePanelDev, asyncHandler(assignLegalDocuments));
+router.post(
+  '/:projectId/legal-documents/resync',
+  requirePanelDev,
+  asyncHandler(resyncLegalDocuments),
+);
 
 // CONTRAT — lecture pour tous les comptes du Panel, DEMANDE de résiliation
 // aussi : c'est un acte de gestion, pas une opération d'infrastructure.

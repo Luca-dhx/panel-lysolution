@@ -457,6 +457,18 @@ const TESTS = [
   // Du vrai Company.save() jusqu'à la fiche du Panel, deux backends réels.
   'project-company-live-e2e.test.js',
   'contract-current-history.test.js',
+  // LES DOCUMENTS LÉGAUX — le référentiel central des mentions légales et des
+  // politiques de confidentialité du parc.
+  //
+  // Elle éprouve l'ISOLATION MULTI-TENANT en injectant volontairement les
+  // fixtures de l'autre locataire, et vérifie qu'aucune n'apparaît — ni dans le
+  // document résolu, ni dans le journal de synchronisation. C'est la leçon de
+  // l'incident FJ / KleenPro, appliquée à un contenu PUBLIC et opposable.
+  //
+  // Elle verrouille aussi le caractère DYNAMIQUE : basculer un projet vers un
+  // template de version INFÉRIEURE doit produire une écriture que le projet
+  // accepte — le piège que 'documentVersion' existe pour fermer.
+  'legal-documents.test.js',
   'architecture.test.js',
   'panel-ux.test.js',
   'live-refresh.test.js',

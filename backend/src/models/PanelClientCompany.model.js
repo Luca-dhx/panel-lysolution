@@ -212,6 +212,37 @@ const clientCompanySchema = new mongoose.Schema(
     /** Ville du greffe d'immatriculation — mention légale usuelle. */
     registrationCity: { type: String, default: null, trim: true },
 
+    /**
+     * ── TROIS CHAMPS AJOUTÉS POUR LES DOCUMENTS LÉGAUX ────────────────────
+     *
+     * Ils n'existaient pas parce que la fiche était née d'un besoin de
+     * FACTURATION, où aucun des trois n'est requis. Les mentions légales, elles,
+     * les exigent — et les faire naître ailleurs (une copie sur le projet, un
+     * champ libre dans le template) aurait recréé exactement la duplication que
+     * cette collection existe pour éviter.
+     *
+     * `shareCapital` est TEXTE et non nombre : il s'écrit « 10 000 € » et se
+     * cite tel quel. Le stocker en centimes obligerait à choisir une devise et
+     * un formatage, c'est-à-dire à décider à la place du registre.
+     *
+     * Il reste VIDE pour un entrepreneur individuel, et ce n'est pas un oubli :
+     * un EI n'a pas de capital social. Le résolveur retire alors la ligne, au
+     * lieu d'écrire « Capital social : N/A » sur une page publique.
+     *
+     * `publicationDirector` est la personne physique responsable du contenu
+     * publié. Distinct du signataire contractuel — souvent la même personne,
+     * jamais le même rôle : l'un engage la société, l'autre répond du contenu.
+     * Vide, le résolveur retombe sur le signataire (voir sa doctrine).
+     *
+     * `publicEmail` est l'adresse que le VISITEUR peut écrire. Elle n'est pas
+     * `billingEmail` : celle-là part vers une boîte comptable que personne ne
+     * relève pour autre chose, et l'afficher en mentions légales enverrait les
+     * demandes du public au cabinet comptable du client.
+     */
+    shareCapital: { type: String, default: null, trim: true },
+    publicationDirector: { type: String, default: null, trim: true },
+    publicEmail: { type: String, default: null, trim: true, lowercase: true },
+
     /* ── ADRESSES ────────────────────────────────────────────────────── */
 
     /** Le SIÈGE SOCIAL — l'adresse juridique. Toujours celle du registre. */

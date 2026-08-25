@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto';
 import PanelCompany from '../../models/PanelCompany.model.js';
 import PanelCompanyVersion from '../../models/PanelCompanyVersion.model.js';
 import ApiError from '../../utils/ApiError.js';
+import logger from '../../utils/logger.js';
 import config from '../../config/env.js';
 import { nowIso } from '../../bridge/bridgeContract.js';
 import { listProjects } from '../registry/projectRegistry.service.js';
@@ -354,6 +355,32 @@ export async function publishConfiguration(companyId, { reason } = {}, actor = {
   );
 
   const recipients = await broadcastCompany(companyId, { ...payload, version }, at);
+
+  /**
+   * ── LES DOCUMENTS LÉGAUX DU PARC SUIVENT NOTRE PROPRE IDENTITÉ ──────────
+   *
+   * La section « Conception et réalisation » des mentions légales de CHAQUE
+   * site cite L.Y Solution — nom, forme juridique, SIREN, adresse, contact.
+   * Ces valeurs sont substituées au moment où le Panel émet le document : les
+   * corriger ici sans republier laisserait l'ancienne identité sur tous les
+   * sites du parc, sans qu'aucun écran ne le signale.
+   *
+   * Seuls les projets AYANT une affectation sont visités — voir
+   * `republishFleet()` : republier les autres produirait deux tombstones par
+   * projet à chaque publication d'identité, c'est-à-dire du bruit durable dans
+   * le journal de synchronisation de tout le parc.
+   *
+   * Import différé et non bloquant : `legalDocumentPublisher` lit cette
+   * entreprise pour résoudre, et un cycle d'import se résoudrait en une
+   * fonction `undefined` au premier appel. La publication d'identité, elle, est
+   * déjà partie ; une republication de contenu ne doit pas pouvoir la défaire.
+   */
+  await import('../legal/legalDocumentPublisher.js')
+    .then((m) => m.republishFleet())
+    .catch((err) => {
+      logger.warn(`[legal] Republication du parc incomplète : ${err.message}`);
+      return 0;
+    });
 
   await recordEvent({
     projectId: null,

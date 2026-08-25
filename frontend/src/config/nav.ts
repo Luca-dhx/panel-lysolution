@@ -23,6 +23,25 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/clients', label: 'Clients', section: 'GESTION' },
   { to: '/finances', label: 'Finances', section: 'GESTION' },
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },
+  /**
+   * DOCUMENTS LEGAUX — en GESTION, aux cotes des clients et de l'entreprise.
+   *
+   * Ce sont des CONTENUS metier, pas de l'infrastructure : ce qui s'y ecrit
+   * s'affiche sur le site d'un client, sous sa responsabilite juridique. Les
+   * ranger avec les templates d'e-mail — surface DEVELOPPEUR — en aurait fait
+   * un objet technique que l'equipe n'ouvrirait jamais. L'ECRITURE reste
+   * reservee aux comptes DEV, cote backend, qui est la seule barriere.
+   */
+  { to: '/documents-legaux', label: 'Documents legaux', section: 'GESTION' },
+  /**
+   * ENTREPRISE HEBERGEUSE — juste apres, parce qu'elle n'existe que pour eux.
+   *
+   * C'est la troisieme autorite des documents legaux : ni nous, ni le client.
+   * Une entree separee plutot qu'un onglet, parce qu'on vient l'editer pour
+   * elle-meme — une migration d'hebergeur, une verification annuelle — et non
+   * en ecrivant un template.
+   */
+  { to: '/hebergeur', label: 'Entreprise hebergeuse', section: 'GESTION' },
 
   { to: '/supervision', label: 'Supervision', section: 'DEVELOPPEUR', devOnly: true },
   { to: '/bridges', label: 'Connexions techniques', section: 'DEVELOPPEUR', devOnly: true },

@@ -23,6 +23,8 @@ divergent, et c'est toujours celle qu'on ne lit pas qui reste juste.
 | Politique de grâce d'un impayé | **Panel** | le projet affiche |
 | **Adresse de contact public** du prestataire | **Panel** (`PanelCompany.contacts.publicContactEmail`) | le projet la reçoit publiée, il ne la devine plus |
 | Expéditeur `From` du parc | **Panel** (`SystemConfiguration`) | c'est une adresse TECHNIQUE, jamais un contact |
+| **Documents légaux** (texte et publication) | **Panel** (`PanelLegalTemplate`) | la vitrine détient un rendu résolu, jamais une copie éditable |
+| **Identité juridique** citée par un document | **Panel** (client / L.Y Solution / hébergeur) | trois autorités distinctes, jamais un repli de l'une sur l'autre |
 
 La phrase à retenir, et elle vaut pour tout le lot e-mail :
 
@@ -391,6 +393,119 @@ npm run migrate:email-template-provisioning
 Une migration qui existe aussi au démarrage (c'est le cas de celle-ci) sert à
 réparer **sans redémarrer** : Panel en service, base restaurée, ou simplement
 pour lire le rapport avant d'écrire.
+
+---
+
+## Documents légaux — le référentiel central
+
+> **Le Panel est l'autorité du TEXTE et des DONNÉES. La vitrine ne détient
+> qu'un rendu résolu, et n'en édite jamais une ligne.**
+
+### Autorités
+
+| Ce qui est en jeu | Autorité | Écran |
+|---|---|---|
+| Existence d'une variable insérable, son libellé, sa catégorie | **Panel** (code-first, `legalVariableRegistry.js`) | palette « + Insérer une donnée » |
+| Texte d'un template, ses versions, sa publication | **Panel** (base) | « Documents légaux » |
+| Identité juridique du client (SIREN, siège, directeur de publication) | **Panel** (`PanelClientCompany`) | « Clients » |
+| Identité de L.Y Solution citée en « conception » | **Panel** (`PanelCompany`) | « Mon entreprise » |
+| Identité de l'hébergeur | **Panel** (`PanelHostCompany`) | « Entreprise hébergeuse » |
+| Quel template un projet publie | **Panel** (`PanelProject.legalNoticeTemplateId` / `.privacyPolicyTemplateId`) | fiche projet → « Documents légaux » |
+| Ce que le site AFFICHE | **le projet**, à partir du document répliqué | — |
+
+Trois autorités alimentent un document, et elles ne se mélangent jamais :
+
+```text
+client     PanelClientCompany, atteinte par PanelProject.clientCompanyId
+developer  PanelCompany — L.Y Solution, diffusée à tout le parc
+host       PanelHostCompany — un tiers
+```
+
+`resolveLegalContext()` les lit par TROIS requêtes distinctes. Aucune ne sert
+de repli à une autre : il n'existe aucun code où deux autorités se rencontrent.
+
+### La règle de conditionnalité, en une phrase
+
+> **Un bloc dont UNE variable manque est retiré. Une section dont tous les
+> blocs sont retirés est retirée.**
+
+Automatique, sans syntaxe et sans réglage. Elle rend structurellement
+impossibles les deux sorties interdites — `SIRET :` sans valeur, et
+`undefined` — et produit le bon rendu pour un entrepreneur individuel : les
+lignes « Capital social » et « RCS » n'apparaissent pas, au lieu d'afficher
+« N/A ».
+
+Pour un bloc `FIELDS`, l'unité de disparition est la **ligne**, pas le bloc.
+
+### Ce qui exige un redéploiement, et ce qui n'en exige pas
+
+```text
+éditer un template, le publier            →  AUCUN redéploiement, ni Panel ni site
+changer l'affectation d'un projet         →  AUCUN redéploiement
+corriger une fiche entreprise / hébergeur →  AUCUN redéploiement
+ajouter une VARIABLE au registre          →  REDÉPLOIEMENT PANEL requis (code-first)
+ajouter un TYPE de document               →  REDÉPLOIEMENT Panel + projets
+```
+
+Le caractère dynamique repose sur la réplication : chaque publication émet une
+entité `LEGAL_DOCUMENT` **nominative** (`audience: <projectId>`), le projet
+l'applique, et sa route publique la sert. Il n'y a **aucun appel du site vers
+le Panel** au moment de l'affichage.
+
+### Fallback — Panel injoignable
+
+Le projet sert sa **réplique locale**. La page ne se vide pas : elle fige le
+dernier document valide. Sans document reçu, la route publique répond **404** —
+jamais un texte générique, jamais celui d'un autre type, jamais celui d'un
+autre projet.
+
+### Deux barrières multi-tenant, tenues par deux côtés
+
+```text
+1. l'AUDIENCE de l'écriture   Panel   un projet ne peut pas tirer le document d'un autre
+2. le projectId de la charge  projet  un document qui ne me nomme pas est REFUSÉ
+```
+
+La seconde attrape ce que la première ne peut pas voir : erreur d'audience,
+rejeu vers le mauvais destinataire, base de recette restaurée ailleurs. Un
+projet **non appairé** refuse tout document — il n'a aucun moyen de vérifier.
+
+### Suppression d'un template
+
+**Refusée** dès qu'un projet le référence, et l'erreur nomme les projets
+(`LEGAL_TEMPLATE_IN_USE`). L'archivage est la sortie : il retire du catalogue
+sans cesser de servir les projets déjà rattachés — on ne retire pas le sol sous
+un site en production.
+
+### Migration
+
+```bash
+npm run migrate:legal-tenants -- --dry-run
+npm run migrate:legal-tenants
+```
+
+Crée les fiches d'entreprise cliente des vitrines, les rattache, assigne les
+templates amorcés et publie. **Create-if-missing** : une fiche existante n'est
+jamais réécrite, un projet déjà rattaché n'est jamais redirigé, une affectation
+existante n'est jamais remplacée. La publication, elle, est toujours rejouée —
+c'est ce qui rattrape un projet resté longtemps hors ligne.
+
+### Incident — « la page légale est absente sur le site »
+
+```text
+1. la fiche projet affiche-t-elle un template assigné ?
+   · « Aucun template assigné »        → assigner, puis Enregistrer
+   · « le template est un brouillon »  → le publier
+2. le projet a-t-il rattrapé ?  fiche projet → pont, dernier tirage
+3. forcer :  POST /api/projects/<id>/legal-documents/resync
+```
+
+### Incident — « une information manque sur la page »
+
+Elle n'est pas absente par erreur : le bloc a été **retiré** parce que la
+donnée manque. La fiche projet l'annonce (« Ce template utilise N informations
+non renseignées ») et le lien mène à l'autorité à corriger. Corriger la fiche
+republie automatiquement.
 
 ---
 

@@ -126,7 +126,7 @@ info:
     Sens des appels : PROJET -> PANEL (HTTPS sortant du projet).
     Le Panel ne connaît jamais Mongo ; le projet ne connaît du Panel que
     cette surface.
-  version: 1.13.0
+  version: 1.14.0
 servers:
   - url: https://panel.example.com
     description: >
@@ -1620,6 +1620,7 @@ components:
             - PAYMENT_DEFAULT_CAUSE
             - PAYMENT_DEFAULT_INCIDENT
             - CLIENT_COMPANY
+            - LEGAL_DOCUMENT
         entityId:
           type: string
           format: uuid

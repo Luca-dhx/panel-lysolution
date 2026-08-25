@@ -12,6 +12,7 @@ import { migratePortRegistry } from './services/deployment/portRegistry.service.
 import { migratePanelMedia } from './services/upload/mediaDescriptor.service.js';
 import { reconcileDestinations } from './services/registry/projectDestination.service.js';
 import { seedIntegratedApiCredentialSets } from './services/integratedApi/seed.js';
+import { seedLegalFoundations } from './services/legal/legalSeed.js';
 import { reconcileAllProviderWebhooks } from './services/webhooks/webhookReconciler.js';
 import {
   backfillScopeTypes,
@@ -305,6 +306,30 @@ async function start() {
   });
   if (modeles?.created) {
     logger.info(`Modèles d’e-mail : ${modeles.created} amorcé(s) pour la plateforme.`);
+  }
+
+  /**
+   * SOCLE LÉGAL — hébergeur et templates initiaux. Idempotent, CRÉE SI ABSENT.
+   *
+   * Il ne réécrit jamais une fiche ni un contenu existant : une fois qu'un
+   * opérateur a corrigé un paragraphe de mentions légales, un redémarrage ne
+   * doit pas reposer le texte d'origine. Un seed qui écrase à chaque démarrage
+   * n'est pas un seed, c'est une réinitialisation périodique du travail des
+   * humains — et elle ne laisse aucune trace.
+   *
+   * NON BLOQUANT : les projets déjà servis détiennent une réplique locale de
+   * leurs documents et continuent de les afficher. Refuser de démarrer pour un
+   * amorçage de contenu priverait tout le parc de supervision.
+   */
+  const socleLegal = await seedLegalFoundations().catch((err) => {
+    logger.warn(`Amorçage du socle légal impossible : ${err.message}`);
+    return null;
+  });
+  if (socleLegal?.hostCreated || socleLegal?.templatesCreated) {
+    logger.info(
+      `Socle légal amorcé : ${socleLegal.hostCreated} hébergeur(s), `
+      + `${socleLegal.templatesCreated} template(s).`,
+    );
   }
 
   /**

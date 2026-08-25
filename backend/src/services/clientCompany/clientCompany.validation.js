@@ -230,6 +230,24 @@ const clientCompanySchema = z.object({
   siret,
   vatNumber,
   registrationCity: nullableString(120, 'registrationCity'),
+  /**
+   * ── TROIS CHAMPS EXIGÉS PAR LES MENTIONS LÉGALES ──────────────────────────
+   *
+   * `shareCapital` est TEXTE : il s'écrit « 10 000 € » et se cite tel quel.
+   * Vide sur un entrepreneur individuel — ce n'est pas un oubli, un EI n'en a
+   * pas — et le document retire alors la ligne au lieu d'écrire « N/A ».
+   *
+   * `publicationDirector` est la personne qui répond du CONTENU publié.
+   * Distincte du signataire contractuel, qui engage la SOCIÉTÉ : souvent la
+   * même personne, jamais le même rôle.
+   *
+   * `publicEmail` est l'adresse que le visiteur peut écrire, et surtout PAS
+   * `billingEmail` — celle-là part vers une boîte comptable que personne ne
+   * relève pour autre chose.
+   */
+  shareCapital: nullableString(60, 'shareCapital'),
+  publicationDirector: nullableString(160, 'publicationDirector'),
+  publicEmail: email('publicEmail'),
 
   registeredOffice: address('registeredOffice'),
   /**

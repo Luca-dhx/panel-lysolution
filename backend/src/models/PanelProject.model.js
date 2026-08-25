@@ -265,6 +265,36 @@ const panelProjectSchema = new mongoose.Schema(
     clientCompanyId: { type: String, default: null, index: true },
 
     /**
+     * ── LES DOCUMENTS LÉGAUX DU PROJET — DEUX AFFECTATIONS, RIEN DE PLUS ─────
+     *
+     * Ce sont des RENVOIS vers `PanelLegalTemplate`, jamais du contenu. Le
+     * texte vit une seule fois, au Panel ; le projet ne détient qu'un rendu
+     * résolu (voir `legalDocumentPublisher.js`). C'est ce qui permet à un site
+     * de changer de gabarit graphique sans perdre ses mentions légales, et à
+     * une correction de phrase de se répandre sans opération de masse.
+     *
+     * ══ POURQUOI DEUX CHAMPS ET NON UNE TABLE `{type: id}` ══════════════════
+     *
+     * Parce qu'il y a exactement deux types, qu'ils sont nommés dans le contrat
+     * du pont, et qu'une table libre autoriserait un troisième type qu'aucun
+     * code ne sait servir. Deux champs rendent la question « quel document ce
+     * projet publie-t-il ? » lisible dans un `find()` et indexable ; une table
+     * l'aurait rendue lisible seulement en JavaScript.
+     *
+     * `null` se lit « aucun document assigné », et c'est un ÉTAT, pas un trou à
+     * combler par un défaut. Servir « le premier template actif » ferait
+     * afficher, sur le site d'un client, un texte que personne n'a choisi pour
+     * lui. Sans affectation, la vitrine n'affiche pas la page.
+     *
+     * L'index couvre la question inverse — « quels projets utilisent ce
+     * template ? » — qui gouverne le refus de suppression et le décompte
+     * « Utilisé par N projets ». Sans lui, chaque ouverture du catalogue
+     * balaierait le registre entier, deux fois.
+     */
+    legalNoticeTemplateId: { type: String, default: null, index: true },
+    privacyPolicyTemplateId: { type: String, default: null, index: true },
+
+    /**
      * ── CINQ CHAMPS ONT ÉTÉ RETIRÉS DE CE SCHÉMA ──────────────────────────────
      *
      *   commercialState             l'ouverture commerciale (PREOPENING | LIVE)

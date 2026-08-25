@@ -29,6 +29,7 @@ import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
 import { FreshnessBanner } from '@/components/FreshnessBanner';
 import { ProjectClientCompanyCard } from '@/components/company/ProjectClientCompanyCard';
+import { ProjectLegalSection } from '@/components/legal/ProjectLegalSection';
 import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ThemedFilter } from '@/components/ThemedSelect';
 import { useMeetings, useProjectEvents } from '@/lib/useEvents';
@@ -337,6 +338,21 @@ function OverviewTab({
         « Clients » vaut mieux qu’une copie qui vieillirait.
       */}
       <ProjectClientCompanyCard project={project} onChanged={onClientCompanyChanged} />
+
+      {/*
+        ── LES DOCUMENTS LÉGAUX, JUSTE APRÈS L'ENTREPRISE CLIENTE ───────────
+
+        L'ordre n'est pas indifférent : les mentions légales NOMMENT
+        l'entreprise cliente. Les placer avant elle ferait découvrir
+        l'avertissement « information non renseignée » avant d'avoir vu la
+        fiche qui le répare.
+
+        La section charge ses données SÉPARÉMENT de la fiche (`GET
+        /legal-documents`). Elle coûte la résolution des deux documents, et la
+        joindre à `detail` la ferait payer à chaque ouverture de fiche — y
+        compris pour lire un heartbeat.
+      */}
+      <ProjectLegalSection projectId={project.projectId} />
 
       <Card title="Le site">
         <dl className="detail-list">

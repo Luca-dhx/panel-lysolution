@@ -242,6 +242,15 @@ const contactsSchema = z.object({
 
 const legalSchema = z.object({
   legalForm: nullableString(80),
+  /**
+   * SIREN — 9 chiffres, et SÉPARÉ du SIRET (voir la doctrine au modèle).
+   *
+   * Il n'est pas déduit du SIRET : on connaît toujours le SIREN, rarement le
+   * SIRET, et la déduction rendrait le second obligatoire pour obtenir le
+   * premier. C'est le SIREN que citent les mentions légales du parc.
+   */
+  siren: z.union([z.string().trim().regex(/^\d{9}$/, 'legal.siren : 9 chiffres attendus.'), z.null()])
+    .optional().transform((v) => (v === undefined || v === '' ? null : v)),
   // SIRET : 14 chiffres. Vérifié dans sa forme, pas auprès de l'INSEE — le
   // Panel n'a pas à interroger un service tiers pour enregistrer une fiche.
   siret: z.union([z.string().trim().regex(/^\d{14}$/, 'legal.siret : 14 chiffres attendus.'), z.null()])

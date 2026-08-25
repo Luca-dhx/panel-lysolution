@@ -63,7 +63,25 @@ import { z } from 'zod';
 //   champ inconnu fait refuser le message ENTIER. Le projet ne les publie donc
 //   qu'à un Panel qui a ANNONCÉ savoir les lire (voir `panelSpeaks` côté
 //   projet). Compatible 1.0.x à 1.9.x.
-export const CONTRACT_VERSION = '1.13.0';
+// 1.14.0 (ADDITIF, rétrocompatible) — LES DOCUMENTS LÉGAUX RÉSOLUS.
+//   `LEGAL_DOCUMENT` : nouvel entityType, poussé par le Panel vers UN projet
+//   nommé (`audience: <projectId>`). Il porte un document DÉJÀ RÉSOLU —
+//   mentions légales ou politique de confidentialité — avec les valeurs du
+//   client, du concepteur et de l'hébergeur substituées, dans une structure de
+//   texte fermée : ni HTML, ni gabarit, ni variable.
+//
+//   POURQUOI UNE ENTITÉ DE SYNCHRONISATION plutôt qu'une lecture à la demande :
+//   parce qu'une page de mentions légales ne doit pas disparaître quand le
+//   Panel est injoignable. La réplication donne gratuitement la file durable,
+//   l'idempotence, le rattrapage au tirage — et surtout un dernier document
+//   valide qui reste servi. Un appel direct au Panel à chaque affichage
+//   rendrait une obligation légale dépendante de la disponibilité d'un outil
+//   interne.
+//
+//   Un projet antérieur à 1.14 écarte l'entité proprement (`CHANGE_UNREADABLE`)
+//   et n'affiche simplement pas les pages : la perte est bornée à elles, et
+//   elle se voit.
+export const CONTRACT_VERSION = '1.14.0';
 export const CONTRACT_VERSION_HEADER = 'x-bridge-contract-version';
 
 // Version du FORMAT de manifeste (indépendante de la version du contrat).
@@ -480,6 +498,49 @@ export const SYNC_ENTITY_TYPES = Object.freeze([
    * choisir la raison sociale sur laquelle il est facturé.
    */
   'CLIENT_COMPANY',
+  /**
+   * >= 1.14.0 — UN DOCUMENT LÉGAL RÉSOLU, poussé par le Panel vers UN projet.
+   *
+   * ══ CE QU'ELLE PORTE : UN RENDU, JAMAIS UN GABARIT ════════════════════════
+   *
+   * La charge utile est le document DÉJÀ RÉSOLU — titre, sections, paragraphes,
+   * listes, lignes d'identification — avec les valeurs réelles du client, du
+   * concepteur et de l'hébergeur substituées. Aucune variable, aucun gabarit,
+   * aucune règle.
+   *
+   * Le projet aurait pu recevoir le TEMPLATE et résoudre lui-même. Trois
+   * raisons de ne pas le faire, et la troisième suffirait :
+   *
+   *   · il faudrait alors lui envoyer les données des trois autorités — donc
+   *     l'identité juridique complète du client, celle de L.Y Solution et celle
+   *     de l'hébergeur — pour qu'il en affiche une fraction ;
+   *   · la règle de conditionnalité (« un bloc dont une variable manque
+   *     disparaît ») existerait en DEUX exemplaires, et divergerait au premier
+   *     correctif ; l'écart se verrait sur une page publique ;
+   *   · ce que l'aperçu du Panel montre ne serait plus, à la lettre, ce que le
+   *     site affiche. On publierait à l'aveugle.
+   *
+   * ══ NOMINATIVE, COMME `CLIENT_COMPANY` ═══════════════════════════════════
+   *
+   * `audience: <projectId>`. Un document résolu porte le SIREN, l'adresse et le
+   * directeur de publication d'un client : c'est une donnée de locataire, et
+   * l'autorisation est portée par l'ÉCRITURE, jamais par un filtre appliqué à
+   * la lecture. Deux documents de deux projets ne se croisent nulle part.
+   *
+   * ══ UNE ÉCRITURE PAR TYPE, ET C'EST VOULU ════════════════════════════════
+   *
+   * `entityId` est dérivé de `(projectId, type)` : mentions légales et
+   * politique de confidentialité sont deux entités distinctes. Les fondre en
+   * un « paquet légal » unique ferait republier les deux à chaque correction
+   * de l'une, et un tombstone sur l'une effacerait l'autre.
+   *
+   * ══ SENS UNIQUE ══════════════════════════════════════════════════════════
+   *
+   * PANEL → PROJET, exclusivement. Un projet qui pourrait l'écrire permettrait
+   * d'éditer localement des mentions légales — c'est-à-dire de recréer la copie
+   * divergente que tout ce chantier existe pour supprimer.
+   */
+  'LEGAL_DOCUMENT',
 ]);
 
 // Types réellement APPLIQUÉS par ce Panel — les autres répondent REJECTED
@@ -1368,6 +1429,85 @@ export const companyProfileSchema = z
     team: z.array(z.record(z.string(), z.any())).optional(),
   })
   .passthrough();
+
+/**
+ * UN DOCUMENT LÉGAL RÉSOLU (1.14.0) — ce que le Panel PROMET d'envoyer.
+ *
+ * ══ POURQUOI CE SCHÉMA EST FERMÉ (`.strict()`) ═════════════════════════════
+ *
+ * Parce que le projet le valide à l'arrivée, et qu'un champ inconnu y fait
+ * refuser l'écriture ENTIÈRE — c'est-à-dire, pour cette entité, laisser un
+ * site sans mentions légales. Fermer le schéma ICI, du côté de l'émetteur,
+ * fait échouer la publication chez le producteur plutôt que chez le
+ * consommateur : l'erreur est visible par celui qui peut la corriger.
+ *
+ * L'incident `CLIENT_COMPANY` a montré le coût de l'inverse — une écriture
+ * refusée à la lecture est une PERTE DÉFINITIVE, le curseur avance et le
+ * Panel ne relivre pas.
+ *
+ * ══ POURQUOI IL N'Y A NI HTML NI MISE EN FORME ═════════════════════════════
+ *
+ * Le contenu est du TEXTE, dans une structure de trois formes. La vitrine le
+ * rend avec SON design — c'est tout l'objet du chantier : le document est un
+ * contenu métier, pas un morceau de gabarit graphique. Et un texte qui ne
+ * contient aucune balise ne peut pas en injecter une, quel que soit le
+ * lecteur : la sûreté ne dépend plus de l'échappement appliqué en aval.
+ */
+export const legalDocumentBlockSchema = z
+  .discriminatedUnion('type', [
+    z.object({ type: z.literal('PARAGRAPH'), text: z.string().min(1) }).strict(),
+    z.object({ type: z.literal('LIST'), items: z.array(z.string().min(1)).min(1) }).strict(),
+    z
+      .object({
+        type: z.literal('FIELDS'),
+        items: z
+          .array(z.object({ label: z.string().min(1), value: z.string().min(1) }).strict())
+          .min(1),
+      })
+      .strict(),
+  ]);
+
+export const legalDocumentPayloadSchema = z
+  .object({
+    /** Le TYPE — il décide de la route publique servie par la vitrine. */
+    type: z.enum(['LEGAL_NOTICE', 'PRIVACY_POLICY']),
+    /** Le projet destinataire, RÉPÉTÉ dans la charge utile. Voir plus bas. */
+    projectId: z.string().uuid(),
+    templateId: z.string().min(1),
+    templateName: z.string().min(1),
+    /**
+     * LA VERSION PUBLIÉE du template. Elle permet à l'applicateur d'écarter
+     * une écriture plus ancienne que celle déjà appliquée — le cas normal
+     * après un rattrapage, où le journal se rejoue dans l'ordre du journal et
+     * non dans celui des décisions.
+     */
+    templateVersion: z.number().int().min(0),
+    /**
+     * LE COMPTEUR DE PUBLICATION DU PROJET — distinct de `templateVersion`.
+     *
+     * Changer l'AFFECTATION d'un projet ne change pas la version du template :
+     * deux templates différents peuvent tous deux être en version 1. Sans ce
+     * compteur, basculer de A(v1) vers B(v1) produirait une écriture que la
+     * garde de version rejetterait comme « pas plus récente », et le site
+     * continuerait d'afficher A. C'est le défaut exact que le test dynamique
+     * sans rebuild exerce.
+     */
+    documentVersion: z.number().int().positive(),
+    environment: z.enum(['TEST', 'PROD']),
+    title: z.string().min(1),
+    sections: z
+      .array(
+        z
+          .object({
+            heading: z.string(),
+            blocks: z.array(legalDocumentBlockSchema).min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+    updatedAt: z.string().nullable().optional(),
+  })
+  .strict();
 
 export const integratedApiConfigSchema = z
   .object({

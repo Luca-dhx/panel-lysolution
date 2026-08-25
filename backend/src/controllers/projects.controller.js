@@ -211,6 +211,55 @@ export async function detail(req, res) {
   return ok(res, { project, conformity: describeConformity(record), destinations });
 }
 
+/* -------------------------------------------------------------------------- */
+/*  DOCUMENTS LÉGAUX DU PROJET                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * LA SECTION « Documents légaux » DE LA FICHE — servie à part, et c'est voulu.
+ *
+ * Elle coûte quatre lectures (le projet, l'entreprise cliente, la nôtre,
+ * l'hébergeur) plus la résolution des deux templates. Les joindre à `detail`
+ * les paierait à CHAQUE ouverture de fiche, y compris pour lire un heartbeat.
+ * Un appel séparé les paie quand on regarde la section — et l'écran reste
+ * utilisable si cette lecture-là échoue.
+ */
+export async function legalDocuments(req, res) {
+  const { describeProjectLegalDocuments } = await import(
+    '../services/legal/legalAssignment.service.js'
+  );
+  return ok(res, await describeProjectLegalDocuments(req.params.projectId));
+}
+
+/**
+ * ASSIGNE les templates légaux d'un projet, puis PUBLIE dans la foulée.
+ *
+ * C'est le geste qui rend le système dynamique : après lui, le site affiche le
+ * nouveau document sans qu'aucun frontend n'ait été reconstruit. La publication
+ * est faite par le service, APRÈS l'écriture — voir sa doctrine.
+ */
+export async function assignLegalDocuments(req, res) {
+  const { assignProjectLegalDocuments } = await import(
+    '../services/legal/legalAssignment.service.js'
+  );
+  const actor = req.panelUser ? { userId: req.panelUser.userId, email: req.panelUser.email } : null;
+  return ok(res, await assignProjectLegalDocuments(req.params.projectId, req.body ?? {}, actor));
+}
+
+/**
+ * RESYNCHRONISE — republie les deux documents sans rien changer.
+ *
+ * Utile après une correction de fiche entreprise faite hors du chemin normal,
+ * ou pour un projet resté hors ligne au-delà de la fenêtre de rattrapage. Ne
+ * modifie AUCUNE affectation : c'est un geste de livraison, pas de décision.
+ */
+export async function resyncLegalDocuments(req, res) {
+  const { resyncProjectLegalDocuments } = await import(
+    '../services/legal/legalAssignment.service.js'
+  );
+  return ok(res, { published: await resyncProjectLegalDocuments(req.params.projectId) });
+}
+
 /**
  * RETIRED → EMPTY. L'opérateur constate qu'il ne reste rien sur le serveur.
  *

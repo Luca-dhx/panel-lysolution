@@ -246,6 +246,20 @@ const contactsSchema = new mongoose.Schema(
 const legalSchema = new mongoose.Schema(
   {
     legalForm: { type: String, default: null },
+    /**
+     * LE SIREN — ajouté pour les documents légaux, et séparé du SIRET.
+     *
+     * Même raison que sur `PanelClientCompany` : le SIRET identifie un
+     * ÉTABLISSEMENT et change au déménagement, le SIREN identifie la PERSONNE
+     * MORALE et ne change jamais. Le déduire par `siret.slice(0, 9)` aurait
+     * rendu le SIRET obligatoire pour obtenir le SIREN, alors qu'on connaît
+     * toujours le second et rarement le premier.
+     *
+     * Il reste `null` tant qu'un opérateur ne l'a pas saisi dans « Mon
+     * entreprise ». Aucun seed ne le remplit : une identité juridique devinée
+     * s'afficherait sur les mentions légales de TOUT le parc.
+     */
+    siren: { type: String, default: null },
     siret: { type: String, default: null },
     vatNumber: { type: String, default: null },
     rcs: { type: String, default: null },
