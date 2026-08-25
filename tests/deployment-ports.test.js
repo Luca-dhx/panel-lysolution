@@ -647,5 +647,47 @@ section('ARCHITECTURE — le moteur lit le serveur, l’application tient la bas
     /registre des ports/.test(service));
 }
 
+section('LE PORT EST ARRÊTÉ AVANT NGINX — la machine est l’autorité');
+{
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const lire = (...p) => fs.readFileSync(path.join(racine, ...p), 'utf8');
+
+  /**
+   * ══ L'INCIDENT QUE CETTE SECTION VERROUILLE ═══════════════════════════════
+   *
+   * `demo-fjservices06.ly-solution.com` a servi le site d'un AUTRE client : son
+   * Nginx proxifiait `/api/` vers un port que détenait le backend de
+   * `kleenpro`. La bonne vitrine lisait l'entreprise, le thème et le catalogue
+   * dans la base d'un tiers.
+   *
+   * `reservePort` est appelée SANS transport : elle ne consulte donc que la
+   * BASE, qui ignore tout des voisins sur un serveur PARTAGÉ.
+   * `ensureUsablePort` est la seule qui interroge la MACHINE — sockets réelles
+   * et process PM2 — et elle doit le faire AVANT que le port n'entre dans une
+   * configuration. `verifyBeforeStart`, à `services.start`, arrive après
+   * `nginx.configure` : elle protège le service, pas le locataire.
+   */
+  const executeur = lire('backend', 'src', 'services', 'deployment', 'deploymentExecutor.service.js');
+  const iAssure = executeur.indexOf('ports.ensureUsablePort(');
+  const iMoteur = executeur.indexOf('engine.deployWithReport(');
+
+  check('l’exécuteur oppose le registre à la machine', iAssure !== -1);
+  check('…AVANT d’entrer dans le moteur (donc avant `nginx.configure`)',
+    iAssure !== -1 && iMoteur !== -1 && iAssure < iMoteur);
+  check('…et la réservation de base ne suffit plus à elle seule',
+    executeur.indexOf('ports.reservePort(') < iAssure);
+  check('un déplacement est persisté sur la fiche de destination',
+    /\$set: \{ backendPort \} \}/.test(executeur));
+  check('le filet d’avant démarrage reste en place',
+    /ports\.verifyBeforeStart\(/.test(executeur));
+
+  const journal = lire('backend', 'src', 'services', 'deployment', 'forensics', 'runJournal.service.js');
+  check('`PORT_REASSIGNED` appartient au vocabulaire du journal',
+    /PORT_REASSIGNED: 'PORT_REASSIGNED'/.test(journal));
+}
+
 await stopMemoryMongo();
 finish();

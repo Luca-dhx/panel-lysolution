@@ -11,7 +11,9 @@
 // Dupliquer la logique ici la ferait diverger de SB Auto 06 dès la première
 // correction — c'est exactement ce que la Phase 2D interdit.
 import { DeploymentEngine } from '../../deployment-engine/DeploymentEngine.js';
-import { openSession, closeSession } from '../../deployment-engine/passwordVault.js';
+import { openSession, closeSession, getSession } from '../../deployment-engine/passwordVault.js';
+import { SshTransport } from '../../deployment-engine/transport/SshTransport.js';
+import { pm2AppName } from '../../deployment-engine/pm2.js';
 import { buildRemoteEnv } from '../../deployment-engine/deployEnv.js';
 import { canonicalStep } from '../../deployment-engine/steps.js';
 import { syncRuntimeNetworkConfiguration } from '../../deployment-engine/runtimeConfig.js';
@@ -290,11 +292,81 @@ async function deployWithFullReport({
    * destination vidée dont le port a été rendu en obtient un vérifié.
    */
   const reservation = await ports.reservePort({ target });
-  const backendPort = reservation.port;
+  let backendPort = reservation.port;
+
+  /**
+   * ══ LE REGISTRE NE VOIT QUE SA BASE — LA MACHINE, ELLE, VOIT TOUT ═════════
+   *
+   * ── L'INCIDENT QUI A IMPOSÉ CE BLOC ───────────────────────────────────────
+   *
+   * `demo-fjservices06.ly-solution.com` a servi le site d'un AUTRE client. Son
+   * Nginx proxifiait `/api/` vers `127.0.0.1:5102`, port que détenait le
+   * backend de `kleenpro` : la bonne vitrine allait chercher l'entreprise, le
+   * thème et le catalogue dans la base d'un tiers. Fuite inter-locataires,
+   * servie en HTTPS, sur le bon domaine.
+   *
+   * `reservePort` ci-dessus est appelée SANS transport. Or c'est le transport
+   * qui débloque les étapes 2 et 3 de l'allocation — lire les sockets réelles
+   * et les process PM2 du serveur. Sans lui, l'allocation ne consulte que la
+   * BASE, et la base d'un projet ignore tout de ses voisins sur un serveur
+   * PARTAGÉ. Le port rendu est donc « libre » au sens du registre, et pris au
+   * sens de la machine.
+   *
+   * ── POURQUOI ICI, ET PAS SEULEMENT AVANT LE DÉMARRAGE ────────────────────
+   *
+   * `verifyBeforeStart` (plus bas) attrapait déjà la collision — mais à
+   * l'étape `services.start`, c'est-à-dire APRÈS `nginx.configure`, APRÈS
+   * `https.configure` et APRÈS la bascule des artefacts. Le moteur refusait de
+   * démarrer, à raison, et laissait pourtant le domaine en ligne, câblé sur le
+   * backend du voisin. Un refus tardif protège le service ; il ne protège pas
+   * le locataire.
+   *
+   * Le port est donc arrêté ICI : avant le `.env` distant, avant Nginx, avant
+   * tout. `verifyBeforeStart` reste en place — elle couvre ce qui renaît entre
+   * cette vérification et le démarrage.
+   *
+   * Un service que NOUS détenons n'est jamais déplacé (`DETENU_PAR_NOUS`) : un
+   * redéploiement garde son port, sans quoi l'adresse du backend valserait
+   * derrière un Nginx qui, lui, n'aurait pas bougé.
+   */
+  const identifiantsVps = getSession(sessionId);
+  if (identifiantsVps) {
+    const transportPort = new SshTransport({
+      host: identifiantsVps.host,
+      username: identifiantsVps.username,
+      password: identifiantsVps.password,
+    });
+    try {
+      const verdict = await ports.ensureUsablePort({
+        target: { ...target, backendPort, id: target.targetId, _id: target.targetId },
+        transport: transportPort,
+        expectedPm2Name: pm2AppName(parsedTarget.host),
+      });
+      if (verdict.moved) {
+        backendPort = verdict.port;
+        log(`Port ${verdict.from} détenu sur le serveur par un autre service : `
+          + `réattribué à ${verdict.port} avant toute configuration.`, 'WARNING');
+        await journal(runId, {
+          source: SOURCES.PM2, level: LEVELS.WARNING, eventCode: EVENTS.PORT_REASSIGNED,
+          stepId: 'deployment.initialize', port: verdict.port,
+          message: `Port ${verdict.from} réattribué à ${verdict.port} avant configuration du serveur web.`,
+          details: { from: verdict.from, to: verdict.port, reason: verdict.reason },
+        }).catch(() => null);
+      }
+    } catch (err) {
+      /** Une vérification impossible n'autorise rien : on le DIT, et le filet d'avant démarrage reste bloquant. */
+      log(`Vérification du port contre la machine impossible (${err?.message ?? err}) — `
+        + 'le moteur tranchera avant démarrage.', 'WARNING');
+    } finally {
+      await transportPort.close?.().catch?.(() => null);
+    }
+  }
+
   if (backendPort !== target.backendPort) {
     log(`Port réattribué par le registre : ${target.backendPort} → ${backendPort}.`, 'WARNING');
     const PanelDeploymentTarget = (await import('../../models/PanelDeploymentTarget.model.js')).default;
     await PanelDeploymentTarget.updateOne({ targetId: target.targetId }, { $set: { backendPort } });
+    target.backendPort = backendPort;
   }
   // `buildRemoteEnv` retourne une ENVELOPPE { remoteEnv, dbName, env, sourcePath } :
   // seul `.remoteEnv` porte les variables. Étaler l'enveloppe n'envoyait aucune

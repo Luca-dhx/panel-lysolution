@@ -93,6 +93,13 @@ export const EVENTS = Object.freeze({
   PM2_PROCESS_UNSTABLE: 'PM2_PROCESS_UNSTABLE',
   SOCKET_OWNER_VERIFIED: 'SOCKET_OWNER_VERIFIED',
   PM2_PORT_NOT_OWNED: 'PM2_PORT_NOT_OWNED',
+  /**
+   * Le port réservé était détenu par un AUTRE service du serveur partagé : le
+   * registre en a pris un neuf, AVANT que Nginx ne soit écrit. Sans cette
+   * entrée, le déplacement ne vivrait que dans le journal de l'opérateur —
+   * alors qu'il change l'adresse du backend.
+   */
+  PORT_REASSIGNED: 'PORT_REASSIGNED',
   // Auto-redéploiement
   APPLICATION_RESTART_EXPECTED: 'APPLICATION_RESTART_EXPECTED',
   APPLICATION_RESTART_COMPLETED: 'APPLICATION_RESTART_COMPLETED',
