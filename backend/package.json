@@ -85,7 +85,8 @@
     "test:auth-rate-limit": "node ../tests/auth-rate-limit.test.js",
     "test:bridge-consumption": "node ../tests/bridge-consumption.test.js",
     "test:client-company-ui": "node ../tests/client-company-ui.test.js",
-    "migrate:irk-legal": "node src/scripts/migrations/2026-08-25-irk-tenant-and-privacy-v2.js"
+    "migrate:irk-legal": "node src/scripts/migrations/2026-08-25-irk-tenant-and-privacy-v2.js",
+    "migrate:ly-legal": "node src/scripts/migrations/2026-08-26-ly-solution-legal-templates.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
