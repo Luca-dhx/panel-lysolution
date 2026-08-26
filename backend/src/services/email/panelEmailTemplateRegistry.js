@@ -267,6 +267,36 @@ ${button('Choisir mon mot de passe', '{{auth.activationUrl}}')}
       { key: 'contact.name', label: 'Nom du contact', description: 'Nom saisi par le visiteur.', type: VARIABLE_TYPE.TEXT, required: true },
       { key: 'contact.email', label: 'E-mail du contact', description: 'Adresse saisie par le visiteur.', type: VARIABLE_TYPE.EMAIL, required: true },
       { key: 'contact.phone', label: 'Téléphone du contact', description: 'Téléphone saisi (facultatif).', type: VARIABLE_TYPE.PHONE, required: false },
+      /**
+       * ── L'ENTREPRISE QUI ÉCRIT, ET SON ACTIVITÉ ──────────────────────────
+       *
+       * ══ POURQUOI ELLES ENTRENT AU CONTRAT ══════════════════════════════
+       *
+       * Certains sites du parc ne s'adressent pas à des particuliers. Sur le
+       * site de L.Y Solution, le formulaire demande d'abord l'ENTREPRISE et
+       * son ACTIVITÉ — c'est la première chose qu'on veut savoir d'une
+       * demande, et « Atelier Dupont, ébénisterie » dit ce que
+       * « j***@exemple.fr » ne dira jamais.
+       *
+       * Sans déclaration ici, ces deux valeurs sont refusées au rendu :
+       * « Variable inconnue — les variables sont définies dans le code ».
+       * Le formulaire les collectait, le résolveur les servait, et le gabarit
+       * ne pouvait pas les afficher.
+       *
+       * ══ POURQUOI FACULTATIVES, ET C'EST LE POINT ═══════════════════════
+       *
+       * Ce contrat est partagé par TOUS les projets qui envoient cette
+       * notification. Les sites de karting et de detailing du parc n'ont pas
+       * ces champs : leur résolveur ne les sert pas. En `required: true`, leur
+       * prochain envoi échouerait en variable manquante — une régression
+       * silencieuse chez six clients pour une amélioration chez un seul.
+       *
+       * Facultatives, elles sont disponibles pour qui les remplit et
+       * invisibles pour les autres. Un gabarit qui ne les cite pas se rend
+       * exactement comme avant.
+       */
+      { key: 'contact.company', label: 'Entreprise du contact', description: "Raison sociale ou enseigne saisie par le visiteur. Vide sur les sites qui ne la demandent pas.", type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'contact.activity', label: 'Activité du contact', description: "Métier du visiteur, en quelques mots. Vide sur les sites qui ne la demandent pas.", type: VARIABLE_TYPE.TEXT, required: false },
       { key: 'contact.reason', label: 'Motif', description: 'Motif de la demande.', type: VARIABLE_TYPE.TEXT, required: false },
       { key: 'contact.message', label: 'Message', description: 'Message libre. Rendu en texte : les retours à la ligne sont préservés, le HTML ne l’est pas.', type: VARIABLE_TYPE.TEXT, required: true },
       { key: 'contact.submittedAt', label: 'Date de dépôt', description: 'Date et heure de la soumission.', type: VARIABLE_TYPE.DATETIME, required: true },
@@ -278,6 +308,8 @@ ${button('Choisir mon mot de passe', '{{auth.activationUrl}}')}
       'contact.name': 'Jean Dupont (exemple)',
       'contact.email': 'jean.dupont@exemple.fr',
       'contact.phone': '+33 6 12 34 56 78',
+      'contact.company': 'Atelier Dupont (exemple)',
+      'contact.activity': 'Ébénisterie',
       'contact.reason': 'Demande de devis',
       'contact.message':
         "Bonjour,\n\nJe souhaite un devis pour la révision d'une Clio IV.\n\nCordialement,\nJean Dupont",
