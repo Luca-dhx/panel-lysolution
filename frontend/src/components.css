@@ -4825,14 +4825,24 @@ body {
    hexadécimal — changer le thème repeint ces deux boutons comme le reste.
    `--p-background` pour le texte : c'est le fond du Panel, donc toujours le
    contraste maximal avec un aplat de couleur, sur thème clair comme sombre. */
-.task-btn-done,
-.task-btn-postpone {
+/* LE SÉLECTEUR PORTE LA BALISE, ET C'EST LA MOITIÉ QUI COMPTE.
+
+   `.task-btn-done` seul PERDAIT : les utilitaires Tailwind sont importés APRÈS
+   cette feuille, et à spécificité égale — une classe contre une classe — c'est
+   l'ordre qui tranche. Le bouton sortait bleu, la couleur de `primary`.
+   Vérifié sur l'instance : `rgb(59, 130, 246)` sur les deux.
+
+   `button.task-btn-done` vaut (0,1,1) et bat un utilitaire à (0,1,0), sans
+   recourir à `!important` — qui aurait aussi écrasé les états de focus et de
+   désactivation que le composant gère très bien. */
+button.task-btn-done,
+button.task-btn-postpone {
   color: var(--p-background);
   border-color: transparent;
 }
 
-.task-btn-done { background-color: var(--p-ok); }
-.task-btn-done:hover { background-color: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground)); }
+button.task-btn-done { background-color: var(--p-ok); }
+button.task-btn-done:hover { background-color: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground)); }
 
-.task-btn-postpone { background-color: var(--p-warn); }
-.task-btn-postpone:hover { background-color: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground)); }
+button.task-btn-postpone { background-color: var(--p-warn); }
+button.task-btn-postpone:hover { background-color: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground)); }

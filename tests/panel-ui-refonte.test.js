@@ -488,8 +488,19 @@ section('13. Les tâches : deux décisions, deux couleurs, et un choix multiple'
    * `hover:bg-utility-green-600`, qui n'etait emis dans AUCUNE des feuilles.
    */
   check('les deux styles sont de vraies règles, pas des utilitaires absents',
-    /\.task-btn-done\s*\{/.test(css) && /\.task-btn-postpone\s*\{/.test(css)
-    && /\.task-btn-done:hover/.test(css) && /\.task-btn-postpone:hover/.test(css));
+    /button\.task-btn-done\s*\{/.test(css) && /button\.task-btn-postpone\s*\{/.test(css)
+    && /button\.task-btn-done:hover/.test(css) && /button\.task-btn-postpone:hover/.test(css));
+  /**
+   * LE SELECTEUR PORTE LA BALISE, ET C'EST LA MOITIE QUI COMPTE.
+   *
+   * `.task-btn-done` seul PERDAIT : les utilitaires Tailwind sont importes
+   * APRES `components.css`, et a specificite egale -- une classe contre une
+   * classe -- c'est l'ordre qui tranche. Le bouton sortait bleu, la couleur de
+   * `primary`. Constate sur l'instance deployee : `rgb(59, 130, 246)` sur les
+   * deux boutons, alors que les regles etaient bien emises.
+   */
+  check('…et leur sélecteur porte la balise, sinon Tailwind l’emporte',
+    !/(^|[^n])\.task-btn-done\s*[,{]/m.test(css.replace(/button\.task-btn-done/g, 'BTNDONE')));
   /* ET DANS LE VOCABULAIRE DU PANEL : sinon les boutons ne suivraient pas le
      theme, et seuls eux resteraient de la couleur d'hier. */
   const regles = (css.match(/\.task-btn-[\s\S]*?$/) || [''])[0];
