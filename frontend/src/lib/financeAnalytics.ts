@@ -31,6 +31,26 @@ import type {
   FinanceSeriesPoint,
 } from '@/types.finance';
 
+/** Le fuseau du registre financier, quand la période ne le précise pas. */
+const FUSEAU_PAR_DEFAUT = 'Europe/Paris';
+
+/**
+ * UN INSTANT, RENDU EN DATE CIVILE DANS LE FUSEAU DU REGISTRE.
+ *
+ * `en-CA` produit `AAAA-MM-JJ`, qui est exactement la forme que la route
+ * attend. Passer par `toISOString().slice(0, 10)` aurait donné la date UTC :
+ * à Paris en été, un instant du 1er août à 01 h serait devenu le 31 juillet, et
+ * la fenêtre de comparaison aurait glissé d'un jour deux fois par an.
+ */
+function dateCivile(instant: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(instant));
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    L'ÉVOLUTION DANS LE TEMPS
    ══════════════════════════════════════════════════════════════════════════ */
@@ -54,23 +74,58 @@ export interface EvolutionRow extends Record<string, unknown> {
   inflowCents: number;
   outflowCents: number;
   netCents: number;
+  /**
+   * VRAI si le serveur a rendu un seau ici — FAUX si c'est nous qui l'avons
+   * posé à zéro pour tenir l'axe.
+   *
+   * Le serveur ne renvoie QUE les périodes où il s'est passé quelque chose, et
+   * il a raison de le faire : « il ne s'est rien passé » et « le solde est
+   * resté à zéro » ne sont pas la même phrase, et la différence compte quand on
+   * cherche un oubli de saisie.
+   *
+   * L'axe, lui, a besoin de tous les seaux. Ce drapeau est ce qui permet de
+   * TRACER l'un sans AFFIRMER l'autre : l'infobulle d'un seau creux dit
+   * « aucun mouvement », pas « 0,00 € ».
+   */
+  hasData: boolean;
 }
 
 /**
- * LE SEAU EST UNE DATE CIVILE, PAS UN INSTANT.
+ * LE SEAU EST UN INSTANT, ET IL FAUT LE LIRE DANS LE FUSEAU DE LA PÉRIODE.
  *
- * Le serveur rend `bucket` sous la forme `AAAA-MM-JJ`, `AAAA-MM` ou `AAAA`
- * selon la granularité, dans le FUSEAU de la période. Le passer à
- * `new Date("2026-08-27")` le lit comme minuit UTC : à Paris en été, le point
- * se serait affiché la veille à 22 h — et un mouvement du 1er du mois serait
- * apparu le dernier jour du mois précédent.
+ * ══ CE QUE LE SERVEUR REND VRAIMENT ════════════════════════════════════════
  *
- * On construit donc la date en heure LOCALE du navigateur, à midi. Midi, et
- * non minuit : c'est la seule heure qui survit à un décalage d'un fuseau dans
- * les deux sens sans changer de jour.
+ * `$dateTrunc` tronque dans `Europe/Paris`, puis `buildSeries` sérialise en
+ * `toISOString()`. Un seau n'est donc PAS `2026-08-22` : c'est
+ * `2026-08-21T22:00:00.000Z` — le 22 août à minuit, heure de Paris, écrit en
+ * UTC.
+ *
+ * ══ CE QUE LE DÉCOUPAGE NAÏF EN FAISAIT ════════════════════════════════════
+ *
+ * Une version antérieure découpait la chaîne sur les tirets : elle lisait
+ * `["2026", "08", "21T22:00:00.000Z"]`, retenait le jour 21, et affichait
+ * « 21 août » pour des mouvements du 22. En granularité mensuelle, le décalage
+ * portait sur le MOIS : `2026-07-31T22:00:00.000Z` est le 1er août à Paris, et
+ * se lisait « juil. 26 ».
+ *
+ * Le chiffre était juste ; c'est la date écrite à côté qui était fausse — le
+ * genre d'erreur qu'on ne voit pas, parce qu'on la croit.
+ *
+ * ── CE QUE CETTE FONCTION REND ─────────────────────────────────────────────
+ * Une date à MIDI en heure locale du navigateur, portant les parties civiles
+ * du seau telles qu'elles se lisent dans le fuseau de la période. Midi, et non
+ * minuit : c'est la seule heure qui survit à un décalage d'un fuseau dans les
+ * deux sens sans changer de jour — et le tracé comme l'étiquette n'ont besoin
+ * que du jour.
+ *
+ * Une borne déjà civile (`AAAA-MM-JJ`, sans heure) est acceptée telle quelle :
+ * il n'y a alors rien à convertir.
  */
-export function parseBucket(bucket: string): Date {
-  const [annee, mois, jour] = bucket.split('-').map((n) => Number.parseInt(n, 10));
+export function parseBucket(bucket: string, timeZone: string = FUSEAU_PAR_DEFAUT): Date {
+  const civile = bucket.includes('T')
+    ? dateCivile(new Date(bucket).getTime(), timeZone)
+    : bucket;
+  const [annee, mois, jour] = civile.split('-').map((n) => Number.parseInt(n, 10));
   return new Date(
     annee,
     Number.isFinite(mois) ? mois - 1 : 0,
@@ -100,9 +155,10 @@ export function formatBucketLabel(date: Date, granularity: FinancePeriod['granul
 export function toEvolutionRows(
   series: FinanceSeriesPoint[],
   granularity: FinancePeriod['granularity'],
+  timeZone: string = FUSEAU_PAR_DEFAUT,
 ): EvolutionRow[] {
   return series.map((point) => {
-    const date = parseBucket(point.bucket);
+    const date = parseBucket(point.bucket, timeZone);
     return {
       date,
       label: formatBucketLabel(date, granularity),
@@ -112,21 +168,195 @@ export function toEvolutionRows(
       inflowCents: point.inflowCents,
       outflowCents: point.outflowCents,
       netCents: point.netCents,
+      hasData: true,
     };
   });
 }
 
+/* --------------------------------------------------------------------------
+   L'AXE COUVRE LA PERIODE, PAS SEULEMENT LES JOURS OU IL S'EST PASSE QUELQUE
+   CHOSE
+   -------------------------------------------------------------------------- */
+
 /**
- * UN GRAPHIQUE A BESOIN D'AU MOINS DEUX POINTS POUR ÊTRE UNE COURBE.
+ * LA CLEF CIVILE D'UN SEAU, DANS LE FUSEAU DE LA PERIODE.
  *
- * Avec un seul seau, une courbe est un point isolé et une aire un trait : le
- * lecteur y voit une panne d'affichage. L'écran montre alors le chiffre, pas
- * le tracé. Zéro point n'est pas une erreur non plus — c'est une période sans
- * mouvement, et elle se dit avec des mots.
+ * `2026-08-21T22:00:00.000Z` a Paris devient `2026-08-22` au jour, `2026-08` au
+ * mois, `2026` a l'annee. C'est par cette clef, et jamais par l'instant brut,
+ * qu'un seau du serveur retrouve sa place sur l'axe : deux instants differents
+ * peuvent designer le meme jour civil, et c'est le jour civil qu'on affiche.
  */
-export function evolutionState(rows: EvolutionRow[]): 'empty' | 'single' | 'ready' {
+function clefDeSeau(
+  instant: number,
+  granularity: FinancePeriod['granularity'],
+  timeZone: string,
+): string {
+  const civile = dateCivile(instant, timeZone);
+  if (granularity === 'year') return civile.slice(0, 4);
+  if (granularity === 'month') return civile.slice(0, 7);
+  return civile;
+}
+
+/** Les parties civiles d'une clef, quelle que soit sa longueur. */
+function partiesDeClef(clef: string): { annee: number; mois: number; jour: number } {
+  const [annee, mois, jour] = clef.split('-').map((n) => Number.parseInt(n, 10));
+  return {
+    annee,
+    mois: Number.isFinite(mois) ? mois : 1,
+    jour: Number.isFinite(jour) ? jour : 1,
+  };
+}
+
+/**
+ * GARDE-FOU. La granularite du serveur borne deja le nombre de seaux -- au jour
+ * jusqu'a 62 jours, au mois jusqu'a deux ans -- mais une periode aberrante ne
+ * doit pas pouvoir faire boucler l'ecran.
+ */
+const SEAUX_MAX = 400;
+
+/**
+ * TOUS LES SEAUX DE LA PERIODE, DANS L'ORDRE, LES CREUX COMPRIS.
+ *
+ * == POURQUOI L'ECRAN COMBLE CE QUE LE SERVEUR LAISSE VIDE ==================
+ *
+ * Le serveur ne rend que les periodes ou il s'est passe quelque chose, et son
+ * commentaire dit pourquoi : inventer trente points nuls ferait lire « le
+ * benefice est reste a zero » la ou la verite est « il ne s'est rien passe ».
+ * Cette distinction est JUSTE, et elle est conservee -- chaque seau comble
+ * porte `hasData: false`, et l'infobulle d'un seau creux dit « aucun
+ * mouvement ».
+ *
+ * Ce qu'un axe creux coutait, en revanche : un mois entier se resumait a un
+ * point isole, sans echelle de temps. On ne voyait pas QUAND dans le mois, ni
+ * combien de jours etaient restes sans mouvement. Un graphique dont l'axe
+ * horizontal ne couvre pas la periode qu'il annonce ne repond pas a la question
+ * qu'on lui pose.
+ *
+ * Poser zero n'est d'ailleurs pas fabriquer une donnee : l'absence de mouvement
+ * un jour donne VAUT zero euro ce jour-la. Ce qui serait fabrique, ce serait
+ * d'interpoler, de lisser, ou de prolonger une tendance -- et rien de tout cela
+ * n'est fait ici.
+ *
+ * == LES BORNES SONT SEMI-OUVERTES =========================================
+ *
+ * `[startsAt, endsAt[`. Le dernier seau a couvrir est donc celui qui contient
+ * `endsAt` moins un instant : pour le mois d'aout, `endsAt` est le 1er
+ * septembre a minuit, et l'axe s'arrete au 31 aout.
+ *
+ * == « DEPUIS TOUJOURS » N'A PAS DE BORNES ==================================
+ *
+ * La periode `ALL` rend `startsAt: null`. L'axe part alors du premier seau
+ * RECU -- le premier fait connu -- et court jusqu'a aujourd'hui. Sans le
+ * moindre mouvement ET sans bornes, il n'y a rien a dessiner : la fonction rend
+ * une liste vide, et l'ecran le dit avec des mots.
+ */
+export function densifyEvolution(
+  series: FinanceSeriesPoint[],
+  period: FinancePeriod,
+  maintenant: number = Date.now(),
+): EvolutionRow[] {
+  const fuseau = period.timezone || FUSEAU_PAR_DEFAUT;
+  const granularite = period.granularity;
+
+  const recus = new Map<string, FinanceSeriesPoint>();
+  for (const point of series) {
+    recus.set(clefDeSeau(new Date(point.bucket).getTime(), granularite, fuseau), point);
+  }
+
+  const instantsRecus = series.map((p) => new Date(p.bucket).getTime());
+  const debut = period.startsAt
+    ? new Date(period.startsAt).getTime()
+    : (instantsRecus.length ? Math.min(...instantsRecus) : null);
+  if (debut === null) return [];
+
+  /*
+    Le dernier instant COUVERT, borne haute exclue. On retire une milliseconde
+    plutot qu'un jour : a la granularite mensuelle, retirer un jour ferait
+    perdre le dernier mois d'une periode qui s'arrete pile au premier du mois
+    suivant.
+  */
+  const finBrute = period.endsAt ? new Date(period.endsAt).getTime() - 1 : maintenant;
+  const fin = Math.max(finBrute, instantsRecus.length ? Math.max(...instantsRecus) : finBrute);
+
+  const clefFin = clefDeSeau(fin, granularite, fuseau);
+  const lignes: EvolutionRow[] = [];
+  const curseur = partiesDeClef(clefDeSeau(debut, granularite, fuseau));
+
+  for (let garde = 0; garde < SEAUX_MAX; garde += 1) {
+    const aa = String(curseur.annee).padStart(4, '0');
+    const mm = String(curseur.mois).padStart(2, '0');
+    const jj = String(curseur.jour).padStart(2, '0');
+    const clef = granularite === 'year'
+      ? aa
+      : granularite === 'month' ? `${aa}-${mm}` : `${aa}-${mm}-${jj}`;
+
+    const date = new Date(curseur.annee, curseur.mois - 1, curseur.jour, 12, 0, 0, 0);
+    const point = recus.get(clef);
+    lignes.push({
+      date,
+      label: formatBucketLabel(date, granularite),
+      inflow: (point?.inflowCents ?? 0) / 100,
+      outflow: (point?.outflowCents ?? 0) / 100,
+      net: (point?.netCents ?? 0) / 100,
+      inflowCents: point?.inflowCents ?? 0,
+      outflowCents: point?.outflowCents ?? 0,
+      netCents: point?.netCents ?? 0,
+      hasData: point !== undefined,
+    });
+
+    if (clef >= clefFin) break;
+
+    /*
+      L'avancee se fait sur le CALENDRIER, jamais en ajoutant 86 400 000 ms :
+      un jour d'octobre dure vingt-cinq heures a Paris, et une arithmetique en
+      millisecondes produirait deux fois le meme jour civil.
+    */
+    if (granularite === 'year') {
+      curseur.annee += 1;
+    } else if (granularite === 'month') {
+      curseur.mois += 1;
+      if (curseur.mois > 12) { curseur.mois = 1; curseur.annee += 1; }
+    } else {
+      const suivant = new Date(Date.UTC(curseur.annee, curseur.mois - 1, curseur.jour));
+      suivant.setUTCDate(suivant.getUTCDate() + 1);
+      curseur.annee = suivant.getUTCFullYear();
+      curseur.mois = suivant.getUTCMonth() + 1;
+      curseur.jour = suivant.getUTCDate();
+    }
+  }
+
+  return lignes;
+}
+
+/**
+ * CE QUE L'ÉCRAN PEUT TRACER.
+ *
+ * ══ POURQUOI « UN SEUL POINT » A DISPARU ═══════════════════════════════════
+ *
+ * Cet état existait parce que l'axe ne portait que les seaux REÇUS : un mois
+ * entier se réduisait alors à un point isolé, et un point isolé ressemble à une
+ * panne d'affichage plus qu'à une information. L'écran renonçait donc au tracé
+ * et montrait les trois chiffres.
+ *
+ * `densifyEvolution` a supprimé la cause : l'axe couvre désormais la période
+ * ANNONCÉE, du premier au dernier seau, creux compris. Un mouvement isolé le
+ * 22 août se lit sur trente et un jours, à sa place — ce qui est précisément ce
+ * qu'on demande à un graphique d'évolution.
+ *
+ * ══ IL RESTE DEUX ÉTATS, ET UN SEUL EMPÊCHE DE DESSINER ════════════════════
+ *
+ *   `empty`     aucun seau à porter. Cela n'arrive plus que pour « depuis
+ *               toujours » sur un registre vide : sans bornes ET sans fait, il
+ *               n'y a aucun axe à construire. Cela se dit avec des mots.
+ *   `barren`    l'axe existe et la période est couverte, mais AUCUN seau ne
+ *               porte de mouvement. On trace — l'échelle de temps est une
+ *               information — et on ajoute une phrase, parce qu'un graphique
+ *               plat sans explication laisse croire à une panne de chargement.
+ *   `ready`     au moins un mouvement dans la période.
+ */
+export function evolutionState(rows: EvolutionRow[]): 'empty' | 'barren' | 'ready' {
   if (rows.length === 0) return 'empty';
-  if (rows.length === 1) return 'single';
+  if (!rows.some((r) => r.hasData)) return 'barren';
   return 'ready';
 }
 
@@ -139,26 +369,6 @@ export interface ComparableWindow {
   start: string;
   /** `AAAA-MM-JJ`, INCLUSE elle aussi. */
   end: string;
-}
-
-/** Le fuseau du registre financier, quand la période ne le précise pas. */
-const FUSEAU_PAR_DEFAUT = 'Europe/Paris';
-
-/**
- * UN INSTANT, RENDU EN DATE CIVILE DANS LE FUSEAU DU REGISTRE.
- *
- * `en-CA` produit `AAAA-MM-JJ`, qui est exactement la forme que la route
- * attend. Passer par `toISOString().slice(0, 10)` aurait donné la date UTC :
- * à Paris en été, un instant du 1er août à 01 h serait devenu le 31 juillet, et
- * la fenêtre de comparaison aurait glissé d'un jour deux fois par an.
- */
-function dateCivile(instant: number, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(instant));
 }
 
 /**
@@ -421,7 +631,9 @@ export default {
   parseBucket,
   formatBucketLabel,
   toEvolutionRows,
+  densifyEvolution,
   evolutionState,
+  missingProjectLabel,
   previousWindow,
   computeTrend,
   formatTrendRatio,

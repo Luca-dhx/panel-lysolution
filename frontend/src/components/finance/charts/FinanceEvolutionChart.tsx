@@ -48,8 +48,8 @@ import { XAxis } from '@/components/charts/x-axis';
 import { YAxis } from '@/components/charts/y-axis';
 import { ChartTooltip } from '@/components/charts/tooltip';
 import { EmptyPanel } from '@/components/ui-kit';
-import { formatCents, formatCompactCents, formatNetCents, netTone } from '@/lib/money';
-import { evolutionState, toEvolutionRows } from '@/lib/financeAnalytics';
+import { formatCents, formatCompactCents, formatNetCents } from '@/lib/money';
+import { densifyEvolution, evolutionState } from '@/lib/financeAnalytics';
 import type { EvolutionRow } from '@/lib/financeAnalytics';
 import type { FinanceSummary } from '@/types.finance';
 
@@ -75,8 +75,8 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
    * graphique. C'est visible, et c'est agaçant.
    */
   const rows = useMemo<EvolutionRow[]>(
-    () => toEvolutionRows(summary.series, summary.period.granularity),
-    [summary.series, summary.period.granularity],
+    () => densifyEvolution(summary.series, summary.period),
+    [summary.series, summary.period],
   );
 
   const etat = evolutionState(rows);
@@ -87,45 +87,6 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
         title="Aucun mouvement sur cette période"
         hint="Élargissez la période, ou enregistrez un premier mouvement."
       />
-    );
-  }
-
-  if (etat === 'single') {
-    // Un seul seau : le chiffre, pas le tracé. On nomme le seau pour qu'on
-    // sache de quoi on parle.
-    const seul = rows[0];
-    return (
-      <div className="uui flex flex-wrap items-baseline gap-x-6 gap-y-2 px-1 py-6">
-        <div>
-          <p className="text-xs text-tertiary">Encaissé — {seul.label}</p>
-          <p className="text-display-xs font-semibold text-utility-green-700">
-            {formatCents(seul.inflowCents)}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-tertiary">Sorties</p>
-          <p className="text-display-xs font-semibold text-utility-red-700">
-            {formatCents(seul.outflowCents)}
-          </p>
-        </div>
-        <div>
-          <p className="text-xs text-tertiary">Net</p>
-          <p
-            className={
-              netTone(seul.netCents) === 'ok'
-                ? 'text-display-xs font-semibold text-utility-green-700'
-                : netTone(seul.netCents) === 'danger'
-                  ? 'text-display-xs font-semibold text-utility-red-700'
-                  : 'text-display-xs font-semibold text-primary'
-            }
-          >
-            {formatNetCents(seul.netCents)}
-          </p>
-        </div>
-        <p className="w-full text-xs text-quaternary">
-          Un seul point sur cette période : une courbe n’y apprendrait rien.
-        </p>
-      </div>
     );
   }
 
@@ -151,8 +112,12 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
    *     aux technologies d'assistance. C'est l'équivalent moderne des `<title>`
    *     d'avant, en plus complet : chaque seau y porte ses trois montants.
    */
+  const porteurs = rows.filter((r) => r.hasData).length;
   const resume = `Évolution sur ${rows.length} points, du ${rows[0].label} au `
-    + `${rows[rows.length - 1].label}. Encaissements, sorties et bénéfice net.`;
+    + `${rows[rows.length - 1].label}. Encaissements, sorties et bénéfice net. `
+    + (porteurs === 0
+      ? 'Aucun mouvement sur cette période.'
+      : `${porteurs} période${porteurs > 1 ? 's' : ''} avec au moins un mouvement.`);
 
   return (
     <div className="uui">
@@ -202,6 +167,17 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
            */
           rows={(point) => {
             const ligne = point as unknown as EvolutionRow;
+            /*
+              UN SEAU CREUX N'EST PAS UN SOLDE NUL.
+              Le serveur ne rend que les périodes où il s'est passé quelque
+              chose ; les autres sont posées à zéro pour tenir l'axe. Écrire
+              « 0,00 € » ferait lire « le bénéfice est resté à zéro » là où la
+              vérité est « il ne s'est rien passé » — et cette différence est
+              exactement ce qu'on regarde quand on cherche un oubli de saisie.
+            */
+            if (!ligne.hasData) {
+              return [{ label: 'Aucun mouvement', value: '—', color: COULEURS.net }];
+            }
             return [
               { label: 'Encaissé', value: formatCents(ligne.inflowCents), color: COULEURS.inflow },
               { label: 'Sorties', value: formatCents(ligne.outflowCents), color: COULEURS.outflow },
@@ -231,9 +207,15 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
           {rows.map((ligne) => (
             <tr key={ligne.label}>
               <th scope="row">{ligne.label}</th>
-              <td>{formatCents(ligne.inflowCents)}</td>
-              <td>{formatCents(ligne.outflowCents)}</td>
-              <td>{formatNetCents(ligne.netCents)}</td>
+              {ligne.hasData ? (
+                <>
+                  <td>{formatCents(ligne.inflowCents)}</td>
+                  <td>{formatCents(ligne.outflowCents)}</td>
+                  <td>{formatNetCents(ligne.netCents)}</td>
+                </>
+              ) : (
+                <td colSpan={3}>Aucun mouvement</td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -245,6 +227,21 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
         écrasait le tracé qu'elle explique. Trois puces sur une ligne suffisent :
         il n'y a que trois séries, et elles ne se masquent pas.
       */}
+      {/*
+        UNE PÉRIODE SANS LE MOINDRE MOUVEMENT SE TRACE QUAND MÊME.
+
+        L'échelle de temps EST une information : elle dit sur quoi porte le
+        silence. Mais un tracé plat sans un mot laisse croire à un chargement
+        qui n'a pas abouti — d'où la phrase, sous le graphique et non à sa
+        place.
+      */}
+      {etat === 'barren' ? (
+        <p className="mt-3 text-xs text-quaternary">
+          Aucun mouvement sur cette période. L’axe couvre tout de même la
+          période choisie.
+        </p>
+      ) : null}
+
       <ul className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1">
         {[
           { label: 'Encaissé', color: COULEURS.inflow },

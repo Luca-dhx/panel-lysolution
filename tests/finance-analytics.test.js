@@ -37,6 +37,7 @@ const analytics = await import('../frontend/src/lib/financeAnalytics.ts');
 const {
   parseBucket,
   toEvolutionRows,
+  densifyEvolution,
   evolutionState,
   previousWindow,
   computeTrend,
@@ -116,12 +117,167 @@ section('2. La série du serveur est reprise, pas recalculée');
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
-section('3. Un tracé demande au moins deux points');
+section('3. L’axe couvre la période annoncée, les jours creux compris');
 {
-  check('aucun seau : la période est vide', evolutionState([]) === 'empty');
-  check('un seul seau : on montre le chiffre, pas la courbe',
-    evolutionState([{}]) === 'single');
-  check('deux seaux : le tracé a un sens', evolutionState([{}, {}]) === 'ready');
+  /**
+   * -- CE QUE CETTE SECTION VERIFIAIT AVANT, ET POURQUOI ELLE A CHANGE ------
+   *
+   * Elle exigeait « au moins deux points pour tracer », et l'ecran renoncait au
+   * graphique quand le serveur n'avait rendu qu'un seau. La regle etait saine
+   * tant que l'axe ne portait QUE les seaux recus : un point isole ressemble a
+   * une panne d'affichage.
+   *
+   * `densifyEvolution` a supprime la cause. L'axe couvre desormais la periode
+   * ANNONCEE -- du 1er au 31 aout, meme si un seul jour porte un mouvement --
+   * et un point isole retrouve sa place dans le temps, ce qui est precisement
+   * ce qu'on demande a un graphique d'evolution.
+   *
+   * L'intention verifiee ici n'est donc plus « combien de points » mais
+   * « l'ecran sait-il distinguer un axe vide d'un axe sans mouvement ».
+   */
+  check('aucun seau : il n’y a pas d’axe à dessiner', evolutionState([]) === 'empty');
+  check('un axe entier sans le moindre mouvement se DIT, et se trace',
+    evolutionState([{ hasData: false }, { hasData: false }]) === 'barren');
+  check('un seul mouvement suffit pour que le tracé porte quelque chose',
+    evolutionState([{ hasData: false }, { hasData: true }, { hasData: false }]) === 'ready');
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('3 bis. La densification : combler sans inventer');
+{
+  /** Une periode telle que le serveur la rend : bornes SEMI-OUVERTES. */
+  const aout = {
+    period: 'CURRENT_MONTH',
+    startsAt: '2026-07-31T22:00:00.000Z',   // 1er aout 00 h, Paris
+    endsAt: '2026-08-31T22:00:00.000Z',     // 1er septembre 00 h, Paris — EXCLU
+    timezone: 'Europe/Paris',
+    granularity: 'day',
+  };
+  /** Le seul mouvement du parc : le 22 aout, heure de Paris. */
+  const unMouvement = [
+    { bucket: '2026-08-21T22:00:00.000Z', inflowCents: 135586, outflowCents: 4457, netCents: 131129 },
+  ];
+
+  const lignes = densifyEvolution(unMouvement, aout);
+  check('un mois entier tient sur l’axe, pas un point isolé', lignes.length === 31);
+
+  /**
+   * LES BORNES SONT SEMI-OUVERTES. `endsAt` est le 1er septembre a minuit :
+   * l'axe doit s'arreter au 31 aout. Une soustraction d'un jour au lieu d'une
+   * milliseconde aurait fait perdre le dernier seau.
+   */
+  check('…le premier jour est le 1er, le dernier le 31',
+    lignes[0].date.getDate() === 1 && lignes[0].date.getMonth() === 7
+    && lignes[30].date.getDate() === 31 && lignes[30].date.getMonth() === 7);
+
+  /**
+   * -- LA REGRESSION QUI A MOTIVE TOUT LE RESTE -----------------------------
+   *
+   * Le serveur rend un INSTANT (`$dateTrunc` dans Europe/Paris, serialise en
+   * UTC), pas une date civile. Un decoupage naif sur les tirets lisait
+   * `["2026", "08", "21T22:00:00.000Z"]`, retenait le jour 21, et affichait
+   * « 21 aout » pour des mouvements du 22.
+   *
+   * Le chiffre etait juste ; c'est la date ecrite a cote qui etait fausse.
+   */
+  const porteurs = lignes.filter((l) => l.hasData);
+  check('LE SEAU TOMBE LE BON JOUR — le 22, pas le 21',
+    porteurs.length === 1 && porteurs[0].date.getDate() === 22);
+  check('…et il porte les montants du serveur, au centime',
+    porteurs[0].inflowCents === 135586 && porteurs[0].netCents === 131129);
+
+  /**
+   * ON COMBLE, ON N'INVENTE PAS. Un seau pose a zero est MARQUE comme tel :
+   * c'est ce drapeau qui permet a l'infobulle de dire « aucun mouvement »
+   * plutot que « 0,00 € », et les deux phrases ne veulent pas dire la meme
+   * chose quand on cherche un oubli de saisie.
+   */
+  check('les jours comblés sont MARQUÉS comme creux',
+    lignes.filter((l) => !l.hasData).length === 30
+    && lignes.filter((l) => !l.hasData).every((l) => l.inflowCents === 0 && l.netCents === 0));
+
+  /**
+   * ET LE TOTAL NE BOUGE PAS. Trente zeros ajoutes a une somme la laissent
+   * inchangee -- c'est l'argument qui rend le comblement honnete : il ajoute
+   * des reperes de temps, aucune valeur.
+   */
+  const sommeAvant = unMouvement.reduce((t, p) => t + p.inflowCents, 0);
+  const sommeApres = lignes.reduce((t, l) => t + l.inflowCents, 0);
+  check('COMBLER N’AJOUTE PAS UN CENTIME', sommeAvant === sommeApres);
+
+  /**
+   * -- LA GRANULARITE MENSUELLE, OU LE DECALAGE PORTAIT SUR LE MOIS ---------
+   *
+   * `2026-07-31T22:00:00.000Z` est le 1er AOUT a Paris. Le decoupage naif le
+   * lisait « juil. 26 ».
+   */
+  const annee = {
+    period: 'CURRENT_YEAR',
+    startsAt: '2025-12-31T23:00:00.000Z',   // 1er janvier 2026, Paris
+    endsAt: '2026-12-31T23:00:00.000Z',     // 1er janvier 2027, Paris — EXCLU
+    timezone: 'Europe/Paris',
+    granularity: 'month',
+  };
+  const mois = densifyEvolution(
+    [{ bucket: '2026-07-31T22:00:00.000Z', inflowCents: 135586, outflowCents: 4457, netCents: 131129 }],
+    annee,
+  );
+  check('une année tient en douze seaux', mois.length === 12);
+  check('LE SEAU TOMBE LE BON MOIS — août, pas juillet',
+    mois.filter((m) => m.hasData).length === 1
+    && mois.filter((m) => m.hasData)[0].date.getMonth() === 7);
+
+  /**
+   * -- LE PASSAGE A L'HEURE D'HIVER -----------------------------------------
+   *
+   * Octobre compte trente et un jours, dont un de vingt-cinq heures. Une
+   * avancee « + 86 400 000 ms » produirait deux fois le meme jour civil, ou en
+   * sauterait un. L'avancee se fait donc sur le CALENDRIER.
+   */
+  const octobre = densifyEvolution([], {
+    period: 'CUSTOM',
+    startsAt: '2026-09-30T22:00:00.000Z',
+    endsAt: '2026-10-31T23:00:00.000Z',
+    timezone: 'Europe/Paris',
+    granularity: 'day',
+  });
+  check('octobre compte 31 jours, changement d’heure compris', octobre.length === 31);
+  check('…et aucun jour n’apparaît deux fois',
+    new Set(octobre.map((l) => l.date.getDate())).size === 31);
+
+  /**
+   * UNE PERIODE ENTIEREMENT CREUSE SE TRACE QUAND MEME : c'est la demande, et
+   * l'echelle de temps est une information. Ce qui ne se trace pas, c'est
+   * « depuis toujours » sur un registre vide -- sans bornes ET sans fait, il
+   * n'y a aucun axe a construire.
+   */
+  check('une période bornée sans aucun mouvement garde son axe',
+    octobre.length === 31 && evolutionState(octobre) === 'barren');
+  check('« depuis toujours » sur un registre vide ne dessine rien',
+    densifyEvolution([], {
+      period: 'ALL', startsAt: null, endsAt: null,
+      timezone: 'Europe/Paris', granularity: 'month',
+    }).length === 0);
+
+  /**
+   * « DEPUIS TOUJOURS » AVEC DES FAITS : l'axe part du premier fait connu et
+   * court jusqu'a aujourd'hui. On fige « aujourd'hui » pour que la recette ne
+   * change pas de resultat demain.
+   */
+  const depuisToujours = densifyEvolution(
+    [{ bucket: '2026-05-31T22:00:00.000Z', inflowCents: 1000, outflowCents: 0, netCents: 1000 }],
+    { period: 'ALL', startsAt: null, endsAt: null, timezone: 'Europe/Paris', granularity: 'month' },
+    Date.UTC(2026, 7, 27, 10, 0, 0),
+  );
+  /*
+    Juin, juillet, aout : TROIS seaux, pas quatre. Le premier fait est le 1er
+    juin (l'instant 2026-05-31T22:00Z lu a Paris), et l'axe court jusqu'au mois
+    en cours inclus.
+  */
+  check('sans bornes, l’axe va du premier fait à aujourd’hui',
+    depuisToujours.length === 3
+    && depuisToujours[0].date.getMonth() === 5
+    && depuisToujours[2].date.getMonth() === 7);
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

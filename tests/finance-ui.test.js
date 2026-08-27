@@ -165,16 +165,38 @@ section('2. Le graphique ne casse sur aucun état d’un registre qui démarre')
     trenteEtUn.labelEvery >= 3);
 
   /*
-    L'état vide se nomme désormais par sa cause : `evolutionState` distingue
-    « aucun seau » (période sans mouvement) de « un seul seau » (une courbe d'un
-    point est un pixel, on rend le chiffre). Deux états au lieu d'un, et le
-    second est un progrès — le tracé ne prétend plus montrer une évolution
-    qu'il n'a pas.
+    -- « UN SEUL POINT » A DISPARU, ET C'EST UNE CORRECTION -------------------
+
+    Cet etat existait parce que l'axe ne portait QUE les seaux rendus par le
+    serveur, lequel omet les periodes sans mouvement. Un mois entier se
+    reduisait alors a un point isole -- qui ressemble a une panne d'affichage
+    plus qu'a une information --, et l'ecran renoncait au trace pour montrer
+    trois chiffres.
+
+    `densifyEvolution` a supprime la CAUSE : l'axe couvre desormais la periode
+    annoncee, du premier au dernier seau, creux compris. Un mouvement isole le
+    22 aout se lit sur trente et un jours, a sa place.
+
+    L'exigence de cette suite n'est donc plus « refuse de tracer un point » mais
+    « l'axe couvre la periode, et un seau comble ne se fait pas passer pour un
+    solde nul ».
   */
   check('le composant montre un état vide plutôt qu’un cadre sans barres',
     graphique.includes("etat === 'empty'") && graphique.includes('EmptyPanel'));
-  check('…et refuse de tracer une « courbe » d’un seul point',
-    graphique.includes("etat === 'single'"));
+  check('…mais l’axe couvre la PÉRIODE, pas seulement les jours mouvementés',
+    graphique.includes('densifyEvolution(summary.series, summary.period)'));
+  /*
+    LE POINT QUI FAIT QUE COMBLER RESTE HONNETE : un seau pose a zero est
+    marque, et l'infobulle le dit avec des mots au lieu d'ecrire « 0,00 € ».
+    « Il ne s'est rien passe » et « le solde est reste a zero » ne sont pas la
+    meme phrase, et la difference est exactement ce qu'on regarde quand on
+    cherche un oubli de saisie.
+  */
+  check('…un jour creux dit « aucun mouvement », jamais « 0,00 € »',
+    /if \(!ligne\.hasData\)/.test(graphique)
+    && /label: 'Aucun mouvement'/.test(graphique));
+  check('…et une période entièrement creuse se trace quand même, en le disant',
+    graphique.includes("etat === 'barren'"));
 }
 
 section('3. UN SEUL moteur — la fiche projet et la page globale le partagent');
