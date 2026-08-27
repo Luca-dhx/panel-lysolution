@@ -239,6 +239,25 @@ interdit** dans les tableaux ; un test le vérifie.
 
 Largeurs contrôlées : 1440, 1280, 1024, 768, 430, 390, 375, 320.
 
+### Comment on le vérifie — sur l'instance déployée, pas en local
+
+Le contrôle ouvre les six écrans à chacune des huit largeurs, avec le compte
+développeur, et compare `document.documentElement.scrollWidth` à
+`window.innerWidth`. Il exige en plus, sur chaque écran, un élément qui n'existe
+que là : une mesure qu'on ne peut pas rattacher à l'écran voulu ne vaut pas
+mieux que pas de mesure — la première version de ce contrôle a mesuré l'écran de
+connexion quarante-huit fois avant qu'on s'en aperçoive.
+
+Il a trouvé deux défauts que le développement local n'avait pas montrés :
+
+| Défaut | Pourquoi il n'apparaissait qu'à 320 px, sur données réelles |
+|---|---|
+| `.input` et `.form-actions` étaient **écrites sans exister** | Les champs de texte étaient rattrapés par le sélecteur d'élément ; un `<select>` n'a pas d'équivalent — il sortait hors du thème et **dimensionné par sa plus longue option** (334 px pour « Fabrice DAGORNE — 941189383 »). Le défaut grandissait avec les données. |
+| Un rattachement affiché en **identifiant technique** | Le projet a été retiré du parc, ses mouvements conservés — et il n'existait aucun instantané de son nom. Aucun jeu d'essai court ne produit cette combinaison. |
+
+> Ce que ces deux-là ont en commun : **ils dépendent des données, pas du code**.
+> Un écran vérifié sur un parc de démonstration les traverse sans les voir.
+
 ---
 
 ## 9. Ajouter quelque chose
@@ -318,3 +337,33 @@ future est une installation neuve, ce qui est le comportement voulu.
 Les quinze autres écrans n'ont **pas** été touchés : ils continuent de vivre sur
 `styles.css` et `components.css`. C'est ce que « refonte progressive » veut
 dire, et c'est ce que le refus du préflight rend possible.
+
+---
+
+## 11. Ce que l'instance déployée a appris — et qui vaut pour la suite
+
+Trois choses relevées **après** mise en ligne, qu'aucune recette locale n'aurait
+sorties, et qu'il faut garder en tête pour les écrans suivants.
+
+**Une classe posée dans le balisage n'est pas une classe qui existe.** Onze
+contrôles portaient `.input` ou `.form-actions` sans qu'aucune règle ne les
+définisse. Un contrôle statique le vérifie désormais pour ces deux-là ; il est
+écrit pour accueillir les suivantes.
+
+**Un `<select>` natif se dimensionne sur sa plus longue option.** `max-width`
+seul n'y peut rien : sa largeur minimale intrinsèque reste celle de son contenu
+tant que `min-width` vaut `auto`. Les deux vont ensemble, toujours.
+
+**L'API rend des instants ISO, mais attend des dates civiles.** Pour une période
+`CUSTOM`, `start` et `end` sont deux dates `AAAA-MM-JJ` **fin incluse** ;
+réinjecter ce que le serveur vient de rendre produit un `400`, et la tendance
+disparaît de tous les indicateurs **sans un mot**. `previousWindow` émet donc des
+dates civiles dans le fuseau de la période, et le passage à l'heure d'hiver est
+couvert par une recette. Vérifié en production : les quatre fenêtres de
+comparaison émises (`2026-07-01..2026-07-31`, `2025-01-01..2025-12-31`,
+`2026-08-14..2026-08-20`, `2026-06-29..2026-07-28`) sont exactes.
+
+> La leçon commune : **les défauts qui restent sont ceux qui dépendent des
+> données**. Un parc de démonstration ne contient ni projet supprimé, ni raison
+> sociale longue, ni série à un seul point — et ce sont exactement les trois cas
+> qui ont mordu.
