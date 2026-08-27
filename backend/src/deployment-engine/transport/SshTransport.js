@@ -9,6 +9,7 @@
  * chargent sans cette dépendance ; elle n'est requise que pour un déploiement
  * réel. Installez-la avec `npm install` côté backend (voir package.json).
  */
+import { StringDecoder } from 'node:string_decoder';
 import { Transport } from './Transport.js';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -195,6 +196,39 @@ export class SshTransport extends Transport {
   async exec(command, opts = {}) {
     const client = await this._connect();
     const timeoutMs = opts.timeoutMs || DEFAULT_TIMEOUT_MS;
+    /**
+     * ── LE FLUX EST DÉCODÉ EN CONTINU, ET C'EST UNE CORRECTION ──────────────
+     *
+     * ══ LE DÉFAUT, TEL QU'IL S'EST PRODUIT ═════════════════════════════════
+     *
+     * Cette méthode faisait `stdout += chunk.toString('utf8')` : chaque bloc
+     * arrivant de SSH était décodé SEUL. Or un caractère UTF-8 non-ASCII tient
+     * sur plusieurs octets, et rien ne garantit qu'un bloc s'arrête entre deux
+     * caractères. Un « ’ », un « — » ou un « é » coupé en deux par une
+     * frontière de bloc devenait deux caractères de remplacement (U+FFFD) —
+     * silencieusement, sans erreur.
+     *
+     * Sur un `ls` ou un `pm2 status`, cela passe inaperçu. Sur le contrôle
+     * d'artefact du déploiement, qui télécharge le bundle JavaScript servi et
+     * compare son sha256 à celui construit, cela produit un verdict FAUX :
+     *
+     *     WEBSITE_ARTIFACT_MISMATCH — index ok, JS divergent, version ok
+     *
+     * Autrement dit : « le site servi n'est pas celui qu'on vient de
+     * construire », sur un déploiement parfaitement réussi. Le message oriente
+     * vers un cache ou une vieille version — deux pistes qui n'existent pas —
+     * et le déploiement est déclaré en échec après avoir tout fait.
+     *
+     * La probabilité grandit avec la taille du fichier et avec la quantité de
+     * texte non-ASCII qu'il contient : un bundle francophone d'un mégaoctet
+     * traverse des dizaines de frontières de blocs. Le contrôle passait donc
+     * jusqu'au jour où il a cessé de passer, sans que rien ne l'explique.
+     *
+     * `StringDecoder` conserve en tampon les octets d'un caractère incomplet
+     * jusqu'au bloc suivant. C'est exactement ce à quoi il sert.
+     */
+    const decodeurSortie = new StringDecoder('utf8');
+    const decodeurErreur = new StringDecoder('utf8');
     return new Promise((resolve, reject) => {
       client.exec(command, (err, stream) => {
         if (err) return reject(err);
@@ -223,6 +257,10 @@ export class SshTransport extends Transport {
            */
           .on('close', (exitCode, closeSignal) => {
             clearTimeout(timer);
+            // `end()` rend ce qui restait en tampon. Sans lui, un dernier
+            // caractère multi-octets tronqué serait simplement perdu.
+            stdout += decodeurSortie.end();
+            stderr += decodeurErreur.end();
             resolve({
               code: exitCode === undefined || exitCode === null ? null : exitCode,
               signal: closeSignal ?? signal ?? null,
@@ -232,10 +270,10 @@ export class SshTransport extends Transport {
           })
           .on('exit', (exitCode, exitSignal) => { signal = exitSignal ?? signal; })
           .on('data', (d) => {
-            stdout += d.toString('utf8');
+            stdout += decodeurSortie.write(d);
           })
           .stderr.on('data', (d) => {
-            stderr += d.toString('utf8');
+            stderr += decodeurErreur.write(d);
           });
         if (opts.input) {
           stream.end(opts.input);
@@ -262,13 +300,26 @@ export class SshTransport extends Transport {
     });
   }
 
+  /**
+   * LES BLOCS SONT RECOLLÉS AVANT D'ÊTRE DÉCODÉS, pas l'inverse.
+   *
+   * Le défaut était le même que dans `exec` : `data += bloc.toString('utf8')`
+   * décode chaque bloc SEUL, et un caractère non-ASCII coupé par une frontière
+   * de bloc devient deux caractères de remplacement. Sur un fichier distant —
+   * un `.env`, une configuration Nginx, un rapport — la corruption est
+   * silencieuse et ne se voit qu'à la relecture, longtemps après.
+   *
+   * Un fichier tient en mémoire : on concatène donc les OCTETS, et on décode
+   * une seule fois. Pour un flux sans fin, ce serait `StringDecoder` — c'est
+   * ce que fait `exec`.
+   */
   async readFile(remotePath) {
     const sftp = await this._getSftp();
     return new Promise((resolve, reject) => {
-      let data = '';
+      const blocs = [];
       const rs = sftp.createReadStream(remotePath);
-      rs.on('data', (d) => (data += d.toString('utf8')));
-      rs.on('end', () => resolve(data));
+      rs.on('data', (d) => blocs.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
+      rs.on('end', () => resolve(Buffer.concat(blocs).toString('utf8')));
       rs.on('error', reject);
     });
   }

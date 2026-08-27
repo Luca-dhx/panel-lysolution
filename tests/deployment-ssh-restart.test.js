@@ -729,5 +729,78 @@ section('UNE PROMESSE REJETÉE SANS GARDE laisse une trace dans le run');
   garde.resetProcessGuards();
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('Le flux SSH est décodé EN CONTINU — un caractère à cheval survit');
+{
+  /**
+   * ══ LE DÉFAUT QUE CETTE SECTION FERME ═════════════════════════════════════
+   *
+   * `exec` accumulait `chunk.toString('utf8')` : chaque bloc arrivant de SSH
+   * était décodé SEUL. Un caractère non-ASCII coupé en deux par une frontière
+   * de bloc devenait deux caractères de remplacement — silencieusement.
+   *
+   * Sur un `ls`, personne ne le voit. Sur le CONTRÔLE D'ARTEFACT du
+   * déploiement — qui télécharge le bundle servi et compare son sha256 à celui
+   * construit — cela produit un verdict FAUX :
+   *
+   *     WEBSITE_ARTIFACT_MISMATCH — index ok, JS divergent, version ok
+   *
+   * « Le site servi n'est pas celui qu'on vient de construire », sur un
+   * déploiement parfaitement réussi, avec un message qui oriente vers un cache
+   * inexistant. Observé sur le Panel : un bundle francophone d'un mégaoctet
+   * traverse des dizaines de frontières de blocs, et il a suffi qu'il grossisse
+   * pour que le contrôle cesse de passer.
+   *
+   * On DÉCOUPE donc volontairement au milieu d'un caractère : c'est le seul
+   * moyen de prouver que le tampon inter-blocs existe.
+   */
+  const texte = 'L’affaire est gagnée — conception ou refonte…\n';
+  const octets = Buffer.from(texte, 'utf8');
+  // Une coupure garantie à l'intérieur du « ’ » (3 octets, à partir du 2e).
+  const coupe = 2;
+
+  function clientFluxSimule() {
+    const c = new EventEmitter();
+    c.connect = () => setTimeout(() => c.emit('ready'), 1);
+    c.end = () => {};
+    c.destroy = () => {};
+    c.exec = (_cmd, cb) => {
+      const flux = new EventEmitter();
+      flux.stderr = new EventEmitter();
+      flux.end = () => {};
+      setTimeout(() => {
+        flux.emit('data', octets.subarray(0, coupe));
+        flux.emit('data', octets.subarray(coupe));
+        flux.emit('close', 0, null);
+      }, 1);
+      cb(null, flux);
+    };
+    return c;
+  }
+
+  const tx = new SshTransport({
+    host: '203.0.113.10', username: 'root', password: 'SECRET-A-NE-PAS-VOIR',
+    clientFactory: clientFluxSimule,
+  });
+  const res = await tx.exec('curl -fsSL https://exemple.test/assets/index.js');
+
+  check('la sortie est rendue INTACTE malgré la coupure au milieu d’un caractère',
+    res.stdout === texte);
+  check('…aucun caractère de remplacement n’a été fabriqué',
+    !res.stdout.includes('�'));
+  check('…et le code de sortie reste lisible', res.code === 0);
+
+  const source = sansCommentaires(
+    await lireSource('../backend/src/deployment-engine/transport/SshTransport.js'),
+  );
+  check('le transport s’appuie sur `StringDecoder`', /StringDecoder/.test(source));
+  // Ce qui est interdit, c'est de décoder DANS un gestionnaire de blocs.
+  // Décoder un tampon entier une fois recollé reste parfaitement légitime —
+  // c'est ce que fait `readFile`.
+  check('…et aucun gestionnaire `data` ne décode un bloc isolé',
+    !new RegExp(String.raw`on\('data'[^
+]*toString\('utf8'\)`).test(source));
+}
+
 await stopMemoryMongo();
 finish();
