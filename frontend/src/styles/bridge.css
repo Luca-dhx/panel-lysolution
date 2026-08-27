@@ -1,0 +1,187 @@
+/**
+ * LE PONT — Untitled UI PARLE LA LANGUE DU THÈME DU PANEL.
+ *
+ * ══ POURQUOI CE FICHIER EXISTE ══════════════════════════════════════════════
+ *
+ * `theme.css` est la palette d'Untitled UI, reprise telle quelle : un thème
+ * clair, avec un blanc en fond de carte et une échelle de gris figée. Le Panel,
+ * lui, n'a pas de palette : il a QUATRE couleurs réglables par l'exploitant
+ * (`--p-background`, `--p-foreground`, `--p-primary`, `--p-accent`) dont tout
+ * le reste est dérivé par `color-mix`.
+ *
+ * Laisser les deux cohabiter aurait produit exactement le défaut que le Panel
+ * a déjà rencontré ailleurs : une carte blanche posée sur un fond sombre, un
+ * texte figé qui ne ressort plus dès qu'on change le thème. Une interface qui
+ * ignore son propre réglage de couleurs n'est pas « une autre esthétique »,
+ * c'est un écran illisible un jour sur deux.
+ *
+ * ══ CE QU'IL FAIT, ET POURQUOI SI PEU DE LIGNES SUFFISENT ═══════════════════
+ *
+ * Untitled UI dérive TOUTE sa sémantique (`text-primary`, `bg-secondary`,
+ * `border-secondary`…) de deux échelles : `--color-neutral-*` et
+ * `--color-brand-*`. Redéfinir ces deux échelles — plus la poignée de jetons
+ * qui citaient le blanc en dur — suffit donc à repeindre l'ensemble.
+ *
+ * ── L'ORIENTATION DE L'ÉCHELLE NEUTRE ───────────────────────────────────────
+ * `neutral-25` est la couleur du FOND, `neutral-950` celle du TEXTE. Ce n'est
+ * pas « du clair vers le foncé » : c'est « du fond vers le premier plan ». Sur
+ * un thème sombre, l'échelle s'inverse toute seule, et `text-primary` reste ce
+ * qu'il doit être — la couleur qui ressort le plus du fond.
+ *
+ * ── AUCUNE COULEUR EN DUR ───────────────────────────────────────────────────
+ * Pas un seul code hexadécimal ici : tout vient de `tokens.css`. C'est la règle
+ * du Panel, et elle vaut pour les composants importés comme pour les nôtres.
+ *
+ * ── CE BLOC N'EST PAS DANS UNE COUCHE (`@layer`), ET C'EST VOULU ────────────
+ * `theme.css` pose ses valeurs dans la couche `theme`. Une règle HORS couche
+ * l'emporte toujours sur une règle en couche, quelle que soit sa spécificité :
+ * c'est ce qui rend cette redéfinition sûre sans un seul `!important`.
+ */
+
+:root {
+  /* ── L'ÉCHELLE NEUTRE — du fond vers le premier plan ─────────────────── */
+  --color-neutral-25: color-mix(in srgb, var(--p-background) 98%, var(--p-foreground));
+  --color-neutral-50: color-mix(in srgb, var(--p-background) 94%, var(--p-foreground));
+  --color-neutral-100: color-mix(in srgb, var(--p-background) 88%, var(--p-foreground));
+  --color-neutral-200: color-mix(in srgb, var(--p-background) 80%, var(--p-foreground));
+  --color-neutral-300: color-mix(in srgb, var(--p-background) 68%, var(--p-foreground));
+  --color-neutral-400: color-mix(in srgb, var(--p-background) 52%, var(--p-foreground));
+  --color-neutral-500: color-mix(in srgb, var(--p-background) 40%, var(--p-foreground));
+  --color-neutral-600: color-mix(in srgb, var(--p-background) 30%, var(--p-foreground));
+  --color-neutral-700: color-mix(in srgb, var(--p-background) 20%, var(--p-foreground));
+  --color-neutral-800: color-mix(in srgb, var(--p-background) 12%, var(--p-foreground));
+  --color-neutral-900: color-mix(in srgb, var(--p-background) 6%, var(--p-foreground));
+  --color-neutral-950: var(--p-foreground);
+
+  /* Untitled UI cite les deux familles ; le Panel n'en a qu'une. */
+  --color-gray-25: var(--color-neutral-25);
+  --color-gray-50: var(--color-neutral-50);
+  --color-gray-100: var(--color-neutral-100);
+  --color-gray-200: var(--color-neutral-200);
+  --color-gray-300: var(--color-neutral-300);
+  --color-gray-400: var(--color-neutral-400);
+  --color-gray-500: var(--color-neutral-500);
+  --color-gray-600: var(--color-neutral-600);
+  --color-gray-700: var(--color-neutral-700);
+  --color-gray-800: var(--color-neutral-800);
+  --color-gray-900: var(--color-neutral-900);
+  --color-gray-950: var(--color-neutral-950);
+
+  /* ── LA MARQUE — la couleur primaire réglée dans « Thème du Panel » ──── */
+  --color-brand-25: color-mix(in srgb, var(--p-primary) 8%, var(--p-background));
+  --color-brand-50: color-mix(in srgb, var(--p-primary) 14%, var(--p-background));
+  --color-brand-100: color-mix(in srgb, var(--p-primary) 22%, var(--p-background));
+  --color-brand-200: color-mix(in srgb, var(--p-primary) 38%, var(--p-background));
+  --color-brand-300: color-mix(in srgb, var(--p-primary) 55%, var(--p-background));
+  --color-brand-400: color-mix(in srgb, var(--p-primary) 78%, var(--p-background));
+  --color-brand-500: var(--p-primary);
+  --color-brand-600: var(--p-primary);
+  --color-brand-700: color-mix(in srgb, var(--p-primary) 78%, var(--p-foreground));
+  --color-brand-800: color-mix(in srgb, var(--p-primary) 62%, var(--p-foreground));
+  --color-brand-900: color-mix(in srgb, var(--p-primary) 50%, var(--p-foreground));
+  --color-brand-950: color-mix(in srgb, var(--p-primary) 38%, var(--p-foreground));
+
+  /* ── LES SURFACES — jamais un blanc figé ─────────────────────────────── */
+  --color-bg-primary: var(--p-surface);
+  --color-bg-primary_alt: var(--p-surface);
+  --color-bg-secondary: var(--p-surface-sunken);
+  --color-bg-secondary_alt: var(--p-surface-sunken);
+  --color-bg-secondary_hover: var(--p-surface-raised);
+  --color-bg-primary_hover: var(--p-surface-raised);
+  --color-bg-active: var(--p-surface-raised);
+  --color-bg-tertiary: var(--p-surface-raised);
+  --color-bg-overlay: var(--p-background);
+
+  /* ── LES BORDURES — celles du Panel, pas un gris importé ─────────────── */
+  --color-border-primary: var(--p-border-strong);
+  --color-border-secondary: var(--p-border);
+  --color-border-tertiary: var(--p-border);
+
+  /* ── L'ANNEAU DE FOCUS — visible sur tout thème ──────────────────────── */
+  --color-focus-ring: var(--p-primary);
+
+  /*
+   * ── LES CHIPS D'ÉTAT ────────────────────────────────────────────────────
+   *
+   * Untitled UI peint ses pastilles « aplat très clair + texte très foncé ».
+   * Sur le thème sombre par défaut du Panel, cela donnait des vignettes
+   * pastel posées sur une carte noire. Chaque famille est donc remixée sur le
+   * FOND du thème pour l'aplat, et sur le TEXTE du thème pour l'encre : la
+   * pastille reste lisible que le Panel soit clair ou sombre.
+   *
+   * `-500` reste la couleur pure — c'est elle que porte la puce du badge.
+   */
+  --color-utility-red-50: color-mix(in srgb, var(--p-danger) 16%, var(--p-background));
+  --color-utility-red-100: color-mix(in srgb, var(--p-danger) 24%, var(--p-background));
+  --color-utility-red-200: color-mix(in srgb, var(--p-danger) 42%, var(--p-background));
+  --color-utility-red-300: color-mix(in srgb, var(--p-danger) 55%, var(--p-background));
+  --color-utility-red-400: color-mix(in srgb, var(--p-danger) 72%, var(--p-background));
+  --color-utility-red-500: var(--p-danger);
+  --color-utility-red-600: color-mix(in srgb, var(--p-danger) 82%, var(--p-foreground));
+  --color-utility-red-700: color-mix(in srgb, var(--p-danger) 58%, var(--p-foreground));
+
+  --color-utility-green-50: color-mix(in srgb, var(--p-ok) 16%, var(--p-background));
+  --color-utility-green-100: color-mix(in srgb, var(--p-ok) 24%, var(--p-background));
+  --color-utility-green-200: color-mix(in srgb, var(--p-ok) 42%, var(--p-background));
+  --color-utility-green-300: color-mix(in srgb, var(--p-ok) 55%, var(--p-background));
+  --color-utility-green-400: color-mix(in srgb, var(--p-ok) 72%, var(--p-background));
+  --color-utility-green-500: var(--p-ok);
+  --color-utility-green-600: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground));
+  --color-utility-green-700: color-mix(in srgb, var(--p-ok) 58%, var(--p-foreground));
+
+  --color-utility-orange-50: color-mix(in srgb, var(--p-warn) 16%, var(--p-background));
+  --color-utility-orange-100: color-mix(in srgb, var(--p-warn) 24%, var(--p-background));
+  --color-utility-orange-200: color-mix(in srgb, var(--p-warn) 42%, var(--p-background));
+  --color-utility-orange-300: color-mix(in srgb, var(--p-warn) 55%, var(--p-background));
+  --color-utility-orange-400: color-mix(in srgb, var(--p-warn) 72%, var(--p-background));
+  --color-utility-orange-500: var(--p-warn);
+  --color-utility-orange-600: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground));
+  --color-utility-orange-700: color-mix(in srgb, var(--p-warn) 58%, var(--p-foreground));
+
+  --color-utility-yellow-50: var(--color-utility-orange-50);
+  --color-utility-yellow-100: var(--color-utility-orange-100);
+  --color-utility-yellow-200: var(--color-utility-orange-200);
+  --color-utility-yellow-300: var(--color-utility-orange-300);
+  --color-utility-yellow-400: var(--color-utility-orange-400);
+  --color-utility-yellow-500: var(--color-utility-orange-500);
+  --color-utility-yellow-600: var(--color-utility-orange-600);
+  --color-utility-yellow-700: var(--color-utility-orange-700);
+
+  --color-utility-blue-50: color-mix(in srgb, var(--p-primary) 16%, var(--p-background));
+  --color-utility-blue-100: color-mix(in srgb, var(--p-primary) 24%, var(--p-background));
+  --color-utility-blue-200: color-mix(in srgb, var(--p-primary) 42%, var(--p-background));
+  --color-utility-blue-300: color-mix(in srgb, var(--p-primary) 55%, var(--p-background));
+  --color-utility-blue-400: color-mix(in srgb, var(--p-primary) 72%, var(--p-background));
+  --color-utility-blue-500: var(--p-primary);
+  --color-utility-blue-600: color-mix(in srgb, var(--p-primary) 82%, var(--p-foreground));
+  --color-utility-blue-700: color-mix(in srgb, var(--p-primary) 58%, var(--p-foreground));
+
+  --color-utility-neutral-50: var(--color-neutral-100);
+  --color-utility-neutral-100: var(--color-neutral-200);
+  --color-utility-neutral-200: var(--color-neutral-300);
+  --color-utility-neutral-300: var(--color-neutral-400);
+  --color-utility-neutral-400: var(--color-neutral-500);
+  --color-utility-neutral-500: var(--color-neutral-600);
+  --color-utility-neutral-600: var(--color-neutral-700);
+  --color-utility-neutral-700: var(--color-neutral-900);
+  --color-utility-neutral-800: var(--color-neutral-900);
+  --color-utility-neutral-900: var(--color-neutral-950);
+
+  --color-utility-brand-50: var(--color-brand-50);
+  --color-utility-brand-100: var(--color-brand-100);
+  --color-utility-brand-200: var(--color-brand-200);
+  --color-utility-brand-300: var(--color-brand-300);
+  --color-utility-brand-400: var(--color-brand-400);
+  --color-utility-brand-500: var(--color-brand-500);
+  --color-utility-brand-600: var(--color-brand-600);
+  --color-utility-brand-700: var(--color-brand-700);
+
+  /* ── RAYONS ET POLICES — ceux du Panel ───────────────────────────────── */
+  --radius-md: var(--p-radius-sm);
+  --radius-lg: var(--p-radius);
+  --radius-xl: var(--p-radius-lg);
+  --radius-2xl: var(--p-radius-lg);
+
+  --font-body: var(--p-font-body);
+  --font-display: var(--p-font-heading);
+}

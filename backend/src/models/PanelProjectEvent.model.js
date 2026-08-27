@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { participantSchema, revisionSchema } from './PanelMeeting.model.js';
+import { participantSchema, revisionSchema, SUBJECT_TYPES } from './PanelMeeting.model.js';
 
 /**
  * ÉVÉNEMENT — ce qui S'EST PASSÉ avec un client.
@@ -61,6 +61,12 @@ const eventSchema = new mongoose.Schema(
   {
     projectId: { type: String, required: true, index: true },
     projectName: { type: String, default: null },
+    /**
+     * L'espèce du sujet — un projet, ou un prospect. Même raisonnement, mêmes
+     * précautions de lecture que sur la réunion : voir `SUBJECT_TYPES` dans
+     * `PanelMeeting.model.js`.
+     */
+    subjectType: { type: String, enum: SUBJECT_TYPES, default: 'PROJECT', index: true },
 
     /** La réunion d'origine, ou `null` pour un événement saisi à la main. */
     sourceMeetingId: { type: String, default: null },

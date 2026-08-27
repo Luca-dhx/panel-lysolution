@@ -32,6 +32,8 @@ import { MyProfilePage } from '@/pages/MyProfilePage';
 import { PanelUsersPage } from '@/pages/PanelUsersPage';
 import { PairingsPage } from '@/pages/PairingsPage';
 import { ProjectsPage } from '@/pages/ProjectsPage';
+import { ProspectionPage } from '@/pages/ProspectionPage';
+import { ProspectDetailPage } from '@/pages/ProspectDetailPage';
 import { AgendaPage } from '@/pages/AgendaPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
 import { ThemePage } from '@/pages/ThemePage';
@@ -108,6 +110,17 @@ export default function App() {
           L’ÉCRITURE, elle, reste réservée aux comptes DEV — côté backend,
           qui est la seule barrière.
         */}
+        {/*
+          PROSPECTION — les affaires qui ne sont pas encore des clients.
+
+          En GESTION, comme l'agenda et les clients : le démarchage est le
+          quotidien de l'équipe. L'écriture n'est PAS réservée aux comptes DEV,
+          contrairement aux entreprises clientes — un prospect n'engage rien, il
+          ne facture pas, ne signe pas et ne s'affiche nulle part. Le backend
+          applique la même règle, et c'est LUI la barrière.
+        */}
+        <Route path="/prospection" element={<ProspectionPage />} />
+        <Route path="/prospection/:prospectId" element={<ProspectDetailPage />} />
         <Route path="/clients" element={<ClientCompaniesPage />} />
         <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
         {/*

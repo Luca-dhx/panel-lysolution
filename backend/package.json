@@ -28,6 +28,7 @@
     "test:live-refresh": "node --experimental-strip-types --import ../tests/helpers/registerFrontendLoader.mjs ../tests/live-refresh.test.js",
     "test:panel-ui": "node ../tests/panel-ui.test.js",
     "test:events": "node ../tests/events.test.js",
+    "test:prospection": "node ../tests/prospection.test.js",
     "test:finance": "node ../tests/finance-core.test.js",
     "test:finance-ui": "node ../tests/finance-ui.test.js",
     "test:finance-recurring": "node ../tests/finance-recurring.test.js",

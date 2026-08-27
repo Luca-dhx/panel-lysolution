@@ -28,8 +28,8 @@ const actorOf = (req) => ({
 /* ── RÉUNIONS — l'agenda ───────────────────────────────────────────────────── */
 
 export async function meetings(req, res) {
-  const { projectId = null, scope = 'upcoming' } = req.query ?? {};
-  return ok(res, { meetings: await listMeetings({ projectId, scope }) });
+  const { projectId = null, subjectType = null, scope = 'upcoming' } = req.query ?? {};
+  return ok(res, { meetings: await listMeetings({ projectId, subjectType, scope }) });
 }
 
 export async function planMeeting(req, res) {
@@ -59,14 +59,16 @@ export async function reschedule(req, res) {
  * se demande explicitement (`scope=all`).
  */
 export async function events(req, res) {
-  const { projectId = null, status = null, type = null, scope = null } = req.query ?? {};
+  const {
+    projectId = null, subjectType = null, status = null, type = null, scope = null,
+  } = req.query ?? {};
   if (!projectId && scope !== 'all') {
     throw ApiError.badRequest(
       'PANEL_EVENT_PROJECT_REQUIRED',
       'Précisez un projet, ou demandez explicitement la vue globale.',
     );
   }
-  return ok(res, { events: await listEvents({ projectId, status, type }) });
+  return ok(res, { events: await listEvents({ projectId, subjectType, status, type }) });
 }
 
 export async function pending(_req, res) {

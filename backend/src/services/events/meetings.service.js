@@ -21,6 +21,7 @@ import {
   MEETING_TRANSITIONS,
   PanelMeeting,
   REMOTE_KINDS,
+  SUBJECT_TYPES,
 } from '../../models/PanelMeeting.model.js';
 import { applyPatch } from './revisions.js';
 import { normalizeParticipants, refuseLegacyParticipants } from './participants.js';
@@ -113,6 +114,24 @@ export function normalizeMode(data) {
   };
 }
 
+/**
+ * L'ESPÈCE DU SUJET — normalisée ici, et refusée si elle est inconnue.
+ *
+ * Un `subjectType` fantaisiste ne doit PAS retomber silencieusement sur
+ * « projet » : le rendez-vous serait alors rangé sous un client qui n'existe
+ * pas, et personne ne le retrouverait. On préfère un refus lisible.
+ */
+export function normalizeSubjectType(value) {
+  if (value === undefined || value === null || value === '') return 'PROJECT';
+  if (!SUBJECT_TYPES.includes(value)) {
+    throw ApiError.badRequest(
+      'PANEL_SUBJECT_TYPE_UNKNOWN',
+      'Un rendez-vous porte sur un projet ou sur un prospect.',
+    );
+  }
+  return value;
+}
+
 export async function createMeeting(data, actor = {}) {
   const {
     projectId, projectName = null, title, description = '',
@@ -120,9 +139,15 @@ export async function createMeeting(data, actor = {}) {
     participants = [],
     rescheduledFromMeetingId = null,
   } = data ?? {};
+  const subjectType = normalizeSubjectType(data?.subjectType);
 
   refuseLegacyParticipants(data ?? {});
-  if (!projectId) throw ApiError.badRequest('PANEL_MEETING_PROJECT_REQUIRED', 'Projet requis.');
+  if (!projectId) {
+    throw ApiError.badRequest(
+      'PANEL_MEETING_PROJECT_REQUIRED',
+      subjectType === 'PROSPECT' ? 'Prospect requis.' : 'Projet requis.',
+    );
+  }
   if (!title || !String(title).trim()) {
     throw ApiError.badRequest('PANEL_MEETING_TITLE_REQUIRED', 'Un intitulé est requis.');
   }
@@ -133,6 +158,7 @@ export async function createMeeting(data, actor = {}) {
   return PanelMeeting.create({
     projectId,
     projectName,
+    subjectType,
     title: String(title).trim(),
     description,
     scheduledAt: new Date(scheduledAt),
@@ -225,6 +251,9 @@ export async function rescheduleMeeting(meetingId, { scheduledAt, reason = null 
   const nouvelle = await createMeeting({
     projectId: ancienne.projectId,
     projectName: ancienne.projectName,
+    // Reporter ne change pas DE QUI l'on parle : sans cette ligne, un rendez-vous
+    // de prospection reporté réapparaissait sous un projet inexistant.
+    subjectType: ancienne.subjectType ?? 'PROJECT',
     title: ancienne.title,
     description: ancienne.description,
     scheduledAt,
@@ -283,6 +312,9 @@ export async function convertDueMeetings(now = new Date()) {
       await PanelProjectEvent.create({
         projectId: meeting.projectId,
         projectName: meeting.projectName,
+        // L'événement hérite de l'espèce du rendez-vous : une confirmation de
+        // prospection reste une confirmation de prospection.
+        subjectType: meeting.subjectType ?? 'PROJECT',
         sourceMeetingId: String(meeting._id),
         type: 'MEETING_OCCURRED',
         title: meeting.title,
@@ -308,9 +340,29 @@ export async function convertDueMeetings(now = new Date()) {
 
 /* ── Lectures ─────────────────────────────────────────────────────────────── */
 
-export async function listMeetings({ projectId = null, scope = 'upcoming', limit = 100 } = {}) {
+/**
+ * @param {object}  options
+ * @param {?string} options.projectId   borne la lecture à UN sujet
+ * @param {?string} options.subjectType `PROJECT` | `PROSPECT` — sans lui,
+ *   l'agenda global rend les deux, ce qui est le comportement voulu : l'équipe
+ *   n'a qu'un seul agenda.
+ */
+export async function listMeetings({
+  projectId = null, subjectType = null, scope = 'upcoming', limit = 100,
+} = {}) {
   const maintenant = new Date();
   const filtre = projectId ? { projectId } : {};
+
+  /**
+   * L'ABSENCE DE PROSPECT, PAS LA PRÉSENCE DE PROJET.
+   *
+   * Les réunions écrites avant l'arrivée de `subjectType` ne portent pas le
+   * champ : `{ subjectType: 'PROJECT' }` ne les trouverait pas, et l'agenda
+   * d'un client se serait vidé le jour du déploiement. Voir le commentaire du
+   * champ dans `PanelMeeting.model.js`.
+   */
+  if (subjectType === 'PROSPECT') filtre.subjectType = 'PROSPECT';
+  else if (subjectType === 'PROJECT') filtre.subjectType = { $ne: 'PROSPECT' };
 
   if (scope === 'upcoming') {
     filtre.status = MEETING_STATUS.PLANNED;
@@ -333,6 +385,7 @@ export default {
   createMeeting,
   updateMeeting,
   normalizeMode,
+  normalizeSubjectType,
   cancelMeeting,
   rescheduleMeeting,
   convertDueMeetings,

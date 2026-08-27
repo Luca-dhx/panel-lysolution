@@ -1,0 +1,151 @@
+/**
+ * LA COUCHE « LIBRAIRIE » DU PANEL — Untitled UI, Tailwind v4, React Aria.
+ *
+ * ══ CE QUE CE FICHIER OUVRE, ET CE QU'IL REFUSE D'OUVRIR ════════════════════
+ *
+ * La refonte de l'interface est PROGRESSIVE : un écran passe à la librairie
+ * quand on le refait, les autres continuent de vivre sur `styles.css` et
+ * `components.css`. Cette contrainte gouverne tout ce fichier.
+ *
+ * ── POURQUOI PAS `@import "tailwindcss"` ────────────────────────────────────
+ *
+ * L'import complet embarque le PREFLIGHT — la remise à zéro globale de
+ * Tailwind. Elle réécrit `h1`, `ul`, `button`, `input`, `img`, `table` pour le
+ * document ENTIER. Sur un dépôt qui porte déjà 190 ko de CSS écrit à la main,
+ * cela n'aurait pas « modernisé » les anciens écrans : cela les aurait cassés
+ * tous en même temps, le jour où l'on ajoute une page.
+ *
+ * On importe donc les deux moitiés utiles — le thème (les variables) et les
+ * utilitaires (les classes) — et on remplace le préflight par une remise à
+ * zéro LOCALE, sous `.uui`, qui ne franchit jamais la frontière de l'écran
+ * refondu.
+ *
+ * ── POURQUOI LES UTILITAIRES NE SONT PAS DANS UNE COUCHE ────────────────────
+ *
+ * En CSS, une règle hors couche l'emporte sur toute règle en couche. Mettre
+ * les utilitaires dans `@layer utilities` les aurait fait perdre contre le
+ * moindre sélecteur de `styles.css`, qui est écrit hors couche — et une classe
+ * Tailwind qui « ne s'applique pas » est le pire genre de bogue, parce qu'on
+ * la voit dans le HTML. Le thème, lui, reste en couche : ce sont des variables,
+ * elles doivent au contraire s'effacer devant `bridge.css`.
+ */
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "./theme.css";
+@import "./bridge.css";
+@import "tailwindcss/utilities.css";
+
+@plugin "tailwindcss-react-aria-components";
+@plugin "tailwindcss-animate";
+
+/*
+ * Les classes à générer se lisent dans le code source du frontend. Le chemin
+ * est explicite plutôt que deviné : la détection automatique dépend du
+ * répertoire de travail du build, qui n'est pas le même en développement et
+ * pendant un déploiement.
+ */
+@source "../";
+
+/*
+ * ── LA REMISE À ZÉRO LOCALE ─────────────────────────────────────────────────
+ *
+ * Tout est écrit sous `:where(…)`, dont la spécificité est NULLE. Conséquence
+ * concrète : n'importe quelle classe du Panel — `.btn`, `.badge`, `.card` —
+ * continue de gagner si on la pose à l'intérieur d'un écran refondu. On
+ * neutralise les défauts du navigateur, jamais le style de la maison.
+ */
+.uui,
+:where(.uui) *,
+:where(.uui) *::before,
+:where(.uui) *::after {
+  box-sizing: border-box;
+}
+
+:where(.uui) table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  text-indent: 0;
+}
+
+:where(.uui) th,
+:where(.uui) td {
+  text-align: left;
+  vertical-align: middle;
+}
+
+:where(.uui) h1,
+:where(.uui) h2,
+:where(.uui) h3,
+:where(.uui) h4,
+:where(.uui) p,
+:where(.uui) figure,
+:where(.uui) blockquote {
+  margin: 0;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+:where(.uui) ul,
+:where(.uui) ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:where(.uui) button,
+:where(.uui) input,
+:where(.uui) select,
+:where(.uui) textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+  margin: 0;
+  background: transparent;
+  border: 0;
+}
+
+:where(.uui) button {
+  cursor: pointer;
+  padding: 0;
+}
+
+:where(.uui) svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+:where(.uui) img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+:where(.uui) a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
+/*
+ * ── LES SURFACES FLOTTANTES SORTENT DE `.uui` ───────────────────────────────
+ *
+ * React Aria téléporte ses popovers en fin de `<body>` : ils naissent donc HORS
+ * de l'écran refondu, et la remise à zéro locale ne les atteint pas. Sans cette
+ * ligne, un menu déroulant héritait des marges de listes de `styles.css` et
+ * s'affichait décalé — un défaut invisible en relecture, parce que le HTML est
+ * juste.
+ */
+:where([data-rac][role="dialog"]) ul,
+:where([data-rac][role="dialog"]) ol,
+:where([data-rac][role="menu"]),
+:where([data-rac][role="listbox"]) {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+:where([data-rac]) button,
+:where([data-rac]) svg {
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}

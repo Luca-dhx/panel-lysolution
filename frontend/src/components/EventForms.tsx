@@ -17,39 +17,75 @@ import { useState } from 'react';
 import { Card } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { useProjects } from '@/lib/useProjects';
+import { useProspects } from '@/lib/useProspects';
 import { projectDisplayName } from '@/lib/projectPresentation';
 import { TYPE_LABELS } from '@/components/eventLabels';
 import { ParticipantsField, participantsPrets } from '@/components/Participants';
 import { DateField, DurationField, TimeField, joinIso, splitIso } from '@/components/DateTimeField';
-import type { EventType, Meeting, Participant, ProjectEvent } from '@/types.events';
+import type { EventType, Meeting, Participant, ProjectEvent, SubjectType } from '@/types.events';
 
 const lignes = (t: string) => t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
 /** Types saisissables à la main. `MEETING_OCCURRED` naît d'une réunion. */
 const TYPES_MANUELS: EventType[] = ['CALL', 'VIDEO_CALL', 'MEAL', 'FOLLOW_UP', 'OTHER'];
 
-function ChoixProjet({
-  projectId,
+/**
+ * DE QUI PARLE-T-ON — un projet, ou un prospect.
+ *
+ * ══ POURQUOI UNE SEULE LISTE, ET NON DEUX SÉLECTEURS ════════════════════════
+ *
+ * Un rendez-vous a UN sujet. Deux listes déroulantes côte à côte — « projet »
+ * et « prospect » — auraient posé une question sans réponse : que se passe-t-il
+ * si l'on remplit les deux ? Un seul contrôle, deux groupes, et le choix est
+ * exclusif par construction.
+ *
+ * Les groupes sont nommés : sans eux, un garage prospecté et un garage client
+ * portant le même nom seraient indiscernables dans la liste.
+ *
+ * `subjectType` accompagne l'identifiant parce que rien, dans un identifiant,
+ * ne dit de quelle collection il vient — et que c'est lui qui décide où mènera
+ * le lien « voir la fiche » dans l'agenda.
+ */
+function ChoixSujet({
+  subjectId,
   onChange,
 }: {
-  projectId: string;
-  onChange: (id: string, nom: string) => void;
+  subjectId: string;
+  onChange: (id: string, nom: string, type: SubjectType) => void;
 }) {
   const { projects } = useProjects();
+  const { prospects } = useProspects();
   return (
     <label className="field">
-      <span className="field-label">Projet</span>
+      <span className="field-label">Sujet</span>
       <select
-        value={projectId}
+        value={subjectId}
         onChange={(e) => {
-          const p = projects.find((x) => x.projectId === e.target.value);
-          onChange(e.target.value, p ? projectDisplayName(p) : '');
+          const id = e.target.value;
+          const projet = projects.find((x) => x.projectId === id);
+          if (projet) {
+            onChange(id, projectDisplayName(projet), 'PROJECT');
+            return;
+          }
+          const prospect = prospects.find((x) => x._id === id);
+          onChange(id, prospect ? prospect.name : '', prospect ? 'PROSPECT' : 'PROJECT');
         }}
       >
         <option value="">— choisir —</option>
-        {projects.map((p) => (
-          <option key={p.projectId} value={p.projectId}>{projectDisplayName(p)}</option>
-        ))}
+        {projects.length > 0 ? (
+          <optgroup label="Projets clients">
+            {projects.map((p) => (
+              <option key={p.projectId} value={p.projectId}>{projectDisplayName(p)}</option>
+            ))}
+          </optgroup>
+        ) : null}
+        {prospects.length > 0 ? (
+          <optgroup label="Prospects">
+            {prospects.map((p) => (
+              <option key={p._id} value={p._id}>{p.name}</option>
+            ))}
+          </optgroup>
+        ) : null}
       </select>
     </label>
   );
@@ -60,12 +96,18 @@ function ChoixProjet({
 export function MeetingForm({
   projectId: impose,
   projectName: nomImpose,
+  subjectType: typeImpose,
   meeting,
   onSaved,
   onCancel,
 }: {
   projectId?: string;
   projectName?: string;
+  /**
+   * L'espèce du sujet quand l'écran la connaît déjà — une fiche de prospect
+   * n'a pas à faire choisir entre ses propres réunions et celles d'un client.
+   */
+  subjectType?: SubjectType;
   /** Présente = MODIFICATION ; absente = création. */
   meeting?: Meeting;
   onSaved: () => void;
@@ -75,6 +117,9 @@ export function MeetingForm({
 
   const [projectId, setProjectId] = useState(meeting?.projectId ?? impose ?? '');
   const [projectName, setProjectName] = useState(meeting?.projectName ?? nomImpose ?? '');
+  const [subjectType, setSubjectType] = useState<SubjectType>(
+    meeting?.subjectType ?? typeImpose ?? 'PROJECT',
+  );
   const [title, setTitle] = useState(meeting?.title ?? '');
   const [description, setDescription] = useState(meeting?.description ?? '');
   const [date, setDate] = useState(initial.date);
@@ -108,6 +153,7 @@ export function MeetingForm({
     const corps = {
       projectId,
       projectName: projectName || null,
+      subjectType,
       title: title.trim(),
       description,
       scheduledAt: quand,
@@ -136,9 +182,11 @@ export function MeetingForm({
 
       <div className="event-form">
         {impose || meeting ? null : (
-          <ChoixProjet
-            projectId={projectId}
-            onChange={(id, nom) => { setProjectId(id); setProjectName(nom); }}
+          <ChoixSujet
+            subjectId={projectId}
+            onChange={(id, nom, type) => {
+              setProjectId(id); setProjectName(nom); setSubjectType(type);
+            }}
           />
         )}
         <label className="field">
@@ -270,12 +318,14 @@ export function MeetingForm({
 export function PastEventForm({
   projectId: impose,
   projectName: nomImpose,
+  subjectType: typeImpose,
   event,
   onSaved,
   onCancel,
 }: {
   projectId?: string;
   projectName?: string;
+  subjectType?: SubjectType;
   event?: ProjectEvent;
   onSaved: () => void;
   onCancel: () => void;
@@ -284,6 +334,9 @@ export function PastEventForm({
 
   const [projectId, setProjectId] = useState(event?.projectId ?? impose ?? '');
   const [projectName, setProjectName] = useState(event?.projectName ?? nomImpose ?? '');
+  const [subjectType, setSubjectType] = useState<SubjectType>(
+    event?.subjectType ?? typeImpose ?? 'PROJECT',
+  );
   const [type, setType] = useState<EventType>(event?.type ?? 'CALL');
   const [title, setTitle] = useState(event?.title ?? '');
   const [date, setDate] = useState(initial.date);
@@ -307,6 +360,7 @@ export function PastEventForm({
     const corps = {
       projectId,
       projectName: projectName || null,
+      subjectType,
       ...(typeVerrouille ? {} : { type }),
       title: title.trim(),
       occurredAt: quand,
@@ -339,9 +393,11 @@ export function PastEventForm({
 
       <div className="event-form">
         {impose || event ? null : (
-          <ChoixProjet
-            projectId={projectId}
-            onChange={(id, nom) => { setProjectId(id); setProjectName(nom); }}
+          <ChoixSujet
+            subjectId={projectId}
+            onChange={(id, nom, type) => {
+              setProjectId(id); setProjectName(nom); setSubjectType(type);
+            }}
           />
         )}
         {typeVerrouille ? null : (

@@ -132,6 +132,19 @@ const TESTS = [
   // plutôt que supposer une fréquence de prélèvement.
   'contract-recurrence.test.js',
   'events.test.js',
+  // LA PROSPECTION — le carnet des affaires qui ne sont pas encore des clients.
+  //
+  // Placée juste après les événements, parce qu'elle éprouve la MÊME mécanique
+  // vue d'un autre sujet : un prospect n'a pas son propre agenda, il emprunte
+  // celui du Panel via `subjectType`.
+  //
+  // Ce que cette suite garde surtout, c'est la COMPATIBILITÉ : les réunions et
+  // les événements écrits avant ce lot ne portent pas le champ du tout. Une
+  // lecture qui demanderait `{ subjectType: 'PROJECT' }` viderait l'agenda de
+  // tous les clients le jour du déploiement — sans erreur, sans trace. La
+  // suite fabrique donc un document « à l'ancienne » et vérifie qu'il reste
+  // visible.
+  'prospection.test.js',
   // L10.1 — LA FONDATION FINANCIÈRE, indépendante de tout fournisseur.
   // Deux suites, parce qu'elles ne prouvent pas la même chose :
   //   · le NOYAU — centimes entiers, bornes de période dans un fuseau nommé,

@@ -33,6 +33,20 @@ export type MissedReason = 'CANCELLED' | 'CLIENT_ABSENT' | 'TEAM_ABSENT' | 'OTHE
  */
 export type ParticipantType = 'INTERNAL' | 'EXTERNAL';
 
+/**
+ * DE QUI PARLE UN RENDEZ-VOUS — un projet, ou un prospect.
+ *
+ * `projectId` porte l'identifiant du SUJET, quel qu'il soit ; `subjectType` dit
+ * de quelle espèce il est. Le champ n'a pas été renommé côté serveur : des
+ * milliers de documents le portent déjà, et une migration de renommage aurait
+ * été un risque pris pour un confort de vocabulaire.
+ *
+ * Facultatif à la lecture : les documents antérieurs ne le portent pas. Absent
+ * vaut « projet » — mais on le teste toujours par `=== 'PROSPECT'`, jamais par
+ * `=== 'PROJECT'`, pour la même raison.
+ */
+export type SubjectType = 'PROJECT' | 'PROSPECT';
+
 export interface Participant {
   id: string;
   type: ParticipantType;
@@ -45,6 +59,7 @@ export interface Meeting {
   _id: string;
   projectId: string;
   projectName: string | null;
+  subjectType?: SubjectType;
   title: string;
   description: string;
   scheduledAt: string;
@@ -71,6 +86,7 @@ export interface ProjectEvent {
   _id: string;
   projectId: string;
   projectName: string | null;
+  subjectType?: SubjectType;
   sourceMeetingId: string | null;
   type: EventType;
   title: string;

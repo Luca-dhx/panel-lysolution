@@ -11,6 +11,9 @@ import 'bootstrap-icons/font/bootstrap-icons.css';
 import '@/tokens.css';
 import '@/styles.css';
 import '@/components.css';
+// La couche « librairie » (Untitled UI / Tailwind) vient EN DERNIER : ses
+// utilitaires doivent gagner sur les écrans refondus, jamais l'inverse.
+import '@/styles/uui.css';
 
 /**
  * LA MARQUE EST PEINTE AVANT QUE REACT NE MONTE.

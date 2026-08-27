@@ -7,7 +7,30 @@ import { ParticipantsSummary } from '@/components/Participants';
 import { Icon } from '@/components/Icon';
 import type { IconName } from '@/components/Icon';
 import { lienTelephone } from '@/components/Links';
-import type { Meeting, ProjectEvent } from '@/types.events';
+import type { Meeting, ProjectEvent, SubjectType } from '@/types.events';
+
+/**
+ * OÙ MÈNE « VOIR LA FICHE » — et pourquoi la question se pose.
+ *
+ * ══ LE DÉFAUT QUE CECI ÉVITE ════════════════════════════════════════════════
+ *
+ * L'agenda est UN seul agenda : les rendez-vous de projets et ceux de
+ * prospection y cohabitent, et c'est voulu — un rendez-vous de prospection
+ * absent de « Réunions à venir » est un rendez-vous manqué. Mais le bouton de
+ * fin de ligne pointait invariablement vers `/projects/…`. Sur un rendez-vous
+ * de prospection, il menait donc à une fiche de projet inexistante.
+ *
+ * On teste `=== 'PROSPECT'`, jamais `=== 'PROJECT'` : les objets écrits avant
+ * l'arrivée du champ ne le portent pas du tout, et ce sont des projets.
+ */
+function ficheDuSujet(sujet: { projectId: string; subjectType?: SubjectType }): string {
+  return sujet.subjectType === 'PROSPECT'
+    ? `/prospection/${sujet.projectId}`
+    : `/projects/${sujet.projectId}`;
+}
+
+const libelleFiche = (sujet: { subjectType?: SubjectType }) =>
+  (sujet.subjectType === 'PROSPECT' ? 'Voir le prospect' : 'Voir le projet');
 
 /**
  * L'icône dit le MODE avant toute lecture : on reconnaît un déplacement d'un
@@ -160,8 +183,8 @@ export function MeetingRow({
           </button>
         ) : null}
         {showProject ? (
-          <Link className="btn btn-secondary btn-small" to={`/projects/${meeting.projectId}`}>
-            Voir le projet
+          <Link className="btn btn-secondary btn-small" to={ficheDuSujet(meeting)}>
+            {libelleFiche(meeting)}
           </Link>
         ) : null}
       </div>
@@ -204,8 +227,8 @@ export function EventRow({
         </button>
       ) : null}
       {showProject ? (
-        <Link className="btn btn-secondary btn-small" to={`/projects/${event.projectId}`}>
-          Voir le projet
+        <Link className="btn btn-secondary btn-small" to={ficheDuSujet(event)}>
+          {libelleFiche(event)}
         </Link>
       ) : null}
     </li>

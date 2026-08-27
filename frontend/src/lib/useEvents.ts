@@ -1,7 +1,9 @@
 import { useCallback } from 'react';
 import { api } from '@/lib/api';
 import { useLiveQuery } from '@/lib/useLiveQuery';
-import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
+import type {
+  Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary, SubjectType,
+} from '@/types.events';
 
 /**
  * Lectures VIVANTES de l'agenda et de l'historique.
@@ -16,15 +18,27 @@ import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '
  */
 const REFRESH_MS = 30_000;
 
-export function useMeetings(scope: MeetingScope, projectId?: string) {
+/**
+ * @param subjectType borne la lecture à une espèce de sujet — projet ou
+ *   prospect. Omis, l'agenda rend les DEUX : l'équipe n'a qu'un seul agenda, et
+ *   un rendez-vous de prospection absent de « Réunions à venir » serait un
+ *   rendez-vous manqué. On le précise donc là où le mélange serait FAUX — la
+ *   fiche d'un prospect, la colonne « prochain rendez-vous » du tableau de
+ *   prospection — jamais dans l'agenda global.
+ */
+export function useMeetings(
+  scope: MeetingScope,
+  projectId?: string,
+  subjectType?: SubjectType,
+) {
   const fetcher = useCallback(
-    async () => (await api.listMeetings(scope, projectId)).meetings,
-    [scope, projectId],
+    async () => (await api.listMeetings(scope, projectId, subjectType)).meetings,
+    [scope, projectId, subjectType],
   );
   const q = useLiveQuery<Meeting[]>(fetcher, {
     intervalMs: REFRESH_MS,
     fallbackError: 'Impossible de charger les réunions.',
-    key: `m:${scope}:${projectId ?? ''}`,
+    key: `m:${scope}:${projectId ?? ''}:${subjectType ?? ''}`,
   });
   return { ...q, meetings: q.data ?? [] };
 }

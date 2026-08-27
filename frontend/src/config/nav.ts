@@ -20,6 +20,17 @@ export const NAV_ITEMS: NavItem[] = [
   { to: '/', label: 'Tableau de bord', section: 'GESTION' },
   { to: '/projects', label: 'Projets clients', section: 'GESTION' },
   { to: '/agenda', label: 'Agenda et événements', section: 'GESTION' },
+  /**
+   * PROSPECTION — avant les clients, parce que c'est l'ordre du cycle.
+   *
+   * Un prospect devient un client, qui reçoit un projet. Ranger la prospection
+   * après « Clients » aurait inversé la lecture du menu, et laissé croire qu'on
+   * prospecte les gens à qui l'on facture déjà.
+   *
+   * En GESTION, comme l'agenda : le démarchage est le quotidien de l'équipe,
+   * pas une opération technique.
+   */
+  { to: '/prospection', label: 'Prospection', section: 'GESTION' },
   { to: '/clients', label: 'Clients', section: 'GESTION' },
   { to: '/finances', label: 'Finances', section: 'GESTION' },
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },

@@ -67,6 +67,30 @@ export const MEETING_TRANSITIONS = Object.freeze({
  */
 export const PARTICIPANT_TYPES = Object.freeze(['INTERNAL', 'EXTERNAL']);
 
+/**
+ * DE QUI PARLE CE RENDEZ-VOUS — un projet, ou un prospect.
+ *
+ * ══ POURQUOI UN DISCRIMINANT, ET NON UNE SECONDE COLLECTION ════════════════
+ *
+ * Un rendez-vous de prospection est un rendez-vous : même agenda, même
+ * imminence, même conversion « à confirmer » à l'échéance, mêmes participants.
+ * Lui donner sa propre collection aurait dupliqué l'ordonnanceur, la machine à
+ * états et les trois écrans — pour finir avec deux agendas qui divergent, et
+ * une réunion de prospection absente de « Réunions à venir ».
+ *
+ * `projectId` porte donc l'identifiant du SUJET, quel qu'il soit, et
+ * `subjectType` dit de quelle espèce il est. Le champ n'a pas été renommé
+ * exprès : des milliers de documents le portent déjà, et une migration de
+ * renommage aurait été un risque pris pour un confort de vocabulaire.
+ *
+ * ── LE DÉFAUT EST `PROJECT`, ET LES LECTURES NE S'Y FIENT PAS ──────────────
+ * Les documents écrits avant ce lot n'ont pas le champ du tout : une requête
+ * `{ subjectType: 'PROJECT' }` ne les trouverait PAS. Les lectures filtrent
+ * donc l'absence de prospect (`$ne: 'PROSPECT'`), jamais la présence de projet.
+ * C'est ce qui permet d'ajouter ce champ sans migration.
+ */
+export const SUBJECT_TYPES = Object.freeze(['PROJECT', 'PROSPECT']);
+
 export const participantSchema = new mongoose.Schema(
   {
     id: { type: String, required: true },
@@ -103,6 +127,8 @@ const meetingSchema = new mongoose.Schema(
   {
     projectId: { type: String, required: true, index: true },
     projectName: { type: String, default: null },
+    /** L'espèce du sujet — voir `SUBJECT_TYPES` ci-dessus. */
+    subjectType: { type: String, enum: SUBJECT_TYPES, default: 'PROJECT', index: true },
 
     title: { type: String, required: true, trim: true },
     /** Ordre du jour : ce qu'on prévoit d'aborder, pas ce qui a été dit. */

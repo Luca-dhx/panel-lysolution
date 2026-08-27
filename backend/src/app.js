@@ -24,6 +24,7 @@ import diagnosticRoutes from './routes/diagnostic.routes.js';
 import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
 import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
+import prospectsRoutes from './routes/prospects.routes.js';
 import legalTemplatesRoutes, { hostCompaniesRouter } from './routes/legalTemplates.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
 import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
@@ -195,6 +196,19 @@ export function createApp() {
    * l'ACHETEUR, et une facture distingue les deux.
    */
   app.use('/api/client-companies', clientCompaniesRoutes);
+  /**
+   * LA PROSPECTION — les affaires qui ne sont pas encore des clients.
+   *
+   * Volontairement HORS de `/api/client-companies` : un prospect n'a ni SIREN,
+   * ni contrat, ni facture. Le loger sous la racine des entreprises clientes
+   * aurait obligé à inventer une entreprise pour chaque nom griffonné, puis à
+   * filtrer partout pour ne pas facturer quelqu'un qui n'a rien signé.
+   *
+   * Monté APRÈS `eventsRoutes`, comme le reste : ce routeur-là s'installe sur
+   * `/api` tout entier et pose la garde d'utilisateur. La prospection la veut —
+   * elle exige exactement le même jeton.
+   */
+  app.use('/api/prospects', prospectsRoutes);
   /**
    * LES DOCUMENTS LÉGAUX — le référentiel des textes que les sites publient.
    *

@@ -116,6 +116,7 @@ déploiement, recettes TEST et cleanup.
 | [22_DATA_MODEL.md](docs/architecture/22_DATA_MODEL.md) | Données locales, synchronisées, Panel |
 | [23_PANEL_STANDARD.md](docs/architecture/23_PANEL_STANDARD.md) | **Le Panel comme projet standard de l'écosystème** |
 | [24_ENVIRONMENT_AND_DOMAINS.md](docs/architecture/24_ENVIRONMENT_AND_DOMAINS.md) | **Variables, secrets, domaines, rotation** |
+| [25_PROSPECTION.md](docs/architecture/25_PROSPECTION.md) | **La prospection, et la refonte progressive de l'interface** |
 | [spec/README.md](docs/spec/README.md) | Gouvernance des contrats OpenAPI |
 | [FINANCES_L12_PAYMENT_CONVERGENCE_REPORT.md](docs/architecture/FINANCES_L12_PAYMENT_CONVERGENCE_REPORT.md) | **Convergence des paiements, archivage des factures, notifications** |
 | [PHASE_3_PREPARATION.md](docs/architecture/PHASE_3_PREPARATION.md) | Ce qui reste volontairement à faire |

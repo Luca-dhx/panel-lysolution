@@ -1,9 +1,18 @@
 import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-  plugins: [react()],
+  /**
+   * TAILWIND V4 EST UN PLUGIN VITE, PAS UN PLUGIN POSTCSS.
+   *
+   * La refonte progressive de l'interface s'appuie sur la librairie Untitled UI
+   * (`src/styles/uui.css`), qui compile ses utilitaires ici. Aucun écran
+   * existant n'en dépend : le préflight de Tailwind est délibérément écarté,
+   * pour que `styles.css` continue de gouverner tout ce qui n'a pas été refait.
+   */
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),

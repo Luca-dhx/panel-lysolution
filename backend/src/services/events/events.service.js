@@ -25,6 +25,20 @@ import {
 import { MEETING_STATUS, PanelMeeting } from '../../models/PanelMeeting.model.js';
 import { applyPatch } from './revisions.js';
 import { normalizeParticipants, refuseLegacyParticipants } from './participants.js';
+import { normalizeSubjectType } from './meetings.service.js';
+
+/**
+ * BORNE UNE LECTURE À UNE ESPÈCE DE SUJET.
+ *
+ * `PROJECT` se demande par l'ABSENCE de prospect, jamais par la présence du
+ * champ : les événements écrits avant ce lot ne le portent pas, et une égalité
+ * stricte aurait vidé l'historique de tous les clients d'un coup.
+ */
+function filtreSujet(subjectType) {
+  if (subjectType === 'PROSPECT') return { subjectType: 'PROSPECT' };
+  if (subjectType === 'PROJECT') return { subjectType: { $ne: 'PROSPECT' } };
+  return {};
+}
 
 /** Valide une transition SANS l'appliquer. */
 function assertTransition(from, to) {
@@ -57,8 +71,15 @@ export async function createPastEvent(data, actor = {}) {
     participants = [],
   } = data ?? {};
 
+  const subjectType = normalizeSubjectType(data?.subjectType);
+
   refuseLegacyParticipants(data ?? {});
-  if (!projectId) throw ApiError.badRequest('PANEL_EVENT_PROJECT_REQUIRED', 'Projet requis.');
+  if (!projectId) {
+    throw ApiError.badRequest(
+      'PANEL_EVENT_PROJECT_REQUIRED',
+      subjectType === 'PROSPECT' ? 'Prospect requis.' : 'Projet requis.',
+    );
+  }
   if (!title || !String(title).trim()) {
     throw ApiError.badRequest('PANEL_EVENT_TITLE_REQUIRED', 'Un intitulé est requis.');
   }
@@ -80,6 +101,7 @@ export async function createPastEvent(data, actor = {}) {
   return PanelProjectEvent.create({
     projectId,
     projectName,
+    subjectType,
     sourceMeetingId: null,
     type,
     title: String(title).trim(),
@@ -232,9 +254,9 @@ export async function listPendingConfirmations() {
  * l'oublier afficherait l'historique du parc entier sur la fiche d'un client.
  */
 export async function listEvents({
-  projectId = null, status = null, type = null, limit = 200,
+  projectId = null, subjectType = null, status = null, type = null, limit = 200,
 } = {}) {
-  const filtre = {};
+  const filtre = { ...filtreSujet(subjectType) };
   if (projectId) filtre.projectId = projectId;
   if (status) filtre.status = status;
   if (type) filtre.type = type;

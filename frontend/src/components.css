@@ -4548,3 +4548,219 @@ body {
    quatre tracés à la table pour une rotation. */
 .icon-flip { transform: rotate(180deg); }
 .icon-flip-y { transform: rotate(180deg); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   PROSPECTION
+   ══════════════════════════════════════════════════════════════════════════
+
+   Ce que la librairie (Untitled UI) peint — le TABLEAU — n'a rien ici : il se
+   décrit en classes utilitaires, et ses couleurs viennent de `styles/bridge.css`
+   qui les branche sur le thème du Panel. Ce fichier ne couvre que ce qui reste
+   au style maison : le pipeline, le formulaire, la galerie.
+
+   Aucune couleur en dur, comme partout ailleurs : tout vient de `tokens.css`.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── LE PIPELINE — cinq compteurs, et le filtre par la même occasion ─────────
+   Chaque pastille EST le filtre. Un compteur qu'on lit puis un menu déroulant
+   qu'on ouvre pour filtrer la même chose auraient fait deux gestes d'un seul. */
+.prospect-pipeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--p-space-2);
+}
+
+.prospect-tally {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-1);
+  align-items: flex-start;
+  min-height: 44px;
+  padding: var(--p-space-3) var(--p-space-4);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface);
+  color: var(--p-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--p-motion) var(--p-ease),
+    background var(--p-motion) var(--p-ease);
+}
+
+.prospect-tally:hover { border-color: var(--p-border-strong); }
+
+.prospect-tally-active {
+  border-color: var(--p-primary);
+  background: var(--p-primary-soft);
+}
+
+.prospect-tally-count { font-size: var(--p-text-xl); font-weight: 600; line-height: 1.1; }
+.prospect-tally-label { font-size: var(--p-text-xs); color: var(--p-text-muted); }
+
+/* La couleur du compteur DIT l'état avant qu'on lise le libellé — les mêmes
+   intentions que les pastilles du tableau, dérivées des mêmes tokens. */
+.prospect-tally-WAITING { color: var(--p-text-muted); }
+.prospect-tally-IN_PROGRESS { color: var(--p-warn); }
+.prospect-tally-PLANNED { color: var(--p-primary); }
+.prospect-tally-SIGNED { color: var(--p-ok); }
+.prospect-tally-LOST { color: var(--p-danger); }
+
+/* La recherche est posée DANS l'en-tête du tableau de la librairie : elle doit
+   donc se contenter de la place restante, et passer sous le titre quand il n'y
+   en a plus. */
+.prospect-search { width: 100%; max-width: 20rem; }
+
+/* ── LE TITRE DE LA FICHE — nom et statut sur la même ligne ────────────────── */
+.prospect-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-3);
+  align-items: center;
+}
+
+/* ── LIENS DU FORMULAIRE ──────────────────────────────────────────────────── */
+.prospect-links { display: flex; flex-direction: column; gap: var(--p-space-3); margin: 0; padding: 0; list-style: none; }
+
+.prospect-link {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr auto;
+  gap: var(--p-space-3);
+  align-items: end;
+  padding: var(--p-space-3);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+}
+
+/* ── IMAGES DU FORMULAIRE ─────────────────────────────────────────────────── */
+.prospect-images {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: var(--p-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prospect-image {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+  padding: var(--p-space-2);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: var(--p-surface-sunken);
+}
+
+.prospect-image img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--p-radius-sm);
+  background: var(--p-surface);
+}
+
+/* La croix de retrait fait 44 px de cible tactile, comme tous les contrôles du
+   Panel — un carré de 20 px posé sur une image se rate une fois sur deux. */
+.prospect-image-remove {
+  position: absolute;
+  top: var(--p-space-1);
+  right: var(--p-space-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--p-text-muted);
+  cursor: pointer;
+}
+
+.prospect-image-remove:hover { color: var(--p-danger); }
+
+/* ── GALERIE DE LA FICHE ──────────────────────────────────────────────────── */
+.prospect-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--p-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prospect-gallery-item {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-radius);
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.prospect-gallery-item:hover { border-color: var(--p-primary); }
+
+.prospect-gallery-item img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+.prospect-gallery-caption {
+  display: block;
+  margin-top: var(--p-space-1);
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+.prospect-preview {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: var(--p-radius);
+}
+
+/* Les notes conservent les retours à la ligne saisis : sans cela, un compte
+   rendu écrit en paragraphes devenait un pavé d'une seule coulée. */
+.prospect-notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* ── HISTORIQUE DU STATUT ─────────────────────────────────────────────────── */
+.prospect-history { display: flex; flex-direction: column; gap: var(--p-space-2); margin: 0; padding: 0; list-style: none; }
+
+.prospect-history li {
+  display: grid;
+  grid-template-columns: minmax(9rem, auto) 1fr auto;
+  gap: var(--p-space-3);
+  align-items: baseline;
+  padding-bottom: var(--p-space-2);
+  border-bottom: 1px solid var(--p-border);
+  font-size: var(--p-text-sm);
+}
+
+.prospect-history li:last-child { border-bottom: 0; padding-bottom: 0; }
+.prospect-history-when { color: var(--p-text-muted); }
+.prospect-history-what { font-weight: 500; }
+
+/* ── L'EN-TÊTE D'UN CHAMP QUI PORTE UN BOUTON ─────────────────────────────── */
+.field-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--p-space-2);
+}
+
+@media (max-width: 900px) {
+  /* Un lien tient trois champs : sur un mobile, ils DOIVENT retomber en
+     colonne, sinon aucun n'est lisible. Même règle que les participants. */
+  .prospect-link { grid-template-columns: 1fr; align-items: stretch; }
+  .prospect-history li { grid-template-columns: 1fr; gap: var(--p-space-1); }
+  .prospect-search { max-width: none; }
+}

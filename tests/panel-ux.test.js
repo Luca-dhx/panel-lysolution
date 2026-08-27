@@ -71,9 +71,19 @@ section('1. Deux espaces, et le menu reflète la règle');
   //
   // Il est placé entre les projets et les finances, dans l'ordre où l'on
   // descend : le site, à qui il appartient, ce qu'il rapporte.
+  //
+  // « Prospection » entre en Gestion (chantier « prospection »), et sa PLACE est
+  // le raisonnement : elle précède « Clients » parce que c'est l'ordre du cycle
+  // — un prospect devient un client, qui reçoit un projet. La ranger après
+  // aurait laissé croire qu'on démarche les gens à qui l'on facture déjà.
+  //
+  // « Documents legaux » et « Entreprise hebergeuse » ferment la liste : ce sont
+  // des CONTENUS métier, publiés sous la responsabilité juridique d'un client.
+  // Leur ÉCRITURE reste réservée aux comptes DEV, mais côté backend — la
+  // barrière n'est pas dans ce menu.
   const GESTION_ATTENDUE = [
-    'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Clients', 'Finances',
-    'Mon entreprise',
+    'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Prospection',
+    'Clients', 'Finances', 'Mon entreprise', 'Documents legaux', 'Entreprise hebergeuse',
   ];
   check(`Gestion = ${GESTION_ATTENDUE.join(', ')} — ${gestionLabels.join(', ')}`,
     gestionLabels.join('|') === GESTION_ATTENDUE.join('|'));
@@ -119,8 +129,19 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
    * serveur (`requirePanelDev` sur les verbes de mutation), où une URL tapée
    * ne la contourne pas.
    */
+  //
+  // LA LISTE DES ROUTES DE GESTION — fermée, énumérée, et c'est le contrôle.
+  //
+  // Tout ce qui n'y figure pas est réputé TECHNIQUE et doit passer par la garde
+  // DEV. Y inscrire une adresse est donc une décision explicite : la
+  // prospection (`/prospection`) et les documents légaux (`/documents-legaux`,
+  // `/hebergeur`) y entrent parce qu'aucun des trois n'est une opération
+  // d'infrastructure. Ce que ces écrans ÉCRIVENT reste gardé côté backend,
+  // lorsqu'il doit l'être — et c'est LUI la barrière, pas cette liste.
   const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company',
-    '/clients', '/clients/:clientCompanyId', '/panel'];
+    '/clients', '/clients/:clientCompanyId', '/panel',
+    '/prospection', '/prospection/:prospectId',
+    '/documents-legaux', '/hebergeur'];
 
   /**
    * LES ROUTES D'AUTHENTIFICATION — hors garde par NATURE, et nommées ici.

@@ -1,0 +1,159 @@
+// LE PROSPECT — quelqu'un à qui l'on n'a encore rien vendu.
+//
+// ══ CE QU'IL N'EST PAS, ET IL FAUT COMMENCER PAR LÀ ═════════════════════════
+//
+// Le Panel connaît déjà deux voisins immédiats, et les confondre coûte cher :
+//
+//   PanelProject        une INSTANCE technique appairée. Elle existe, elle
+//                       tourne, elle a une adresse et un pont.
+//   PanelClientCompany  une PERSONNE MORALE à qui l'on facture. Elle a un
+//                       SIREN, une adresse, un signataire.
+//
+// Un prospect n'est ni l'un ni l'autre : il n'a pas de site, pas de contrat,
+// souvent pas même de raison sociale vérifiée. Le ranger dans l'une de ces deux
+// collections aurait obligé à inventer des champs vides — un SIREN qu'on ne
+// connaît pas, un projet qui n'existe pas — puis à filtrer partout pour ne pas
+// facturer quelqu'un qui n'a jamais rien signé.
+//
+// ══ LE STATUT EST MANUEL, ET C'EST UNE DÉCISION ════════════════════════════
+//
+// Aucune règle ne fait avancer un prospect toute seule. Ni le temps, ni une
+// réunion tenue, ni un e-mail envoyé : c'est un jugement commercial, et il
+// appartient à la personne qui suit l'affaire. Un automatisme se tromperait
+// silencieusement, et pire, ferait croire l'affaire vivante alors qu'elle est
+// morte depuis six semaines.
+//
+// Ce qui est conservé, en revanche, c'est l'HISTOIRE des changements : qui a
+// bougé le curseur, quand, et depuis quel état. Un pipeline sans historique ne
+// permet pas de dire pourquoi une affaire a stagné.
+//
+// ══ CE QUI SORT D'ICI ══════════════════════════════════════════════════════
+//
+// Rien. Aucune route du pont n'expose les prospects, et la synchronisation ne
+// les transporte pas. Ce sont nos notes commerciales : les publier chez un
+// client reviendrait à lui montrer notre carnet d'adresses.
+import mongoose from 'mongoose';
+
+/**
+ * LES CINQ ÉTATS, ET RIEN D'AUTRE.
+ *
+ * Une liste fermée plutôt qu'un texte libre : c'est ce qui rend le pipeline
+ * agrégeable. « en cours » et « En Cours » saisis à la main auraient produit
+ * deux colonnes dans le même tableau.
+ */
+export const PROSPECT_STATUS = Object.freeze({
+  WAITING: 'WAITING',
+  IN_PROGRESS: 'IN_PROGRESS',
+  PLANNED: 'PLANNED',
+  LOST: 'LOST',
+  SIGNED: 'SIGNED',
+});
+
+export const PROSPECT_STATUS_VALUES = Object.freeze(Object.values(PROSPECT_STATUS));
+
+/**
+ * TOUTES LES TRANSITIONS SONT PERMISES — y compris les retours en arrière.
+ *
+ * Une affaire perdue se rouvre, un « signé » cliqué par erreur se corrige, un
+ * rendez-vous planifié qui tombe à l'eau redevient « en cours ». Une machine à
+ * états qui l'interdirait ne rendrait pas le pipeline plus vrai : elle
+ * pousserait à créer un doublon pour dire le contraire.
+ *
+ * Ce qui protège l'information n'est donc pas l'interdiction, mais la TRACE.
+ */
+const statusChangeSchema = new mongoose.Schema(
+  {
+    at: { type: Date, required: true },
+    from: { type: String, default: null },
+    to: { type: String, required: true },
+    actorEmail: { type: String, default: null },
+    note: { type: String, default: null },
+  },
+  { _id: false },
+);
+
+/**
+ * UN LIEN — autant qu'on veut, et chacun porte son propre nom.
+ *
+ * ── POURQUOI UNE LISTE D'OBJETS, ET NON UN CHAMP TEXTE ──────────────────────
+ * Un prospect arrive avec son site, sa page Google, son Instagram, le devis
+ * d'un concurrent, un dossier partagé. Les empiler dans une zone de texte les
+ * rendrait non cliquables et impossibles à retirer un par un.
+ *
+ * `id` est ce qui permet de corriger ou de supprimer UN lien sans réécrire la
+ * liste entière — la même raison qui a fait de `participants` une liste.
+ */
+const linkSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    label: { type: String, default: '', trim: true },
+    url: { type: String, required: true, trim: true },
+  },
+  { _id: false },
+);
+
+/**
+ * UNE IMAGE — la devanture, une capture, une carte de visite photographiée.
+ *
+ * On conserve le CHEMIN RELATIF (`/uploads/…`) rendu par l'autorité média,
+ * jamais une adresse absolue : l'identité d'un média ne dépend pas du domaine
+ * depuis lequel on le regarde. C'est la règle déjà appliquée à la fiche
+ * d'entreprise, et la raison pour laquelle un logo importé depuis un poste de
+ * développement reste visible sur le Panel déployé.
+ */
+const imageSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    url: { type: String, required: true, trim: true },
+    filename: { type: String, default: null },
+    caption: { type: String, default: '', trim: true },
+    addedAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
+const prospectSchema = new mongoose.Schema(
+  {
+    /** Le seul champ vraiment obligatoire : un prospect sans nom n'est rien. */
+    name: { type: String, required: true, trim: true },
+
+    /**
+     * COORDONNÉES — facultatives, et délibérément.
+     *
+     * On note un prospect au moment où on l'apprend, pas quand le dossier est
+     * complet. Exiger un e-mail valide dès la création aurait fait perdre
+     * exactement les affaires qu'on veut suivre : celles dont on n'a encore
+     * qu'un nom griffonné.
+     */
+    email: { type: String, default: '', trim: true },
+    phone: { type: String, default: '', trim: true },
+
+    /** Notes INTERNES. Elles ne sortent jamais du Panel. */
+    notes: { type: String, default: '' },
+
+    links: { type: [linkSchema], default: [] },
+    images: { type: [imageSchema], default: [] },
+
+    status: {
+      type: String,
+      enum: PROSPECT_STATUS_VALUES,
+      default: PROSPECT_STATUS.WAITING,
+      index: true,
+    },
+    statusHistory: { type: [statusChangeSchema], default: [] },
+
+    createdBy: { type: String, default: null },
+    updatedBy: { type: String, default: null },
+  },
+  { timestamps: true, minimize: false, versionKey: false },
+);
+
+// Le tableau se lit par état, puis par fraîcheur : c'est l'ordre dans lequel
+// on travaille un pipeline.
+prospectSchema.index({ status: 1, updatedAt: -1 });
+// La recherche par nom sert dès la deuxième dizaine de fiches.
+prospectSchema.index({ name: 1 });
+
+export const PanelProspect = mongoose.model('PanelProspect', prospectSchema);
+
+export default PanelProspect;

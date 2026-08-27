@@ -21,6 +21,9 @@ import type {
 } from '@/types.supervision';
 import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
+import type {
+  Prospect, ProspectInput, ProspectListResult, ProspectStatus,
+} from '@/types.prospection';
 import type { PanelTheme } from '@/lib/useTheme';
 import type { EmailSenderScreen, EmailSenderTestReport } from '@/types.emailSender';
 import type {
@@ -319,6 +322,17 @@ export async function uploadImage(
    * rôle, et c'est lui qu'ils lisent pour savoir quoi afficher où.
    */
   role?: string,
+  /**
+   * L'ADRESSE QUI REÇOIT — `/api/uploads/image` par défaut.
+   *
+   * ── POURQUOI ELLE EST PARAMÉTRABLE ────────────────────────────────────────
+   * L'adresse historique est réservée aux comptes DEV : les médias qu'elle
+   * reçoit s'affichent sur tout le parc. La prospection, elle, est ouverte à
+   * toute l'équipe et importe sur `/api/prospects/images`. La MÉCANIQUE côté
+   * serveur est la même — un seul module la porte — mais la garde diffère, et
+   * c'est le chemin qui la choisit.
+   */
+  endpoint = '/api/uploads/image',
 ): Promise<{
   /** Chemin de stockage RELATIF — c'est lui que la fiche conserve. */
   url: string;
@@ -348,7 +362,7 @@ export async function uploadImage(
 
   let res: Response;
   try {
-    res = await fetch(`/api/uploads/image?${query.toString()}`, {
+    res = await fetch(`${endpoint}?${query.toString()}`, {
       method: 'POST',
       headers,
       body: form,
@@ -1006,10 +1020,18 @@ export const api = {
   resetTheme: () => request<{ theme: PanelTheme }>('/api/theme/reset', { method: 'POST' }),
 
   /* ── AGENDA (réunions) et HISTORIQUE (événements) — aucun pont ────────── */
-  listMeetings: (scope: MeetingScope, projectId?: string) =>
-    request<{ meetings: Meeting[] }>(
-      `/api/meetings?scope=${scope}${projectId ? `&projectId=${projectId}` : ''}`,
-    ),
+  /**
+   * `subjectType` borne la lecture à une espèce de sujet — projet ou prospect.
+   * Omis, l'agenda rend les DEUX : l'équipe n'a qu'un seul agenda, et un
+   * rendez-vous de prospection absent de « Réunions à venir » serait un
+   * rendez-vous manqué.
+   */
+  listMeetings: (scope: MeetingScope, projectId?: string, subjectType?: 'PROJECT' | 'PROSPECT') => {
+    const q = new URLSearchParams({ scope });
+    if (projectId) q.set('projectId', projectId);
+    if (subjectType) q.set('subjectType', subjectType);
+    return request<{ meetings: Meeting[] }>(`/api/meetings?${q.toString()}`);
+  },
 
   planMeeting: (body: Record<string, unknown>) =>
     request<{ meeting: Meeting }>('/api/meetings', { method: 'POST', body }),
@@ -1047,6 +1069,39 @@ export const api = {
 
   addPastEvent: (body: Record<string, unknown>) =>
     request<{ event: ProjectEvent }>('/api/events', { method: 'POST', body }),
+
+  /* ── PROSPECTION ──────────────────────────────────────────────────────────
+     Le carnet commercial du Panel. Ces fiches ne sortent jamais : aucune route
+     du pont ne les expose, et la synchronisation ne les transporte pas. */
+
+  listProspects: (status?: ProspectStatus) =>
+    request<ProspectListResult>(`/api/prospects${status ? `?status=${status}` : ''}`),
+
+  getProspect: (prospectId: string) =>
+    request<{ prospect: Prospect; meetings: Meeting[]; events: ProjectEvent[] }>(
+      `/api/prospects/${prospectId}`,
+    ),
+
+  createProspect: (body: ProspectInput) =>
+    request<{ prospect: Prospect }>('/api/prospects', { method: 'POST', body }),
+
+  updateProspect: (prospectId: string, body: ProspectInput) =>
+    request<{ prospect: Prospect }>(`/api/prospects/${prospectId}`, { method: 'PATCH', body }),
+
+  /**
+   * Le STATUT a sa propre route : il se pilote depuis une liste déroulante
+   * posée sur une LIGNE de tableau, pas depuis le formulaire d'édition. Le
+   * faire passer par le `PATCH` général aurait obligé l'écran à renvoyer la
+   * fiche entière pour bouger un curseur — et à écraser au passage ce qu'un
+   * autre poste venait d'y écrire.
+   */
+  setProspectStatus: (prospectId: string, status: ProspectStatus, note?: string) =>
+    request<{ prospect: Prospect }>(`/api/prospects/${prospectId}/status`, {
+      method: 'POST', body: { status, note },
+    }),
+
+  deleteProspect: (prospectId: string) =>
+    request<{ deleted: boolean }>(`/api/prospects/${prospectId}`, { method: 'DELETE' }),
 
   confirmEvent: (eventId: string, body: Record<string, unknown>) =>
     request<{ event: ProjectEvent }>(`/api/events/${eventId}/confirm`, { method: 'POST', body }),

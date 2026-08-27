@@ -135,11 +135,32 @@ section('3. Icônes : le jeu Bootstrap, sans bibliothèque ni couleur propre');
    *
    * L'allow-list reste EXACTE : ajouter quoi que ce soit d'autre fera toujours
    * échouer ce contrôle.
+   *
+   * ── LA LIBRAIRIE D'INTERFACE ENTRE, ET CHAQUE LIGNE EST JUSTIFIÉE ────────
+   *
+   * La refonte progressive de l'interface s'appuie sur Untitled UI, dont les
+   * composants sont COPIÉS dans le dépôt (`components/base`,
+   * `components/application`) — ce ne sont pas des paquets. Ce qui entre ici,
+   * ce sont leurs quatre dépendances d'exécution, et rien d'autre :
+   *
+   *   react-aria-components          le comportement (clavier, ARIA, tri,
+   *                                  menus). C'est LUI qu'on importe, pas une
+   *                                  esthétique ;
+   *   @untitledui/icons              le jeu d'icônes de ces composants. Le jeu
+   *                                  MAISON reste intact et reste la règle
+   *                                  pour les écrans du Panel — le contrôle
+   *                                  ci-dessus le vérifie ;
+   *   tailwind-merge                 la fusion de classes utilitaires ;
+   *   tailwindcss-*                  deux greffons de compilation.
+   *
+   * `tailwindcss` lui-même est en `devDependencies` : il compile, il n'est pas
+   * embarqué.
    */
   const pkg = JSON.parse(lire('frontend/package.json'));
   check('…et les dépendances du frontend restent celles-là, exactement',
     Object.keys(pkg.dependencies).sort().join(',')
-      === 'bootstrap-icons,react,react-dom,react-router-dom');
+      === '@untitledui/icons,bootstrap-icons,react,react-aria-components,react-dom,'
+        + 'react-router-dom,tailwind-merge,tailwindcss-animate,tailwindcss-react-aria-components');
   check('…la police n’est importée qu’en un seul point',
     (lire('frontend/src/main.tsx').match(/^import 'bootstrap-icons/gm) ?? []).length === 1);
 }
