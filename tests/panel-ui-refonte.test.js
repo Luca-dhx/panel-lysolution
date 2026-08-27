@@ -305,4 +305,50 @@ section('8. Le poids : les écrans lourds sont chargés à la demande');
     /lazy\(\(\) => import\('\.\/charts\/FinanceEvolutionChart'\)\)/.test(dashboard));
 }
 
+section('9. Aucune classe n’est posée sans exister');
+{
+  /**
+   * CE QUE CE CONTROLE FERME.
+   *
+   * `.input` et `.form-actions` etaient ecrites sur onze controles de la
+   * famille « entreprise cliente » sans qu'aucune regle ne les definisse. Les
+   * champs de texte s'en tiraient par le selecteur d'element ; un `<select>`,
+   * lui, sortait au rendu brut du navigateur ET DIMENSIONNE PAR SA PLUS LONGUE
+   * OPTION.
+   *
+   * Releve sur l'instance deployee, a 320 px : le selecteur d'entreprise de la
+   * fiche projet mesurait 334 px et poussait le document a 371 px. Le defaut
+   * grandissait avec les donnees -- une raison sociale plus longue l'aggravait.
+   */
+  const css = lire('frontend/src/components.css') + '\n' + lire('frontend/src/styles.css');
+  const utilisees = ['input', 'form-actions'];
+  for (const classe of utilisees) {
+    check(`« ${classe} » est posée ET définie`,
+      new RegExp(`\\.${classe}\\s*(,|\\{|:)`).test(css));
+  }
+
+  /**
+   * LES DEUX MOITIES DU CORRECTIF. `max-width` seul ne peut rien : la largeur
+   * minimale intrinseque d'un select reste celle de son contenu tant que
+   * `min-width` vaut auto.
+   */
+  /*
+    L'ancrage en debut de ligne n'est pas un detail : `.conn-search .input {`
+    contient la meme sous-chaine, vit plus haut dans le fichier, et une
+    recherche naive lisait donc 400 caracteres d'une regle sans rapport.
+  */
+  const regleInput = (css.match(/^\.input \{[^}]*\}/m) || [''])[0];
+  check('…et un select ne peut plus dépasser son conteneur',
+    /min-width:\s*0/.test(regleInput) && /max-width:\s*100%/.test(regleInput));
+
+  check('…les actions se replient au lieu de déborder',
+    /\.form-actions\s*\{[^}]*flex-wrap:\s*wrap/.test(css));
+
+  /**
+   * ET LA REGLE RESTE DANS LE VOCABULAIRE DU PANEL : pas un code hexadecimal,
+   * sinon le controle change de couleur avec le theme et pas le reste.
+   */
+  check('…sans une seule couleur en dur', !/#[0-9a-fA-F]{3,8}/.test(regleInput));
+}
+
 finish();

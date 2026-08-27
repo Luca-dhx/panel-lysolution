@@ -4771,3 +4771,42 @@ body {
    qu'il n'informe. Ce qu'il faut éviter, c'est que la page se replie sur zéro
    puis se rouvre — d'où la hauteur, et d'où l'absence de contenu. */
 .page-loading { min-height: 60vh; }
+
+/* ── DEUX CLASSES QUI ÉTAIENT ÉCRITES SANS EXISTER ────────────────────────
+   `.input` et `.form-actions` sont posées sur onze contrôles de la famille
+   « entreprise cliente », et aucune des deux n'avait de règle. Les champs de
+   texte s'en tiraient — le sélecteur d'élément `input[type='text']` les
+   rattrape —, mais un `<select>` n'a pas d'équivalent : il sortait au rendu
+   brut du navigateur, hors du thème, ET DIMENSIONNÉ PAR SA PLUS LONGUE OPTION.
+
+   Relevé sur l'instance déployée, à 320 px : le sélecteur d'entreprise de la
+   fiche projet mesurait 334 px et poussait le document à 371 px. Une raison
+   sociale plus longue l'aurait aggravé d'autant — le défaut grandit avec les
+   données, ce qui est la pire façon d'échouer.
+
+   `min-width: 0` est la moitié qui compte : sans lui, la largeur minimale
+   intrinsèque d'un select reste celle de son contenu, et `max-width` ne peut
+   rien. */
+.input {
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 0.55rem 0.75rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.input:focus { outline: none; border-color: var(--accent); }
+
+/* Les actions passent à la ligne plutôt que de déborder : « Rattacher » et
+   « Détacher » suivent le sélecteur tant qu'il reste de la place, et se
+   replient sous lui quand il n'y en a plus. */
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--p-space-2, 0.5rem);
+}
