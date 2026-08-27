@@ -48,7 +48,16 @@ const AUTH = { authorization: `Bearer ${login.json.data.token}` };
 
 const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
-const page = lire('frontend/src/pages/ProjectsPage.tsx');
+/*
+  ── LA LISTE EST DEVENUE UN TABLEAU ───────────────────────────────────────
+  La page ne fait plus que filtrer et composer ; le rendu d'une ligne vit
+  dans `components/projects/ProjectsTable.tsx`. Ce que cette suite garde —
+  l'assistant vit DANS la page, la liste n'est jamais démontée, l'identité
+  s'affiche — est inchangé. On lit donc les deux fichiers ensemble.
+*/
+const pageSeule = lire('frontend/src/pages/ProjectsPage.tsx');
+const page = pageSeule
+  + '\n' + lire('frontend/src/components/projects/ProjectsTable.tsx');
 const assistant = lire('frontend/src/components/ProjectWizard.tsx');
 const css = lire('frontend/src/components.css');
 
@@ -80,9 +89,9 @@ section('1. La liste redevient le contenu principal');
   check('fermer l’assistant nettoie l’adresse, sinon il se rouvrirait',
     /next\.delete\(cle\)/.test(page));
 
-  check('la liste des projets est toujours là', page.includes('grid-cards'));
-  check('les cartes projet n’ont pas bougé',
-    page.includes('projectDisplayName(project)') && page.includes('project-avatar'));
+  check('la liste des projets est toujours là', page.includes('<ProjectsTable'));
+  check('les lignes de projet portent toujours l’identité',
+    page.includes('projectDisplayName(project)') && page.includes('<Avatar'));
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -91,8 +100,16 @@ section('2. L’assistant vit DANS la page — aucun clignotement au retour');
   // Une page dédiée démonterait la liste : `useProjects` repartirait sur un
   // premier chargement, l'écran afficherait « Chargement… » et le défilement
   // retomberait en haut. C'est précisément ce qu'on refuse.
+  /*
+    LA VÉRIFICATION PORTE SUR LA PAGE SEULE, et c'est nécessaire depuis que la
+    liste est un tableau : celui-ci emploie `useNavigate` pour son menu de fin
+    de ligne — ouvrir une fiche, ce qui est justement une navigation VOULUE.
+    Ce qu'on interdit, c'est que la PAGE quitte la liste pour montrer
+    l'assistant : elle serait démontée, `useProjects` repartirait de zéro, et
+    le défilement retomberait en haut.
+  */
   check('l’assistant est rendu depuis la page, pas derrière une autre route',
-    page.includes('<ProjectWizard') && !/useNavigate|<Navigate/.test(page));
+    pageSeule.includes('<ProjectWizard') && !/useNavigate|<Navigate/.test(pageSeule));
   check('la liste alimente l’assistant, elle n’est pas rechargée pour lui',
     /projects=\{projects\}/.test(page));
   check('après création, la liste se remet à jour en place',

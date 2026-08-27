@@ -168,7 +168,13 @@ section('5. L’écran ne mélange plus les deux');
   const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
   const carte = lire('frontend/src/components/ContractCard.tsx');
-  const liste = lire('frontend/src/pages/ProjectsPage.tsx');
+  /*
+    La liste est devenue un tableau : la pastille contractuelle est rendue
+    par `components/projects/ProjectsTable.tsx`. La règle gardée ici est la
+    même — sans contrat EN COURS, aucune pastille : afficher l'état d'un
+    contrat terminé laisserait croire à un engagement encore en vigueur.
+  */
+  const liste = lire('frontend/src/components/projects/ProjectsTable.tsx');
   const css = lire('frontend/src/components.css');
 
   check('sans contrat actuel, la carte le DIT',

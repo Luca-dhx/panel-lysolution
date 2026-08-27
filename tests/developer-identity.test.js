@@ -127,7 +127,28 @@ section('4. Les références sont éditables — le bloc était absent');
 /* ────────────────────────────────────────────────────────────────────────── */
 section('5. Le logo s’IMPORTE — même geste que dans le Manager');
 {
-  const routes = lire('backend/src/routes/upload.routes.js');
+  /*
+    ── LA MÉCANIQUE D'IMPORT A ÉTÉ EXTRAITE DE LA ROUTE ──────────────────────
+
+    Le relais vers l'autorité média, la validation sur les OCTETS, la politique
+    de taille par rôle et la traduction des refus de `multer` vivent désormais
+    dans `services/upload/imageEndpoint.js`. La raison : la prospection importe
+    elle aussi des images, sous une garde DIFFÉRENTE — les photos d'un prospect
+    ne s'affichent sur aucun site client, alors que les médias de marque sont
+    servis par tout le parc.
+
+    Deux copies de cette chaîne auraient fini par diverger : l'une validant les
+    octets, l'autre l'oubliant, et l'écart ne se serait vu que le jour d'un
+    fichier hostile.
+
+    Ce que ces contrôles gardent est inchangé — la route existe, elle est
+    gardée, elle borne l'entrée depuis la POLITIQUE, elle n'accepte que des
+    images, et un nom de fichier ne peut pas sortir du dossier. On lit donc la
+    route ET le module qu'elle monte : la garantie porte sur la CHAÎNE, pas sur
+    un fichier.
+  */
+  const routes = lire('backend/src/routes/upload.routes.js')
+    + '\n' + lire('backend/src/services/upload/imageEndpoint.js');
   const service = lire('backend/src/services/upload/upload.service.js');
   const app = lire('backend/src/app.js');
   const client = lire('frontend/src/lib/api.ts');
@@ -155,7 +176,8 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
     /inputRef\.current\.value = ''/.test(blocs));
 
   // Backend : le Panel héberge désormais ses médias.
-  check('la route d’import existe', /router\.post\('\/image', upload\.single\('file'\)/.test(routes));
+  check('la route d’import existe',
+    /router\.post\('\/image', imageUpload\.single\('file'\)/.test(routes));
   check('…réservée aux DEV', /router\.use\(requirePanelDev\)/.test(routes));
   /*
     LA BORNE EXISTE — et elle ne s'écrit plus dans la route.
@@ -170,7 +192,7 @@ section('5. Le logo s’IMPORTE — même geste que dans le Manager');
   */
   check('…limitée en taille', /limits: \{ fileSize: MAX_INPUT_BYTES \}/.test(routes));
   check('…et la borne vient de la POLITIQUE, pas d’un nombre écrit ici',
-    /import \{[^}]*MAX_INPUT_BYTES[^}]*\} from '\.\.\/services\/upload\/mediaPolicy\.js'/.test(routes)
+    /import \{[^}]*MAX_INPUT_BYTES[^}]*\} from '\.\/mediaPolicy\.js'/.test(routes)
     && !/fileSize: \d+ \* 1024/.test(routes));
   check('…et aux images', /startsWith\('image\//.test(routes));
   check('le nom de fichier ne peut pas sortir du dossier', /a-z0-9_-/.test(routes));
