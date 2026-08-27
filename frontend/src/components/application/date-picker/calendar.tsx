@@ -60,6 +60,14 @@ export const Calendar = ({ highlightedDates, className, children, ...props }: Ca
 
                         {children || (
                             <div className="flex gap-3">
+                                {/*
+                                    LES LIBELLÉS SONT EN FRANÇAIS, comme le
+                                    reste du Panel. Le registre les livre en
+                                    anglais ; laisser « Today » au-dessus d'une
+                                    grille dont les jours se lisent « lu ma me »
+                                    est le même défaut que l'axe des dates des
+                                    graphiques, au même endroit de l'écran.
+                                */}
                                 <InputDateBase aria-label="Date" size="sm" className="flex-1" />
                                 <Button
                                     slot={null}
@@ -70,7 +78,7 @@ export const Calendar = ({ highlightedDates, className, children, ...props }: Ca
                                         state.setFocusedDate(today(getLocalTimeZone()));
                                     }}
                                 >
-                                    Today
+                                    Aujourd’hui
                                 </Button>
                             </div>
                         )}
