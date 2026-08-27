@@ -11,6 +11,7 @@
  * défilement du fond est bloqué pendant l'ouverture.
  */
 import { useEffect, useState } from 'react';
+import { Suspense } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import { SECTION_LABELS, SECTION_ORDER, navItemsFor } from '@/config/nav';
@@ -171,7 +172,28 @@ export function Layout() {
       </aside>
 
       <main className="main-content">
-        <Outlet />
+        {/*
+          ── LA FRONTIÈRE D'ATTENTE DES ÉCRANS PARESSEUX ───────────────────
+
+          Cinq écrans sont chargés à la demande (voir `App.tsx`). Sans cette
+          frontière, React remonterait chercher la plus proche — il n'y en a
+          pas — et l'application entière tomberait pendant le téléchargement
+          du fragment.
+
+          Elle est posée DANS le gabarit, pas autour : la barre latérale, la
+          barre supérieure et le fil de navigation restent affichés. Seule la
+          zone de contenu attend, ce qui rend la transition presque
+          imperceptible — et laisse l'utilisateur repartir ailleurs.
+
+          Le contenu de l'attente est délibérément vide et RÉSERVE LA HAUTEUR :
+          un tourniquet apparu puis disparu en 80 ms se voit plus qu'il
+          n'informe, et un bloc sans hauteur ferait sauter la page.
+        */}
+        <Suspense
+          fallback={<div className="page-loading" aria-busy="true" aria-live="polite" />}
+        >
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

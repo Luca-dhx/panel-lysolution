@@ -48,6 +48,7 @@ import { Link, useParams } from 'react-router-dom';
 
 import { Card, Checkbox, EmptyState } from '@/components/ui';
 import { Icon, type IconName } from '@/components/Icon';
+import { PageHeader } from '@/components/ui-kit';
 import { Modal } from '@/components/Modal';
 import { ThemedSelect, type ThemedOption } from '@/components/ThemedSelect';
 import { useToast } from '@/components/ToastProvider';
@@ -478,25 +479,37 @@ export function ClientCompanyDetailPage() {
 
   return (
     <div className="page cc-detail">
-      <p className="page-eyebrow"><Link to="/clients">← Clients</Link></p>
-
       {/*
-        ── L'EN-TÊTE RÉPOND À LA QUESTION QU'ON SE POSE EN ARRIVANT ─────────
-        Qui est-ce, et que peut-il faire ? L'identité à gauche, les verdicts
-        juste dessous, les actions à droite — jamais mêlées au reste.
-      */}
-      <header className="cc-hero">
-        <span className="cc-hero-avatar" aria-hidden="true"><Icon name="building" size={28} /></span>
+        ── L'EN-TÊTE COMMUN AUX CINQ ÉCRANS REFONDUS ────────────────────────
 
-        <div className="cc-hero-identity">
-          <h1 className="cc-hero-name">{fiche.legalName}</h1>
-          <p className="cc-hero-meta">
+        La fiche avait le sien — `cc-hero` — avec son avatar, son fil d'Ariane
+        en `page-eyebrow`, ses pastilles et ses actions. Trois gabarits
+        différents pour la même chose sur trois écrans, et trois comportements
+        différents quand la place manque : ici les actions passaient sous les
+        pastilles, ailleurs à côté, ailleurs encore elles débordaient.
+
+        `PageHeader` les tient tous. Ce qui est PROPRE à cette fiche — l'avatar
+        d'entreprise, les deux verdicts, le couple Modifier/Archiver — lui est
+        passé en propriétés.
+      */}
+      <PageHeader
+        backTo={{ to: '/clients', label: 'Clients' }}
+        title={fiche.legalName}
+        avatar={(
+          <span className="flex size-12 items-center justify-center rounded-lg bg-secondary text-fg-quaternary">
+            <Icon name="building" size={24} aria-hidden="true" />
+          </span>
+        )}
+        description={(
+          <>
             {fiche.tradingName && fiche.tradingName !== fiche.legalName ? `${fiche.tradingName} · ` : ''}
             {fiche.siren ? `SIREN ${fiche.siren} · ` : ''}
             {fiche.projects.length} projet{fiche.projects.length > 1 ? 's' : ''} rattaché
             {fiche.projects.length > 1 ? 's' : ''}
-          </p>
-          <div className="cc-hero-badges">
+          </>
+        )}
+        badges={(
+          <>
             {fiche.status === 'ARCHIVED' ? (
               <span className="badge badge-muted">Archivée</span>
             ) : null}
@@ -506,35 +519,37 @@ export function ClientCompanyDetailPage() {
             <span className={fiche.readiness.signing.ready ? 'badge badge-ok' : 'badge badge-danger'}>
               {fiche.readiness.signing.ready ? 'Signatures possibles' : 'Signatures bloquées'}
             </span>
-          </div>
-        </div>
-
-        {isDev ? (
-          <div className="cc-hero-actions">
-            {edition ? (
-              <>
-                <button type="button" className="btn btn-secondary" onClick={annulerEdition} disabled={enregistrement}>
-                  Annuler
-                </button>
-                <button type="button" className="btn btn-primary" onClick={enregistrer} disabled={enregistrement}>
-                  <Icon name="check2" size={13} />
-                  {enregistrement ? 'Enregistrement…' : 'Enregistrer'}
-                </button>
-              </>
-            ) : (
-              <>
-                <button type="button" className="btn btn-primary" onClick={ouvrirEdition}>
-                  <Icon name="pencil" size={13} />
-                  Modifier
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={basculerArchive}>
-                  {fiche.status === 'ARCHIVED' ? 'Réactiver' : 'Archiver'}
-                </button>
-              </>
-            )}
-          </div>
+          </>
+        )}
+        actions={isDev ? (
+          edition ? (
+            <>
+              <button type="button" className="btn btn-secondary btn-small" onClick={annulerEdition} disabled={enregistrement}>
+                Annuler
+              </button>
+              <button type="button" className="btn btn-primary btn-small" onClick={enregistrer} disabled={enregistrement}>
+                <Icon name="check2" size={13} />
+                {enregistrement ? 'Enregistrement…' : 'Enregistrer'}
+              </button>
+            </>
+          ) : (
+            <>
+              {/*
+                L'ARCHIVAGE EST UNE ACTION RARE ET LOURDE : il passe en
+                SECONDAIRE, et « Modifier » — le geste quotidien — reste
+                l'action principale, donc la dernière du groupe.
+              */}
+              <button type="button" className="btn btn-secondary btn-small" onClick={basculerArchive}>
+                {fiche.status === 'ARCHIVED' ? 'Réactiver' : 'Archiver'}
+              </button>
+              <button type="button" className="btn btn-primary btn-small" onClick={ouvrirEdition}>
+                <Icon name="pencil" size={13} />
+                Modifier
+              </button>
+            </>
+          )
         ) : null}
-      </header>
+      />
 
       {/*
         ── CE QUE CETTE FICHE PERMET, OU EMPÊCHE ────────────────────────────

@@ -29,6 +29,8 @@
     "test:panel-ui": "node ../tests/panel-ui.test.js",
     "test:events": "node ../tests/events.test.js",
     "test:prospection": "node ../tests/prospection.test.js",
+    "test:ui-refonte": "node ../tests/panel-ui-refonte.test.js",
+    "test:finance-analytics": "node ../tests/finance-analytics.test.js",
     "test:finance": "node ../tests/finance-core.test.js",
     "test:finance-ui": "node ../tests/finance-ui.test.js",
     "test:finance-recurring": "node ../tests/finance-recurring.test.js",

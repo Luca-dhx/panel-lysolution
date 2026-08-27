@@ -82,7 +82,25 @@ const LISTE_CODE = () => codeSeul(LISTE);
 const FICHE_CODE = () => codeSeul(FICHE);
 const UI_CODE = () => codeSeul(UI);
 
-const LISTE = lire('frontend/src/pages/ClientCompaniesPage.tsx');
+/*
+  -- LA LISTE EST REDEVENUE UN TABLEAU, ET IL FAUT DIRE POURQUOI ------------
+
+  Elle a ete une grille de cartes, puis une liste d'items. Le passage aux items
+  repondait a trois defauts REELS du tableau d'origine -- aucune hierarchie, des
+  cellules collees, aucune action explicite. Le tableau de la librairie les
+  ferme tous les trois : la raison sociale est l'EN-TETE DE LIGNE avec
+  l'enseigne dessous, les cellules portent leur rembourrage, et un menu de fin
+  de ligne nomme les actions.
+
+  Ce qu'il apporte en plus, et que les items ne pouvaient pas donner : le TRI
+  et la comparaison verticale. « Qui est bloque en paiement » se lit en
+  balayant une colonne.
+
+  Les controles de cette suite gardent les memes INTENTIONS ; ils les verifient
+  desormais sur le rendu, qui vit dans `components/company/ClientCompaniesTable`.
+*/
+const TABLEAU = lire('frontend/src/components/company/ClientCompaniesTable.tsx');
+const LISTE = lire('frontend/src/pages/ClientCompaniesPage.tsx') + '\n' + TABLEAU;
 const FICHE = lire('frontend/src/pages/ClientCompanyDetailPage.tsx');
 const UI = lire('frontend/src/components/ui.tsx');
 const SELECT = lire('frontend/src/components/ThemedSelect.tsx');
@@ -90,73 +108,108 @@ const CSS = lire('frontend/src/components.css');
 const ICONES = lire('frontend/src/components/Icon.tsx');
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('1. La liste : des items, pas un tableau');
+section('1. La liste : une hierarchie, des cellules aerees, deux verdicts');
 {
   /**
-   * LE TABLEAU EST PARTI, ET C'EST LE POINT DE DÉPART DU LOT.
-   * Un `<td>` n'a pas d'espacement propre : tout ce qu'on y met se touche.
+   * LA RAISON SOCIALE DOMINE -- c'etait le premier reproche fait au tableau
+   * d'origine, ou elle avait le meme poids visuel qu'un compte de projets.
+   * Elle est desormais l'EN-TETE DE LIGNE, en gras, et l'enseigne la suit en
+   * seconde ligne attenuee.
    */
-  check('aucun <table> ne subsiste sur la page Clients', !/<table/.test(LISTE_CODE()));
-  check('…ni <thead>, ni <th>', !/<thead|<th>/.test(LISTE_CODE()));
-  check('la liste est une <ul> d’items', /className="cc-list"/.test(LISTE));
+  check('la raison sociale est l’en-tête de ligne', /isRowHeader/.test(TABLEAU));
+  check('…et elle mène à la fiche', /to=\{`\/clients\/\$\{row\.clientCompanyId\}`\}/.test(TABLEAU));
+  check('…l’enseigne ne s’affiche que si elle DIFFÈRE',
+    /row\.tradingName !== row\.legalName/.test(TABLEAU));
 
-  check('chaque item porte une icône d’entreprise', /cc-item-avatar[\s\S]{0,200}name="building"/.test(LISTE));
   /**
-   * L'ICÔNE DOUBLE UN NOM DÉJÀ LISIBLE : l'annoncer ferait entendre « image,
-   * bâtiment » avant chaque entreprise, à chaque ligne.
+   * LES CELLULES NE SE TOUCHENT PLUS -- second reproche. Un `<td>` nu n'a pas
+   * d'espacement propre ; celles de la librairie portent le leur.
    */
-  check('…décorative, masquée aux lecteurs d’écran',
-    /cc-item-avatar" aria-hidden="true"/.test(LISTE));
+  check('les cellules portent leur rembourrage', /px-3 md:px-6/.test(TABLEAU));
 
-  check('l’identité, les métadonnées et les badges sont trois blocs distincts',
-    /cc-item-identity/.test(LISTE) && /cc-item-meta/.test(LISTE) && /cc-item-badges/.test(LISTE));
+  check('chaque ligne porte une illustration d’entreprise', /<Avatar/.test(TABLEAU));
+  check('…qui retombe sur les initiales, jamais sur une image manquante',
+    /initials=\{initiales\(row\.legalName\)\}/.test(TABLEAU));
 
   check('les deux verdicts sont affichés séparément',
-    /titre="Paiements"/.test(LISTE) && /titre="Signatures"/.test(LISTE));
+    /titre="Paiements"/.test(TABLEAU) && /titre="Signatures"/.test(TABLEAU));
+  /**
+   * « BLOQUE » N'EST PAS DECORATIF : ce client NE PEUT NI PAYER NI SIGNER. Le
+   * detail des manques passe par l'infobulle -- deplier sept libelles par ligne
+   * rendrait la liste illisible ; la fiche, elle, les ecrit en clair.
+   */
+  check('…et le détail des manques reste accessible',
+    /il manque \$\{manquants\.join/.test(TABLEAU));
+
+  check('la liste se trie', /onSortChange/.test(TABLEAU) && /allowsSorting/.test(TABLEAU));
+  check('…et un état vide est prévu', /EmptyPanel/.test(TABLEAU));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('2. Le bouton « Voir »');
+section('2. L’action est explicite, et la ligne n’est pas cliquable');
 {
-  check('chaque item porte une action « Voir »', /cc-item-action/.test(LISTE) && />\s*Voir/.test(LISTE));
-  check('…avec un chevron', /cc-item-action[\s\S]{0,300}name="chevron-right"/.test(LISTE));
   /**
-   * UN LIEN, PEINT EN BOUTON. Le clic milieu, l'ouverture dans un onglet et
-   * l'aperçu de la destination au survol sont des comportements du navigateur :
-   * un `<button onClick>` les perd tous, silencieusement.
+   * TROISIEME REPROCHE FAIT AU TABLEAU D'ORIGINE : aucune action explicite,
+   * le seul chemin vers la fiche etait le nom -- une cible minuscule, et rien
+   * ne disait qu'il y AVAIT une fiche derriere.
+   *
+   * Le nom reste cliquable, ET un menu de fin de ligne nomme les actions.
    */
-  check('…c’est un LIEN, pas un bouton qui navigue',
-    /<Link[\s\S]{0,300}cc-item-action/.test(LISTE));
-  /**
-   * Dans une liste de dix boutons « Voir », un lecteur d'écran doit pouvoir
-   * dire lequel mène où.
-   */
-  check('…nommé par l’entreprise qu’il ouvre',
-    /aria-label=\{`Voir la fiche de \$\{row\.legalName\}`\}/.test(LISTE));
+  check('chaque ligne porte un menu d’actions', /Dropdown\.DotsButton/.test(TABLEAU));
+  check('…dont chaque entrée est NOMMÉE', /textValue="Ouvrir la fiche"/.test(TABLEAU));
+  check('…et le bouton du menu est annoncé',
+    /aria-label="Open menu"/.test(lire('frontend/src/components/base/dropdown/dropdown.tsx')));
 
   /**
-   * L'ITEM ENTIER N'EST PAS CLIQUABLE : il contient du texte qu'on sélectionne
-   * et un badge à infobulle. Un bloc cliquable ferait naviguer au moindre
-   * glissement pendant une sélection.
+   * LA NAVIGATION PASSE PAR LE ROUTEUR, jamais par un lien natif : celui-ci
+   * rechargerait l'application entiere au lieu de changer de route.
    */
-  check('l’item entier n’est PAS une cible de navigation',
-    !/<li[^>]*onClick/.test(LISTE_CODE()) && !/cc-item"[\s\S]{0,60}onClick/.test(LISTE_CODE()));
+  check('l’ouverture de la fiche passe par le routeur',
+    /navigate\(`\/clients\//.test(TABLEAU));
+
+  /**
+   * LA LIGNE ENTIERE N'EST PAS UNE CIBLE. Elle contient du texte qu'on
+   * selectionne -- un SIREN, une adresse -- et un badge a infobulle. Un bloc
+   * cliquable ferait naviguer au moindre glissement pendant une selection, et
+   * rien ne permet d'annuler une navigation involontaire.
+   */
+  check('la ligne entière n’est PAS une cible de navigation',
+    !/onRowAction/.test(TABLEAU) && !/<Table\.Row[^>]*onClick/.test(TABLEAU));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-section('3. La barre d’actions : l’action d’abord, le filtre ensuite');
+section('3. L’action de page d’un côté, les filtres du tableau de l’autre');
 {
-  const barre = LISTE.slice(LISTE.indexOf('cc-toolbar-actions'), LISTE.indexOf('</div>', LISTE.indexOf('cc-toolbar-actions')) + 200);
-  const posBouton = barre.indexOf('Nouvelle entreprise');
-  const posCase = barre.indexOf('<Checkbox');
-  check('« Nouvelle entreprise » est présent dans la barre', posBouton >= 0);
-  check('…la case à cocher aussi', posCase >= 0);
+  const page = lire('frontend/src/pages/ClientCompaniesPage.tsx');
+
   /**
-   * L'ORDRE N'EST PAS COSMÉTIQUE : le geste le plus structurant de la page
-   * était rangé tout à droite, c'est-à-dire là où l'œil arrive en dernier.
+   * -- DEUX FAMILLES, DEUX EMPLACEMENTS ------------------------------------
+   *
+   * La barre d'outils occupait toute la largeur pour trois controles, entre le
+   * titre et la liste. A 900 px -- au moment ou la barre laterale apparait --
+   * elle repoussait la premiere ligne sous la ligne de flottaison.
+   *
+   * Ce qui gouverne CE QUE LA LISTE MONTRE -- la recherche, les archivees --
+   * est desormais dans l'en-tete du TABLEAU, a cote de son titre. La creation,
+   * qui ne filtre rien, reste dans l'en-tete de PAGE : c'est le geste le plus
+   * structurant, et il est a l'endroit le plus stable de l'ecran.
    */
-  check('…et le bouton vient AVANT la case', posBouton >= 0 && posCase > posBouton);
-  check('le bouton porte l’icône « ajouter »', /Nouvelle entreprise/.test(LISTE) && /name="plus-lg"/.test(LISTE));
+  const posEntetePage = page.indexOf('<PageHeader');
+  const posCreation = page.indexOf('Nouvelle entreprise');
+  const posTableau = page.indexOf('<ClientCompaniesTable');
+  check('« Nouvelle entreprise » est dans l’en-tête de page',
+    posEntetePage >= 0 && posCreation > posEntetePage && posCreation < posTableau);
+  check('le bouton porte l’icône « ajouter »', /name="plus-lg"/.test(page));
+
+  const posCase = page.indexOf('<Checkbox');
+  const posRecherche = page.indexOf('<SearchField');
+  check('la case « archivées » est dans les outils du tableau', posCase > posTableau);
+  check('…la recherche aussi', posRecherche > posTableau);
+  /**
+   * L'ORDRE N'EST PAS COSMETIQUE : la case gouverne ce que la liste CONTIENT,
+   * la recherche ce qu'elle RETIENT. La premiere d'abord.
+   */
+  check('…et la case vient AVANT la recherche', posCase < posRecherche);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -212,8 +265,18 @@ section('5. La fiche : des sections illustrées');
     check(`…et « ${icone} » existe réellement dans le jeu`,
       new RegExp(`^\\s+'?${icone}'?:`, 'm').test(ICONES));
   }
+  /*
+    L'en-tete `cc-hero` a laisse place au gabarit commun aux cinq ecrans
+    refondus. Ce qu'il porte est inchange -- une identite, des pastilles, des
+    actions -- mais il se comporte de la meme facon partout quand la place
+    manque, ce qui n'etait le cas d'aucune des trois variantes precedentes.
+  */
   check('l’en-tête porte l’identité, ses badges et ses actions',
-    /cc-hero-identity/.test(FICHE) && /cc-hero-badges/.test(FICHE) && /cc-hero-actions/.test(FICHE));
+    /<PageHeader/.test(FICHE)
+    && /title=\{fiche\.legalName\}/.test(FICHE)
+    && /badges=\{/.test(FICHE)
+    && /actions=\{isDev/.test(FICHE));
+  check('…et un retour vers la liste', /backTo=\{\{ to: '\/clients'/.test(FICHE));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

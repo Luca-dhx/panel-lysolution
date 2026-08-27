@@ -53,7 +53,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { Checkbox, EmptyState } from '@/components/ui';
+import { Checkbox } from '@/components/ui';
+import { ClientCompaniesTable } from '@/components/company/ClientCompaniesTable';
+import { PageHeader, SkeletonRows } from '@/components/ui-kit';
 import { Icon } from '@/components/Icon';
 import { SearchField } from '@/components/SearchField';
 import { Modal } from '@/components/Modal';
@@ -61,7 +63,7 @@ import { useToast } from '@/components/ToastProvider';
 import { useIsDev } from '@/auth/RequireDev';
 import { clientCompanies, errorMessage } from '@/lib/api';
 import { useLiveQuery } from '@/lib/useLiveQuery';
-import type { ClientCompanyRow, DuplicateSiren } from '@/types.clientCompany';
+import type { DuplicateSiren } from '@/types.clientCompany';
 import {
   ClientCompanyForm,
   corpsPour,
@@ -69,149 +71,14 @@ import {
   type ClientCompanyFormValue,
 } from '@/components/company/ClientCompanyForm';
 
-/**
- * ── UN BADGE PAR MÉTIER, PARCE QUE CE SONT DEUX VERDICTS ───────────────────
+/*
+ * ── `VerdictBadge` ET `EntrepriseItem` ONT DÉMÉNAGÉ ────────────────────────
  *
- * ══ CE QU'UNE COLONNE UNIQUE DISAIT AVANT ════════════════════════════════
- *
- * Un seul mot — « Prête », « Facturation incomplète », « Signataire
- * manquant » — pour DEUX états indépendants. Une entreprise parfaitement
- * facturable dont le gérant vient de partir s'affichait « Signataire
- * manquant », ce qui est vrai, mais faisait croire qu'elle ne pouvait plus
- * rien : ses échéances passaient parfaitement.
- *
- * Et l'inverse, plus grave : une fiche à qui il manquait À LA FOIS l'adresse
- * de facturation ET le signataire n'affichait QUE la première. On corrigeait
- * l'adresse, on revenait, et un second manque apparaissait — découvert
- * seulement après coup.
- *
- * Les deux verdicts viennent du BACKEND, qui est la même autorité que celle
- * qui refusera le paiement ou la demande de signature.
+ * Ils rendaient la liste sous forme d'items. Cette page rend désormais un
+ * TABLEAU : les deux vivent, adaptés, dans
+ * `components/company/ClientCompaniesTable.tsx`, qui explique en tête pourquoi
+ * les trois défauts ayant motivé les items ne s'appliquent plus.
  */
-function VerdictBadge({
-  archived,
-  pret,
-  manquants,
-  titre,
-}: {
-  archived: boolean;
-  pret: boolean;
-  manquants: string[];
-  titre: string;
-}) {
-  if (archived) return <span className="badge badge-muted">{titre} suspendus</span>;
-  if (pret) return <span className="badge badge-ok">{titre} possibles</span>;
-  /**
-   * Le détail des manques passe par `title` : la liste sert à BALAYER un
-   * parc, et y déplier sept libellés par ligne la rendrait illisible. La
-   * fiche, elle, les écrit en clair.
-   */
-  return (
-    <span className="badge badge-danger" title={`${titre} : il manque ${manquants.join(', ')}.`}>
-      {titre} bloqués
-    </span>
-  );
-}
-
-/**
- * ── UNE ENTREPRISE, UN ITEM ────────────────────────────────────────────────
- *
- * ══ POURQUOI L'ITEM ENTIER N'EST PAS CLIQUABLE ═══════════════════════════
- *
- * Parce qu'il contient déjà des cibles : le SIREN se sélectionne, l'e-mail se
- * copie, un badge porte une infobulle. Rendre le bloc cliquable ferait
- * naviguer au moindre glissement de souris pendant une sélection de texte —
- * et il n'existe aucune façon d'annuler une navigation involontaire autrement
- * qu'en revenant en arrière.
- *
- * L'action est donc EXPLICITE et nommée : « Voir ». Une seule cible, à un
- * seul endroit, toujours la même.
- */
-function EntrepriseItem({ row }: { row: ClientCompanyRow }) {
-  const archivee = row.status === 'ARCHIVED';
-  const enseigne = row.tradingName && row.tradingName !== row.legalName ? row.tradingName : null;
-
-  /**
-   * LES MÉTADONNÉES SONT ASSEMBLÉES, PAS EMPILÉES.
-   *
-   * Un « — » pour chaque champ absent produisait une ligne de tirets qui
-   * n'apprend rien. Ce qui manque est simplement ABSENT ; ce qui reste est
-   * séparé par un point médian, qui se lit sans être une ponctuation.
-   */
-  const metadonnees = [
-    row.siren ? `SIREN ${row.siren}` : null,
-    row.billingEmail,
-    `${row.projectCount} projet${row.projectCount > 1 ? 's' : ''}`,
-  ].filter(Boolean) as string[];
-
-  return (
-    <li className={archivee ? 'cc-item cc-item-archived' : 'cc-item'}>
-      {/*
-        L'ICÔNE EST DÉCORATIVE — elle double une raison sociale déjà lisible.
-        Elle est donc masquée aux lecteurs d'écran : l'annoncer ferait entendre
-        « image, bâtiment » avant chaque nom d'entreprise, à chaque ligne.
-      */}
-      <span className="cc-item-avatar" aria-hidden="true">
-        <Icon name="building" size={20} />
-      </span>
-
-      <div className="cc-item-body">
-        <div className="cc-item-identity">
-          <span className="cc-item-name">{row.legalName}</span>
-          {/*
-            L'ENSEIGNE N'EST AFFICHÉE QUE SI ELLE DIFFÈRE.
-            La répéter à l'identique donnerait l'impression de deux noms
-            distincts à maintenir séparément.
-          */}
-          {enseigne ? <span className="cc-item-trading">{enseigne}</span> : null}
-          {archivee ? <span className="badge badge-muted">Archivée</span> : null}
-        </div>
-
-        <p className="cc-item-meta">
-          {metadonnees.map((texte, index) => (
-            <span key={texte}>
-              {index > 0 ? <span className="cc-item-sep" aria-hidden="true"> · </span> : null}
-              {texte}
-            </span>
-          ))}
-        </p>
-
-        <div className="cc-item-badges">
-          <VerdictBadge
-            archived={archivee}
-            pret={row.readiness.billing.ready}
-            manquants={row.readiness.billing.missing}
-            titre="Paiements"
-          />
-          <VerdictBadge
-            archived={archivee}
-            pret={row.readiness.signing.ready}
-            manquants={row.readiness.signing.missing}
-            titre="Signatures"
-          />
-        </div>
-      </div>
-
-      {/*
-        UN LIEN, PEINT EN BOUTON — jamais un `<button>` qui navigue.
-        Le clic milieu, l'ouverture dans un onglet et le survol qui montre la
-        destination sont des comportements du navigateur : un bouton avec un
-        `onClick` les perd tous, silencieusement.
-
-        Le nom de l'entreprise est dans le libellé accessible : dans une liste
-        de dix boutons « Voir », un lecteur d'écran doit pouvoir dire lequel.
-      */}
-      <Link
-        to={`/clients/${row.clientCompanyId}`}
-        className="btn btn-secondary btn-sm cc-item-action"
-        aria-label={`Voir la fiche de ${row.legalName}`}
-      >
-        Voir
-        <Icon name="chevron-right" size={12} />
-      </Link>
-    </li>
-  );
-}
 
 export function ClientCompaniesPage() {
   const isDev = useIsDev();
@@ -285,13 +152,33 @@ export function ClientCompaniesPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <h1>Clients</h1>
-        <p className="page-description">
-          Les entreprises clientes de L.Y Solution. Leur identité légale fait autorité sur les
-          factures et les contrats de leurs projets.
-        </p>
-      </header>
+      {/*
+        ── L'EN-TÊTE COMMUN, ET LES OUTILS DANS L'EN-TÊTE DU TABLEAU ─────────
+
+        La barre d'outils vivait entre le titre et la liste, sur deux lignes :
+        actions et case à cocher d'abord, recherche ensuite. Elle occupait
+        toute la largeur pour trois contrôles, et à 900 px — au moment où la
+        barre latérale apparaît — elle repoussait la première ligne de la liste
+        sous la ligne de flottaison.
+
+        Les outils qui gouvernent CE QUE LA LISTE MONTRE sont désormais DANS
+        l'en-tête du tableau, à côté de son titre. L'action de création, elle,
+        reste dans l'en-tête de PAGE : elle ne filtre rien, elle crée.
+      */}
+      <PageHeader
+        title="Clients"
+        description="Les entreprises clientes de L.Y Solution. Leur identité légale fait autorité sur les factures et les contrats de leurs projets."
+        actions={isDev ? (
+          <button
+            type="button"
+            className="btn btn-primary btn-small"
+            onClick={() => setCreation(formulaireVide())}
+          >
+            <Icon name="plus-lg" size={13} />
+            Nouvelle entreprise
+          </button>
+        ) : null}
+      />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
@@ -306,65 +193,39 @@ export function ClientCompaniesPage() {
         </div>
       ) : null}
 
-      {/*
-        ── L'ACTION D'ABORD, LE FILTRE ENSUITE, LA RECHERCHE À PART ─────────
-
-        La barre était rangée dans l'ordre inverse : recherche, case à cocher,
-        puis le bouton de création tout à droite — c'est-à-dire le geste le
-        plus structurant à l'endroit où l'œil arrive en dernier.
-
-        « Nouvelle entreprise » ouvre en tête, la case le suit immédiatement
-        parce qu'elle gouverne CE QUE LA LISTE MONTRE, et la recherche occupe
-        sa propre ligne : elle n'est pas une action, c'est un filtre continu.
-      */}
-      <div className="cc-toolbar">
-        <div className="cc-toolbar-actions">
-          {/*
-            LA CRÉATION EST RÉSERVÉE AUX COMPTES DEV.
-            Ce qui est saisi ici finit sur une facture et sur un contrat signé :
-            la garde n'est pas hiérarchique, elle est proportionnée à ce qu'une
-            erreur de saisie produit chez un tiers. Le backend applique la même
-            règle, et c'est LUI la barrière — ce bouton ne fait que la refléter.
-          */}
-          {isDev ? (
-            <button type="button" className="btn btn-primary" onClick={() => setCreation(formulaireVide())}>
-              <Icon name="plus-lg" size={13} />
-              Nouvelle entreprise
-            </button>
-          ) : null}
-
-          <Checkbox
-            checked={avecArchivees}
-            onChange={setAvecArchivees}
-            label="Afficher les archivées"
-          />
-        </div>
-
-        <SearchField
-          value={recherche}
-          onChange={setRecherche}
-          label="Rechercher une entreprise"
-          placeholder="Raison sociale ou SIREN…"
-        />
-      </div>
-
       {isInitialLoading ? (
-        <p className="muted">Chargement des entreprises clientes…</p>
-      ) : lignes.length === 0 ? (
-        <EmptyState
-          title={recherche ? 'Aucune entreprise ne correspond' : 'Aucune entreprise cliente'}
-          hint={
+        <div className="uui overflow-hidden rounded-xl ring-1 ring-secondary">
+          <SkeletonRows rows={5} columns={4} />
+        </div>
+      ) : (
+        <ClientCompaniesTable
+          rows={lignes}
+          title={avecArchivees ? 'Toutes les entreprises' : 'Entreprises actives'}
+          description="Le nom mène à la fiche. « Bloqué » signifie que ce client ne peut ni payer ni signer."
+          emptyTitle={recherche ? 'Aucune entreprise ne correspond' : 'Aucune entreprise cliente'}
+          emptyHint={
             recherche
               ? 'Essayez une autre raison sociale, ou un SIREN.'
               : 'Créez la fiche d’un client pour pouvoir lui facturer un projet.'
           }
+          contentTrailing={(
+            <div className="flex w-full flex-wrap items-center gap-4 lg:w-auto lg:justify-end">
+              <Checkbox
+                checked={avecArchivees}
+                onChange={setAvecArchivees}
+                label="Afficher les archivées"
+              />
+              <div className="min-w-0 flex-1 lg:w-64 lg:flex-none">
+                <SearchField
+                  value={recherche}
+                  onChange={setRecherche}
+                  label="Rechercher une entreprise"
+                  placeholder="Raison sociale ou SIREN…"
+                />
+              </div>
+            </div>
+          )}
         />
-      ) : (
-        <ul className="cc-list">
-          {lignes.map((row) => (
-            <EntrepriseItem key={row.clientCompanyId} row={row} />
-          ))}
-        </ul>
       )}
 
       {creation ? (

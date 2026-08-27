@@ -50,15 +50,36 @@ const money = await import('@/lib/money');
 const echelle = await import('@/lib/netChartScale');
 const libelles = await import('@/components/finance/financeLabels');
 
-const workspace = lire('frontend/src/components/finance/FinanceWorkspace.tsx');
+/*
+  ── LE MOTEUR FINANCIER S'EST SCINDÉ ────────────────────────────────────────
+
+  `FinanceWorkspace` portait tout : filtres, indicateurs, graphique, registre,
+  formulaires. Les INDICATEURS et le GRAPHIQUE vivent désormais dans
+  `FinanceDashboard`, que le moteur monte — c'est ce qui permet à la page
+  Finances et à l'onglet Finances d'un projet de partager exactement la même
+  lecture.
+
+  Rien de ce que cette suite garde n'a changé de sens ; les fichiers ont bougé.
+  On lit donc les deux ensemble : ces contrôles portent sur L'ÉCRAN, pas sur un
+  fichier.
+*/
+const moteur = lire('frontend/src/components/finance/FinanceWorkspace.tsx');
+const tableauDeBord = lire('frontend/src/components/finance/FinanceDashboard.tsx');
+const workspace = moteur + '\n' + tableauDeBord;
 const formRegle = lire('frontend/src/components/finance/RecurringCostForm.tsx');
 const listeRegles = lire('frontend/src/components/finance/RecurringCostList.tsx');
 const recu = lire('frontend/src/components/finance/ReceiptCell.tsx');
 const libelles2 = lire('frontend/src/components/finance/financeLabels.ts');
 const formulaire = lire('frontend/src/components/finance/TransactionForm.tsx');
 const detail = lire('frontend/src/components/finance/TransactionDetail.tsx');
-const graphique = lire('frontend/src/components/finance/NetChart.tsx');
-const pageGlobale = lire('frontend/src/pages/FinancesPage.tsx');
+/*
+  LE GRAPHIQUE DU NET EST DEVENU UN GRAPHIQUE COMPOSÉ (Bklit) : des barres pour
+  les sorties, deux courbes pour les encaissements et le net. `NetChart` reste
+  dans le dépôt — il n'est plus monté par aucun écran — et le contrôle porte
+  désormais sur celui qui est réellement affiché.
+*/
+const graphique = lire('frontend/src/components/finance/charts/FinanceEvolutionChart.tsx');
+const pageGlobale = lire('frontend/src/pages/FinancesPage.tsx') + '\n' + tableauDeBord;
 const ficheProjet = lire('frontend/src/pages/ProjectDetailPage.tsx');
 const nav = lire('frontend/src/config/nav.ts');
 const app = lire('frontend/src/App.tsx');
@@ -143,8 +164,17 @@ section('2. Le graphique ne casse sur aucun état d’un registre qui démarre')
   check('31 jours : les libellés sont espacés, jamais tous affichés',
     trenteEtUn.labelEvery >= 3);
 
+  /*
+    L'état vide se nomme désormais par sa cause : `evolutionState` distingue
+    « aucun seau » (période sans mouvement) de « un seul seau » (une courbe d'un
+    point est un pixel, on rend le chiffre). Deux états au lieu d'un, et le
+    second est un progrès — le tracé ne prétend plus montrer une évolution
+    qu'il n'a pas.
+  */
   check('le composant montre un état vide plutôt qu’un cadre sans barres',
-    graphique.includes('series.length === 0') && graphique.includes('EmptyState'));
+    graphique.includes("etat === 'empty'") && graphique.includes('EmptyPanel'));
+  check('…et refuse de tracer une « courbe » d’un seul point',
+    graphique.includes("etat === 'single'"));
 }
 
 section('3. UN SEUL moteur — la fiche projet et la page globale le partagent');
@@ -166,8 +196,15 @@ section('3. UN SEUL moteur — la fiche projet et la page globale le partagent')
 
 section('4. L’onglet Finances et la page globale sont atteignables');
 {
-  check('l’onglet existe dans la fiche projet', /className=\{tab === 'finances'/.test(ficheProjet));
-  check('…il est nommé « Finances »', /tab === 'finances'[\s\S]{0,200}Finances/.test(ficheProjet));
+  /*
+    Les onglets sont désormais une LISTE passée à `SmoothTabs` : l'entrée existe
+    en donnée, plus en balisage. Ce qui est gardé — l'onglet existe, il se nomme
+    « Finances », il vit dans l'URL, il n'est pas réservé aux DEV — est
+    inchangé.
+  */
+  check('l’onglet existe dans la fiche projet',
+    /value: 'finances' as const, label: 'Finances'/.test(ficheProjet));
+  check('…il est nommé « Finances »', /label: 'Finances'/.test(ficheProjet));
   check('…il vit dans l’URL comme les autres', ficheProjet.includes("'finances'"));
   check('…et il n’est PAS réservé aux DEV',
     !/isDev[\s\S]{0,120}tab === 'finances'/.test(ficheProjet));
@@ -181,10 +218,12 @@ section('4. L’onglet Finances et la page globale sont atteignables');
 
 section('5. Les trois sous-onglets, et ce qu’ils filtrent');
 {
+  /* La table des sous-onglets a pris la forme attendue par `SmoothTabs` :
+     `value` plutôt que `key`. Les trois entrées sont les mêmes. */
   check('les trois sous-onglets existent',
-    workspace.includes("key: 'general'")
-    && workspace.includes("key: 'costs'")
-    && workspace.includes("key: 'revenues'"));
+    workspace.includes("value: 'general'")
+    && workspace.includes("value: 'costs'")
+    && workspace.includes("value: 'revenues'"));
   check('« Coûts » filtre sur la catégorie COST',
     /sousOnglet === 'costs' \? 'COST'/.test(workspace));
   /**
@@ -203,7 +242,7 @@ section('5. Les trois sous-onglets, et ce qu’ils filtrent');
   check('« Général » ne filtre rien', /'REVENUE,REFUND' : null/.test(workspace));
 
   check('le graphique n’apparaît que sur « Général »',
-    /sousOnglet === 'general' \?[\s\S]{0,200}<NetChart/.test(workspace));
+    /sousOnglet === 'general' \?[\s\S]{0,400}<FinanceEvolutionPanel/.test(workspace));
 
   check('LES AGRÉGATS NE SUIVENT PAS LE SOUS-ONGLET — ils décrivent la période',
     workspace.includes('criteresResume') && workspace.includes('criteresListe')
@@ -221,8 +260,11 @@ section('6. Les périodes, les filtres et le tri sont à l’écran');
     libelles.PERIOD_ORDER.every((clef) => typeof libelles.PERIOD_LABELS[clef] === 'string'
       && libelles.PERIOD_LABELS[clef].length > 0));
 
+  /* Le choix de période est devenu un contrôle segmenté partagé
+     (`ui-kit/PeriodPicker`) : c'est LUI qui ouvre les deux bornes. */
   check('la période personnalisée ouvre deux bornes de date',
-    /period === 'CUSTOM' \?[\s\S]{0,600}type="date"/.test(workspace));
+    /personnalise \?[\s\S]{0,900}type="date"[\s\S]{0,900}type="date"/
+      .test(lire('frontend/src/components/ui-kit/PeriodPicker.tsx')));
   check('…et une borne manquante ne part pas en erreur serveur',
     workspace.includes('periodeUtilisable'));
 
@@ -355,7 +397,17 @@ section('11. Responsive, thème et accessibilité');
 
   check('le graphique porte un rôle et une description',
     graphique.includes('role="img"') && graphique.includes('aria-label'));
-  check('chaque barre porte sa valeur en infobulle native', graphique.includes('<title>'));
+  /*
+    LES VALEURS RESTENT LISIBLES SANS LA SOURIS.
+
+    L'ancien tracé était un SVG écrit à la main : chaque barre portait un
+    `<title>`. Un graphique de librairie est un canevas interactif dont les
+    valeurs n'existent qu'au survol — geste sans équivalent au clavier. Le
+    tableau masqué à l'œil (`sr-only`) les rend toutes, avec leur période :
+    c'est l'équivalent moderne, et il est plus complet.
+  */
+  check('les valeurs du graphique restent accessibles sans survol',
+    /<table className="sr-only">/.test(graphique) && /<caption>/.test(graphique));
   check('la colonne d’actions a un intitulé pour les lecteurs d’écran',
     workspace.includes('sr-only'));
   check('les choix de catégorie annoncent leur état', formulaire.includes('aria-pressed'));

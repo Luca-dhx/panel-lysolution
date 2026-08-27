@@ -1,5 +1,5 @@
 /**
- * FINANCES — la vue d'ensemble de L.Y Solution.
+ * FINANCES — le tableau de bord de pilotage de L.Y Solution.
  *
  * ══ CE QU'ELLE N'EST PAS ════════════════════════════════════════════════════
  *
@@ -15,17 +15,30 @@
  * elle-même dans ce classement — car les mouvements propres à L.Y Solution
  * (`projectId: null`) y figurent comme n'importe quel autre rattachement. Ce ne
  * sont pas une exception du modèle, ils en sont un cas.
+ *
+ * ══ CE QUE LA REFONTE A CHANGÉ ══════════════════════════════════════════════
+ *
+ * L'écran empilait un titre, quatre cartes, un graphique, une barre de filtres,
+ * une liste et un tableau — tous du même poids visuel, tous à la même largeur.
+ * Il fallait le PARCOURIR pour en tirer quoi que ce soit.
+ *
+ * Il est désormais organisé par question :
+ *
+ *   1. COMBIEN, et par rapport à quand   → les indicateurs, avec leur tendance
+ *   2. COMMENT ça évolue                 → le graphique composé
+ *   3. GRÂCE À QUI                       → la répartition, graphique + chiffres
+ *   4. QUOI exactement                   → le registre, inchangé
+ *
+ * Les trois premières couches sont neuves ; la quatrième est le moteur
+ * existant, qui n'a perdu aucune de ses fonctions.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Card, EmptyState } from '@/components/ui';
+import { useMemo, useState } from 'react';
+import { PageHeader, SkeletonRows } from '@/components/ui-kit';
 import { FinanceWorkspace } from '@/components/finance/FinanceWorkspace';
+import { FinanceBreakdownPanel } from '@/components/finance/FinanceDashboard';
 import { LY_SOLUTION } from '@/components/finance/financeLabels';
-import { errorMessage, finances } from '@/lib/api';
-import { formatCents, formatNetCents, netTone } from '@/lib/money';
 import { useProjects } from '@/lib/useProjects';
 import { projectDisplayName } from '@/lib/projectPresentation';
-import type { FinanceProjectLine } from '@/types.finance';
 
 export function FinancesPage() {
   const { projects, isInitialLoading } = useProjects();
@@ -50,127 +63,71 @@ export function FinancesPage() {
     [projects],
   );
 
+  /**
+   * Les noms VIVANTS, indexés une fois.
+   *
+   * L'instantané porté par une ligne financière est un repli d'audit : il dit
+   * comment le projet s'appelait au moment de la saisie. Ce qu'on veut lire,
+   * c'est son nom d'aujourd'hui.
+   */
+  const nomsVivants = useMemo(
+    () => new Map(choix.map((c) => [c.projectId, c.projectName])),
+    [choix],
+  );
+
   return (
     <div className="page">
-      <header className="page-header">
-        <h1>Finances</h1>
-        <p className="page-description">
-          Tous les mouvements du parc et ceux de {LY_SOLUTION}, dans un seul registre.
-          Le bénéfice est calculé depuis les mouvements — il n’est jamais saisi.
-        </p>
-      </header>
+      <PageHeader
+        title="Finances"
+        description={(
+          <>
+            Tous les mouvements du parc et ceux de {LY_SOLUTION}, dans un seul registre.
+            Le bénéfice est calculé depuis les mouvements — il n’est jamais saisi.
+          </>
+        )}
+      />
 
       {isInitialLoading ? (
-        <Card><p className="muted">Chargement du parc…</p></Card>
+        /*
+          Le squelette a la FORME de ce qui arrive : quatre indicateurs puis un
+          bloc. Un « Chargement du parc… » centré ne réservait aucune place, et
+          tout sautait à l'arrivée des chiffres.
+        */
+        <div className="uui flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-24 animate-pulse rounded-xl bg-secondary" />
+            ))}
+          </div>
+          <div className="overflow-hidden rounded-xl ring-1 ring-secondary">
+            <SkeletonRows rows={4} columns={4} />
+          </div>
+        </div>
       ) : (
         <>
+          {/*
+            LE MOTEUR — indicateurs, évolution, filtres, registre, formulaires.
+            Il porte sa propre période : c'est LUI qui décide de la fenêtre, et
+            les chiffres du haut décrivent exactement ce que la liste du bas
+            contient.
+          */}
           <FinanceWorkspace
             scope="all"
             projects={choix}
             onMutate={() => setRevision((n) => n + 1)}
           />
-          <RepartitionParProjet
-            revision={revision}
-            projectNames={new Map(choix.map((c) => [c.projectId, c.projectName]))}
-          />
+
+          {/*
+            LA RÉPARTITION — volontairement hors du moteur, et sans période.
+
+            C'est un classement de FOND. Lui donner ses propres filtres aurait
+            mis deux réglages indépendants sur un même écran, donc, un jour,
+            deux lectures contradictoires côte à côte.
+          */}
+          <FinanceBreakdownPanel revision={revision} projectNames={nomsVivants} />
         </>
       )}
     </div>
-  );
-}
-
-/**
- * QUI RAPPORTE, QUI COÛTE — sur l'ensemble du registre.
- *
- * Volontairement SANS filtre de période : c'est un classement de fond, pas une
- * vue de travail. Le moteur au-dessus porte déjà toutes les périodes, et
- * dupliquer ses filtres ici aurait produit deux réglages indépendants sur un
- * même écran — donc, un jour, deux lectures contradictoires côte à côte.
- */
-function RepartitionParProjet({
-  revision,
-  projectNames,
-}: {
-  /** Change à chaque écriture du moteur — c'est le seul déclencheur de relecture. */
-  revision: number;
-  projectNames: Map<string, string>;
-}) {
-  const [lignes, setLignes] = useState<FinanceProjectLine[] | null>(null);
-  const [erreur, setErreur] = useState<string | null>(null);
-
-  useEffect(() => {
-    let vivant = true;
-    finances.byProject({ period: 'ALL' })
-      .then((res) => { if (vivant) { setLignes(res.items); setErreur(null); } })
-      .catch((err) => {
-        if (vivant) setErreur(errorMessage(err, 'La répartition n’a pas pu être chargée.'));
-      });
-    return () => { vivant = false; };
-  }, [revision]);
-
-  if (erreur) return <Card title="Répartition par projet"><div className="alert alert-error">{erreur}</div></Card>;
-  if (lignes === null) return <Card title="Répartition par projet"><p className="muted">Chargement…</p></Card>;
-
-  if (lignes.length === 0) {
-    return (
-      <Card title="Répartition par projet">
-        <EmptyState
-          title="Aucun mouvement enregistré."
-          hint="La répartition apparaîtra dès la première transaction."
-        />
-      </Card>
-    );
-  }
-
-  return (
-    <Card title="Répartition par projet">
-      <div className="table-scroll">
-        <table className="data-table finance-table finance-table-stackable">
-          <thead>
-            <tr>
-              <th scope="col">Rattachement</th>
-              <th scope="col" className="finance-cell-amount">Revenus</th>
-              <th scope="col" className="finance-cell-amount">Coûts</th>
-              <th scope="col" className="finance-cell-amount">Net</th>
-              <th scope="col" className="finance-cell-amount">Mouvements</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lignes.map((ligne) => (
-              <tr key={ligne.projectId ?? '__company__'}>
-                <td data-label="Rattachement">
-                  {ligne.projectId ? (
-                    // Depuis le classement, on va lire le détail là où il vit :
-                    // sur la fiche du client, dans son onglet Finances.
-                    <Link className="project-link" to={`/projects/${ligne.projectId}?tab=finances`}>
-                      {projectNames.get(ligne.projectId) ?? ligne.projectNameSnapshot ?? ligne.projectId}
-                    </Link>
-                  ) : (
-                    <span className="cell-primary">{LY_SOLUTION}</span>
-                  )}
-                </td>
-                <td data-label="Revenus" className="finance-cell-amount finance-amount-inflow">
-                  {formatCents(ligne.revenueCents)}
-                </td>
-                <td data-label="Coûts" className="finance-cell-amount finance-amount-outflow">
-                  {formatCents(ligne.costCents)}
-                </td>
-                <td
-                  data-label="Net"
-                  className={`finance-cell-amount finance-net-${netTone(ligne.netCents)}`}
-                >
-                  {formatNetCents(ligne.netCents)}
-                </td>
-                <td data-label="Mouvements" className="finance-cell-amount">{ligne.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="field-hint muted">
-        Depuis le début, toutes périodes confondues. Les mouvements supprimés n’y figurent pas.
-      </p>
-    </Card>
   );
 }
 

@@ -1,0 +1,308 @@
+/**
+ * LA REFONTE D'INTERFACE — ce qui doit rester vrai après elle.
+ *
+ * ══ CE QUE CETTE SUITE PROTÈGE ══════════════════════════════════════════════
+ *
+ * Quatre écosystèmes d'interface cohabitent désormais dans le Panel : Untitled
+ * UI, Bklit, Kokonut UI et Radix Themes. Chacun arrive avec sa palette, sa
+ * remise à zéro et ses hypothèses de mise en page. Ce qui les empêche de
+ * produire une soupe n'est pas une intention, ce sont des PONTS — trois
+ * fichiers CSS qui traduisent leurs vocabulaires vers les quatre couleurs
+ * réglables du Panel.
+ *
+ * Ces contrôles sont STATIQUES et lisent les fichiers. C'est délibéré : les
+ * défauts qu'ils ferment ne se voient pas à l'exécution d'un test fonctionnel.
+ * Une couleur figée reste une couleur — jusqu'au jour où l'exploitant change de
+ * thème et découvre une carte blanche sur un fond noir.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { check, finish, section } from './helpers/harness.js';
+
+const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
+const existe = (rel) => fs.existsSync(path.join(racine, rel));
+
+/** Un fichier privé de ses commentaires : sinon une assertion se valide sur sa propre explication. */
+const sansCommentaires = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '')
+  .replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('1. Les registres sont déclarés, et Claude Code peut les explorer');
+{
+  const config = JSON.parse(lire('frontend/components.json'));
+  check('`components.json` existe et déclare des registres', Boolean(config.registries));
+  check('…celui de Bklit', config.registries['@bklit'] === 'https://ui.bklit.com/r/{name}.json');
+  check('…celui de Kokonut UI', config.registries['@kokonutui'] === 'https://kokonutui.com/r/{name}.json');
+  check('la feuille visée par la CLI est le fichier GÉNÉRÉ, pas la nôtre',
+    config.tailwind.css === 'src/styles/registry-generated.css');
+  check('les alias pointent le dossier `src`', config.aliases.utils === '@/lib/utils');
+
+  const mcp = JSON.parse(lire('.mcp.json'));
+  check('le serveur MCP shadcn est déclaré', Boolean(mcp.mcpServers.shadcn));
+  check('…avec le répertoire du frontend', mcp.mcpServers.shadcn.args.includes('frontend'));
+  check('le serveur MCP Untitled UI est déclaré', Boolean(mcp.mcpServers.untitledui));
+  check('…en HTTP, sur l’adresse officielle',
+    mcp.mcpServers.untitledui.url === 'https://www.untitledui.com/react/api/mcp');
+
+  /**
+   * AUCUN SECRET DANS LA CONFIGURATION MCP.
+   *
+   * Les composants PRO d'Untitled UI s'obtiennent par OAuth, que le client
+   * gère. Une clef écrite ici serait committée, et un `Authorization: Bearer`
+   * en clair dans un dépôt est exactement le genre de motif qu'un scanner
+   * reconnaît — à raison.
+   */
+  const brut = lire('.mcp.json');
+  check('aucun jeton, aucune clef dans la configuration MCP',
+    !/(bearer|api[-_]?key|token|secret|password)/i.test(brut));
+
+  check('le skill Bklit est installé', existe('.claude/skills/bklit-ui/SKILL.md'));
+  check('…et il est PORTABLE — un vrai dossier, pas un lien vers ce poste',
+    fs.statSync(path.join(racine, '.claude/skills/bklit-ui')).isDirectory()
+    && !fs.lstatSync(path.join(racine, '.claude/skills/bklit-ui')).isSymbolicLink());
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('2. Les ponts : aucune librairie n’impose sa palette');
+{
+  const bridge = lire('frontend/src/styles/bridge.css');
+  const registry = lire('frontend/src/styles/registry.css');
+  const radix = lire('frontend/src/styles/radix-scope.css');
+
+  for (const [nom, source] of [
+    ['bridge.css (Untitled UI)', bridge],
+    ['registry.css (Bklit / Kokonut)', registry],
+    ['radix-scope.css (Radix Themes)', radix],
+  ]) {
+    /**
+     * PAS UN SEUL CODE HEXADÉCIMAL.
+     *
+     * C'est la règle du Panel depuis `tokens.css`, et elle vaut pour les ponts :
+     * une teinte écrite ici serait figée sur le thème du jour, et le graphique
+     * serait le seul élément de l'écran à ignorer les couleurs choisies.
+     */
+    const enDur = [...sansCommentaires(source).matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
+    check(`${nom} : aucune couleur en dur (${enDur.join(', ') || 'aucune'})`, enDur.length === 0);
+    check(`${nom} : tout dérive des quatre couleurs du thème`, /var\(--p-/.test(source));
+  }
+
+  check('la palette des séries est branchée sur le thème',
+    /--chart-1:\s*var\(--p-primary\)/.test(registry));
+  check('…et les cinq rangs sont définis',
+    ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5']
+      .every((v) => registry.includes(`${v}:`)));
+  check('les variables propres à Bklit sont traduites',
+    registry.includes('--chart-tooltip-background:') && registry.includes('--legend-foreground:'));
+
+  /**
+   * LE PONT ÉCRASE CE QUE LA CLI DÉPOSE — par l'ordre d'import, pas à la main.
+   */
+  const entree = lire('frontend/src/styles/uui.css');
+  const iGenere = entree.indexOf('./registry-generated.css');
+  const iPont = entree.indexOf('./registry.css');
+  check('le fichier généré est importé AVANT notre traduction',
+    iGenere !== -1 && iPont !== -1 && iGenere < iPont);
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('3. Radix est SCOPÉ : aucun écran non refondu ne peut être repeint');
+{
+  const radix = lire('frontend/src/styles/radix-scope.css');
+  check('la feuille complète de Radix n’est PAS importée',
+    !radix.includes('@radix-ui/themes/styles.css'));
+  check('…seuls les jetons et les composants le sont',
+    radix.includes('tokens/base.css') && radix.includes('components.css'));
+  // On lit les IMPORTS, pas la prose : le commentaire d'en-tête cite
+  // justement ces deux feuilles pour expliquer pourquoi elles restent dehors.
+  const importsRadix = [...radix.matchAll(/@import\s+"([^"]+)"/g)].map((m) => m[1]);
+  check('ni les utilitaires ni la mise en page de Radix n’entrent',
+    !importsRadix.some((i) => /utilities\.css|layout\.css/.test(i)));
+
+  /**
+   * LE CONTENEUR N'EST PAS UNE PAGE.
+   *
+   * Radix pose `min-height: 100dvh` sur tout conteneur qu'il croit racine. Nos
+   * conteneurs sont LOCAUX et n'ont aucun `Theme` parent : chacun se déclarait
+   * donc racine et réclamait une hauteur d'écran. Constaté : 450 px de vide
+   * dans le bloc des filtres de la page Finances.
+   */
+  check('la hauteur de « racine » est neutralisée',
+    /\.radix-themes\[data-is-root-theme='true'\][\s\S]{0,80}min-height:\s*0/.test(radix));
+
+  const scope = lire('frontend/src/components/radix/RadixScope.tsx');
+  check('le conteneur ne peint aucun fond', scope.includes('hasBackground={false}'));
+  check('l’apparence est DÉDUITE de la luminance du thème, jamais figée',
+    scope.includes('luminance') && scope.includes('--p-background'));
+  check('…et recalculée quand le thème change sans rechargement',
+    scope.includes('MutationObserver'));
+
+  /**
+   * AUCUN `<Theme>` GLOBAL. La racine porte déjà 190 ko de CSS écrit à la main :
+   * un cinquième système revendiquant `background`, `color` et la police sur
+   * `<body>` aurait repeint les quinze écrans hors périmètre.
+   */
+  const main = lire('frontend/src/main.tsx');
+  const app = lire('frontend/src/App.tsx');
+  check('aucun conteneur Radix à la racine de l’application',
+    !/@radix-ui\/themes/.test(main) && !/@radix-ui\/themes/.test(app));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('4. Le préflight de Tailwind reste dehors');
+{
+  const entree = lire('frontend/src/styles/uui.css');
+  check('l’import complet de Tailwind — qui embarque le préflight — est écarté',
+    !/@import\s+"tailwindcss"\s*;/.test(entree));
+  check('…seuls le thème et les utilitaires entrent',
+    entree.includes('tailwindcss/theme.css') && entree.includes('tailwindcss/utilities.css'));
+  check('la remise à zéro est LOCALE, sous `.uui`', entree.includes(':where(.uui)'));
+  check('…et de spécificité nulle, pour que `.btn` gagne toujours',
+    /:where\(\.uui\)\s+button/.test(entree));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('5. Les écrans refondus ne fabriquent aucun chiffre');
+{
+  const dashboard = sansCommentaires(lire('frontend/src/components/finance/FinanceDashboard.tsx'));
+  const evolution = sansCommentaires(lire('frontend/src/components/finance/charts/FinanceEvolutionChart.tsx'));
+  const breakdown = sansCommentaires(lire('frontend/src/components/finance/charts/FinanceBreakdownChart.tsx'));
+
+  /**
+   * AUCUNE SOMME DE LIGNES PAGINÉES.
+   *
+   * La liste est bornée par `limit` : additionner ses items donnerait un total
+   * plausible et faux. Tous les agrégats viennent de `/summary` et
+   * `/by-project`, calculés par le serveur sur l'ENSEMBLE du périmètre.
+   */
+  for (const [nom, source] of [
+    ['FinanceDashboard', dashboard],
+    ['FinanceEvolutionChart', evolution],
+    ['FinanceBreakdownChart', breakdown],
+  ]) {
+    check(`${nom} : aucune addition de \`list.items\``,
+      !/list\.items[\s\S]{0,120}reduce/.test(source));
+    check(`${nom} : aucune division par cent hors des formateurs`,
+      !/\/\s*100\b/.test(source));
+  }
+
+  check('la tendance est demandée au SERVEUR, sur la fenêtre précédente',
+    dashboard.includes('previousWindow') && dashboard.includes("period: 'CUSTOM'"));
+
+  /**
+   * AUCUNE DONNÉE DE DÉMONSTRATION.
+   *
+   * Les exemples de Bklit et d'Untitled UI vivent sur des jeux fictifs. Ils
+   * servent à comprendre l'API ; en laisser un dans l'application afficherait
+   * des chiffres inventés sous un titre sérieux.
+   */
+  const ecrans = [
+    'frontend/src/pages/FinancesPage.tsx',
+    'frontend/src/pages/ProjectsPage.tsx',
+    'frontend/src/pages/ClientCompaniesPage.tsx',
+    'frontend/src/components/finance/FinanceDashboard.tsx',
+    'frontend/src/components/projects/ProjectsTable.tsx',
+    'frontend/src/components/company/ClientCompaniesTable.tsx',
+  ];
+  for (const rel of ecrans) {
+    const source = lire(rel);
+    check(`${path.basename(rel)} : aucun jeu de démonstration importé`,
+      !/customers\.json|table\/customers|placeholder-data|mock/i.test(source));
+  }
+
+  check('aucun composant d’exemple Bklit n’a été installé',
+    !existe('frontend/src/components/charts/area-chart-example.tsx'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('6. Les paliers responsive se calent sur la largeur du CONTENU');
+{
+  /**
+   * ══ LE PIÈGE QUE CES CONTRÔLES FERMENT ═════════════════════════════════════
+   *
+   * La barre latérale du Panel reprend 250 px dès 900 px de fenêtre. Il y a
+   * donc MOINS de place utile à 900 px (≈ 570 px) qu'à 768 px, où elle est
+   * encore un tiroir. Un palier posé au réflexe `md:` fait déborder le tableau
+   * juste après le seuil du tiroir — sur la seule largeur où personne ne pense
+   * à regarder.
+   *
+   * Les colonnes sortent donc à `sm`, `lg`, `xl` ou `2xl`. On interdit ici
+   * `md:table-cell`, qui est la forme exacte du défaut.
+   */
+  const tableaux = [
+    'frontend/src/components/prospection/ProspectsTable.tsx',
+    'frontend/src/components/projects/ProjectsTable.tsx',
+    'frontend/src/components/company/ClientCompaniesTable.tsx',
+  ];
+  for (const rel of tableaux) {
+    const source = lire(rel);
+    check(`${path.basename(rel)} : aucune colonne n’apparaît au palier « md »`,
+      !/md:table-cell/.test(source));
+    check(`${path.basename(rel)} : le cadre défile, pas la page`,
+      source.includes('TableCard.Root'));
+    /*
+      Deux formes légitimes : un `EmptyPanel` posé à la place du tableau quand
+      la liste entière est vide, ou le `renderEmptyState` de React Aria quand
+      seul le filtre ne ramène rien. Les deux disent quelque chose ; c'est le
+      silence qu'on interdit.
+    */
+    check(`${path.basename(rel)} : un état vide est prévu`,
+      source.includes('EmptyPanel') || source.includes('renderEmptyState'));
+  }
+
+  const entete = lire('frontend/src/components/ui-kit/Panel.tsx');
+  check('l’en-tête d’un bloc ne passe en ligne qu’à 1024 px',
+    entete.includes('lg:flex-row'));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('7. Les trois états, et l’accessibilité des nouveaux contrôles');
+{
+  const etats = lire('frontend/src/components/ui-kit/States.tsx');
+  check('l’attente est structurelle (squelette), jamais un tourniquet',
+    etats.includes('Skeleton') && !/spinner/i.test(etats));
+  check('le squelette est annoncé', etats.includes('aria-busy'));
+  check('une erreur reste réparable quand l’appelant sait réessayer',
+    etats.includes('onRetry'));
+  check('un vide peut porter une action', etats.includes('action'));
+
+  const onglets = lire('frontend/src/components/ui-kit/SmoothTabs.tsx');
+  check('les onglets portent les rôles ARIA',
+    onglets.includes('role="tablist"') && onglets.includes('role="tab"'));
+  check('…un seul arrêt de tabulation pour le groupe',
+    onglets.includes('tabIndex={actif ? 0 : -1}'));
+  check('…et les flèches changent d’onglet',
+    onglets.includes("'ArrowRight'") && onglets.includes("'ArrowLeft'"));
+
+  const periode = lire('frontend/src/components/ui-kit/PeriodPicker.tsx');
+  check('le choix de période est un contrôle segmenté accessible',
+    periode.includes('SegmentedControl') && periode.includes('aria-label="Période"'));
+  check('…et il ne calcule aucune fenêtre lui-même',
+    !/Date\.now\(\)/.test(sansCommentaires(periode)));
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('8. Le poids : les écrans lourds sont chargés à la demande');
+{
+  const app = lire('frontend/src/App.tsx');
+  for (const ecran of [
+    'FinancesPage', 'ProjectsPage', 'ProjectDetailPage',
+    'ClientCompaniesPage', 'ClientCompanyDetailPage',
+  ]) {
+    check(`${ecran} est chargé à la demande`,
+      new RegExp(`const ${ecran} = lazy\\(`).test(app));
+  }
+
+  const layout = lire('frontend/src/components/Layout.tsx');
+  check('une frontière d’attente existe, DANS le gabarit',
+    layout.includes('<Suspense') && layout.includes('<Outlet />'));
+
+  const dashboard = lire('frontend/src/components/finance/FinanceDashboard.tsx');
+  check('les graphiques eux-mêmes sont chargés à la demande',
+    /lazy\(\(\) => import\('\.\/charts\/FinanceEvolutionChart'\)\)/.test(dashboard));
+}
+
+finish();

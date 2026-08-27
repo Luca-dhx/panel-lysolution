@@ -4764,3 +4764,10 @@ body {
   .prospect-history li { grid-template-columns: 1fr; gap: var(--p-space-1); }
   .prospect-search { max-width: none; }
 }
+
+/* ── L'ATTENTE D'UN ÉCRAN CHARGÉ À LA DEMANDE ─────────────────────────────
+   Une hauteur réservée, et rien d'autre. Le fragment arrive en quelques
+   dizaines de millisecondes : un tourniquet apparu puis disparu se voit plus
+   qu'il n'informe. Ce qu'il faut éviter, c'est que la page se replie sur zéro
+   puis se rouvre — d'où la hauteur, et d'où l'absence de contenu. */
+.page-loading { min-height: 60vh; }

@@ -157,10 +157,51 @@ section('3. Icônes : le jeu Bootstrap, sans bibliothèque ni couleur propre');
    * embarqué.
    */
   const pkg = JSON.parse(lire('frontend/package.json'));
-  check('…et les dépendances du frontend restent celles-là, exactement',
-    Object.keys(pkg.dependencies).sort().join(',')
-      === '@untitledui/icons,bootstrap-icons,react,react-aria-components,react-dom,'
-        + 'react-router-dom,tailwind-merge,tailwindcss-animate,tailwindcss-react-aria-components');
+  /*
+    ── LA REFONTE D'INTERFACE FAIT ENTRER TROIS ÉCOSYSTÈMES DE PLUS ─────────
+
+    Chacun est COPIÉ dans le dépôt — ce ne sont pas des paquets de composants.
+    Ce qui entre au `package.json`, ce sont leurs dépendances d'EXÉCUTION, et
+    rien d'autre :
+
+      @radix-ui/themes    cinq primitives que le Panel n'avait pas :
+                          ScrollArea, DataList, SegmentedControl, Skeleton,
+                          Callout. Scopé, allégé, et chargé à la demande ;
+      @visx/* + d3-*      le moteur de tracé des graphiques Bklit ;
+      motion              leurs animations, et l'indicateur des onglets ;
+      @number-flow/react  les nombres animés de leurs infobulles ;
+      @base-ui/react      la légende de Bklit ;
+      clsx                exigé par le `cn` des registres shadcn.
+
+    `lucide-react` est entré avec un composant Kokonut UI, puis en est ressorti
+    avec lui : le Panel a déjà deux jeux d'icônes — le sien et celui d'Untitled
+    UI — et un troisième aurait été de la soupe.
+
+    `tailwindcss` reste en `devDependencies` : il compile, il n'est pas
+    embarqué. La liste demeure CLOSE — c'est tout son intérêt : une dépendance
+    de plus doit rester une décision, jamais un effet de bord d'un `add`.
+  */
+  const ATTENDUES = [
+    '@base-ui/react',
+    '@number-flow/react',
+    '@radix-ui/themes',
+    '@untitledui/icons',
+    '@visx/curve', '@visx/event', '@visx/gradient', '@visx/grid', '@visx/group',
+    '@visx/pattern', '@visx/responsive', '@visx/scale', '@visx/shape',
+    'bootstrap-icons',
+    'clsx',
+    'd3-array', 'd3-shape',
+    'motion',
+    'react', 'react-aria-components', 'react-dom', 'react-router-dom',
+    'tailwind-merge', 'tailwindcss-animate', 'tailwindcss-react-aria-components',
+  ].sort();
+  const reelles = Object.keys(pkg.dependencies).sort();
+  const enTrop = reelles.filter((d) => !ATTENDUES.includes(d));
+  const manquantes = ATTENDUES.filter((d) => !reelles.includes(d));
+  check(`…et les dépendances du frontend restent celles-là, exactement`
+    + `${enTrop.length ? ` — en trop : ${enTrop.join(', ')}` : ''}`
+    + `${manquantes.length ? ` — manquantes : ${manquantes.join(', ')}` : ''}`,
+    enTrop.length === 0 && manquantes.length === 0);
   check('…la police n’est importée qu’en un seul point',
     (lire('frontend/src/main.tsx').match(/^import 'bootstrap-icons/gm) ?? []).length === 1);
 }
@@ -174,8 +215,16 @@ section('4. Liens et coordonnées : plus un seul bleu souligné');
   check('la fiche présente ses contacts en lignes icône + libellé + valeur',
     /LinkRow[\s\S]{0,120}icon="envelope"/.test(detail)
     && /icon="telephone"/.test(detail) && /icon="globe"/.test(detail));
-  check('la liste des projets affiche le site en puce cliquable',
-    /LinkChip icon="globe"/.test(projets));
+  /*
+    LA LISTE EST DEVENUE UN TABLEAU — la puce `LinkChip` a laissé place à un
+    lien tronqué portant sa marque d'ouverture externe. Ce que le contrôle
+    garde est inchangé : l'adresse est CLIQUABLE, mise en forme, et sans son
+    protocole. Elle vit dans `components/projects/ProjectsTable.tsx`.
+  */
+  const projetsTableau = lire('frontend/src/components/projects/ProjectsTable.tsx');
+  check('la liste des projets affiche le site en lien mis en forme',
+    /sansProtocole\(url\)/.test(projetsTableau)
+    && /rel="noopener noreferrer"/.test(projetsTableau));
   check('l’adresse s’affiche sans son protocole',
     liens.includes('export function sansProtocole'));
 

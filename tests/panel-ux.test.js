@@ -15,6 +15,16 @@ import { check, finish, section } from './helpers/harness.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 
+/*
+  ── LE RENDU D'UNE LIGNE DE PROJET A DÉMÉNAGÉ ─────────────────────────────
+  Il vivait dans `pages/ProjectsPage.tsx`, qui rendait une grille de cartes.
+  La page ne fait plus que filtrer et composer ; le rendu est dans
+  `components/projects/ProjectsTable.tsx`. Trois sections de cette suite
+  l'inspectent — la constante est donc au niveau du module, pas recopiée
+  dans chacune.
+*/
+const projectsTable = read('frontend/src/components/projects/ProjectsTable.tsx');
+
 const nav = read('frontend/src/config/nav.ts');
 const app = read('frontend/src/App.tsx');
 const layout = read('frontend/src/components/Layout.tsx');
@@ -259,8 +269,14 @@ section('4. Aucun vocabulaire d’infrastructure sur les écrans métier');
 section('5. Fiche projet : l’onglet Développeur n’existe que pour un DEV');
 {
   const detail = read('frontend/src/pages/ProjectDetailPage.tsx');
+  /*
+    Les quatre `<button>` sont devenus un `SmoothTabs` : la liste d'onglets est
+    donc CONSTRUITE, et l'entrée Développeur n'y est ajoutée que pour un DEV.
+    Ce que le contrôle garde est inchangé — l'onglet n'existe pas sans le rôle —
+    seule la forme de l'expression a changé.
+  */
   check('l’onglet est rendu sous condition de rôle',
-    /\{isDev \? \(\s*<button/.test(detail));
+    /isDev \? \[\{ value: 'dev'/.test(detail));
   check('…et son contenu aussi, jamais seulement l’onglet',
     /tab === 'dev' && isDev/.test(detail));
   check('le rôle vient de la garde unique, pas d’un test local',
@@ -352,10 +368,17 @@ section('8. Identité commerciale : le manifeste enrichi prime (contrat >= 1.4.x
   check('le logo publié par le projet est lu', presentation.includes('presentation?.logoUrl'));
   check('les contacts publiés sont lus', presentation.includes('presentation?.contacts'));
 
-  // La liste métier affiche le logo, et retombe sur les initiales.
+  /*
+    ── LA LISTE MÉTIER EST DEVENUE UN TABLEAU ──────────────────────────────
+    Le rendu d'une ligne vit désormais dans `components/projects/ProjectsTable`.
+    La page, elle, ne fait plus que filtrer et composer. Ce que ces contrôles
+    gardent — logo, repli sur les initiales, clé stable, pastille de
+    désynchronisation — n'a pas changé ; c'est le fichier qui a bougé.
+  */
   const projects = read('frontend/src/pages/ProjectsPage.tsx');
-  check('la liste affiche le logo quand il existe', /projectLogoUrl\(project\)/.test(projects));
-  check('…et les initiales sinon', /projectInitials\(project\)/.test(projects));
+  check('la liste affiche le logo quand il existe',
+    /projectLogoUrl\(project\)/.test(projectsTable));
+  check('…et les initiales sinon', /projectInitials\(project\)/.test(projectsTable));
 
   // Les trois adresses ne se mélangent pas : seule celle du site est métier.
   const detail = read('frontend/src/pages/ProjectDetailPage.tsx');
@@ -403,10 +426,16 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
     /visibilityState === 'hidden'/.test(live));
 
   // Stabilité du rendu : identités de liste et états locaux.
+  /*
+    L'identité de ligne n'est plus une `key` React mais l'`id` d'une ligne de
+    collection React Aria — c'est LUI qui sert d'identité, et il doit être aussi
+    stable. La garantie est la même : jamais un index, jamais un contenu
+    sérialisé.
+  */
   check('la liste est indexée par identifiant de projet',
-    /key=\{project\.projectId\}/.test(projects));
+    /id=\{project\.projectId\}/.test(projectsTable));
   check('aucune clé instable ne remonte les cartes',
-    !/key=\{JSON\.stringify/.test(projects) && !/key=\{JSON\.stringify/.test(detail));
+    !/key=\{JSON\.stringify/.test(projectsTable) && !/key=\{JSON\.stringify/.test(detail));
   /**
    * L'ONGLET A QUITTÉ L'ÉTAT LOCAL POUR L'URL — et c'est plus fort, pas moins.
    *
@@ -454,8 +483,14 @@ section('9. Le rafraîchissement automatique reste INVISIBLE');
   // page pour l'assistant (Lot « création guidée ») : la garantie le suit,
   // elle ne disparaît pas avec le déménagement.
   const assistant = read('frontend/src/components/ProjectWizard.tsx');
+  /*
+    La page porte désormais DEUX états de filtre — la recherche et l'état du
+    site — qui sont eux aussi des `useState('')`. Ce que le contrôle vise est la
+    saisie de CRÉATION : l'adresse et le nom d'un projet à déclarer. On les
+    nomme, plutôt que d'interdire une forme d'expression.
+  */
   check('la page n’héberge plus aucune saisie de création',
-    !/useState\(''\)/.test(projects));
+    !/setUrl|setNom|declarerProjet/.test(projects));
   check('la saisie de l’assistant est un état local, jamais réécrit par une réponse',
     /const \[url, setUrl\] = useState\(''\)/.test(assistant)
     && /const \[nom, setNom\] = useState\(''\)/.test(assistant)
@@ -481,7 +516,7 @@ section('10. Un manifeste périmé ne se fait plus passer pour une donnée vivan
   check('…et le lit sur la projection, pas sur le manifeste',
     /isBusinessSynchronized[\s\S]{0,200}business\?\.presentation/.test(presentation));
 
-  for (const [name, source] of [['la liste', projects], ['la fiche', detail]]) {
+  for (const [name, source] of [['la liste', projectsTable], ['la fiche', detail]]) {
     check(`${name} signale un projet relié dont l’identité n’est pas synchronisée`,
       /pairing\.status === 'PAIRED' && !isBusinessSynchronized\(project\)/.test(source)
       && source.includes('Identité non synchronisée'));

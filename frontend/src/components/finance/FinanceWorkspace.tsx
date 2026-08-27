@@ -35,8 +35,12 @@ import { ThemedFilter } from '@/components/ThemedSelect';
 import { useIsDev } from '@/auth/RequireDev';
 import { errorMessage, finances } from '@/lib/api';
 import { useFinanceWorkspace } from '@/lib/useFinances';
-import { formatCents, formatFlowCents, formatNetCents, netTone } from '@/lib/money';
-import { NetChart } from '@/components/finance/NetChart';
+import { formatCents, formatFlowCents } from '@/lib/money';
+import {
+  FinanceEvolutionPanel, FinanceMetrics,
+} from '@/components/finance/FinanceDashboard';
+import { Panel, PeriodPicker, SmoothTabs } from '@/components/ui-kit';
+import type { SmoothTab } from '@/components/ui-kit';
 import { TransactionDetail } from '@/components/finance/TransactionDetail';
 import { TransactionForm } from '@/components/finance/TransactionForm';
 import type { ProjectChoice } from '@/components/finance/TransactionForm';
@@ -49,7 +53,7 @@ import { PaymentDefaultPanel } from '@/components/finance/PaymentDefaultPanel';
 import { RecurringCostList } from '@/components/finance/RecurringCostList';
 import { RecurringCostForm, StopRecurringDialog } from '@/components/finance/RecurringCostForm';
 import {
-  LY_SOLUTION, PERIOD_LABELS, PERIOD_ORDER, SORT_LABELS, SORT_ORDER, ownershipLabel,
+  LY_SOLUTION, PERIOD_LABELS, SORT_LABELS, SORT_ORDER, ownershipLabel,
 } from '@/components/finance/financeLabels';
 import type {
   FinanceCriteria, FinancePeriodKey, FinanceScope, FinanceSort, FinancialTransaction,
@@ -58,10 +62,10 @@ import type {
 
 type SousOnglet = 'general' | 'costs' | 'revenues';
 
-const SOUS_ONGLETS: { key: SousOnglet; label: string }[] = [
-  { key: 'general', label: 'Général' },
-  { key: 'costs', label: 'Coûts' },
-  { key: 'revenues', label: 'Revenus' },
+const SOUS_ONGLETS: SmoothTab<SousOnglet>[] = [
+  { value: 'general', label: 'Général' },
+  { value: 'costs', label: 'Coûts' },
+  { value: 'revenues', label: 'Revenus' },
 ];
 
 /** Le mot à retaper pour une suppression en masse — le backend l'exige aussi. */
@@ -252,8 +256,6 @@ export function FinanceWorkspace({
     return <div className="alert alert-error">Les finances n’ont pas pu être chargées.</div>;
   }
 
-  const net = summary.totals.netCents;
-
   return (
     <div className="finance-workspace">
       {/*
@@ -269,111 +271,103 @@ export function FinanceWorkspace({
       ) : null}
 
       {/* ── SOUS-ONGLETS ──────────────────────────────────────────────── */}
-      <div className="tabs tabs-sub">
-        {SOUS_ONGLETS.map((onglet) => (
-          <button
-            key={onglet.key}
-            type="button"
-            className={sousOnglet === onglet.key ? 'tab tab-active' : 'tab'}
-            onClick={() => setSousOnglet(onglet.key)}
-          >
-            {onglet.label}
-          </button>
-        ))}
-        {isRefreshing ? <span className="live-hint">Mise à jour…</span> : null}
-      </div>
-
-      {/* ── AGRÉGATS DE LA PÉRIODE ────────────────────────────────────── */}
-      <div className="metric-row finance-metrics">
-        <div className="metric">
-          <p className="metric-value finance-amount-inflow">
-            {formatCents(summary.byCategory.revenueCents)}
-          </p>
-          <p className="metric-label">Revenus de la période</p>
-        </div>
-        <div className="metric">
-          <p className="metric-value finance-amount-outflow">
-            {formatCents(summary.byCategory.costCents)}
-          </p>
-          <p className="metric-label">Coûts de la période</p>
-          {/*
-            ── DONT LES COMMISSIONS DE PAIEMENT (L13) ───────────────────────
-
-            « dont », et le mot compte : ces centimes sont DÉJÀ dans le total
-            au-dessus. Une carte séparée les aurait fait lire comme un coût
-            supplémentaire, et quelqu'un les aurait additionnés.
-
-            La ventilation vient du SERVEUR, où l'égalité
-            `total = commissions + autres` est calculée une fois. Cet écran ne
-            la recompose pas, et ne peut donc pas s'en écarter.
-
-            Elle n'apparaît que s'il y en a : une ligne « dont 0,00 € »
-            annoncerait un poste de charge inexistant.
-          */}
-          {summary.costs && summary.costs.providerFeeCents > 0 ? (
-            <p className="metric-hint">
-              {`dont ${formatCents(summary.costs.providerFeeCents)} de commissions de paiement`}
-            </p>
-          ) : null}
-        </div>
-        <div className={`metric metric-${netTone(net)}`}>
-          <p className={`metric-value finance-net-${netTone(net)}`}>{formatNetCents(net)}</p>
-          <p className="metric-label">Bénéfice net</p>
-          <p className="metric-hint">Entrées moins sorties — jamais un champ saisi.</p>
-        </div>
-        {/*
-          Les remboursements n'apparaissent QUE s'il y en a. Une carte à zéro
-          annoncerait une fonctionnalité que ce lot n'a pas livrée.
-        */}
-        {summary.byCategory.refundCents > 0 ? (
-          <div className="metric">
-            <p className="metric-value">{formatCents(summary.byCategory.refundCents)}</p>
-            <p className="metric-label">Remboursements</p>
-            <p className="metric-hint">Comptés hors coûts d’exploitation.</p>
-          </div>
+      <div className="uui flex flex-wrap items-center gap-3">
+        <SmoothTabs
+          tabs={SOUS_ONGLETS}
+          value={sousOnglet}
+          onChange={setSousOnglet}
+          /*
+            L'identifiant du groupe d'animation porte la PORTÉE : la page
+            Finances et l'onglet Finances d'un projet peuvent coexister dans un
+            même arbre React lors d'une navigation, et deux indicateurs
+            partageant le même identifiant se seraient renvoyé l'un à l'autre.
+          */
+          layoutId={`finance-tabs-${portee.scope}-${portee.projectId ?? 'all'}`}
+        />
+        {isRefreshing ? (
+          <span className="text-xs text-quaternary" role="status">Mise à jour…</span>
         ) : null}
       </div>
 
-      {/* ── GRAPHIQUE — sur « Général » seulement ─────────────────────── */}
+      {/*
+        ── LES INDICATEURS DE LA PÉRIODE ────────────────────────────────────
+
+        ══ CE QU'ILS AJOUTENT AUX QUATRE CARTES PRÉCÉDENTES ═════════════════
+
+        Une PÉRIODE et une TENDANCE. Les cartes d'avant affichaient un nombre et
+        un libellé : « 12 400 € », « Revenus de la période ». Sur quoi ? Et
+        est-ce beaucoup ? Les deux réponses se faisaient dans la tête du
+        lecteur, c'est-à-dire mal.
+
+        La comparaison avec la fenêtre précédente est demandée au SERVEUR, sur
+        les bornes qu'il vient lui-même de rendre. Elle n'apparaît pas quand la
+        période n'a pas d'avant — « depuis toujours » — ni quand la fenêtre
+        précédente était à zéro. Voir `financeAnalytics.previousWindow`.
+
+        Le sens FAVORABLE de chaque variation est déclaré par l'indicateur, pas
+        déduit de sa direction : une hausse des sorties n'est pas une bonne
+        nouvelle, et l'ancienne présentation n'avait aucun moyen de le dire.
+      */}
+      <FinanceMetrics
+        summary={summary}
+        isLoading={false}
+        portee={portee}
+        periodeLabel={PERIOD_LABELS[periodeUtilisable] ?? 'Période'}
+      />
+
+      {/*
+        ── L'ÉVOLUTION — sur « Général » seulement ──────────────────────────
+
+        Les sous-onglets « Coûts » et « Revenus » restreignent la LISTE, pas les
+        totaux. Y montrer une courbe qui, elle, porte sur tout le périmètre
+        aurait fait lire un tracé complet sous un titre partiel.
+      */}
       {sousOnglet === 'general' ? (
-        <Card title="Bénéfice net sur la période">
-          <NetChart series={summary.series} period={summary.period} />
-        </Card>
+        <FinanceEvolutionPanel
+          summary={summary}
+          isLoading={false}
+          periodeLabel={PERIOD_LABELS[periodeUtilisable] ?? 'Période'}
+        />
       ) : null}
 
       {/* ── FILTRES ET ACTIONS ────────────────────────────────────────── */}
-      <Card>
+      <Panel
+        title="Filtres"
+        actions={(
+          <>
+            <button
+              type="button"
+              className="btn btn-primary btn-small"
+              onClick={() => setFormulaire({ open: true, cible: null })}
+            >
+              Ajouter une transaction
+            </button>
+            {isDev ? (
+              <button type="button" className="btn btn-danger btn-small" onClick={() => setMasse(true)}>
+                Tout supprimer
+              </button>
+            ) : null}
+          </>
+        )}
+      >
+        {/*
+          ── LA PÉRIODE EST UN CONTRÔLE SEGMENTÉ, PLUS UNE LISTE DÉROULANTE ──
+
+          Une période se change souvent, et on compare : 30 jours, puis 90, puis
+          retour. Une liste demandait deux gestes par changement et masquait les
+          autres choix pendant qu'on lisait. Voir `ui-kit/PeriodPicker`.
+        */}
+        <PeriodPicker
+          value={period}
+          onChange={setPeriod}
+          start={debut}
+          end={fin}
+          onStartChange={setDebut}
+          onEndChange={setFin}
+          className="mb-4"
+        />
+
         <div className="filter-row finance-filters">
-          <ThemedFilter
-            label="Période"
-            value={period}
-            options={PERIOD_ORDER.map((clef) => ({ value: clef, label: PERIOD_LABELS[clef] }))}
-            onChange={(valeur) => setPeriod(valeur as FinancePeriodKey)}
-          />
-
-          {period === 'CUSTOM' ? (
-            <>
-              <label className="filter">
-                <span className="filter-label">Du</span>
-                <input
-                  className="search-input"
-                  type="date"
-                  value={debut}
-                  onChange={(e) => setDebut(e.target.value)}
-                />
-              </label>
-              <label className="filter">
-                <span className="filter-label">Au (inclus)</span>
-                <input
-                  className="search-input"
-                  type="date"
-                  value={fin}
-                  onChange={(e) => setFin(e.target.value)}
-                />
-              </label>
-            </>
-          ) : null}
-
           {!verrouille ? (
             <ThemedFilter
               label="Rattachement"
@@ -410,22 +404,7 @@ export function FinanceWorkspace({
             Renseignez les deux bornes : en attendant, le mois en cours reste affiché.
           </p>
         ) : null}
-
-        <div className="action-buttons">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setFormulaire({ open: true, cible: null })}
-          >
-            Ajouter une transaction
-          </button>
-          {isDev ? (
-            <button type="button" className="btn btn-danger" onClick={() => setMasse(true)}>
-              Tout supprimer
-            </button>
-          ) : null}
-        </div>
-      </Card>
+      </Panel>
 
       {erreurAction ? <div className="alert alert-error">{erreurAction}</div> : null}
 

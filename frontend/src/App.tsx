@@ -1,3 +1,4 @@
+import { lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from '@/auth/RequireAuth';
 import { RequireDev } from '@/auth/RequireDev';
@@ -5,8 +6,6 @@ import { Layout } from '@/components/Layout';
 import { ActionsPage } from '@/pages/ActionsPage';
 import { BridgesPage } from '@/pages/BridgesPage';
 import { CompanyPage } from '@/pages/CompanyPage';
-import { ClientCompaniesPage } from '@/pages/ClientCompaniesPage';
-import { ClientCompanyDetailPage } from '@/pages/ClientCompanyDetailPage';
 import { DeploymentPage } from '@/pages/DeploymentPage';
 import { DeploymentRunPage } from '@/pages/DeploymentRunPage';
 import { DeploymentTargetPage } from '@/pages/DeploymentTargetPage';
@@ -15,7 +14,6 @@ import { IntegratedApisPage } from '@/pages/IntegratedApisPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { EmailSenderPage } from '@/pages/EmailSenderPage';
 import { EmailTemplatesPage } from '@/pages/EmailTemplatesPage';
-import { FinancesPage } from '@/pages/FinancesPage';
 import { FleetPage } from '@/pages/FleetPage';
 import { FederationAuthorizePage } from '@/pages/FederationAuthorizePage';
 import { ForgotPasswordPage } from '@/pages/ForgotPasswordPage';
@@ -26,17 +24,40 @@ import { ExecutionPage } from '@/pages/ExecutionPage';
 import { ProjectActionsPage } from '@/pages/ProjectActionsPage';
 import { ProjectDiagnosticPage } from '@/pages/ProjectDiagnosticPage';
 import { ProjectSupervisionPage } from '@/pages/ProjectSupervisionPage';
-import { ProjectDetailPage } from '@/pages/ProjectDetailPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { MyProfilePage } from '@/pages/MyProfilePage';
 import { PanelUsersPage } from '@/pages/PanelUsersPage';
 import { PairingsPage } from '@/pages/PairingsPage';
-import { ProjectsPage } from '@/pages/ProjectsPage';
 import { ProspectionPage } from '@/pages/ProspectionPage';
 import { ProspectDetailPage } from '@/pages/ProspectDetailPage';
 import { AgendaPage } from '@/pages/AgendaPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
 import { ThemePage } from '@/pages/ThemePage';
+/**
+ * ── LES CINQ ÉCRANS REFONDUS SONT CHARGÉS À LA DEMANDE ─────────────────────
+ *
+ * ══ CE QUE CELA RETIRE DU PAQUET INITIAL ═══════════════════════════════════
+ *
+ * Ils sont les seuls à utiliser la couche « librairie » lourde : Radix Themes
+ * (≈ 420 ko de CSS et 176 ko de JavaScript) et, pour les finances, les
+ * graphiques Bklit et leurs dépendances visx / d3 / motion.
+ *
+ * Statiques, tout cela entrait dans le fragment que TOUT LE MONDE télécharge —
+ * y compris quelqu'un qui ouvre le Panel pour lire son agenda. En les rendant
+ * paresseux, Vite en fait des fragments séparés, CSS comprise : la page de
+ * connexion et le tableau de bord retrouvent leur poids d'origine.
+ *
+ * ── POURQUOI CES CINQ-LÀ, ET PAS TOUT L'ARBRE ──────────────────────────────
+ * Un fractionnement systématique ajoute un aller-retour réseau à chaque
+ * navigation, y compris vers un écran de 4 ko. On ne fractionne que là où le
+ * poids le justifie — et on le mesure : voir le rapport de build.
+ */
+const FinancesPage = lazy(() => import('@/pages/FinancesPage'));
+const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
+const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
+const ClientCompaniesPage = lazy(() => import('@/pages/ClientCompaniesPage'));
+const ClientCompanyDetailPage = lazy(() => import('@/pages/ClientCompanyDetailPage'));
+
 import { useThemeLoader } from '@/lib/useTheme';
 import { useFaviconLoader } from '@/lib/useFavicon';
 import { VersionsPage } from '@/pages/VersionsPage';

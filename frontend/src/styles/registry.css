@@ -1,0 +1,219 @@
+/**
+ * LE PONT shadcn — BKLIT ET KOKONUT PARLENT LA LANGUE DU THÈME DU PANEL.
+ *
+ * ══ LE PROBLÈME QUE CE FICHIER RÉSOUT ═══════════════════════════════════════
+ *
+ * Le Panel intègre quatre écosystèmes d'interface. Trois d'entre eux arrivent
+ * avec leur propre palette :
+ *
+ *   Untitled UI   son échelle sémantique (`text-primary`, `bg-secondary`, …)
+ *                 → repointée dans `bridge.css`
+ *   Bklit         les variables shadcn (`--background`, `--card`, `--border`)
+ *                 ET ses variables de graphique (`--chart-*`, `--legend-*`)
+ *   Kokonut UI    les mêmes variables shadcn
+ *
+ * Les laisser cohabiter telles quelles aurait produit exactement ce que la
+ * mission interdit : une soupe. Une carte Bklit blanche à côté d'une carte
+ * Untitled UI sombre, à côté d'une carte maison d'une troisième couleur — sur
+ * un Panel dont l'exploitant peut changer les quatre couleurs à l'exécution.
+ *
+ * ══ LA RÈGLE, ET ELLE EST UNIQUE ════════════════════════════════════════════
+ *
+ * `tokens.css` est la SEULE source. Quatre couleurs réglables
+ * (`--p-background`, `--p-foreground`, `--p-primary`, `--p-accent`), tout le
+ * reste en dérive par `color-mix`. Ce fichier ne fait que TRADUIRE ce
+ * vocabulaire dans celui de shadcn et de Bklit. Pas un code hexadécimal ici :
+ * changer le thème du Panel repeint donc aussi les graphiques, sans qu'une
+ * seule ligne ne soit à toucher.
+ *
+ * ── IL ÉCRASE `registry-generated.css`, ET C'EST LE PLAN ────────────────────
+ * La CLI shadcn écrit les variables des registres dans le fichier déclaré par
+ * `components.json`. Ce fichier-là est `registry-generated.css`, importé JUSTE
+ * AVANT celui-ci : ce que la CLI dépose reste lisible et versionné, et notre
+ * traduction gagne par ordre de cascade. Aucune fusion manuelle à refaire à
+ * chaque `shadcn add`.
+ *
+ * ── HORS COUCHE, DÉLIBÉRÉMENT ───────────────────────────────────────────────
+ * Une règle hors `@layer` l'emporte sur toute règle en couche. C'est ce qui
+ * permet à ces définitions de gagner sur le `@theme` de Tailwind sans un seul
+ * `!important` — même mécanique que `bridge.css`.
+ */
+
+:root {
+  /* ── SURFACES ET TEXTE — le vocabulaire shadcn ───────────────────────── */
+  --background: var(--p-background);
+  --foreground: var(--p-foreground);
+
+  --card: var(--p-surface);
+  --card-foreground: var(--p-foreground);
+
+  --popover: var(--p-surface-raised);
+  --popover-foreground: var(--p-foreground);
+
+  --primary: var(--p-primary);
+  --primary-foreground: var(--p-background);
+
+  --secondary: var(--p-surface-raised);
+  --secondary-foreground: var(--p-foreground);
+
+  --muted: var(--p-surface-sunken);
+  --muted-foreground: var(--p-text-muted);
+
+  --accent: var(--p-surface-raised);
+  --accent-foreground: var(--p-foreground);
+
+  --destructive: var(--p-danger);
+  --destructive-foreground: var(--p-foreground);
+
+  --border: var(--p-border);
+  --input: var(--p-border-strong);
+  --ring: var(--p-primary);
+
+  --radius: var(--p-radius);
+
+  /*
+   * ── LA PALETTE DES SÉRIES ────────────────────────────────────────────────
+   *
+   * Cinq teintes, et le choix n'est pas décoratif : elles doivent rester
+   * distinguables entre elles ET lisibles sur le fond du thème, clair ou
+   * sombre. Le Panel ne possède que deux couleurs de marque — on synthétise
+   * donc les autres par mélange, comme les teintes de la nature d'un prospect.
+   *
+   * L'ORDRE PORTE UN SENS, et les écrans s'y tiennent :
+   *
+   *   --chart-1  la mesure PRINCIPALE   (encaissements)   ← primaire
+   *   --chart-2  la mesure OPPOSÉE      (sorties)         ← danger
+   *   --chart-3  la SYNTHÈSE            (net)             ← accent
+   *   --chart-4  une mesure SECONDAIRE  (remboursements)  ← avertissement
+   *   --chart-5  le RESTE               (divers)          ← mélange
+   *
+   * Un graphique du Panel n'invente jamais sa couleur : il désigne un RANG.
+   * C'est ce qui garantit qu'« encaissements » a la même teinte sur la courbe
+   * d'évolution, dans la répartition par projet et dans la légende.
+   */
+  --chart-1: var(--p-primary);
+  --chart-2: var(--p-danger);
+  --chart-3: var(--p-accent);
+  --chart-4: var(--p-warn);
+  --chart-5: color-mix(in srgb, var(--p-primary) 45%, var(--p-accent));
+
+  /*
+   * ── LE DÉCOR DU GRAPHIQUE — variables propres à Bklit ────────────────────
+   *
+   * Elles gouvernent le fond, le texte, la grille, le curseur et les repères,
+   * indépendamment des séries. Aux valeurs d'origine, Bklit posait une grille
+   * claire et un texte sombre : sur le thème par défaut du Panel, le graphique
+   * aurait été le seul élément de l'écran à ignorer les couleurs choisies.
+   *
+   * `--chart-background` est TRANSPARENT : le graphique est posé dans une carte
+   * qui a déjà sa surface. Lui en donner une seconde aurait dessiné un
+   * rectangle plus clair au milieu de la carte.
+   */
+  --chart-background: transparent;
+  --chart-foreground: var(--p-text);
+  --chart-foreground-muted: var(--p-text-muted);
+  --chart-label: var(--p-text-faint);
+  --chart-grid: color-mix(in srgb, var(--p-border) 75%, transparent);
+  --chart-crosshair: color-mix(in srgb, var(--p-foreground) 32%, transparent);
+  --chart-brush-border: var(--chart-grid);
+  --chart-line-primary: var(--chart-1);
+  --chart-line-secondary: var(--chart-3);
+  --chart-indicator-color: var(--chart-1);
+  --chart-indicator-secondary-color: var(--chart-3);
+
+  --chart-marker-background: var(--p-surface-raised);
+  --chart-marker-border: var(--p-border-strong);
+  --chart-marker-foreground: var(--p-text);
+  --chart-marker-badge-background: var(--p-primary-soft);
+  --chart-marker-badge-foreground: var(--p-text);
+
+  /*
+   * L'infobulle est une surface FLOTTANTE : elle doit se détacher de la carte
+   * sur laquelle elle passe, pas s'y fondre. D'où la surface haute, et non la
+   * surface de carte.
+   */
+  --chart-tooltip-background: color-mix(in srgb, var(--p-surface-raised) 94%, var(--p-foreground));
+  --chart-tooltip-foreground: var(--p-text);
+  --chart-tooltip-muted: var(--p-text-muted);
+
+  /* L'échelle d'intensité — une seule mesure, du plus faible au plus fort. */
+  --chart-scale-01: color-mix(in srgb, var(--p-primary) 16%, var(--p-background));
+  --chart-scale-02: color-mix(in srgb, var(--p-primary) 34%, var(--p-background));
+  --chart-scale-03: color-mix(in srgb, var(--p-primary) 54%, var(--p-background));
+  --chart-scale-04: color-mix(in srgb, var(--p-primary) 76%, var(--p-background));
+  --chart-scale-05: var(--p-primary);
+  --chart-scale-pattern-color: var(--p-surface-sunken);
+
+  /* ── LA LÉGENDE — surface propre dans Bklit, alignée sur la carte ──────── */
+  --legend: var(--p-surface);
+  --legend-foreground: var(--p-text);
+  --legend-muted: var(--p-surface-sunken);
+  --legend-muted-foreground: var(--p-text-muted);
+  --legend-track: var(--p-border);
+}
+
+/**
+ * ── LES NOMS D'UTILITAIRES ATTENDUS PAR LES COMPOSANTS IMPORTÉS ─────────────
+ *
+ * `@theme inline` déclare à Tailwind les familles de couleurs à générer, en
+ * pointant sur les variables ci-dessus plutôt qu'en les recopiant : `inline`
+ * signifie « résous à l'usage », donc un changement de thème à l'exécution est
+ * répercuté sans recompilation.
+ *
+ * La liste est CLOSE et tirée des classes réellement écrites dans les sources
+ * de Bklit (`text-chart-label`, `bg-chart-tooltip-background`,
+ * `text-legend-foreground`, `bg-muted`, `text-foreground`…). Déclarer la
+ * palette shadcn entière aurait généré des dizaines d'utilitaires que personne
+ * n'écrit, et surtout : `bg-primary` et `text-primary` appartiennent déjà à
+ * Untitled UI dans ce Panel, avec un SENS DIFFÉRENT (une surface de carte, un
+ * texte principal — pas la couleur de marque). Les redéclarer ici aurait fait
+ * dépendre l'apparence d'un composant de l'ordre des fichiers.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-chart-label: var(--chart-label);
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-tooltip-background: var(--chart-tooltip-background);
+  --color-chart-tooltip-foreground: var(--chart-tooltip-foreground);
+  --color-chart-tooltip-muted: var(--chart-tooltip-muted);
+  --color-chart-marker-background: var(--chart-marker-background);
+  --color-chart-marker-border: var(--chart-marker-border);
+  --color-chart-marker-foreground: var(--chart-marker-foreground);
+
+  --color-legend: var(--legend);
+  --color-legend-foreground: var(--legend-foreground);
+  --color-legend-muted: var(--legend-muted);
+  --color-legend-muted-foreground: var(--legend-muted-foreground);
+  --color-legend-track: var(--legend-track);
+}
+
+/*
+ * ── LE MODE SOMBRE N'EST PAS UNE CLASSE, ICI ────────────────────────────────
+ *
+ * Les registres shadcn attendent un sélecteur `.dark`. Le Panel n'en a pas :
+ * son thème est un JEU DE QUATRE COULEURS posé à l'exécution sur la racine du
+ * document, et « sombre » n'y est pas un mode mais une conséquence du fond
+ * choisi. Tout ce qui précède étant dérivé de ces quatre couleurs, l'inversion
+ * se fait d'elle-même — il n'y a rien à basculer.
+ *
+ * La classe reste néanmoins déclarée : un composant importé plus tard pourrait
+ * l'utiliser, et il doit alors trouver le thème courant, pas un thème clair
+ * oublié.
+ */
+.dark {
+  color-scheme: dark;
+}

@@ -28,6 +28,8 @@ import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
 import { FreshnessBanner } from '@/components/FreshnessBanner';
+import { PageHeader, SmoothTabs } from '@/components/ui-kit';
+import { Avatar } from '@/components/base/avatar/avatar';
 import { ProjectClientCompanyCard } from '@/components/company/ProjectClientCompanyCard';
 import { ProjectLegalSection } from '@/components/legal/ProjectLegalSection';
 import { LinkChip, LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
@@ -147,53 +149,68 @@ export function ProjectDetailPage() {
 
   return (
     <div className="page">
-      <p className="breadcrumb">
-        {/* Une ACTION de navigation, pas du texte cliquable : ni bleu, ni
-            souligné, avec une cible confortable et un focus net. */}
-        <Link className="link-back" to="/projects">
-          <Icon name="chevron-down" size={14} />
-          Projets clients
-        </Link>
-      </p>
+      {/*
+        ── LE FIL D'ARIANE A DÉMÉNAGÉ DANS L'EN-TÊTE ────────────────────────
+        Il était ici, en `<p className="breadcrumb">`, ET `PageHeader` en pose
+        un : la fiche affichait donc DEUX « Projets clients » l'un sous
+        l'autre. Un seul reste, celui du gabarit commun.
+      */}
+      {/*
+        ── L'EN-TÊTE DE FICHE — le même que les quatre autres écrans refondus ──
 
-      {/* ── EN-TÊTE ─────────────────────────────────────────────────────── */}
-      <header className="page-header">
-        <div className="project-row">
-          {projectLogoUrl(project) ? (
-            <img className="project-avatar" src={projectLogoUrl(project) as string} alt="" />
-          ) : (
-            <span className="project-avatar">{projectInitials(project)}</span>
-          )}
-          <div className="project-row-main">
-            <h1>{projectDisplayName(project)}</h1>
-            {description ? (
-              <p className="page-description">
-                {description}
-                {showRefreshHint ? <span className="live-hint">Mise à jour…</span> : null}
-              </p>
+        Il portait un gabarit à lui : `project-row`, un logo, un titre, une
+        ligne de pastilles et un bouton posé à droite en position absolue. À
+        1024 px le bouton chevauchait les pastilles ; à 390 px il passait sous
+        le titre sans marge. Chacun des cinq écrans avait sa propre variante du
+        même problème.
+
+        `PageHeader` en tient un seul : le retour, le titre, les pastilles, les
+        actions. Ce qui lui est PROPRE — le logo — reste ici, dans les
+        pastilles, où il ne pousse rien.
+      */}
+      <PageHeader
+        backTo={{ to: '/projects', label: 'Projets clients' }}
+        title={projectDisplayName(project)}
+        avatar={(
+          <Avatar
+            src={projectLogoUrl(project)}
+            alt={projectDisplayName(project)}
+            initials={projectInitials(project)}
+            size="lg"
+          />
+        )}
+        description={(
+          <>
+            {description}
+            {showRefreshHint ? (
+              <span className="ml-2 text-xs text-quaternary" role="status">Mise à jour…</span>
             ) : null}
-            <div className="project-row-meta">
-              <span className={toneBadgeClass(site.tone)}>{site.label}</span>
-              <span className={toneBadgeClass(connection.tone)}>{connection.label}</span>
-              {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
-                <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
-              ) : null}
-              {since ? <span>Dernier contact {since}</span> : null}
-            </div>
-          </div>
-          {url ? (
-            <a
-              className="btn btn-secondary btn-small"
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Icon name="box-arrow-up-right" size={14} />
-              Ouvrir le site
-            </a>
-          ) : null}
-        </div>
-      </header>
+          </>
+        )}
+        badges={(
+          <>
+            <span className={toneBadgeClass(site.tone)}>{site.label}</span>
+            <span className={toneBadgeClass(connection.tone)}>{connection.label}</span>
+            {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
+              <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
+            ) : null}
+            {since ? (
+              <span className="text-xs text-quaternary">Dernier contact {since}</span>
+            ) : null}
+          </>
+        )}
+        actions={url ? (
+          <a
+            className="btn btn-secondary btn-small"
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Icon name="box-arrow-up-right" size={14} />
+            Ouvrir le site
+          </a>
+        ) : null}
+      />
 
       {/*
         UNE FICHE = UNE INSTANCE. RIEN NE MÈNE AILLEURS DEPUIS ICI.
@@ -217,43 +234,30 @@ export function ProjectDetailPage() {
 
       {alert ? <div className={`alert alert-${alert.tone === 'error' ? 'error' : 'warning'}`}>{alert.message}</div> : null}
 
-      <div className="tabs">
-        <button
-          type="button"
-          className={tab === 'overview' ? 'tab tab-active' : 'tab'}
-          onClick={() => setTab('overview')}
-        >
-          Vue d’ensemble
-        </button>
-        <button
-          type="button"
-          className={tab === 'events' ? 'tab tab-active' : 'tab'}
-          onClick={() => setTab('events')}
-        >
-          Événements
-        </button>
-        {/*
-          FINANCES — visible par tout compte du Panel, comme la vue d'ensemble.
-          Le backend applique la même règle : cet onglet ne masque rien qu'une
-          URL révélerait, il reflète une permission qui existe côté serveur.
-        */}
-        <button
-          type="button"
-          className={tab === 'finances' ? 'tab tab-active' : 'tab'}
-          onClick={() => setTab('finances')}
-        >
-          Finances
-        </button>
-        {isDev ? (
-          <button
-            type="button"
-            className={tab === 'dev' ? 'tab tab-active' : 'tab'}
-            onClick={() => setTab('dev')}
-          >
-            Développeur
-          </button>
-        ) : null}
-      </div>
+      {/*
+        ── LES ONGLETS — l'indicateur SUIT, il ne saute plus ─────────────────
+
+        C'étaient quatre `<button>` dont l'actif portait une classe. Deux
+        défauts, dont un d'accessibilité : le groupe ajoutait quatre arrêts de
+        tabulation avant le contenu, et les flèches ne faisaient rien.
+        `SmoothTabs` pose les rôles `tablist` / `tab`, un seul arrêt pour le
+        groupe, et les flèches changent d'onglet.
+
+        L'onglet Développeur n'apparaît que pour un compte DEV. Ce n'est pas la
+        barrière — le backend l'est — mais afficher un onglet qui répondrait 403
+        serait une promesse non tenue.
+      */}
+      <SmoothTabs
+        tabs={[
+          { value: 'overview' as const, label: 'Vue d’ensemble' },
+          { value: 'events' as const, label: 'Événements' },
+          { value: 'finances' as const, label: 'Finances' },
+          ...(isDev ? [{ value: 'dev' as const, label: 'Développeur' }] : []),
+        ]}
+        value={tab}
+        onChange={setTab}
+        layoutId="project-detail-tabs"
+      />
 
       {tab === 'overview' ? (
         <OverviewTab project={project} url={url} since={since} link={link} fraicheur={fraicheur}

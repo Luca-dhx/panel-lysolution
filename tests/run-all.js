@@ -145,6 +145,15 @@ const TESTS = [
   // suite fabrique donc un document « à l'ancienne » et vérifie qu'il reste
   // visible.
   'prospection.test.js',
+  // LA REFONTE D'INTERFACE — quatre écosystèmes, une seule identité visuelle.
+  //
+  // Contrôles STATIQUES, et c'est délibéré : les défauts qu'ils ferment ne se
+  // voient pas à l'exécution. Une couleur figée reste une couleur — jusqu'au
+  // jour où l'exploitant change de thème et découvre une carte blanche sur un
+  // fond noir. Ils gardent aussi que le préflight de Tailwind reste dehors, que
+  // Radix reste scopé, qu'aucun jeu de démonstration n'a survécu, et qu'aucune
+  // colonne ne sort au palier `md` — celui où la barre latérale reprend 250 px.
+  'panel-ui-refonte.test.js',
   // L10.1 — LA FONDATION FINANCIÈRE, indépendante de tout fournisseur.
   // Deux suites, parce qu'elles ne prouvent pas la même chose :
   //   · le NOYAU — centimes entiers, bornes de période dans un fuseau nommé,
@@ -154,6 +163,15 @@ const TESTS = [
   //     exécutés, pas relus), le signe des montants, et la confirmation forte
   //     de « tout supprimer ».
   'finance-core.test.js',
+  // LES TRANSFORMATIONS DU TABLEAU DE BORD FINANCIER — pures, donc éprouvables.
+  //
+  // Elles décident de ce qu'un tracé montre et de ce qu'un indicateur compare.
+  // Un graphique mal aligné se voit ; une série mal construite ne se voit pas —
+  // elle se lit, et on la croit. La suite garde notamment que la fenêtre de
+  // comparaison parle la langue de la ROUTE (dates civiles, borne haute
+  // INCLUSE) : la confondre avec celle du modèle produisait un 400, et la
+  // tendance disparaissait de tous les indicateurs sans un mot.
+  'finance-analytics.test.js',
   // L10.2 — LES COÛTS RÉCURRENTS ET LEURS JUSTIFICATIFS. Deux suites de plus,
   // parce qu'elles gardent deux invariants sans rapport :
   //   · le CALENDRIER et l'IDEMPOTENCE — le 31 janvier revient au 31 mars, un

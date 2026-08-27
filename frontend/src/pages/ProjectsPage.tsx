@@ -15,31 +15,53 @@
  * sonder une adresse de backend et de transmettre un code d'appairage — une
  * opération d'infrastructure, pas de gestion.
  *
+ * ══ CE QUE LA REFONTE A CHANGÉ ══════════════════════════════════════════════
+ *
+ * La liste était une grille de CARTES. Une carte présente bien UN objet ; elle
+ * compare mal TRENTE objets — rien ne s'aligne d'une carte à l'autre, et pour
+ * trouver quel site est hors ligne il fallait lire les trente accroches.
+ *
+ * Elle est devenue un TABLEAU trié, avec une recherche et un filtre d'état. Les
+ * informations montrées sont exactement les mêmes : la retenue de la carte a
+ * été gardée, sa mise en page a changé.
+ *
  * Elle tenait auparavant un bloc technique PERMANENT au-dessus de la liste :
  * champ d'adresse, bouton de test, verdict brut, champ de nom, déclaration.
  * Tout était offert en même temps, à tout le monde, sans ordre. Il ne reste
  * qu'un bouton ; le reste se déroule dans l'assistant, étape par étape.
  */
-import { useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { Card, EmptyState } from '@/components/ui';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ProjectWizard } from '@/components/ProjectWizard';
-import { LinkChip, sansProtocole } from '@/components/Links';
+import { ProjectsTable } from '@/components/projects/ProjectsTable';
+import { SearchField } from '@/components/SearchField';
+import { ThemedFilter } from '@/components/ThemedSelect';
+import { PageHeader, SkeletonRows } from '@/components/ui-kit';
 import { useProjects } from '@/lib/useProjects';
 import { useSustained } from '@/lib/useLiveQuery';
 import { useIsDev } from '@/auth/RequireDev';
 import {
-  contractState,
-  isBusinessSynchronized,
   projectDescription,
   projectDisplayName,
-  projectInitials,
-  projectLogoUrl,
   projectDomain,
   projectSiteUrl,
   vitrineState,
-  toneBadgeClass,
 } from '@/lib/projectPresentation';
+
+/**
+ * LES ÉTATS DE VITRINE FILTRABLES.
+ *
+ * La liste est CLOSE et tirée de ce que `vitrineState` sait rendre : un filtre
+ * qui proposerait un état que le lecteur ne produit jamais afficherait
+ * invariablement zéro résultat, et ferait douter du filtre entier.
+ */
+const ETATS = [
+  { value: '', label: 'Tous les états' },
+  { value: 'ok', label: 'En ligne' },
+  { value: 'warn', label: 'À surveiller' },
+  { value: 'error', label: 'Hors ligne' },
+  { value: 'neutral', label: 'Non appairé' },
+];
 
 export function ProjectsPage() {
   const { projects, isInitialLoading, isRefreshing, error, reload } = useProjects();
@@ -85,28 +107,48 @@ export function ProjectsPage() {
     }
   };
 
+  /* ── RECHERCHE ET FILTRE — locaux, sur une liste déjà en main ──────────
+     Le parc se compte en dizaines. Un aller-retour réseau par frappe aurait
+     rendu la recherche poussive, et la lecture vivante aurait remis la liste
+     dans l'ordre du serveur entre deux caractères. */
+  const [recherche, setRecherche] = useState('');
+  const [etat, setEtat] = useState('');
+
+  const filtres = useMemo(() => {
+    const terme = recherche.trim().toLowerCase();
+    return projects.filter((projet) => {
+      if (etat && vitrineState(projet).tone !== etat) return false;
+      if (!terme) return true;
+      /* On cherche sur ce qu'on a EN TÊTE : le nom, le domaine, l'accroche.
+         Pas sur la clé technique — personne ne la retient, et elle ferait
+         remonter des résultats que le lecteur ne reconnaîtrait pas. */
+      return [
+        projectDisplayName(projet),
+        projectDomain(projet) ?? '',
+        projectSiteUrl(projet) ?? '',
+        projectDescription(projet) ?? '',
+      ].some((champ) => champ.toLowerCase().includes(terme));
+    });
+  }, [projects, recherche, etat]);
+
+  const boutonCreer = isDev ? (
+    <button type="button" className="btn btn-primary btn-small" onClick={() => setAssistantManuel(true)}>
+      Créer un projet
+    </button>
+  ) : null;
+
   return (
     <div className="page">
-      <header className="page-header">
-        <h1>Projets clients</h1>
-        <p className="page-description">
-          Les sites que nous gérons et leur état du jour.
-          {/* Mention placée EN FIN de ligne existante : elle ne pousse rien et
-              ne change aucune hauteur. Silencieuse sous une demi-seconde. */}
-          {showRefreshHint ? <span className="live-hint">Mise à jour…</span> : null}
-        </p>
-      </header>
+      <PageHeader
+        title="Projets clients"
+        description="Les sites que nous gérons et leur état du jour."
+        badges={showRefreshHint ? (
+          <span className="text-xs text-quaternary" role="status">Mise à jour…</span>
+        ) : null}
+        actions={boutonCreer}
+      />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
-
-      {/* ── UN SEUL POINT D'ENTRÉE — réservé aux comptes DEV ───────────────── */}
-      {isDev ? (
-        <div className="contract-actions">
-          <button type="button" className="btn btn-primary" onClick={() => setAssistantManuel(true)}>
-            Créer un projet
-          </button>
-        </div>
-      ) : null}
 
       {assistant ? (
         <ProjectWizard
@@ -118,95 +160,46 @@ export function ProjectsPage() {
         />
       ) : null}
 
-      {/* ── LISTE MÉTIER ──────────────────────────────────────────────────── */}
       {isInitialLoading ? (
-        <p className="muted">Chargement des projets…</p>
-      ) : projects.length === 0 ? (
-        <EmptyState
-          title="Aucun projet client"
-          hint={
-            isDev
-              ? 'Créez un premier projet à partir de son adresse : l’assistant vous guide.'
-              : 'Aucun projet n’a encore été déclaré dans le Panel.'
-          }
-        />
-      ) : (
-        <div className="grid-cards">
-          {/* ── LA CARTE DIT PEU, ET C'EST LE POINT ───────────────────────────
-              Elle portait l'état du site, l'état du lien avec le Panel, la date
-              du dernier contact, le statut du contrat, le montant de
-              l'abonnement, sa périodicité et la note interne. Sept informations
-              pour répondre à une question — « de qui s'agit-il, et est-ce que ça
-              va ? » —, et un empilement de pastilles où plus rien ne ressort.
-
-              Ne reste que ce qui aide à CHOISIR sur quelle fiche cliquer :
-              l'identité, l'état du site, l'état du contrat, l'adresse. Le reste
-              appartient à la fiche, où il est lisible. */}
-          {projects.map((project) => {
-            /**
-             * LA CARTE PARLE DU CLIENT — donc de sa VITRINE, pas du pont.
-             *
-             * Elle affichait `siteState`, qui lisait le battement de cœur du
-             * Bridge : une vitrine suspendue par la protection contractuelle
-             * s'y présentait « En ligne ». On montre désormais l'état PROJETÉ
-             * par le projet — la seule autorité sur l'accessibilité du site.
-             */
-            const site = vitrineState(project);
-            const url = projectSiteUrl(project);
-            const domain = projectDomain(project);
-            const logoUrl = projectLogoUrl(project);
-            const contract = project.business?.contract ?? null;
-            const description = projectDescription(project);
-            return (
-              <Card key={project.projectId} className="project-card">
-                <div className="project-card-head">
-                  {/* Le logo vient du projet, en URL absolue ; à défaut, les
-                      initiales — jamais une image manquante. */}
-                  {logoUrl ? (
-                    <img className="project-avatar" src={logoUrl} alt="" loading="lazy" />
-                  ) : (
-                    <span className="project-avatar">{projectInitials(project)}</span>
-                  )}
-                  <div className="project-card-identity">
-                    <p className="project-row-title">{projectDisplayName(project)}</p>
-                    {description ? <p className="muted project-card-tagline">{description}</p> : null}
-                  </div>
-                </div>
-
-                <div className="project-card-meta">
-                  <span className={toneBadgeClass(site.tone)}>{site.label}</span>
-                  {/* Sans contrat EN COURS, la liste ne montre aucune pastille
-                      contractuelle : afficher l'état d'un contrat terminé
-                      laisserait croire à un engagement encore en vigueur. */}
-                  {contract?.status && contract.hasCurrent !== false ? (
-                    <span className={toneBadgeClass(contractState(contract.status).tone)}>
-                      {contractState(contract.status).label}
-                    </span>
-                  ) : null}
-                  {/* Un projet relié qui n'a jamais rien poussé affiche son
-                      manifeste : on le DIT, sinon une panne de synchronisation
-                      ressemble à une donnée à jour. */}
-                  {project.pairing.status === 'PAIRED' && !isBusinessSynchronized(project) ? (
-                    <span className={toneBadgeClass('warn')}>Identité non synchronisée</span>
-                  ) : null}
-                </div>
-
-                <div className="project-card-foot">
-                  {url ? (
-                    <LinkChip icon="globe" href={url} external title={url}>
-                      {sansProtocole(url)}
-                    </LinkChip>
-                  ) : domain ? (
-                    <span className="muted">{domain}</span>
-                  ) : <span />}
-                  <Link className="btn btn-secondary btn-small" to={`/projects/${project.projectId}`}>
-                    Voir
-                  </Link>
-                </div>
-              </Card>
-            );
-          })}
+        <div className="uui overflow-hidden rounded-xl ring-1 ring-secondary">
+          <SkeletonRows rows={6} columns={4} />
         </div>
+      ) : (
+        <ProjectsTable
+          projects={filtres}
+          title={etat ? (ETATS.find((e) => e.value === etat)?.label ?? 'Projets') : 'Tous les projets'}
+          description="Le nom mène à la fiche ; le menu ouvre les finances ou le site."
+          emptyTitle={
+            projects.length === 0 ? 'Aucun projet client' : 'Aucun projet ne correspond'
+          }
+          emptyHint={
+            projects.length === 0
+              ? (isDev
+                ? 'Créez un premier projet à partir de son adresse : l’assistant vous guide.'
+                : 'Aucun projet n’a encore été déclaré dans le Panel.')
+              : 'Élargissez la recherche, ou changez de filtre d’état.'
+          }
+          emptyAction={projects.length === 0 ? boutonCreer : null}
+          contentTrailing={(
+            <div className="flex w-full flex-wrap items-end gap-3 lg:w-auto lg:justify-end">
+              <ThemedFilter
+                label="État du site"
+                value={etat}
+                options={ETATS}
+                placeholder="Tous les états"
+                onChange={setEtat}
+              />
+              <div className="min-w-0 flex-1 lg:w-64 lg:flex-none">
+                <SearchField
+                  label="Rechercher un projet"
+                  placeholder="Nom, domaine, accroche…"
+                  value={recherche}
+                  onChange={setRecherche}
+                />
+              </div>
+            </div>
+          )}
+        />
       )}
     </div>
   );

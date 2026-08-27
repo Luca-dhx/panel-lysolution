@@ -24,7 +24,22 @@ const racine = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const lire = (rel) => fs.readFileSync(path.join(racine, rel), 'utf8');
 
 const css = lire('frontend/src/components.css');
-const projets = lire('frontend/src/pages/ProjectsPage.tsx');
+/*
+  ── LA LISTE DES PROJETS EST DEVENUE UN TABLEAU ────────────────────────────
+
+  Elle rendait une grille de CARTES, et ces contrôles lisaient la page. La page
+  ne fait plus que filtrer et composer ; le rendu d'une ligne vit dans
+  `components/projects/ProjectsTable.tsx`.
+
+  Ce que la suite garde n'a pas changé — l'identité, l'état de la vitrine, celui
+  du contrat, l'adresse, une seule action, la pastille de désynchronisation, et
+  ce qui appartient à la fiche et ne doit PAS remonter dans la liste. On lit
+  donc les deux fichiers ensemble : la retenue vaut pour l'écran entier, quel
+  que soit le fichier qui la porte.
+*/
+const projets = lire('frontend/src/pages/ProjectsPage.tsx')
+  + '\n'
+  + lire('frontend/src/components/projects/ProjectsTable.tsx');
 const fiche = lire('frontend/src/pages/ProjectDetailPage.tsx');
 const timeline = lire('frontend/src/components/EventTimeline.tsx');
 const listes = lire('frontend/src/components/EventLists.tsx');
@@ -51,7 +66,16 @@ section('1. Plus un seul lien bleu souligné');
   check('le retour vers les projets clients est une action, pas un lien nu',
     /<Link className="link-back" to="\/projects">/.test(fiche));
   check('…avec son icône', /link-back[\s\S]{0,120}<Icon name="chevron-down"/.test(fiche));
-  check('« Voir » reste un bouton', /className="btn btn-secondary btn-small" to=\{`\/projects\//.test(projets));
+  /*
+    L'ACTION RESTE NOMMÉE ET EXPLICITE — sa forme a changé.
+
+    C'était un `<Link>` peint en bouton, « Voir ». C'est désormais un menu de
+    fin de ligne dont chaque entrée porte un nom : « Ouvrir la fiche », « Voir
+    les finances », « Ouvrir le site ». Ce que le contrôle protégeait — une
+    cible explicite plutôt qu'une ligne entière cliquable — tient toujours.
+  */
+  check('l’action de fin de ligne est nommée, pas une ligne cliquable',
+    /textValue="Ouvrir la fiche"/.test(projets) && !/onRowAction/.test(projets));
   check('aucune couleur bleue en dur dans les écrans concernés',
     !/color:\s*blue|#0000ff/i.test(css + projets + fiche));
 }
@@ -61,7 +85,13 @@ section('2. La carte projet dit peu');
 {
   check('elle porte l’identité', /projectDisplayName\(project\)/.test(projets)
     && /projectInitials\(project\)|projectLogoUrl/.test(projets));
-  check('…un slogan court', /project-card-tagline/.test(projets));
+  /*
+    L'accroche du projet n'apparaît plus que faute d'entreprise cliente
+    rattachée : savoir À QUI appartient le site prime sur ce que le site
+    raconte de lui-même. Elle reste lue, elle n'est plus systématique.
+  */
+  check('…une accroche, quand aucun client n’est rattaché',
+    /projectDescription\(project\)/.test(projets));
   /**
    * L'ÉTAT DE LA VITRINE — et non plus celui du pont.
    *
@@ -75,8 +105,15 @@ section('2. La carte projet dit peu');
    */
   check('…l’état de la VITRINE, depuis la projection', /vitrineState\(project\)/.test(projets));
   check('…l’état du contrat', /contractState\(contract\.status\)/.test(projets));
-  check('…l’adresse mise en forme', /LinkChip icon="globe"/.test(projets));
-  check('…et une seule action', (projets.match(/className="btn btn-secondary btn-small"/g) || []).length === 1);
+  check('…l’adresse mise en forme, sans son protocole',
+    /sansProtocole\(url\)/.test(projets));
+  /*
+    UNE SEULE ACTION PAR LIGNE, et elle est repliée. Le menu en porte trois,
+    mais elles ne sont pas OFFERTES en même temps : la ligne ne montre qu'un
+    bouton. Ce qu'on garde est l'absence d'une rangée de boutons concurrents.
+  */
+  check('…et une seule cible d’action visible par ligne',
+    (projets.match(/Dropdown\.DotsButton/g) || []).length === 1);
 
   // Ce qui appartient à la fiche a quitté la carte.
   check('le dernier contact a quitté la carte', !/lastContact/.test(projets));
@@ -89,10 +126,15 @@ section('2. La carte projet dit peu');
   check('l’identité non synchronisée reste signalée',
     projets.includes('Identité non synchronisée'));
 
-  check('la carte est aérée et sans surcharge de bordures',
-    /\.project-card \{[\s\S]{0,200}display: grid/.test(css));
-  check('…avec un survol discret',
-    /\.project-card:hover \{\s*border-color: var\(--p-border-strong\)/.test(css));
+  /*
+    L'aération ne vient plus d'une règle CSS de carte mais du cadre du tableau
+    de la librairie : une surface, un anneau discret, et un survol de ligne.
+  */
+  check('le cadre est une surface discrète, pas une bordure lourde',
+    /TableCard\.Root/.test(projets));
+  check('…avec un survol de ligne', /hover:bg-secondary/.test(
+    lire('frontend/src/components/application/table/table.tsx'),
+  ));
   check('un slogan trop long est tronqué proprement',
     /\.project-card-tagline \{[\s\S]{0,200}-webkit-line-clamp: 2/.test(css));
 }

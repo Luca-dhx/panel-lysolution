@@ -1,0 +1,208 @@
+/**
+ * RADIX THEMES — INTÉGRÉ SOUS SCOPE, ET ALLÉGÉ.
+ *
+ * ══ CE QUE RADIX APPORTE QUE NOUS N'AVIONS PAS ══════════════════════════════
+ *
+ * Le Panel possède déjà des surfaces accessibles : React Aria (via Untitled UI)
+ * fournit dialogues, menus, sélecteurs et infobulles, et la `Modale` maison
+ * piège le focus. Réinstaller tout cela aurait été de la duplication.
+ *
+ * Cinq primitives, en revanche, n'existaient nulle part et se réécrivaient mal
+ * à la main :
+ *
+ *   ScrollArea         un défilement stylé, avec barre visible et pilotable —
+ *                      c'est lui qui rend le détail d'un mouvement lisible sur
+ *                      un écran court sans faire défiler la page derrière ;
+ *   DataList           les paires libellé/valeur d'une fiche, alignées et
+ *                      responsives sans grille faite à la main ;
+ *   SegmentedControl   le choix de période, au clavier et annoncé ;
+ *   Skeleton           l'attente STRUCTURELLE, qui ne déplace rien à l'arrivée ;
+ *   Callout            un message non destructeur, distinct d'une alerte.
+ *
+ * ══ TROIS DÉCISIONS D'INTÉGRATION, ET LEURS RAISONS ═════════════════════════
+ *
+ * ── 1. ON N'IMPORTE PAS `styles.css` ────────────────────────────────────────
+ * Il pèse 794 ko, dont l'essentiel est la palette des trente couleurs d'accent
+ * de Radix — que ce fichier remplace intégralement quelques lignes plus bas.
+ * On prend donc les jetons de base, DEUX palettes (elles ne servent que de
+ * squelette : leurs valeurs sont écrasées), et les composants. On laisse
+ * `utilities.css` et `layout.css` : ce sont les classes d'espacement et les
+ * composants `Box`/`Flex`/`Grid` de Radix, et la mise en page du Panel est
+ * faite par Tailwind. Deux systèmes d'espacement, c'était la soupe annoncée.
+ *
+ * ── 2. LA FEUILLE N'EST PAS CHARGÉE AU DÉMARRAGE ────────────────────────────
+ * Ce fichier n'est importé que par `components/radix/`, lui-même atteint
+ * uniquement depuis des écrans chargés à la demande. Vite en fait donc un
+ * fragment CSS séparé : un utilisateur qui ne va pas dans les finances ne
+ * télécharge jamais ces 480 ko.
+ *
+ * ── 3. RIEN NE S'APPLIQUE HORS DE `.radix-themes` ───────────────────────────
+ * La remise à zéro de Radix est écrite `.rt-reset:where(…)` : elle ne touche
+ * que les éléments que Radix rend lui-même. Aucun écran non refondu ne peut
+ * être affecté — vérifié en lisant la feuille, pas en le supposant.
+ */
+
+@import "@radix-ui/themes/tokens/base.css";
+@import "@radix-ui/themes/tokens/colors/gray.css";
+@import "@radix-ui/themes/tokens/colors/blue.css";
+@import "@radix-ui/themes/components.css";
+
+/**
+ * ══ LE QUATRIÈME PONT — RADIX PARLE LA LANGUE DU THÈME DU PANEL ════════════
+ *
+ * Radix raisonne en ÉCHELLES DE DOUZE PAS, et le sens de chaque pas est fixé
+ * par sa documentation :
+ *
+ *    1  fond d'application            7  bordure d'élément, anneau de focus
+ *    2  fond discret                  8  bordure survolée
+ *    3  fond d'élément                9  aplat plein (la couleur « pleine »)
+ *    4  élément survolé              10  aplat plein survolé
+ *    5  élément actif                11  texte à contraste faible
+ *    6  séparateur discret           12  texte à contraste élevé
+ *
+ * Le Panel n'a que QUATRE couleurs réglables. On reconstruit donc les douze pas
+ * par mélange, du FOND vers le PREMIER PLAN — exactement la logique déjà
+ * appliquée à l'échelle neutre d'Untitled UI. Sur un thème clair, l'échelle
+ * s'inverse d'elle-même : `--gray-1` reste « le fond », quel qu'il soit.
+ *
+ * ── PORTÉE `.radix-themes`, PAS `:root` ─────────────────────────────────────
+ * Ces variables portent des noms très génériques — `--color-background`,
+ * `--color-surface`. Les poser sur la racine les mettrait en concurrence avec
+ * celles de Tailwind et d'Untitled UI dans TOUT le document. Confinées au
+ * conteneur Radix, elles ne peuvent atteindre que ce que Radix rend.
+ */
+.radix-themes {
+  /* ── L'ÉCHELLE NEUTRE ──────────────────────────────────────────────────── */
+  --gray-1: var(--p-background);
+  --gray-2: color-mix(in srgb, var(--p-background) 97%, var(--p-foreground));
+  --gray-3: color-mix(in srgb, var(--p-background) 93%, var(--p-foreground));
+  --gray-4: color-mix(in srgb, var(--p-background) 89%, var(--p-foreground));
+  --gray-5: color-mix(in srgb, var(--p-background) 84%, var(--p-foreground));
+  --gray-6: color-mix(in srgb, var(--p-background) 78%, var(--p-foreground));
+  --gray-7: color-mix(in srgb, var(--p-background) 68%, var(--p-foreground));
+  --gray-8: color-mix(in srgb, var(--p-background) 55%, var(--p-foreground));
+  --gray-9: color-mix(in srgb, var(--p-background) 44%, var(--p-foreground));
+  --gray-10: color-mix(in srgb, var(--p-background) 36%, var(--p-foreground));
+  --gray-11: var(--p-text-muted);
+  --gray-12: var(--p-foreground);
+
+  /*
+   * Les pas ALPHA servent aux surfaces translucides — un survol qui laisse
+   * transparaître ce qu'il y a dessous. Les rendre opaques aurait fait
+   * apparaître des rectangles pleins par-dessus les graphiques.
+   */
+  --gray-a1: color-mix(in srgb, var(--p-foreground) 2%, transparent);
+  --gray-a2: color-mix(in srgb, var(--p-foreground) 4%, transparent);
+  --gray-a3: color-mix(in srgb, var(--p-foreground) 8%, transparent);
+  --gray-a4: color-mix(in srgb, var(--p-foreground) 12%, transparent);
+  --gray-a5: color-mix(in srgb, var(--p-foreground) 16%, transparent);
+  --gray-a6: color-mix(in srgb, var(--p-foreground) 22%, transparent);
+  --gray-a7: color-mix(in srgb, var(--p-foreground) 30%, transparent);
+  --gray-a8: color-mix(in srgb, var(--p-foreground) 42%, transparent);
+  --gray-a9: color-mix(in srgb, var(--p-foreground) 54%, transparent);
+  --gray-a10: color-mix(in srgb, var(--p-foreground) 64%, transparent);
+  --gray-a11: color-mix(in srgb, var(--p-foreground) 78%, transparent);
+  --gray-a12: color-mix(in srgb, var(--p-foreground) 92%, transparent);
+
+  /* ── L'ACCENT — la couleur primaire réglée dans « Thème du Panel » ─────── */
+  --accent-1: color-mix(in srgb, var(--p-primary) 6%, var(--p-background));
+  --accent-2: color-mix(in srgb, var(--p-primary) 10%, var(--p-background));
+  --accent-3: color-mix(in srgb, var(--p-primary) 18%, var(--p-background));
+  --accent-4: color-mix(in srgb, var(--p-primary) 26%, var(--p-background));
+  --accent-5: color-mix(in srgb, var(--p-primary) 34%, var(--p-background));
+  --accent-6: color-mix(in srgb, var(--p-primary) 44%, var(--p-background));
+  --accent-7: color-mix(in srgb, var(--p-primary) 58%, var(--p-background));
+  --accent-8: color-mix(in srgb, var(--p-primary) 76%, var(--p-background));
+  --accent-9: var(--p-primary);
+  --accent-10: var(--p-primary-hover);
+  --accent-11: color-mix(in srgb, var(--p-primary) 72%, var(--p-foreground));
+  --accent-12: color-mix(in srgb, var(--p-primary) 32%, var(--p-foreground));
+
+  --accent-a1: color-mix(in srgb, var(--p-primary) 6%, transparent);
+  --accent-a2: color-mix(in srgb, var(--p-primary) 10%, transparent);
+  --accent-a3: color-mix(in srgb, var(--p-primary) 18%, transparent);
+  --accent-a4: color-mix(in srgb, var(--p-primary) 26%, transparent);
+  --accent-a5: color-mix(in srgb, var(--p-primary) 34%, transparent);
+  --accent-a6: color-mix(in srgb, var(--p-primary) 44%, transparent);
+  --accent-a7: color-mix(in srgb, var(--p-primary) 58%, transparent);
+  --accent-a8: color-mix(in srgb, var(--p-primary) 76%, transparent);
+  --accent-a9: color-mix(in srgb, var(--p-primary) 88%, transparent);
+  --accent-a10: color-mix(in srgb, var(--p-primary) 94%, transparent);
+  --accent-a11: color-mix(in srgb, var(--p-primary) 80%, transparent);
+  --accent-a12: color-mix(in srgb, var(--p-primary) 92%, transparent);
+
+  /*
+   * `--accent-contrast` est l'encre POSÉE SUR l'aplat plein. Radix y met du
+   * blanc. C'est précisément le défaut déjà rencontré ailleurs dans le Panel :
+   * dès que la couleur primaire s'éclaircit, un texte blanc devient illisible.
+   * On y met donc le FOND du thème — qui, par construction, contraste avec
+   * tout ce qui est peint par-dessus lui.
+   */
+  --accent-contrast: var(--p-background);
+  --accent-surface: var(--p-primary-soft);
+  --accent-indicator: var(--p-primary);
+  --accent-track: var(--p-primary);
+
+  /* ── LES SURFACES SÉMANTIQUES DE RADIX ─────────────────────────────────── */
+  --color-background: var(--p-background);
+  --color-panel-solid: var(--p-surface);
+  --color-panel-translucent: color-mix(in srgb, var(--p-surface) 88%, transparent);
+  --color-surface: var(--p-surface-sunken);
+  --color-overlay: color-mix(in srgb, var(--p-background) 65%, transparent);
+  --color-selection: var(--p-primary-soft);
+  --color-focus-root: var(--p-primary);
+  --focus-8: var(--p-primary);
+
+  /* ── RAYONS, POLICES ET MOUVEMENT — ceux du Panel ──────────────────────── */
+  --radius-factor: 1;
+  --default-font-family: var(--p-font-body);
+  --heading-font-family: var(--p-font-heading);
+  --code-font-family: 'Cascadia Code', 'Consolas', monospace;
+
+  /*
+   * Le conteneur ne peint RIEN de lui-même : il est posé à l'intérieur d'une
+   * carte du Panel qui a déjà sa surface. Un fond ici aurait dessiné un
+   * rectangle légèrement différent au milieu de la carte.
+   */
+  background-color: transparent;
+  color: var(--p-text);
+}
+
+/**
+ * ── LE CONTENEUR N'EST PAS UNE PAGE ─────────────────────────────────────────
+ *
+ * ══ LE DÉFAUT, TEL QU'IL S'EST VU ══════════════════════════════════════════
+ *
+ * Radix pose `min-height: 100dvh` sur tout conteneur qu'il considère RACINE :
+ *
+ *     .radix-themes:where([data-is-root-theme='true']) { min-height: 100dvh }
+ *
+ * C'est juste pour une application dont le `<Theme>` enveloppe le document
+ * entier. Ici, chaque conteneur est local — un contrôle segmenté, un squelette,
+ * un message — et AUCUN n'a de `Theme` parent : chacun se déclare donc racine,
+ * et chacun réclamait une hauteur d'écran entière.
+ *
+ * Résultat mesuré sur la page Finances : 450 px de vide dans le bloc des
+ * filtres, le bouton « Personnalisé » flottant seul au milieu, et la barre de
+ * recherche repoussée sous la ligne de flottaison. Le HTML était juste ; c'est
+ * une hypothèse de la librairie qui ne tenait pas dans notre montage.
+ *
+ * La spécificité est délibérément SUPÉRIEURE à celle de Radix (un attribut
+ * simple contre un `:where()`, qui vaut zéro) : la règle gagne sans dépendre de
+ * l'ordre des fichiers, donc sans dépendre de l'ordre d'importation.
+ */
+.radix-themes[data-is-root-theme='true'] {
+  min-height: 0;
+}
+
+/*
+ * Une personne ayant demandé moins d'animations en a demandé MOINS, pas moins
+ * vite. Radix anime ses ouvertures ; on coupe, on ne raccourcit pas — même
+ * règle que `tokens.css`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .radix-themes * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

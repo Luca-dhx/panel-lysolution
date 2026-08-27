@@ -1,0 +1,404 @@
+/**
+ * LES TRANSFORMATIONS DU TABLEAU DE BORD FINANCIER.
+ *
+ * ══ POURQUOI ELLES VIVENT ICI, ET PAS DANS LES COMPOSANTS ═══════════════════
+ *
+ * Parce qu'elles portent des CHIFFRES. Un graphique mal aligné se voit ; une
+ * série mal construite ne se voit pas — elle se lit, et on la croit. Sorties
+ * des composants, ces fonctions deviennent PURES, donc éprouvables ligne par
+ * ligne, ce que la suite `tests/finance-analytics.test.js` fait.
+ *
+ * ══ TROIS RÈGLES QUI NE SE NÉGOCIENT PAS ════════════════════════════════════
+ *
+ * 1. ON N'INVENTE AUCUN TOTAL. Chaque valeur affichée vient du serveur, qui
+ *    l'a calculée sur l'ENSEMBLE du périmètre. Additionner les lignes reçues
+ *    par la liste — bornée par `limit` — donnerait un total plausible et faux.
+ *    Rien ici n'additionne des transactions.
+ *
+ * 2. ON RESTE EN CENTIMES jusqu'à l'affichage. Une seule exception, documentée
+ *    plus bas : les graphiques ont besoin de nombres, et un axe vertical se
+ *    trace en euros. La conversion se fait AU DERNIER MOMENT, après toute
+ *    addition.
+ *
+ * 3. ON NE FABRIQUE PAS DE TENDANCE QUAND IL N'Y A PAS DE PASSÉ. « Depuis
+ *    toujours » n'a pas de période précédente ; une division par zéro n'a pas
+ *    de pourcentage. Ces cas rendent `null`, et l'écran n'affiche rien —
+ *    plutôt qu'un « +∞ % » ou un « +100 % » sorti de nulle part.
+ */
+import type {
+  FinancePeriod,
+  FinanceProjectLine,
+  FinanceSeriesPoint,
+} from '@/types.finance';
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L'ÉVOLUTION DANS LE TEMPS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Une ligne du graphique d'évolution.
+ *
+ * Les trois mesures sont en EUROS — c'est la seule conversion du module, et
+ * elle est faite APRÈS que le serveur a terminé toutes ses additions. Les
+ * centimes d'origine restent portés à côté : l'infobulle les reformate avec le
+ * formateur monétaire du Panel, sans jamais repasser par le nombre du tracé.
+ */
+export interface EvolutionRow extends Record<string, unknown> {
+  /** L'instant du seau. Les graphiques Bklit attendent un vrai `Date`. */
+  date: Date;
+  /** Libellé lisible du seau, dans le fuseau de la période. */
+  label: string;
+  inflow: number;
+  outflow: number;
+  net: number;
+  inflowCents: number;
+  outflowCents: number;
+  netCents: number;
+}
+
+/**
+ * LE SEAU EST UNE DATE CIVILE, PAS UN INSTANT.
+ *
+ * Le serveur rend `bucket` sous la forme `AAAA-MM-JJ`, `AAAA-MM` ou `AAAA`
+ * selon la granularité, dans le FUSEAU de la période. Le passer à
+ * `new Date("2026-08-27")` le lit comme minuit UTC : à Paris en été, le point
+ * se serait affiché la veille à 22 h — et un mouvement du 1er du mois serait
+ * apparu le dernier jour du mois précédent.
+ *
+ * On construit donc la date en heure LOCALE du navigateur, à midi. Midi, et
+ * non minuit : c'est la seule heure qui survit à un décalage d'un fuseau dans
+ * les deux sens sans changer de jour.
+ */
+export function parseBucket(bucket: string): Date {
+  const [annee, mois, jour] = bucket.split('-').map((n) => Number.parseInt(n, 10));
+  return new Date(
+    annee,
+    Number.isFinite(mois) ? mois - 1 : 0,
+    Number.isFinite(jour) ? jour : 1,
+    12, 0, 0, 0,
+  );
+}
+
+const LIBELLE_JOUR = new Intl.DateTimeFormat('fr-FR', { day: '2-digit', month: 'short' });
+const LIBELLE_MOIS = new Intl.DateTimeFormat('fr-FR', { month: 'short', year: '2-digit' });
+const LIBELLE_ANNEE = new Intl.DateTimeFormat('fr-FR', { year: 'numeric' });
+
+export function formatBucketLabel(date: Date, granularity: FinancePeriod['granularity']): string {
+  if (granularity === 'year') return LIBELLE_ANNEE.format(date);
+  if (granularity === 'month') return LIBELLE_MOIS.format(date);
+  return LIBELLE_JOUR.format(date);
+}
+
+/**
+ * La série du serveur, prête pour le graphique.
+ *
+ * `netCents` est repris TEL QUEL et jamais recalculé depuis `inflow - outflow`.
+ * Les deux devraient coïncider — mais si un jour ils divergent, c'est le
+ * serveur qui a raison, et l'écart doit se voir plutôt que d'être masqué par
+ * une soustraction faite ici.
+ */
+export function toEvolutionRows(
+  series: FinanceSeriesPoint[],
+  granularity: FinancePeriod['granularity'],
+): EvolutionRow[] {
+  return series.map((point) => {
+    const date = parseBucket(point.bucket);
+    return {
+      date,
+      label: formatBucketLabel(date, granularity),
+      inflow: point.inflowCents / 100,
+      outflow: point.outflowCents / 100,
+      net: point.netCents / 100,
+      inflowCents: point.inflowCents,
+      outflowCents: point.outflowCents,
+      netCents: point.netCents,
+    };
+  });
+}
+
+/**
+ * UN GRAPHIQUE A BESOIN D'AU MOINS DEUX POINTS POUR ÊTRE UNE COURBE.
+ *
+ * Avec un seul seau, une courbe est un point isolé et une aire un trait : le
+ * lecteur y voit une panne d'affichage. L'écran montre alors le chiffre, pas
+ * le tracé. Zéro point n'est pas une erreur non plus — c'est une période sans
+ * mouvement, et elle se dit avec des mots.
+ */
+export function evolutionState(rows: EvolutionRow[]): 'empty' | 'single' | 'ready' {
+  if (rows.length === 0) return 'empty';
+  if (rows.length === 1) return 'single';
+  return 'ready';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LA PÉRIODE PRÉCÉDENTE
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export interface ComparableWindow {
+  /** `AAAA-MM-JJ`, INCLUSE — le vocabulaire attendu par `/api/finances`. */
+  start: string;
+  /** `AAAA-MM-JJ`, INCLUSE elle aussi. */
+  end: string;
+}
+
+/** Le fuseau du registre financier, quand la période ne le précise pas. */
+const FUSEAU_PAR_DEFAUT = 'Europe/Paris';
+
+/**
+ * UN INSTANT, RENDU EN DATE CIVILE DANS LE FUSEAU DU REGISTRE.
+ *
+ * `en-CA` produit `AAAA-MM-JJ`, qui est exactement la forme que la route
+ * attend. Passer par `toISOString().slice(0, 10)` aurait donné la date UTC :
+ * à Paris en été, un instant du 1er août à 01 h serait devenu le 31 juillet, et
+ * la fenêtre de comparaison aurait glissé d'un jour deux fois par an.
+ */
+function dateCivile(instant: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(instant));
+}
+
+/**
+ * LA FENÊTRE IMMÉDIATEMENT ANTÉRIEURE, DE MÊME DURÉE.
+ *
+ * ══ ELLE PARLE LA LANGUE DE LA ROUTE, PAS CELLE DU MODÈLE ══════════════════
+ *
+ * Le serveur REND des bornes semi-ouvertes en instants absolus
+ * (`[startsAt, endsAt[`), mais il ATTEND, pour une période `CUSTOM`, deux dates
+ * civiles `AAAA-MM-JJ` dont la seconde est INCLUSE. Les deux vocabulaires ne
+ * sont pas interchangeables, et les confondre a un coût immédiat :
+ *
+ *     GET /api/finances/summary?period=CUSTOM&start=2026-06-30T22:00:00.000Z…
+ *     400 Bad Request
+ *
+ * La tendance disparaissait alors de tous les indicateurs, silencieusement —
+ * l'écran restait juste, et seule la comparaison manquait.
+ *
+ * ══ LE CALCUL ══════════════════════════════════════════════════════════════
+ *
+ * On recule sur les INSTANTS — c'est exact à travers un changement d'heure, là
+ * où « moins trente jours » en heure locale se serait décalé de soixante
+ * minutes. On ne convertit en dates civiles qu'À LA FIN, dans le fuseau de la
+ * période :
+ *
+ *   fin précédente   = la veille du premier jour de la période courante
+ *   début précédent  = cette veille, moins la durée de la période
+ *
+ * ── CE QUI REND `null`, ET C'EST VOLONTAIRE ─────────────────────────────────
+ * « Depuis toujours » n'a pas d'avant. Une période sans borne ne peut pas être
+ * comparée, et l'écran n'affichera aucune tendance plutôt qu'une flèche
+ * inventée.
+ */
+export function previousWindow(period: FinancePeriod): ComparableWindow | null {
+  if (!period.startsAt || !period.endsAt) return null;
+
+  const debut = new Date(period.startsAt).getTime();
+  const fin = new Date(period.endsAt).getTime();
+  if (!Number.isFinite(debut) || !Number.isFinite(fin)) return null;
+
+  const duree = fin - debut;
+  if (duree <= 0) return null;
+
+  const fuseau = period.timezone || FUSEAU_PAR_DEFAUT;
+  // Une milliseconde avant le début de la période courante : le dernier
+  // instant de la période précédente, donc son dernier jour civil.
+  const finPrecedente = debut - 1;
+  const debutPrecedent = finPrecedente - duree + 1;
+
+  return {
+    start: dateCivile(debutPrecedent, fuseau),
+    end: dateCivile(finPrecedente, fuseau),
+  };
+}
+
+export interface Trend {
+  /** L'écart en centimes — toujours défini quand une comparaison existe. */
+  deltaCents: number;
+  /**
+   * L'écart RELATIF, entre 0 et l'infini… sauf qu'on refuse l'infini : `null`
+   * quand la période précédente était à zéro. On ne progresse pas « de 100 % »
+   * par rapport à rien.
+   */
+  ratio: number | null;
+  direction: 'up' | 'down' | 'flat';
+}
+
+export function computeTrend(currentCents: number, previousCents: number): Trend {
+  const deltaCents = currentCents - previousCents;
+  const direction: Trend['direction'] = deltaCents > 0 ? 'up' : deltaCents < 0 ? 'down' : 'flat';
+  const ratio = previousCents === 0 ? null : deltaCents / Math.abs(previousCents);
+  return { deltaCents, ratio, direction };
+}
+
+const POURCENT = new Intl.NumberFormat('fr-FR', {
+  style: 'percent',
+  maximumFractionDigits: 1,
+});
+
+/** « +12,4 % ». `null` quand il n'y a rien à rapporter. */
+export function formatTrendRatio(trend: Trend | null): string | null {
+  if (!trend || trend.ratio === null) return null;
+  const signe = trend.ratio > 0 ? '+' : '';
+  return `${signe}${POURCENT.format(trend.ratio)}`;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LA RÉPARTITION PAR RATTACHEMENT
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export interface BreakdownRow extends Record<string, unknown> {
+  /** `null` = les mouvements propres à L.Y Solution. `'__others__'` = le reste. */
+  key: string;
+  name: string;
+  revenueCents: number;
+  costCents: number;
+  netCents: number;
+  count: number;
+  revenue: number;
+  cost: number;
+  /** Part du revenu total, entre 0 et 1. `null` si le total est nul. */
+  share: number | null;
+  isAggregate: boolean;
+}
+
+export const OTHERS_KEY = '__others__';
+export const COMPANY_KEY = '__company__';
+
+/**
+ * LE CLASSEMENT, BORNÉ — et ce qui dépasse est AGRÉGÉ, jamais coupé.
+ *
+ * ══ POURQUOI PAS SIMPLEMENT LES DIX PREMIERS ═══════════════════════════════
+ *
+ * Parce qu'un graphique dont les barres ne totalisent pas le chiffre affiché
+ * au-dessus fait douter des deux. Au-delà du rang `top`, les rattachements sont
+ * REGROUPÉS dans une ligne « Autres » qui porte leur somme exacte. Le total du
+ * graphique reste donc celui du serveur, au centime.
+ *
+ * Le tri se fait sur le REVENU, pas sur le net : on cherche qui fait tourner
+ * l'activité. Un client au net négatif reste un client qui rapporte.
+ *
+ * `nameOf` est injecté plutôt que lu ici : le nom courant d'un projet vient du
+ * registre, l'instantané de la ligne n'est qu'un repli d'audit.
+ */
+export function toBreakdownRows(
+  lines: FinanceProjectLine[],
+  {
+    top = 8,
+    nameOf,
+    companyLabel,
+    othersLabel = 'Autres rattachements',
+  }: {
+    top?: number;
+    nameOf: (projectId: string) => string | null;
+    companyLabel: string;
+    othersLabel?: string;
+  },
+): BreakdownRow[] {
+  const totalRevenu = lines.reduce((somme, l) => somme + l.revenueCents, 0);
+  const part = (cents: number) => (totalRevenu === 0 ? null : cents / totalRevenu);
+
+  const brutes = lines.map((ligne) => ({
+    ligne,
+    key: ligne.projectId ?? COMPANY_KEY,
+    name: ligne.projectId
+      ? (nameOf(ligne.projectId) ?? ligne.projectNameSnapshot ?? ligne.projectId)
+      : companyLabel,
+  }));
+
+  // Tri STABLE sur le revenu, puis sur le nom : deux rattachements à égalité ne
+  // doivent pas permuter d'un rendu à l'autre, sinon le graphique « bouge »
+  // tout seul à chaque rafraîchissement.
+  brutes.sort((a, b) => (
+    b.ligne.revenueCents - a.ligne.revenueCents
+    || a.name.localeCompare(b.name, 'fr')
+  ));
+
+  const tete = brutes.slice(0, top);
+  const queue = brutes.slice(top);
+
+  const rows: BreakdownRow[] = tete.map(({ ligne, key, name }) => ({
+    key,
+    name,
+    revenueCents: ligne.revenueCents,
+    costCents: ligne.costCents,
+    netCents: ligne.netCents,
+    count: ligne.count,
+    revenue: ligne.revenueCents / 100,
+    cost: ligne.costCents / 100,
+    share: part(ligne.revenueCents),
+    isAggregate: false,
+  }));
+
+  if (queue.length > 0) {
+    const somme = queue.reduce(
+      (acc, { ligne }) => ({
+        revenueCents: acc.revenueCents + ligne.revenueCents,
+        costCents: acc.costCents + ligne.costCents,
+        netCents: acc.netCents + ligne.netCents,
+        count: acc.count + ligne.count,
+      }),
+      { revenueCents: 0, costCents: 0, netCents: 0, count: 0 },
+    );
+    rows.push({
+      key: OTHERS_KEY,
+      name: `${othersLabel} (${queue.length})`,
+      ...somme,
+      revenue: somme.revenueCents / 100,
+      cost: somme.costCents / 100,
+      share: part(somme.revenueCents),
+      isAggregate: true,
+    });
+  }
+
+  return rows;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LE PANIER MOYEN ET LE TAUX DE REMBOURSEMENT
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * LE MONTANT MOYEN D'UN MOUVEMENT ENTRANT.
+ *
+ * `count` est le nombre de mouvements du périmètre, TOUTES catégories
+ * confondues — c'est ce que le serveur rend. Diviser les revenus par ce
+ * compte-là donnerait un « panier moyen » abaissé par chaque coût enregistré.
+ * On rend donc `null` : mieux vaut ne pas afficher un indicateur que d'en
+ * afficher un faux, et le jour où le serveur exposera le compte des seuls
+ * encaissements, c'est ici que cela se branchera.
+ */
+export function averageInflowCents(
+  revenueCents: number,
+  inflowCount: number | null,
+): number | null {
+  if (inflowCount === null || inflowCount <= 0) return null;
+  return Math.round(revenueCents / inflowCount);
+}
+
+/**
+ * QUELLE PART DES ENCAISSEMENTS A ÉTÉ RENDUE.
+ *
+ * Rapporté aux REVENUS, pas aux entrées : un remboursement défait un
+ * encaissement, et c'est à lui qu'il doit être comparé. `null` quand il n'y a
+ * eu aucun revenu — un taux sur zéro n'existe pas.
+ */
+export function refundRate(refundCents: number, revenueCents: number): number | null {
+  if (revenueCents <= 0) return null;
+  return refundCents / revenueCents;
+}
+
+export default {
+  parseBucket,
+  formatBucketLabel,
+  toEvolutionRows,
+  evolutionState,
+  previousWindow,
+  computeTrend,
+  formatTrendRatio,
+  toBreakdownRows,
+  averageInflowCents,
+  refundRate,
+};
