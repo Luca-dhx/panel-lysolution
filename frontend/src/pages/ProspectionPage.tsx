@@ -35,7 +35,14 @@ import { api, errorMessage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
 import { useMeetings } from '@/lib/useEvents';
 import { useProspects } from '@/lib/useProspects';
-import type { Prospect, ProspectStatus } from '@/types.prospection';
+import type { Prospect, ProspectStatus, ProspectSummary } from '@/types.prospection';
+
+/** « 3 conceptions · 2 refontes » — au singulier quand il n'y en a qu'une. */
+function repartition(summary: ProspectSummary): string {
+  const { CREATION = 0, REDESIGN = 0 } = summary.byType ?? {};
+  const pluriel = (n: number, mot: string) => `${n} ${mot}${n > 1 ? 's' : ''}`;
+  return `${pluriel(CREATION, 'conception')} · ${pluriel(REDESIGN, 'refonte')}`;
+}
 
 export function ProspectionPage() {
   const toast = useToast();
@@ -159,7 +166,17 @@ export function ProspectionPage() {
       ) : (
         <ProspectsTable
           title={filtre ? PROSPECT_STATUS_DEFS[filtre].label : 'Tous les prospects'}
-          description="Le statut se change directement sur sa pastille."
+          /*
+            La répartition par NATURE se lit ici plutôt que de devenir un
+            sixième bouton : c'est un second axe, et le mêler aux cinq pastilles
+            du pipeline aurait laissé croire qu'une « refonte » est un état
+            d'avancement. Les deux se changent sur leur propre pastille.
+          */
+          description={
+            summary
+              ? `${repartition(summary)} · statut et nature se changent sur leur pastille.`
+              : 'Le statut et la nature se changent directement sur leur pastille.'
+          }
           prospects={filtres}
           upcomingMeetings={meetings}
           onEdit={(p) => { setVolet(false); setEdite(p); }}

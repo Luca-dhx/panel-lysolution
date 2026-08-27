@@ -47,6 +47,40 @@ doublon pour dire le contraire. Ce qui protège l'information n'est donc pas
 l'interdiction mais la **trace** : `statusHistory` consigne l'avant, l'après,
 l'auteur, la date et le motif éventuel.
 
+## 2 bis. La nature de l'affaire — un second axe
+
+| Code | Libellé | Ce que ça veut dire |
+|---|---|---|
+| `CREATION` | Conception | il n'a pas de site : on en crée un. |
+| `REDESIGN` | Refonte | il en a déjà un : on le refait. |
+
+`status` répond à **où en est-on ?** — il bouge, c'est tout son intérêt. `type`
+répond à **que fait-on ?** — il ne bouge presque jamais. Les fondre en une
+seule liste aurait produit dix états (« refonte en cours », « conception en
+cours », …) : compter les affaires en cours aurait demandé d'additionner deux
+colonnes.
+
+Le type ne produit **aucune entrée d'historique** : ce n'est pas une étape du
+pipeline, c'est une caractéristique de l'affaire. Il passe donc par le `PATCH`
+général, là où le statut a sa route à lui.
+
+**Deux teintes que le thème ne possède pas.** Le statut occupe déjà les cinq
+intentions du Panel (gris, orange, bleu, rouge, vert) et le thème n'a que
+quatre couleurs réglables : il n'y avait pas de violet à emprunter. Les deux
+teintes du type sont donc **synthétisées par mélange** dans `bridge.css` —
+primaire × accent, primaire × danger. Elles restent dérivées du thème et le
+suivent, sans coller à aucun statut. Elles empruntent les noms `indigo` et
+`purple` parce que ce sont ceux que les badges de la librairie connaissent.
+
+Et une **forme** différente, parce que la couleur ne suffit jamais : le statut
+est une pastille à puce, le type une pastille à icône.
+
+**Compatibilité.** Les fiches créées avant ce champ ne le portent pas, et
+`.lean()` n'applique aucun défaut de schéma. Le filtre `type=CREATION` demande
+donc « ce n'est pas une refonte » (`$ne`), et l'interface retombe explicitement
+sur `CREATION` (`prospectType()`). Même précaution que `subjectType`, pour la
+même raison : pas de migration.
+
 ## 3. Le suivi n'est pas un second agenda
 
 Un rendez-vous de prospection est un rendez-vous : même agenda, même imminence,
@@ -140,6 +174,12 @@ Trois décisions gouvernent l'intégration :
    un thème sombre l'échelle s'inverse toute seule. Sans ce pont, une carte
    blanche se serait posée sur un fond sombre — et pas une couleur n'est écrite
    en dur.
+
+**Les paliers responsive se calent sur la largeur du CONTENU, pas de la
+fenêtre.** La barre latérale reprend 250 px dès 900 px : il y a donc moins de
+place à 900 px (≈ 570 px utiles) qu'à 768 px (≈ 736 px, la barre étant encore un
+tiroir). Un palier posé à `md` — le réflexe — fait déborder le tableau juste
+après le seuil du tiroir, sur la seule largeur où personne ne pense à regarder.
 
 Le reste de la page (filtres, formulaire, boutons) demeure sur le style maison.
 C'est ce que « progressif » veut dire : un écran passe à la librairie quand on

@@ -31,9 +31,12 @@ import { useToast } from '@/components/ToastProvider';
 import {
   PROSPECT_STATUS_DEFS,
   PROSPECT_STATUS_ORDER,
+  PROSPECT_TYPE_DEFS,
+  PROSPECT_TYPE_ORDER,
+  prospectType as replierType,
 } from '@/components/prospection/prospectStatus';
 import type {
-  Prospect, ProspectImage, ProspectLink, ProspectStatus,
+  Prospect, ProspectImage, ProspectLink, ProspectStatus, ProspectType,
 } from '@/types.prospection';
 
 function nouvelId(): string {
@@ -72,6 +75,15 @@ export function ProspectForm({
   const [phone, setPhone] = useState(prospect?.phone ?? '');
   const [notes, setNotes] = useState(prospect?.notes ?? '');
   const [status, setStatus] = useState<ProspectStatus>(prospect?.status ?? 'WAITING');
+  /**
+   * Le TYPE est proposé ici même en CORRECTION, contrairement au statut.
+   *
+   * Le statut a sa pastille, qu'on manipule à la volée depuis le tableau. Le
+   * type aussi — mais on le découvre souvent en remplissant la fiche, au
+   * moment où l'on note que le prospect a déjà un site. L'omettre du
+   * formulaire aurait obligé à enregistrer, fermer, puis rouvrir un menu.
+   */
+  const [type, setType] = useState<ProspectType>(replierType(prospect?.type));
   const [links, setLinks] = useState<ProspectLink[]>(prospect?.links ?? []);
   const [images, setImages] = useState<ProspectImage[]>(prospect?.images ?? []);
 
@@ -135,6 +147,7 @@ export function ProspectForm({
       notes,
       links: liensPrets(links),
       images,
+      type,
       ...(prospect ? {} : { status }),
     };
     try {
@@ -185,6 +198,18 @@ export function ProspectForm({
             placeholder="06 12 34 56 78"
           />
         </label>
+        <div className="field">
+          <span className="field-label">Nature de l’affaire</span>
+          <ThemedSelect
+            ariaLabel="Nature de l’affaire"
+            value={type}
+            onChange={(v) => setType(v as ProspectType)}
+            options={PROSPECT_TYPE_ORDER.map((t) => ({
+              value: t,
+              label: `${PROSPECT_TYPE_DEFS[t].label} — ${PROSPECT_TYPE_DEFS[t].hint}`,
+            }))}
+          />
+        </div>
         {/*
           Le statut de DÉPART, à la création seulement. Sur une fiche existante,
           il se change depuis sa pastille — voir l'en-tête de ce fichier.

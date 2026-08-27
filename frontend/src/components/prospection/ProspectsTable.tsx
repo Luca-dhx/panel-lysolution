@@ -11,19 +11,30 @@
  *
  * ══ RESPONSIVE : AUCUNE COLONNE INDISPENSABLE NE DISPARAÎT ══════════════════
  *
- * Un tableau à sept colonnes sur un écran de 390 px n'a que deux issues : une
+ * Un tableau à huit colonnes sur un écran de 390 px n'a que deux issues : une
  * barre de défilement horizontale qu'on ne trouve pas, ou des colonnes écrasées
  * illisibles. Les colonnes sortent donc PAR PALIERS, de la moins utile à la
  * plus utile, et trois restent toujours là :
  *
- *   toujours   le prospect (nom + adresse e-mail), le statut, les actions
- *   ≥ 768 px   le téléphone
- *   ≥ 1024 px  ce qui est attaché (liens, images) et la dernière activité
- *   ≥ 1280 px  le prochain rendez-vous
+ *   toujours    le prospect (nom + adresse e-mail), le statut, les actions
+ *   ≥ 640 px    la nature de l'affaire (conception / refonte)
+ *   ≥ 1280 px   le prochain rendez-vous et la dernière activité
+ *   ≥ 1536 px   le téléphone et ce qui est attaché (liens, images)
  *
- * Rien de ce qui sort n'est PERDU : tout est sur la fiche, à un clic. Le
- * cadre conserve malgré tout son `overflow-x-auto` — c'est le tableau qui
- * défile, jamais la page.
+ * ── LES PALIERS SONT CALÉS SUR LA LARGEUR DU CONTENU, PAS DE LA FENÊTRE ─────
+ *
+ * La barre latérale reprend 250 px dès 900 px de fenêtre. Il y a donc MOINS de
+ * place à 900 px (≈ 570 px utiles) qu'à 768 px (≈ 736 px, la barre étant encore
+ * un tiroir). Un palier posé à `md` — le réflexe — faisait donc déborder le
+ * tableau juste après le seuil du tiroir, sur la seule largeur où personne ne
+ * pense à regarder. La largeur minimale du nom suit la même règle : elle
+ * n'entre qu'à 1024 px.
+ *
+ * Rien de ce qui sort n'est PERDU : tout est sur la fiche, à un clic. Le type,
+ * lui, ne sort même pas — sous 640 px sa pastille se replie sous le nom, parce
+ * qu'une refonte et une conception ne se devinent pas et qu'on balaie cette
+ * liste pour les distinguer. Le cadre conserve malgré tout son
+ * `overflow-x-auto` : c'est le tableau qui défile, jamais la page.
  *
  * ══ LE TRI EST LOCAL, ET C'EST UN CHOIX ═════════════════════════════════════
  *
@@ -41,7 +52,10 @@ import { Table, TableCard } from '@/components/application/table/table';
 import { Avatar } from '@/components/base/avatar/avatar';
 import { Dropdown } from '@/components/base/dropdown/dropdown';
 import { ProspectStatusSelect } from '@/components/prospection/ProspectStatusSelect';
-import { prospectStatusRank } from '@/components/prospection/prospectStatus';
+import {
+  ProspectTypeBadge, ProspectTypeSelect,
+} from '@/components/prospection/ProspectTypeSelect';
+import { prospectStatusRank, prospectTypeRank } from '@/components/prospection/prospectStatus';
 import type { Meeting } from '@/types.events';
 import type { Prospect } from '@/types.prospection';
 
@@ -118,6 +132,10 @@ export function ProspectsTable({
         const ecart = prospectStatusRank(a.status) - prospectStatusRank(b.status);
         return ecart !== 0 ? ecart * sens : a.name.localeCompare(b.name, 'fr');
       }
+      if (colonne === 'type') {
+        const ecart = prospectTypeRank(a.type) - prospectTypeRank(b.type);
+        return ecart !== 0 ? ecart * sens : a.name.localeCompare(b.name, 'fr');
+      }
       if (colonne === 'updatedAt' || colonne === 'createdAt') {
         const va = new Date(a[colonne]).getTime();
         const vb = new Date(b[colonne]).getTime();
@@ -133,11 +151,19 @@ export function ProspectsTable({
   return (
     <div className="uui">
       <TableCard.Root>
+        {/*
+          L'en-tête de la librairie passe en ligne dès 768 px. À cette largeur,
+          la recherche prend sa place et le titre se retrouve écrasé sur trois
+          lignes dans une colonne de 100 px. Il ne se met donc en ligne qu'à
+          1024 px — même raison que les colonnes : la barre latérale reprend
+          250 px dès 900 px, et il n'y a pas la place avant.
+        */}
         <TableCard.Header
           title={title}
           badge={String(prospects.length)}
           description={description}
           contentTrailing={contentTrailing}
+          className="md:flex-col lg:flex-row lg:items-center"
         />
 
         <Table
@@ -156,21 +182,37 @@ export function ProspectsTable({
           <Table.Header>
             <Table.Head
               id="name" label="Prospect" isRowHeader allowsSorting
-              className="min-w-0 px-3 md:min-w-56 md:px-6"
+              className="min-w-0 px-3 md:px-6 lg:min-w-56"
             />
             <Table.Head id="status" label="Statut" allowsSorting className="px-3 md:px-6" />
+            {/*
+              LE TYPE SORT AVANT LE TÉLÉPHONE, à 640 px et non 768 : savoir si
+              une affaire est une refonte ou une conception change le devis et
+              les questions du premier rendez-vous. Un numéro se retrouve sur la
+              fiche ; la nature de l'affaire se lit en balayant la liste.
+
+              Sous 640 px il n'y a plus de colonne : la pastille passe alors
+              sous le nom, dans la première cellule.
+            */}
             <Table.Head
-              id="phone" label="Téléphone" allowsSorting
-              className="hidden px-3 md:table-cell md:px-6"
+              id="type" label="Type" allowsSorting
+              className="hidden px-3 sm:table-cell sm:px-6"
             />
-            <Table.Head id="attachments" label="Joint" className="hidden px-3 lg:table-cell lg:px-6" />
             <Table.Head
-              id="next" label="Prochain rendez-vous"
+              id="next" label="Rendez-vous"
               className="hidden px-3 xl:table-cell xl:px-6"
             />
             <Table.Head
               id="updatedAt" label="Activité" allowsSorting
-              className="hidden px-3 lg:table-cell lg:px-6"
+              className="hidden px-3 xl:table-cell xl:px-6"
+            />
+            <Table.Head
+              id="phone" label="Téléphone" allowsSorting
+              className="hidden px-3 2xl:table-cell 2xl:px-6"
+            />
+            <Table.Head
+              id="attachments" label="Joint"
+              className="hidden px-3 2xl:table-cell 2xl:px-6"
             />
             <Table.Head id="actions" className="px-2 md:px-4" />
           </Table.Header>
@@ -241,6 +283,16 @@ export function ProspectsTable({
                         ) : (
                           <span className="text-sm text-quaternary">Pas d’adresse e-mail</span>
                         )}
+                        {/*
+                          Sous 640 px, la colonne « Type » n'existe plus : la
+                          pastille se replie ici plutôt que de disparaître. Elle
+                          est en LECTURE SEULE à cette largeur — le sélecteur
+                          aurait ajouté un troisième contrôle sur une ligne qui
+                          en porte déjà deux, à portée du pouce.
+                        */}
+                        <span className="mt-1 flex sm:hidden">
+                          <ProspectTypeBadge type={prospect.type} />
+                        </span>
                       </div>
                     </div>
                   </Table.Cell>
@@ -253,7 +305,32 @@ export function ProspectsTable({
                     />
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 md:table-cell md:px-6">
+                  <Table.Cell className="hidden px-3 sm:table-cell sm:px-6">
+                    <ProspectTypeSelect
+                      prospectId={prospect._id}
+                      type={prospect.type}
+                      onChanged={onStatusChanged}
+                    />
+                  </Table.Cell>
+
+                  <Table.Cell className="hidden px-3 xl:table-cell xl:px-6">
+                    {reunion ? (
+                      <div className="whitespace-nowrap">
+                        <p className="text-sm font-medium text-primary">
+                          {dateHeure(reunion.scheduledAt)}
+                        </p>
+                        <p className="truncate text-sm text-tertiary">{reunion.title}</p>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-quaternary">Rien de prévu</span>
+                    )}
+                  </Table.Cell>
+
+                  <Table.Cell className="hidden px-3 whitespace-nowrap xl:table-cell xl:px-6">
+                    {dateCourte(prospect.updatedAt)}
+                  </Table.Cell>
+
+                  <Table.Cell className="hidden px-3 2xl:table-cell 2xl:px-6">
                     {prospect.phone ? (
                       <a
                         href={`tel:${prospect.phone.replace(/\s+/g, '')}`}
@@ -267,7 +344,7 @@ export function ProspectsTable({
                     )}
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 lg:table-cell lg:px-6">
+                  <Table.Cell className="hidden px-3 2xl:table-cell 2xl:px-6">
                     <div className="flex items-center gap-3 text-sm text-tertiary">
                       <span
                         className="flex items-center gap-1"
@@ -284,23 +361,6 @@ export function ProspectsTable({
                         {prospect.images.length}
                       </span>
                     </div>
-                  </Table.Cell>
-
-                  <Table.Cell className="hidden px-3 xl:table-cell xl:px-6">
-                    {reunion ? (
-                      <div className="whitespace-nowrap">
-                        <p className="text-sm font-medium text-primary">
-                          {dateHeure(reunion.scheduledAt)}
-                        </p>
-                        <p className="truncate text-sm text-tertiary">{reunion.title}</p>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-quaternary">Rien de prévu</span>
-                    )}
-                  </Table.Cell>
-
-                  <Table.Cell className="hidden px-3 whitespace-nowrap lg:table-cell lg:px-6">
-                    {dateCourte(prospect.updatedAt)}
                   </Table.Cell>
 
                   <Table.Cell className="px-2 md:px-4">

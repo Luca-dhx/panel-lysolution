@@ -36,6 +36,7 @@ import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ProspectForm } from '@/components/prospection/ProspectForm';
 import { ProspectStatusSelect } from '@/components/prospection/ProspectStatusSelect';
+import { ProspectTypeSelect } from '@/components/prospection/ProspectTypeSelect';
 import { prospectStatusLabel } from '@/components/prospection/prospectStatus';
 import { api, errorMessage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
@@ -120,9 +121,20 @@ export function ProspectDetailPage() {
         </Link>
         <div className="prospect-title">
           <h1>{prospect.name}</h1>
+          {/*
+            Les deux axes côte à côte, et manipulables ici : « où en est-on »
+            et « que fait-on ». C'est la première chose qu'on vient lire avant
+            un appel, et la seule qu'on vient parfois corriger.
+          */}
           <ProspectStatusSelect
             prospectId={prospect._id}
             status={prospect.status}
+            onChanged={toutRecharger}
+            size="md"
+          />
+          <ProspectTypeSelect
+            prospectId={prospect._id}
+            type={prospect.type}
             onChanged={toutRecharger}
             size="md"
           />

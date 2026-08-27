@@ -19,9 +19,9 @@ const actorOf = (req) => ({
 });
 
 export async function list(req, res) {
-  const { status = null } = req.query ?? {};
+  const { status = null, type = null } = req.query ?? {};
   const [prospects, summary] = await Promise.all([
-    listProspects({ status }),
+    listProspects({ status, type }),
     summarizeProspects(),
   ]);
   return ok(res, { prospects, summary });

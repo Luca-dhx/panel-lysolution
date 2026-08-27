@@ -156,6 +156,46 @@
   --color-utility-blue-600: color-mix(in srgb, var(--p-primary) 82%, var(--p-foreground));
   --color-utility-blue-700: color-mix(in srgb, var(--p-primary) 58%, var(--p-foreground));
 
+  /*
+   * ── DEUX TEINTES QUE LE THÈME NE POSSÈDE PAS ────────────────────────────
+   *
+   * La nature d'une affaire — conception ou refonte — est un SECOND axe, à
+   * côté du statut. Le statut occupe déjà les cinq intentions du Panel : gris,
+   * orange, bleu, rouge, vert. En réutiliser une pour le type aurait fait lire
+   * « refonte » comme un état d'avancement, dans la même ligne de tableau.
+   *
+   * Mais le thème n'a que QUATRE couleurs réglables : il n'y a pas de violet à
+   * emprunter. On en SYNTHÉTISE donc deux par mélange de tokens existants —
+   * primaire × accent d'un côté, primaire × danger de l'autre. Le résultat est
+   * une teinte réellement distincte des cinq autres, toujours dérivée du
+   * thème, et qui suit un changement de couleurs comme le reste. Écrire deux
+   * codes hexadécimaux ici les aurait figées sur le thème du jour.
+   *
+   * Elles empruntent les noms `indigo` et `purple` parce que ce sont ceux que
+   * les badges de la librairie connaissent — pas parce qu'elles valent l'indigo
+   * ou le violet d'Untitled UI, qu'elles remplacent intégralement.
+   */
+  --p-type-creation: color-mix(in srgb, var(--p-primary) 50%, var(--p-accent));
+  --p-type-redesign: color-mix(in srgb, var(--p-primary) 55%, var(--p-danger));
+
+  --color-utility-indigo-50: color-mix(in srgb, var(--p-type-creation) 16%, var(--p-background));
+  --color-utility-indigo-100: color-mix(in srgb, var(--p-type-creation) 24%, var(--p-background));
+  --color-utility-indigo-200: color-mix(in srgb, var(--p-type-creation) 42%, var(--p-background));
+  --color-utility-indigo-300: color-mix(in srgb, var(--p-type-creation) 55%, var(--p-background));
+  --color-utility-indigo-400: color-mix(in srgb, var(--p-type-creation) 72%, var(--p-background));
+  --color-utility-indigo-500: var(--p-type-creation);
+  --color-utility-indigo-600: color-mix(in srgb, var(--p-type-creation) 82%, var(--p-foreground));
+  --color-utility-indigo-700: color-mix(in srgb, var(--p-type-creation) 58%, var(--p-foreground));
+
+  --color-utility-purple-50: color-mix(in srgb, var(--p-type-redesign) 16%, var(--p-background));
+  --color-utility-purple-100: color-mix(in srgb, var(--p-type-redesign) 24%, var(--p-background));
+  --color-utility-purple-200: color-mix(in srgb, var(--p-type-redesign) 42%, var(--p-background));
+  --color-utility-purple-300: color-mix(in srgb, var(--p-type-redesign) 55%, var(--p-background));
+  --color-utility-purple-400: color-mix(in srgb, var(--p-type-redesign) 72%, var(--p-background));
+  --color-utility-purple-500: var(--p-type-redesign);
+  --color-utility-purple-600: color-mix(in srgb, var(--p-type-redesign) 82%, var(--p-foreground));
+  --color-utility-purple-700: color-mix(in srgb, var(--p-type-redesign) 58%, var(--p-foreground));
+
   --color-utility-neutral-50: var(--color-neutral-100);
   --color-utility-neutral-100: var(--color-neutral-200);
   --color-utility-neutral-200: var(--color-neutral-300);

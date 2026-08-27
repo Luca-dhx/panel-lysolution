@@ -8,6 +8,9 @@
  *                      mentionne pas ;
  *   2. LE STATUT       il ne bouge que par une décision humaine, toutes les
  *                      transitions sont permises, et chacune laisse sa TRACE ;
+ *   2 bis. LE TYPE     conception ou refonte — un SECOND axe, qui n'entre pas
+ *                      dans l'historique du statut, et dont l'absence sur les
+ *                      fiches antérieures ne les rend pas introuvables ;
  *   3. LE SUIVI        les réunions et les événements du Panel se rattachent à
  *                      un prospect sans qu'un second agenda existe ;
  *   4. L'ÉTANCHÉITÉ    ajouter `subjectType` ne fait disparaître aucun
@@ -175,6 +178,79 @@ section('2. Le statut — manuel, réversible, tracé');
   check('la liste se filtre par statut',
     filtree.json.data.prospects.length === 1
     && filtree.json.data.prospects[0]._id === prospectId);
+}
+
+/* ────────────────────────────────────────────────────────────────────────── */
+section('2 bis. La nature de l’affaire — conception ou refonte');
+{
+  // Le TYPE est un SECOND axe : il n'entre pas dans `statusHistory`, parce que
+  // ce n'est pas une étape du pipeline mais une caractéristique de l'affaire.
+  const parDefaut = await call('POST', '/api/prospects', {
+    headers: AUTH, body: { name: 'Sans site connu' },
+  });
+  check('un prospect est une CONCEPTION par défaut',
+    parDefaut.json.data.prospect.type === 'CREATION');
+
+  const refonte = await call('POST', '/api/prospects', {
+    headers: AUTH, body: { name: 'Site à refaire', type: 'REDESIGN' },
+  });
+  check('…et la refonte se déclare à la création',
+    refonte.status === 201 && refonte.json.data.prospect.type === 'REDESIGN');
+
+  const inconnu = await call('POST', '/api/prospects', {
+    headers: AUTH, body: { name: 'Ni l’un ni l’autre', type: 'MAINTENANCE' },
+  });
+  // Retomber silencieusement sur « conception » ferait apparaître une refonte
+  // comme un site à créer — la confusion exacte que ce champ existe pour lever.
+  check('un type hors liste est REFUSÉ, jamais ramené au défaut',
+    inconnu.status === 400 && inconnu.json.code === 'PANEL_PROSPECT_TYPE_UNKNOWN');
+
+  const corrige = await call('PATCH', `/api/prospects/${parDefaut.json.data.prospect._id}`, {
+    headers: AUTH, body: { type: 'REDESIGN' },
+  });
+  check('le type se corrige par la correction partielle', corrige.json.data.prospect.type === 'REDESIGN');
+  check('…sans rien écrire dans l’historique du statut',
+    corrige.json.data.prospect.statusHistory.length === 1);
+
+  /**
+   * UNE FICHE ÉCRITE AVANT CE CHAMP — le champ retiré à la main, comme en base.
+   *
+   * Le schéma pose le défaut à l'écriture : un document « à l'ancienne » ne
+   * peut pas naître par la voie normale. C'est pourtant l'état qu'on trouve en
+   * production, et le filtre « conception » doit continuer de le voir.
+   */
+  const ancien = await call('POST', '/api/prospects', {
+    headers: AUTH, body: { name: 'Fiche d’avant' },
+  });
+  await PanelProspect.updateOne(
+    { _id: ancien.json.data.prospect._id }, { $unset: { type: '' } },
+  );
+  const brut = await PanelProspect.findById(ancien.json.data.prospect._id).lean();
+  check('…et le champ est bien ABSENT du document', brut.type === undefined);
+
+  const conceptions = await call('GET', '/api/prospects?type=CREATION', { headers: AUTH });
+  const idsConception = conceptions.json.data.prospects.map((p) => p._id);
+  check('le filtre « conception » retrouve la fiche antérieure',
+    idsConception.includes(String(brut._id)));
+  check('…et n’y mêle aucune refonte',
+    !idsConception.includes(refonte.json.data.prospect._id));
+
+  const refontes = await call('GET', '/api/prospects?type=REDESIGN', { headers: AUTH });
+  check('le filtre « refonte » ne rend que des refontes',
+    refontes.json.data.prospects.every((p) => p.type === 'REDESIGN'));
+
+  const resume = (await call('GET', '/api/prospects', { headers: AUTH })).json.data.summary;
+  check('le résumé compte les deux natures',
+    resume.byType.CREATION + resume.byType.REDESIGN === resume.total);
+  check('…et la fiche sans champ compte pour une conception',
+    resume.byType.CREATION >= 1);
+
+  // On nettoie : les sections suivantes comptent les fiches et les réunions.
+  for (const p of [parDefaut, refonte, inconnu, ancien]) {
+    const id = p.json?.data?.prospect?._id;
+    // eslint-disable-next-line no-await-in-loop
+    if (id) await call('DELETE', `/api/prospects/${id}`, { headers: AUTH });
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

@@ -12,6 +12,20 @@ export const PROSPECT_STATUSES: ProspectStatus[] = [
   'WAITING', 'IN_PROGRESS', 'PLANNED', 'LOST', 'SIGNED',
 ];
 
+/**
+ * LA NATURE DE L'AFFAIRE — un second axe, distinct du statut.
+ *
+ *   `status`  où en est-on ?  il bouge.
+ *   `type`    que fait-on ?   le prospect a déjà un site, ou il n'en a pas.
+ *
+ * FACULTATIF à la lecture : les fiches créées avant ce champ ne le portent
+ * pas, et `.lean()` n'applique aucun défaut de schéma côté serveur. Toute
+ * lecture retombe donc explicitement sur `CREATION` — voir `prospectType()`.
+ */
+export type ProspectType = 'CREATION' | 'REDESIGN';
+
+export const PROSPECT_TYPES: ProspectType[] = ['CREATION', 'REDESIGN'];
+
 export interface ProspectLink {
   id: string;
   label: string;
@@ -44,6 +58,7 @@ export interface Prospect {
   links: ProspectLink[];
   images: ProspectImage[];
   status: ProspectStatus;
+  type?: ProspectType;
   statusHistory: ProspectStatusChange[];
   createdBy: string | null;
   updatedBy: string | null;
@@ -60,11 +75,13 @@ export interface ProspectInput {
   links?: ProspectLink[];
   images?: ProspectImage[];
   status?: ProspectStatus;
+  type?: ProspectType;
 }
 
 export interface ProspectSummary {
   total: number;
   byStatus: Record<ProspectStatus, number>;
+  byType: Record<ProspectType, number>;
 }
 
 export interface ProspectListResult {

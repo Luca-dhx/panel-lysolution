@@ -52,6 +52,41 @@ export const PROSPECT_STATUS = Object.freeze({
 export const PROSPECT_STATUS_VALUES = Object.freeze(Object.values(PROSPECT_STATUS));
 
 /**
+ * LA NATURE DE L'AFFAIRE — et pourquoi ce n'est pas un statut de plus.
+ *
+ * ══ DEUX AXES, PARCE QUE DEUX QUESTIONS ═════════════════════════════════════
+ *
+ *   `status`  OÙ EN EST-ON ?   il bouge, c'est tout son intérêt.
+ *   `type`    QUE FAIT-ON ?    il ne bouge presque jamais : soit le prospect a
+ *                              déjà un site, soit il n'en a pas.
+ *
+ * Les fondre dans une seule liste aurait produit dix états (« refonte en
+ * cours », « conception en cours », …) : le pipeline serait devenu illisible,
+ * et compter « combien d'affaires en cours » aurait demandé d'additionner deux
+ * colonnes.
+ *
+ * ── CE QUE LE TYPE CHANGE POUR L'ÉQUIPE ─────────────────────────────────────
+ * Tout, en réalité : une REFONTE part d'un existant — il y a un contenu à
+ * reprendre, un référencement à ne pas casser, un domaine déjà en service. Une
+ * CONCEPTION part de rien. Ce ne sont ni le même devis, ni les mêmes questions
+ * au premier rendez-vous.
+ *
+ * ── LE DÉFAUT EST « CONCEPTION », ET LES LECTURES NE S'Y FIENT PAS ─────────
+ * Les fiches créées avant ce champ ne le portent pas du tout, et `.lean()`
+ * n'applique aucun défaut de schéma : l'interface reçoit alors `undefined`.
+ * Elle retombe donc explicitement sur `CREATION` — même précaution que
+ * `subjectType` sur les réunions, pour la même raison : pas de migration.
+ */
+export const PROSPECT_TYPE = Object.freeze({
+  /** Il n'a pas de site : on en crée un. */
+  CREATION: 'CREATION',
+  /** Il en a déjà un : on le refait. */
+  REDESIGN: 'REDESIGN',
+});
+
+export const PROSPECT_TYPE_VALUES = Object.freeze(Object.values(PROSPECT_TYPE));
+
+/**
  * TOUTES LES TRANSITIONS SONT PERMISES — y compris les retours en arrière.
  *
  * Une affaire perdue se rouvre, un « signé » cliqué par erreur se corrige, un
@@ -138,6 +173,19 @@ const prospectSchema = new mongoose.Schema(
       type: String,
       enum: PROSPECT_STATUS_VALUES,
       default: PROSPECT_STATUS.WAITING,
+      index: true,
+    },
+
+    /**
+     * CONCEPTION ou REFONTE — voir `PROSPECT_TYPE` ci-dessus.
+     *
+     * Le champ s'appelle `type` et non `projectType` : sur un prospect, il n'y
+     * a rien d'autre à typer.
+     */
+    type: {
+      type: String,
+      enum: PROSPECT_TYPE_VALUES,
+      default: PROSPECT_TYPE.CREATION,
       index: true,
     },
     statusHistory: { type: [statusChangeSchema], default: [] },

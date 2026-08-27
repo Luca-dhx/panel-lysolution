@@ -15,6 +15,8 @@ import ApiError from '../../utils/ApiError.js';
 import {
   PROSPECT_STATUS,
   PROSPECT_STATUS_VALUES,
+  PROSPECT_TYPE,
+  PROSPECT_TYPE_VALUES,
   PanelProspect,
 } from '../../models/PanelProspect.model.js';
 import { PanelMeeting } from '../../models/PanelMeeting.model.js';
@@ -112,6 +114,25 @@ function normaliserStatut(valeur) {
   return valeur;
 }
 
+/**
+ * LA NATURE DE L'AFFAIRE — conception ou refonte.
+ *
+ * Une valeur hors liste est REFUSÉE plutôt que ramenée au défaut : retomber
+ * silencieusement sur « conception » ferait apparaître une refonte comme un
+ * site à créer, et c'est précisément la confusion que ce champ existe pour
+ * lever — le devis et les questions du premier rendez-vous n'en sont pas les
+ * mêmes.
+ */
+function normaliserType(valeur) {
+  if (!PROSPECT_TYPE_VALUES.includes(valeur)) {
+    throw ApiError.badRequest(
+      'PANEL_PROSPECT_TYPE_UNKNOWN',
+      'Un prospect est une conception ou une refonte.',
+    );
+  }
+  return valeur;
+}
+
 /* ── Écritures ────────────────────────────────────────────────────────────── */
 
 export async function createProspect(data = {}, actor = {}) {
@@ -124,6 +145,10 @@ export async function createProspect(data = {}, actor = {}) {
     ? PROSPECT_STATUS.WAITING
     : normaliserStatut(data.status);
 
+  const type = data.type === undefined || data.type === null
+    ? PROSPECT_TYPE.CREATION
+    : normaliserType(data.type);
+
   return PanelProspect.create({
     name,
     email: texte(data.email),
@@ -132,6 +157,7 @@ export async function createProspect(data = {}, actor = {}) {
     links: normaliserLiens(data.links),
     images: normaliserImages(data.images),
     status,
+    type,
     // Même la création est datée dans l'historique : sans cette première
     // ligne, un prospect créé directement « en cours » n'aurait aucune origine.
     statusHistory: [{
@@ -181,6 +207,15 @@ export async function updateProspect(prospectId, data = {}, actor = {}) {
   if (data.notes !== undefined) prospect.notes = String(data.notes);
   if (data.links !== undefined) prospect.links = normaliserLiens(data.links);
   if (data.images !== undefined) prospect.images = normaliserImages(data.images);
+  /**
+   * LE TYPE PASSE PAR ICI, ET NON PAR UNE ROUTE À LUI.
+   *
+   * Contrairement au statut, il ne produit aucune entrée d'historique : ce
+   * n'est pas une étape du pipeline, c'est une caractéristique de l'affaire.
+   * Un « journal des changements de type » aurait consigné une correction de
+   * saisie comme un événement commercial.
+   */
+  if (data.type !== undefined) prospect.type = normaliserType(data.type);
 
   prospect.updatedBy = actor.email ?? null;
   await prospect.save();
@@ -251,9 +286,20 @@ export async function deleteProspect(prospectId) {
  * un aller-retour réseau par clic de colonne aurait rendu le tri poussif pour
  * rien. La borne existe malgré tout — elle protège la page, pas la base.
  */
-export async function listProspects({ status = null, limit = 500 } = {}) {
+export async function listProspects({ status = null, type = null, limit = 500 } = {}) {
   const filtre = {};
   if (status) filtre.status = normaliserStatut(status);
+  /**
+   * FILTRER SUR « CONCEPTION » DOIT RAMENER LES FICHES SANS CHAMP.
+   *
+   * Celles créées avant l'arrivée du type ne le portent pas : une égalité
+   * stricte les aurait rendues introuvables dans les DEUX filtres, donc
+   * invisibles dès qu'on en pose un. `CREATION` est le défaut du schéma — on
+   * le demande donc par « ce n'est pas une refonte ».
+   */
+  if (type === 'REDESIGN') filtre.type = 'REDESIGN';
+  else if (type === 'CREATION') filtre.type = { $ne: 'REDESIGN' };
+  else if (type) normaliserType(type);
   return PanelProspect.find(filtre).sort({ updatedAt: -1 }).limit(limit).lean();
 }
 
@@ -292,10 +338,20 @@ export async function summarizeProspects() {
   for (const ligne of lignes) {
     if (ligne._id in parStatut) parStatut[ligne._id] = ligne.count;
   }
-  return {
-    total: Object.values(parStatut).reduce((a, b) => a + b, 0),
-    byStatus: parStatut,
-  };
+
+  /**
+   * LE COMPTE PAR TYPE — les fiches sans champ comptent pour « conception ».
+   *
+   * C'est le pendant du filtre : un total qui ne retomberait pas sur celui du
+   * pipeline ferait douter des deux.
+   */
+  const parType = { CREATION: 0, REDESIGN: 0 };
+  const refontes = await PanelProspect.countDocuments({ type: 'REDESIGN' });
+  const total = Object.values(parStatut).reduce((a, b) => a + b, 0);
+  parType.REDESIGN = refontes;
+  parType.CREATION = total - refontes;
+
+  return { total, byStatus: parStatut, byType: parType };
 }
 
 export default {
