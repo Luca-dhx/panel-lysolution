@@ -86,7 +86,8 @@
     "test:bridge-consumption": "node ../tests/bridge-consumption.test.js",
     "test:client-company-ui": "node ../tests/client-company-ui.test.js",
     "migrate:irk-legal": "node src/scripts/migrations/2026-08-25-irk-tenant-and-privacy-v2.js",
-    "migrate:ly-legal": "node src/scripts/migrations/2026-08-26-ly-solution-legal-templates.js"
+    "migrate:ly-legal": "node src/scripts/migrations/2026-08-26-ly-solution-legal-templates.js",
+    "migrate:restaurant-privacy": "node src/scripts/migrations/2026-08-26-restaurant-privacy-template.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
