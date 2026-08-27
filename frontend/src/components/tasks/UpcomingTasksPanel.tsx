@@ -20,13 +20,14 @@ import { Button } from '@/components/base/buttons/button';
 import { Panel, SkeletonRows } from '@/components/ui-kit';
 import { Dialog, Modal, ModalOverlay } from '@/components/application/modals/modal';
 import { TaskCard } from '@/components/tasks/TaskCard';
+import { TaskForm } from '@/components/tasks/TaskForm';
 import { OverdueBadge, TaskCountdown } from '@/components/tasks/TaskUrgency';
 import { PostponeDialog } from '@/components/tasks/PostponeDialog';
 import { api } from '@/lib/api';
 import { buildTimeline, formatDueAt } from '@/lib/taskTime';
 import { useHorloge, useTasks } from '@/lib/useTasks';
 import { useTaskTargets } from '@/lib/useTaskTargets';
-import type { Task } from '@/types.tasks';
+import type { Task, TaskInput } from '@/types.tasks';
 
 /** Au-delà, ce n'est plus un aperçu : c'est la page des tâches, en moins bien. */
 const MAX_LIGNES = 6;
@@ -37,6 +38,7 @@ export function UpcomingTasksPanel() {
   const { tasks, summary, isInitialLoading, reload } = useTasks({ status: 'OPEN' });
   const [ouverte, setOuverte] = useState<Task | null>(null);
   const [aReporter, setAReporter] = useState<Task | null>(null);
+  const [enEdition, setEnEdition] = useState<Task | null>(null);
 
   const { overdue, upcoming } = buildTimeline(tasks, maintenant);
   const lignes = [...overdue, ...upcoming].slice(0, MAX_LIGNES);
@@ -45,6 +47,18 @@ export function UpcomingTasksPanel() {
     await action();
     await reload();
   }, [reload]);
+
+  /**
+   * ÉDITER DEPUIS LE TABLEAU DE BORD, SANS LE QUITTER.
+   *
+   * « Voir » ouvre la carte ; de là, « Éditer » ouvre le formulaire complet.
+   * Renvoyer vers la page des tâches aurait fait perdre le contexte pour
+   * corriger un mot dans un intitulé — et il aurait fallu revenir.
+   */
+  const enregistrer = useCallback(async (body: TaskInput) => {
+    if (enEdition) await api.updateTask(enEdition._id, body);
+    await reload();
+  }, [enEdition, reload]);
 
   return (
     <>
@@ -95,12 +109,22 @@ export function UpcomingTasksPanel() {
                   })).then(() => setOuverte(null))}
                   onComplete={() => agir(() => api.completeTask(ouverte._id)).then(() => setOuverte(null))}
                   onPostpone={() => { setAReporter(ouverte); setOuverte(null); }}
+                  onEdit={() => { setEnEdition(ouverte); setOuverte(null); }}
+                  onReopen={() => agir(() => api.reopenTask(ouverte._id)).then(() => setOuverte(null))}
                 />
               ) : null}
             </div>
           </Dialog>
         </Modal>
       </ModalOverlay>
+
+      <TaskForm
+        open={enEdition !== null}
+        onClose={() => setEnEdition(null)}
+        onSubmit={enregistrer}
+        cibles={cibles}
+        task={enEdition}
+      />
 
       <PostponeDialog
         task={aReporter}

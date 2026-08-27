@@ -463,4 +463,67 @@ section('12. Un onglet déclaré est un onglet ATTEIGNABLE');
     orphelins.length === 0);
 }
 
+section('13. Les tâches : deux décisions, deux couleurs, et un choix multiple');
+{
+  const carte = lire('frontend/src/components/tasks/TaskCard.tsx');
+  const picker = lire('frontend/src/components/tasks/TaskLinkPicker.tsx');
+  const css = lire('frontend/src/components.css');
+
+  /**
+   * -- LES DEUX DECISIONS D'UNE TACHE ECHUE ---------------------------------
+   *
+   * Une echeance passee pose exactement deux questions -- « c'est fait ? » ou
+   * « on repousse ? » -- et ce sont deux reponses OPPOSEES. Les peindre du meme
+   * gris obligeait a lire les deux libelles avant de cliquer, a chaque fois.
+   */
+  check('« Fait » et « Reporter » portent chacun sa couleur',
+    /className=\{VERT\}/.test(carte) && /className=\{ORANGE\}/.test(carte));
+  check('…et chacun son icône',
+    /iconLeading=\{\(\) => <Icon name="check2" \/>\}/.test(carte)
+    && /iconLeading=\{\(\) => <Icon name="clock" \/>\}/.test(carte));
+
+  /**
+   * LA TEINTE DE SURVOL DOIT EXISTER. Un bouton dont le survol ne repond pas se
+   * lit comme un bouton mort -- et c'est exactement ce que produisait
+   * `hover:bg-utility-green-600`, qui n'etait emis dans AUCUNE des feuilles.
+   */
+  check('les deux styles sont de vraies règles, pas des utilitaires absents',
+    /\.task-btn-done\s*\{/.test(css) && /\.task-btn-postpone\s*\{/.test(css)
+    && /\.task-btn-done:hover/.test(css) && /\.task-btn-postpone:hover/.test(css));
+  /* ET DANS LE VOCABULAIRE DU PANEL : sinon les boutons ne suivraient pas le
+     theme, et seuls eux resteraient de la couleur d'hier. */
+  const regles = (css.match(/\.task-btn-[\s\S]*?$/) || [''])[0];
+  check('…sans une seule couleur en dur',
+    /var\(--p-ok\)/.test(regles) && /var\(--p-warn\)/.test(regles)
+    && !/#[0-9a-fA-F]{3,8}/.test(regles));
+
+  /**
+   * EDITER EST ATTEIGNABLE DEPUIS LA CARTE, donc depuis « Voir » -- tableau de
+   * bord compris. Corriger un mot dans un intitule ne doit pas obliger a
+   * quitter l'ecran pour y revenir.
+   */
+  check('la carte propose « Éditer »', /Éditer/.test(carte));
+  const bord = lire('frontend/src/components/tasks/UpcomingTasksPanel.tsx');
+  check('…et le tableau de bord la câble à un formulaire',
+    /onEdit=\{\(\) => \{ setEnEdition\(ouverte\); setOuverte\(null\); \}\}/.test(bord)
+    && /<TaskForm/.test(bord));
+
+  /**
+   * -- LE RATTACHEMENT : UN TABLEAU, PUIS DES CASES A COCHER -----------------
+   *
+   * Quatre familles, quatre lignes. Cliquer ouvre un selecteur sur CETTE
+   * famille. Des cases plutot qu'une liste cliquable, parce qu'on en choisit
+   * PLUSIEURS : une case cochee porte son etat sur elle.
+   */
+  check('les rattachements se présentent en tableau',
+    /<table/.test(picker) && /<thead>/.test(picker) && /scope="row"/.test(picker));
+  check('…une ligne par famille, ouvrant un sélecteur',
+    /setOuverte\(kind\)/.test(picker) && /<SelecteurFamille/.test(picker));
+  check('…et le sélecteur coche, il ne clique pas',
+    /<Checkbox/.test(picker) && /isSelected=\{choisis\.includes\(o\.id\)\}/.test(picker));
+  /* CE QUI EST DEJA CHOISI REMONTE EN TETE : sur deux cents lignes, on ne
+     retrouve pas autrement ce qu'on vient de cocher. */
+  check('…ce qui est coché remonte en tête', /listes\.coches\.map\(ligne\)/.test(picker));
+}
+
 finish();

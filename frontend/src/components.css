@@ -4810,3 +4810,29 @@ body {
   align-items: center;
   gap: var(--p-space-2, 0.5rem);
 }
+
+/* ── LES DEUX DÉCISIONS D'UNE TÂCHE ÉCHUE ─────────────────────────────────
+   Une échéance passée pose exactement deux questions — « c'est fait ? » ou
+   « on repousse ? » — et ce sont deux réponses OPPOSÉES. Les peindre du même
+   gris obligeait à lire les deux libellés avant de cliquer, à chaque fois.
+
+   POURQUOI DES CLASSES PLUTÔT QUE DES UTILITAIRES TAILWIND : la teinte de
+   survol (`hover:bg-utility-green-600`) n'était pas ÉMISE — vérifié dans les
+   feuilles produites, la règle n'existait nulle part. Un bouton dont le survol
+   ne répond pas se lit comme un bouton mort.
+
+   Les couleurs sont celles du Panel : `--p-ok` et `--p-warn`. Pas un code
+   hexadécimal — changer le thème repeint ces deux boutons comme le reste.
+   `--p-background` pour le texte : c'est le fond du Panel, donc toujours le
+   contraste maximal avec un aplat de couleur, sur thème clair comme sombre. */
+.task-btn-done,
+.task-btn-postpone {
+  color: var(--p-background);
+  border-color: transparent;
+}
+
+.task-btn-done { background-color: var(--p-ok); }
+.task-btn-done:hover { background-color: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground)); }
+
+.task-btn-postpone { background-color: var(--p-warn); }
+.task-btn-postpone:hover { background-color: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground)); }

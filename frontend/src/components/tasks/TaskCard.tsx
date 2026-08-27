@@ -30,6 +30,32 @@ import { TASK_LINK_KINDS, TASK_LINK_LABELS } from '@/types.tasks';
 import type { Task, TaskLinkKind } from '@/types.tasks';
 import type { TaskTargetResolver } from '@/lib/useTaskTargets';
 
+/**
+ * LES DEUX DÉCISIONS D'UNE TÂCHE ÉCHUE, ET LEURS COULEURS.
+ *
+ * ══ POURQUOI CE N'EST PAS DÉCORATIF ═════════════════════════════════════════
+ *
+ * Une échéance passée pose exactement deux questions — « c'est fait ? » ou
+ * « on repousse ? » — et ce sont deux réponses OPPOSÉES. Les peindre du même
+ * gris obligeait à lire les deux libellés avant de cliquer, à chaque fois.
+ *
+ * Le vert et l'orange sont ceux du Panel : `--p-ok` et `--p-warn`, par les
+ * échelles `utility-green` et `utility-orange` du pont. Pas un code
+ * hexadécimal — changer le thème repeint ces deux boutons comme le reste.
+ *
+ * `Button` n'expose pas de couleur verte ni orange : on part de `primary`, dont
+ * on garde la forme, le rembourrage et les états de focus, et on remplace la
+ * seule teinte. `tailwind-merge` fait gagner la classe la plus tardive.
+ *
+ * ── POURQUOI DES CLASSES MAISON, ET PAS DES UTILITAIRES ────────────────────
+ * Parce que la teinte de SURVOL n'était pas émise : `hover:bg-utility-green-600`
+ * n'existait dans aucune des feuilles produites — vérifié fichier par fichier.
+ * Un bouton dont le survol ne répond pas se lit comme un bouton mort. Les deux
+ * règles vivent donc dans `components.css`, sur `--p-ok` et `--p-warn`.
+ */
+const VERT = 'task-btn-done';
+const ORANGE = 'task-btn-postpone';
+
 export interface TaskCardProps {
   task: Task;
   maintenant: number;
@@ -193,22 +219,28 @@ export function TaskCard({
         <footer className="mt-4 flex flex-wrap items-center gap-2 border-t border-secondary pt-3">
           {faite ? (
             onReopen ? (
-              <Button size="sm" color="secondary" onClick={onReopen}>Rouvrir</Button>
+              <Button size="sm" color="secondary" iconLeading={() => <Icon name="arrow-clockwise" />} onClick={onReopen}>
+                Rouvrir
+              </Button>
             ) : null
           ) : (
             <>
               {onComplete ? (
-                <Button size="sm" color={urgence === 'overdue' ? 'primary' : 'secondary'} onClick={onComplete}>
+                <Button size="sm" color="primary" className={VERT} iconLeading={() => <Icon name="check2" />} onClick={onComplete}>
                   Fait
                 </Button>
               ) : null}
               {onPostpone ? (
-                <Button size="sm" color="secondary" onClick={onPostpone}>Reporter</Button>
+                <Button size="sm" color="primary" className={ORANGE} iconLeading={() => <Icon name="clock" />} onClick={onPostpone}>
+                  Reporter
+                </Button>
               ) : null}
             </>
           )}
           {onEdit ? (
-            <Button size="sm" color="link-gray" onClick={onEdit}>Modifier</Button>
+            <Button size="sm" color="secondary" iconLeading={() => <Icon name="pencil" />} onClick={onEdit}>
+              Éditer
+            </Button>
           ) : null}
           {onDelete ? (
             <Button size="sm" color="link-destructive" onClick={onDelete}>Supprimer</Button>
