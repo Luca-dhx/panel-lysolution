@@ -428,8 +428,14 @@ section('11. Responsive, thème et accessibilité');
     tableau masqué à l'œil (`sr-only`) les rend toutes, avec leur période :
     c'est l'équivalent moderne, et il est plus complet.
   */
+  /*
+    Le tableau est ENVELOPPE dans un bloc `sr-only` plutot que de porter la
+    classe lui-meme : `overflow: hidden` n'est pas honore sur une boite de type
+    table, et a 1024 px le document passait a 1167 px. L'exigence ne change
+    pas -- toutes les valeurs, avec leur periode, sans survol.
+  */
   check('les valeurs du graphique restent accessibles sans survol',
-    /<table className="sr-only">/.test(graphique) && /<caption>/.test(graphique));
+    /<div className="sr-only">\s*<table>/.test(graphique) && /<caption>/.test(graphique));
   check('la colonne d’actions a un intitulé pour les lecteurs d’écran',
     workspace.includes('sr-only'));
   check('les choix de catégorie annoncent leur état', formulaire.includes('aria-pressed'));
