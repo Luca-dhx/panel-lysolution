@@ -7,6 +7,7 @@
  * écrans, elle finirait par nommer la même chose de deux façons — et par faire
  * croire à deux notions là où il n'y en a qu'une.
  */
+import { missingProjectLabel } from '@/lib/financeAnalytics';
 import type {
   FinanceCategory, FinanceFlow, FinanceOrigin, FinancePeriodKey, FinanceSort, FinanceStatus,
 } from '@/types.finance';
@@ -86,7 +87,7 @@ export function ownershipLabel(
   vivants: Map<string, string>,
 ): string {
   if (!projectId) return LY_SOLUTION;
-  return vivants.get(projectId) ?? snapshot ?? projectId;
+  return vivants.get(projectId) ?? snapshot ?? missingProjectLabel(projectId);
 }
 
 /**

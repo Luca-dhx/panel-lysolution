@@ -351,4 +351,27 @@ section('9. Aucune classe n’est posée sans exister');
   check('…sans une seule couleur en dur', !/#[0-9a-fA-F]{3,8}/.test(regleInput));
 }
 
+section('10. La mention d’un projet disparu n’existe qu’en un endroit');
+{
+  /**
+   * `ownershipLabel` nomme le rattachement dans le registre, dans la fiche d'un
+   * mouvement et dans la liste des couts recurrents ; `toBreakdownRows` le
+   * nomme dans le graphique de repartition. Les deux doivent lire la MEME
+   * fonction : deux copies identiques finissent toujours par diverger, et le
+   * meme projet se lirait alors sous deux libelles selon l'ecran.
+   */
+  const etiquettes = lire('frontend/src/components/finance/financeLabels.ts');
+  const pur = lire('frontend/src/lib/financeAnalytics.ts');
+
+  check('la règle vit dans la couche pure',
+    /export function missingProjectLabel/.test(pur));
+  check('…le graphique de répartition la lit',
+    /\?\? missingProjectLabel\(ligne\.projectId\)/.test(pur));
+  check('…les libellés la lisent aussi',
+    /import \{ missingProjectLabel \} from '@\/lib\/financeAnalytics'/.test(etiquettes)
+    && /\?\? missingProjectLabel\(projectId\)/.test(etiquettes));
+  check('…et personne n’en garde une copie',
+    !/Projet supprimé —/.test(etiquettes));
+}
+
 finish();

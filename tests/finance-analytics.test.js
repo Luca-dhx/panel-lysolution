@@ -268,6 +268,45 @@ section('6. La répartition n’égare aucun centime');
   const aucune = toBreakdownRows([], { top: 5, nameOf: () => null, companyLabel: 'L.Y' });
   check('une liste vide ne fabrique aucune ligne', aucune.length === 0);
 
+  /**
+   * -- LE PROJET QUI N'EXISTE PLUS ------------------------------------------
+   *
+   * Cas RELEVE SUR L'INSTANCE DEPLOYEE : le rattachement pointe vers un projet
+   * retire du parc, dont les mouvements ont ete conserves -- ce qui est le bon
+   * comportement comptable. Ni fiche vivante, ni instantane.
+   *
+   * L'ecran affichait alors l'identifiant technique, trente-six caracteres, en
+   * etiquette de barre ET en libelle de ligne.
+   */
+  const disparu = toBreakdownRows(
+    [{ projectId: 'e43de003-c6ef-41ed-8ac7-72197f6abe59', projectNameSnapshot: null,
+       revenueCents: 135586, costCents: 4457, netCents: 131129, count: 4 }],
+    { top: 5, nameOf: () => null, companyLabel: 'L.Y Solution' },
+  );
+  check('un projet disparu est NOMMÉ, pas identifié',
+    disparu[0].name === 'Projet supprimé — e43de003');
+  /**
+   * ON NE FABRIQUE AUCUN NOM : le fragment reste celui de l'identifiant reel,
+   * et il suffit a distinguer deux disparus l'un de l'autre.
+   */
+  check('…et il reste distinguable d’un autre disparu',
+    toBreakdownRows(
+      [{ projectId: 'ffffffff-0000-0000-0000-000000000000', projectNameSnapshot: null,
+         revenueCents: 1, costCents: 0, netCents: 1, count: 1 }],
+      { top: 5, nameOf: () => null, companyLabel: 'L.Y Solution' },
+    )[0].name !== disparu[0].name);
+  /**
+   * L'INSTANTANE GARDE LA PRIORITE : s'il existe, il porte un vrai nom, et un
+   * vrai nom vaut toujours mieux qu'une mention d'absence.
+   */
+  check('…mais l’instantané, s’il existe, passe avant',
+    toBreakdownRows(
+      [{ projectId: 'e43de003-c6ef-41ed-8ac7-72197f6abe59', projectNameSnapshot: 'Demo SB Auto',
+         revenueCents: 1, costCents: 0, netCents: 1, count: 1 }],
+      { top: 5, nameOf: () => null, companyLabel: 'L.Y Solution' },
+    )[0].name === 'Demo SB Auto');
+
+
   const sansRevenu = toBreakdownRows([{
     projectId: 'x', projectNameSnapshot: 'X',
     inflowCents: 0, outflowCents: 900, revenueCents: 0, costCents: 900, netCents: -900, count: 1,

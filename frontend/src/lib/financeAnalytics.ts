@@ -268,6 +268,33 @@ export const OTHERS_KEY = '__others__';
 export const COMPANY_KEY = '__company__';
 
 /**
+ * QUAND IL NE RESTE NI FICHE NI INSTANTANÉ.
+ *
+ * Le cas est RÉEL : relevé sur l'instance déployée, le seul rattachement du
+ * registre pointe vers un projet retiré du parc, dont les mouvements — eux —
+ * ont été conservés. C'est le bon comportement comptable : on ne supprime pas
+ * un encaissement parce qu'on a supprimé un projet.
+ *
+ * Ce que l'écran en faisait, en revanche, était mauvais : il affichait
+ * l'identifiant technique, trente-six caractères, en étiquette de barre ET en
+ * libellé de ligne. Un lecteur ne peut rien en faire — il ne sait même pas
+ * qu'il regarde un projet disparu plutôt qu'un nom mal renseigné.
+ *
+ * NOMMER L'ABSENCE N'EST PAS INVENTER UNE DONNÉE. On n'affiche aucun nom qu'on
+ * n'a pas ; on dit ce qui est vrai — ce projet n'existe plus — et on garde de
+ * quoi le distinguer d'un autre disparu, parce que le registre peut en compter
+ * plusieurs et qu'ils ne doivent pas se confondre en une seule ligne à l'œil.
+ *
+ * Le fragment fait huit caractères, la longueur des références courtes du
+ * Panel. La règle vit ICI, dans la couche pure, et `ownershipLabel` la lit :
+ * le registre, la fiche d'un mouvement et le graphique de répartition doivent
+ * nommer le même absent de la même façon.
+ */
+export function missingProjectLabel(projectId: string): string {
+  return `Projet supprimé — ${projectId.slice(0, 8)}`;
+}
+
+/**
  * LE CLASSEMENT, BORNÉ — et ce qui dépasse est AGRÉGÉ, jamais coupé.
  *
  * ══ POURQUOI PAS SIMPLEMENT LES DIX PREMIERS ═══════════════════════════════
@@ -304,7 +331,7 @@ export function toBreakdownRows(
     ligne,
     key: ligne.projectId ?? COMPANY_KEY,
     name: ligne.projectId
-      ? (nameOf(ligne.projectId) ?? ligne.projectNameSnapshot ?? ligne.projectId)
+      ? (nameOf(ligne.projectId) ?? ligne.projectNameSnapshot ?? missingProjectLabel(ligne.projectId))
       : companyLabel,
   }));
 
