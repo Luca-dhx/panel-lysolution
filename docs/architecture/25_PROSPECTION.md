@@ -145,6 +145,27 @@ Le reste de la page (filtres, formulaire, boutons) demeure sur le style maison.
 C'est ce que « progressif » veut dire : un écran passe à la librairie quand on
 le refait.
 
+### Ajouter un composant de la librairie
+
+```bash
+cd frontend
+npx untitledui@latest add <composant> -y   # ex. : add table, add modal
+```
+
+La CLI **copie** le composant et ses dépendances internes dans
+`src/components/…` puis installe ce qui manque au `package.json`. Trois
+vérifications après coup, apprises sur le premier lot :
+
+- **relire le composant copié** — celui des badges chargeait ses drapeaux
+  depuis un `<img>` pointant vers le site de la librairie, soit une requête
+  vers un serveur tiers depuis un outil interne à chaque affichage. Le contrôle
+  d'architecture le refuse, et il a raison ;
+- **mettre à jour la liste fermée** des dépendances du frontend dans
+  `tests/panel-meetings-ui.test.js` — elle est énumérée exprès, pour qu'une
+  dépendance de plus soit une décision ;
+- **passer les couleurs par `bridge.css`** si le composant en introduit de
+  nouvelles, plutôt que d'accepter la palette claire d'origine.
+
 ## 6. Fichiers
 
 ```text
