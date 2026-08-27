@@ -113,8 +113,14 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
    *     d'avant, en plus complet : chaque seau y porte ses trois montants.
    */
   const porteurs = rows.filter((r) => r.hasData).length;
+  /*
+    Un libellé de seau peut DÉJÀ se terminer par un point — « 01 févr. ». Lui en
+    ajouter un second donnait « au 28 févr.. » dans la description lue à voix
+    haute. On ne ponctue donc que si la phrase ne l'est pas déjà.
+  */
+  const dernier = rows[rows.length - 1].label;
   const resume = `Évolution sur ${rows.length} points, du ${rows[0].label} au `
-    + `${rows[rows.length - 1].label}. Encaissements, sorties et bénéfice net. `
+    + `${dernier}${dernier.endsWith('.') ? '' : '.'} Encaissements, sorties et bénéfice net. `
     + (porteurs === 0
       ? 'Aucun mouvement sur cette période.'
       : `${porteurs} période${porteurs > 1 ? 's' : ''} avec au moins un mouvement.`);

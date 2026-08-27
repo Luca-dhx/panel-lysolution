@@ -99,8 +99,21 @@ Le jour où une primitive change de fournisseur, un seul fichier bouge.
    typographique d'Untitled UI) ; `@/lib/utils` réexporte `cn` **par-dessus la
    même instance**. Deux instances de `tailwind-merge` = deux caches et deux
    configurations, et un conflit de classes résolu différemment selon le
-   composant. `shadcn add --overwrite` réécrit `lib/utils.ts` : **le rétablir**
-   est la seule chose à refaire après une installation.
+   composant.
+
+   **Deux fichiers du registre sont modifiés exprès, et la CLI les réécrit :**
+
+   | Fichier | Ce qu'il faut y remettre |
+   |---|---|
+   | `src/lib/utils.ts` | `cn` réexporté **par-dessus la même instance** de `tailwind-merge` que `@/utils/cx` |
+   | `src/components/charts/chart-formatters.ts` | la locale `fr-FR` — le registre les livre en `en-US` |
+
+   Le second n'est pas cosmétique. En `en-US`, l'axe des dates affichait
+   `Feb 1 · Feb 15 · Feb 28` au-dessus d'un tableau qui disait
+   `01 févr. · 15 févr. · 28 févr.` — les mêmes seaux, écrits de deux façons.
+   Et le séparateur anglais des milliers est le séparateur français des
+   **décimales** : sur des montants, la confusion n'est pas une question de
+   style. Un contrôle vérifie qu'aucune locale anglaise ne revient.
 
 2. **Un seul système d'espacement : Tailwind.** C'est pourquoi `utilities.css`
    et `layout.css` de Radix ne sont pas importés, et pourquoi `Box`/`Flex`/
@@ -205,6 +218,37 @@ portant chaque seau et ses trois montants.
 
 ---
 
+### L'axe couvre la période, pas seulement les jours mouvementés
+
+Le serveur ne rend **que** les périodes où il s'est passé quelque chose, et il a
+raison : « il ne s'est rien passé » et « le solde est resté à zéro » ne sont pas
+la même phrase, et la différence est ce qu'on regarde quand on cherche un oubli
+de saisie.
+
+L'écran comble donc les creux **et les marque** (`hasData: false`). L'infobulle
+d'un jour creux dit « aucun mouvement », jamais « 0,00 € ».
+
+> Poser zéro n'est pas fabriquer une donnée : l'absence de mouvement un jour
+> donné **vaut** zéro euro ce jour-là. Ce qui serait fabriqué, ce serait
+> d'interpoler, de lisser ou de prolonger une tendance — et rien de tel n'est
+> fait. Une recette vérifie que **combler n'ajoute pas un centime**.
+
+Une période entièrement creuse se trace quand même : l'échelle de temps *est*
+une information. Une phrase l'accompagne, sinon un tracé plat laisse croire à un
+chargement qui n'a pas abouti.
+
+**Le seau est un instant, pas une date civile.** `$dateTrunc` tronque dans
+`Europe/Paris`, puis la série est sérialisée en UTC : `2026-08-21T22:00:00.000Z`
+est le **22 août** à minuit heure de Paris. Un découpage sur les tirets lisait
+`["2026", "08", "21T22:00:00.000Z"]` et affichait « 21 août ». En granularité
+mensuelle, le décalage portait sur le **mois**. Le montant était juste ; la date
+écrite à côté ne l'était pas.
+
+L'avancée d'un seau au suivant se fait sur le **calendrier**, jamais en ajoutant
+86 400 000 ms : un jour d'octobre dure vingt-cinq heures à Paris.
+
+---
+
 ## 7. Les données
 
 * **Aucun total reconstitué côté navigateur.** La liste est bornée par `limit` :
@@ -271,7 +315,8 @@ npx shadcn@latest add @bklit/<chart>       # ou @kokonutui/<composant>
 
 Puis, systématiquement :
 
-1. **rétablir `src/lib/utils.ts`** si la CLI l'a écrasé (voir §3.1) ;
+1. **rétablir `src/lib/utils.ts` et `src/components/charts/chart-formatters.ts`**
+   si la CLI les a écrasés (voir §3.1) ;
 2. **relire ce qui a été copié** — le badge à drapeaux d'Untitled UI appelait un
    serveur tiers à chaque affichage ; les composants Bklit sont écrits pour les
    types React 19 (`RefObject<T | null>`) et demandent une adaptation ;

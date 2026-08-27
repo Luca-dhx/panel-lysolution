@@ -374,4 +374,37 @@ section('10. La mention d’un projet disparu n’existe qu’en un endroit');
     !/Projet supprimé —/.test(etiquettes));
 }
 
+section('11. Les graphiques parlent français, comme le reste du Panel');
+{
+  /**
+   * -- CE QUE LE REGISTRE LIVRE, ET POURQUOI ON LE CHANGE --------------------
+   *
+   * `@bklit` livre ses formateurs en `en-US`. Constate en production sur
+   * l'ecran financier :
+   *
+   *     axe horizontal   Feb 1 · Feb 15 · Feb 28
+   *     tableau dessous  01 fevr. · 15 fevr. · 28 fevr.
+   *
+   * Les deux decrivent les MEMES seaux. Un lecteur qui les compare se demande
+   * legitimement s'il regarde la meme chose.
+   *
+   * `intFmt` comptait autant : le separateur anglais des milliers est le
+   * separateur francais des DECIMALES. Sur des montants, la confusion n'est
+   * pas cosmetique.
+   */
+  const formateurs = lire('frontend/src/components/charts/chart-formatters.ts');
+  check('les formateurs des graphiques sont en français',
+    !/["']en-US["']/.test(formateurs) && /["']fr-FR["']/.test(formateurs));
+  check('…les quatre, pas seulement celui des dates',
+    (formateurs.match(/LOCALE/g) || []).length >= 4);
+
+  /**
+   * ET LE COMPOSANT NE REPASSE PAS PAR UN FORMATEUR ANGLAIS EN DOUBLE : ses
+   * propres etiquettes viennent du module pur, deja localise.
+   */
+  const graphique = lire('frontend/src/components/finance/charts/FinanceEvolutionChart.tsx');
+  check('le graphique financier n’embarque aucune locale en dur',
+    !/en-US|en-GB/.test(graphique));
+}
+
 finish();
