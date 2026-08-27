@@ -199,7 +199,25 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
         `sr-only` est la classe du Panel pour cela ; le tableau porte un résumé
         (`<caption>`) et une ligne par seau.
       */}
-      <table className="sr-only">
+      {/*
+        LE TABLEAU EST ENVELOPPÉ, ET CE N'EST PAS DÉCORATIF.
+
+        `sr-only` sort l'élément du flux et le réduit à un pixel — recette
+        canonique, appliquée telle quelle dans le Panel. Elle ne CLIPPE
+        pourtant pas un `<table>` : `overflow: hidden` sur une boîte de type
+        table n'est pas honoré comme sur un bloc, et la zone de défilement d'un
+        élément positionné en absolu remonte quand même à son bloc conteneur.
+
+        Constaté sur l'instance déployée, à 1024 px : la légende du tableau
+        mesurait 894 px en `white-space: nowrap`, et le document passait à
+        1167 px pour une fenêtre de 1024. Le défaut est apparu quand l'axe est
+        devenu complet — un tableau d'une seule ligne tenait sous la fenêtre.
+
+        Un `<div>` est un bloc : il clippe, et sa zone de défilement s'arrête à
+        lui.
+      */}
+      <div className="sr-only">
+      <table>
         <caption>{resume}</caption>
         <thead>
           <tr>
@@ -226,6 +244,7 @@ export function FinanceEvolutionChart({ summary }: { summary: FinanceSummary }) 
           ))}
         </tbody>
       </table>
+      </div>
 
       {/*
         LA LÉGENDE EST STATIQUE, ET SOUS LE GRAPHIQUE.

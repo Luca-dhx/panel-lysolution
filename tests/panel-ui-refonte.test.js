@@ -405,6 +405,23 @@ section('11. Les graphiques parlent français, comme le reste du Panel');
   const graphique = lire('frontend/src/components/finance/charts/FinanceEvolutionChart.tsx');
   check('le graphique financier n’embarque aucune locale en dur',
     !/en-US|en-GB/.test(graphique));
+
+  /**
+   * -- UN TABLEAU MASQUE DOIT ETRE ENVELOPPE DANS UN BLOC --------------------
+   *
+   * `sr-only` sort l'element du flux et le reduit a un pixel. Elle ne CLIPPE
+   * pourtant pas un `<table>` : `overflow: hidden` sur une boite de type table
+   * n'est pas honore comme sur un bloc, et la zone de defilement d'un element
+   * positionne en absolu remonte quand meme a son bloc conteneur.
+   *
+   * Releve sur l'instance deployee, a 1024 px : la legende du tableau mesurait
+   * 894 px en `white-space: nowrap`, et le document passait a 1167 px pour une
+   * fenetre de 1024. Le defaut est apparu quand l'axe est devenu complet -- un
+   * tableau d'une seule ligne tenait sous la fenetre.
+   */
+  check('le tableau accessible est enveloppé dans un bloc qui clippe',
+    /<div className="sr-only">\s*<table>/.test(graphique)
+    && !/<table className="sr-only">/.test(graphique));
 }
 
 finish();
