@@ -49,6 +49,44 @@ export interface ProspectStatusChange {
   note: string | null;
 }
 
+/**
+ * UN CHAMP D'INFORMATION LIBRE — un nom, un contenu.
+ *
+ * On ne sait pas d'avance ce qu'on notera : « budget annonce », « hebergeur
+ * actuel », « qui decide ». Figer une liste de colonnes aurait oblige a migrer
+ * le modele chaque fois qu'une question nouvelle apparait. Le prix paye est
+ * qu'aucun de ces champs n'est interrogeable finement : ce sont des NOTES
+ * structurees, pas des criteres de recherche.
+ */
+export interface ProspectInfoField {
+  id: string;
+  label: string;
+  value: string;
+}
+
+/**
+ * UN MESSAGE — envoye, ou a envoyer.
+ *
+ * `sentAt` porte l'état À LUI SEUL : `null` = prévu, une date = envoyé. Un
+ * booléen à côté d'une date aurait permis les deux incohérences classiques —
+ * envoyé sans date, daté sans être envoyé — et il aurait fallu décider
+ * laquelle des deux croire.
+ *
+ * Rien ici n'ENVOIE quoi que ce soit : le Panel note ce qui a ete fait
+ * ailleurs.
+ */
+export interface ProspectMessage {
+  id: string;
+  /** Texte libre : « e-mail », « LinkedIn », « au telephone », « via son associe ». */
+  channel: string;
+  /** Interne, jamais envoye : « premier contact », « relance 1 ». */
+  title: string;
+  body: string;
+  sentAt: string | null;
+  createdAt?: string;
+  createdBy?: string | null;
+}
+
 export interface Prospect {
   _id: string;
   name: string;
@@ -57,6 +95,8 @@ export interface Prospect {
   notes: string;
   links: ProspectLink[];
   images: ProspectImage[];
+  infoFields: ProspectInfoField[];
+  messages: ProspectMessage[];
   status: ProspectStatus;
   type?: ProspectType;
   statusHistory: ProspectStatusChange[];
@@ -74,6 +114,8 @@ export interface ProspectInput {
   notes?: string;
   links?: ProspectLink[];
   images?: ProspectImage[];
+  infoFields?: ProspectInfoField[];
+  messages?: ProspectMessage[];
   status?: ProspectStatus;
   type?: ProspectType;
 }

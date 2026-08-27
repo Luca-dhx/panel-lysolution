@@ -24,8 +24,12 @@
  */
 import { useRef, useState } from 'react';
 import { Card } from '@/components/ui';
+import { Button } from '@/components/base/buttons/button';
+import { Input } from '@/components/base/input/input';
+import { TextArea } from '@/components/base/textarea/textarea';
 import { Icon } from '@/components/Icon';
 import { ThemedSelect } from '@/components/ThemedSelect';
+import { ProspectInfoFieldsEditor } from '@/components/prospection/ProspectInfoFields';
 import { api, errorMessage, uploadImage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
 import {
@@ -35,6 +39,7 @@ import {
   PROSPECT_TYPE_ORDER,
   prospectType as replierType,
 } from '@/components/prospection/prospectStatus';
+import type { ProspectInfoField } from '@/types.prospection';
 import type {
   Prospect, ProspectImage, ProspectLink, ProspectStatus, ProspectType,
 } from '@/types.prospection';
@@ -86,6 +91,7 @@ export function ProspectForm({
   const [type, setType] = useState<ProspectType>(replierType(prospect?.type));
   const [links, setLinks] = useState<ProspectLink[]>(prospect?.links ?? []);
   const [images, setImages] = useState<ProspectImage[]>(prospect?.images ?? []);
+  const [infoFields, setInfoFields] = useState<ProspectInfoField[]>(prospect?.infoFields ?? []);
 
   const [importEnCours, setImportEnCours] = useState(false);
   const [enCours, setEnCours] = useState(false);
@@ -147,6 +153,10 @@ export function ProspectForm({
       notes,
       links: liensPrets(links),
       images,
+      /* Une information SANS NOM n'a aucun sens pour celui qui relit la fiche :
+         elle est écartée ici plutôt que refusée, parce qu'une ligne ajoutée
+         puis laissée vide est un geste abandonné, pas une erreur. */
+      infoFields: infoFields.filter((f) => f.label.trim()),
       type,
       ...(prospect ? {} : { status }),
     };
@@ -167,37 +177,29 @@ export function ProspectForm({
       {erreur ? <div className="alert alert-error">{erreur}</div> : null}
 
       <div className="event-form">
-        <label className="field">
-          <span className="field-label">Nom</span>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Boulangerie Martin"
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">
-            Adresse e-mail <span className="muted">(facultatif)</span>
-          </span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="contact@exemple.fr"
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">
-            Téléphone <span className="muted">(facultatif)</span>
-          </span>
-          <input
-            type="tel"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="06 12 34 56 78"
-          />
-        </label>
+        <Input
+          label="Nom"
+          isRequired
+          value={name}
+          onChange={setName}
+          placeholder="Boulangerie Martin"
+        />
+        <Input
+          label="Adresse e-mail"
+          type="email"
+          hint="Facultatif."
+          value={email}
+          onChange={setEmail}
+          placeholder="contact@exemple.fr"
+        />
+        <Input
+          label="Téléphone"
+          type="tel"
+          hint="Facultatif."
+          value={phone}
+          onChange={setPhone}
+          placeholder="06 12 34 56 78"
+        />
         <div className="field">
           <span className="field-label">Nature de l’affaire</span>
           <ThemedSelect
@@ -230,25 +232,38 @@ export function ProspectForm({
         )}
       </div>
 
-      <label className="field">
-        <span className="field-label">
-          Notes internes <span className="muted">(elles ne sortent jamais du Panel)</span>
-        </span>
-        <textarea
-          rows={4}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Ce qu’on sait de l’affaire, ce qui a été dit, ce qu’il reste à faire."
-        />
-      </label>
+      {/*
+        ── LES INFORMATIONS LIBRES, JUSTE APRÈS L'IDENTITÉ ────────────────────
+
+        C'est là qu'on note ce qui décide d'une affaire — budget annoncé,
+        hébergeur actuel, qui signe. Les placer après les images les aurait
+        reléguées en bas d'un formulaire qu'on ne fait défiler que la première
+        fois.
+      */}
+      <div className="field">
+        <div className="field-head">
+          <span className="field-label">Informations</span>
+          <span className="muted">Un nom, un contenu — autant qu’il en faut.</span>
+        </div>
+        <ProspectInfoFieldsEditor fields={infoFields} onChange={setInfoFields} />
+      </div>
+
+      <TextArea
+        label="Notes internes"
+        hint="Elles ne sortent jamais du Panel."
+        rows={4}
+        value={notes}
+        onChange={setNotes}
+        placeholder="Ce qu’on sait de l’affaire, ce qui a été dit, ce qu’il reste à faire."
+      />
 
       {/* ── LIENS ─────────────────────────────────────────────────────────── */}
       <div className="field">
         <div className="field-head">
           <span className="field-label">Liens</span>
-          <button type="button" className="btn btn-secondary btn-small" onClick={ajouterLien}>
+          <Button size="sm" color="secondary" onClick={ajouterLien}>
             Ajouter un lien
-          </button>
+          </Button>
         </div>
         {links.length === 0 ? (
           <p className="muted">
@@ -258,32 +273,28 @@ export function ProspectForm({
           <ul className="prospect-links">
             {links.map((lien) => (
               <li key={lien.id} className="prospect-link">
-                <label className="field">
-                  <span className="field-label">Intitulé</span>
-                  <input
-                    type="text"
-                    value={lien.label}
-                    onChange={(e) => modifierLien(lien.id, 'label', e.target.value)}
-                    placeholder="Site officiel"
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">Adresse</span>
-                  <input
-                    type="text"
-                    value={lien.url}
-                    onChange={(e) => modifierLien(lien.id, 'url', e.target.value)}
-                    placeholder="exemple.fr"
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-small"
+                <Input
+                  size="sm"
+                  label="Intitulé"
+                  value={lien.label}
+                  onChange={(v) => modifierLien(lien.id, 'label', v)}
+                  placeholder="Site officiel"
+                />
+                <Input
+                  size="sm"
+                  label="Adresse"
+                  value={lien.url}
+                  onChange={(v) => modifierLien(lien.id, 'url', v)}
+                  placeholder="exemple.fr"
+                />
+                <Button
+                  size="sm"
+                  color="secondary"
                   aria-label={`Retirer le lien ${lien.label || lien.url || 'vide'}`}
                   onClick={() => retirerLien(lien.id)}
                 >
                   Retirer
-                </button>
+                </Button>
               </li>
             ))}
           </ul>
@@ -294,14 +305,14 @@ export function ProspectForm({
       <div className="field">
         <div className="field-head">
           <span className="field-label">Images</span>
-          <button
-            type="button"
-            className="btn btn-secondary btn-small"
-            disabled={importEnCours}
+          <Button
+            size="sm"
+            color="secondary"
+            isLoading={importEnCours}
             onClick={() => champFichier.current?.click()}
           >
-            {importEnCours ? 'Import…' : 'Ajouter des images'}
-          </button>
+            Ajouter des images
+          </Button>
         </div>
         <input
           ref={champFichier}
@@ -348,18 +359,20 @@ export function ProspectForm({
         )}
       </div>
 
-      <div className="contract-actions">
-        <button
-          type="button"
-          className="btn btn-primary btn-small"
-          disabled={!pret || enCours}
+      {/*
+        L'ACTION PRINCIPALE À DROITE, comme dans les dialogues du Panel : c'est
+        là que l'œil termine sa lecture, et c'est le geste qu'on cherche.
+      */}
+      <div className="uui mt-4 flex flex-wrap justify-end gap-2 border-t border-secondary pt-4">
+        <Button color="secondary" onClick={onCancel} isDisabled={enCours}>Annuler</Button>
+        <Button
+          color="primary"
+          isDisabled={!pret}
+          isLoading={enCours}
           onClick={() => void enregistrer()}
         >
-          {enCours ? 'Enregistrement…' : prospect ? 'Enregistrer' : 'Ajouter le prospect'}
-        </button>
-        <button type="button" className="btn btn-secondary btn-small" onClick={onCancel}>
-          Annuler
-        </button>
+          {prospect ? 'Enregistrer' : 'Ajouter le prospect'}
+        </Button>
       </div>
     </Card>
   );

@@ -104,6 +104,71 @@ function normaliserImages(liste) {
   return liste.map(normaliserImage).filter(Boolean);
 }
 
+/**
+ * UN CHAMP D'INFORMATION LIBRE.
+ *
+ * Sans NOM, il n'y a pas de champ : une valeur sans étiquette est illisible
+ * pour quiconque relit la fiche. La valeur, elle, peut être vide — on crée
+ * souvent l'étiquette avant d'avoir la réponse.
+ */
+function normaliserChampInfo(brut) {
+  const label = texte(brut?.label);
+  if (!label) return null;
+  return {
+    id: texte(brut?.id) || identifiant(),
+    label: label.slice(0, 120),
+    value: texte(brut?.value).slice(0, 4000),
+  };
+}
+
+function normaliserChampsInfo(liste) {
+  if (!Array.isArray(liste)) return [];
+  return liste.map(normaliserChampInfo).filter(Boolean).slice(0, 100);
+}
+
+/**
+ * UN MESSAGE — envoyé, ou à envoyer.
+ *
+ * Un message sans canal NI titre NI contenu n'est rien : il est écarté plutôt
+ * que d'occuper une ligne vide dans la liste. N'importe lequel des trois suffit
+ * à le garder — on note parfois le canal et le titre avant d'écrire le texte.
+ *
+ * `sentAt` porte l'état à lui seul : `null` = prévu, une date = envoyé.
+ */
+function normaliserMessage(brut) {
+  const channel = texte(brut?.channel).slice(0, 120);
+  const title = texte(brut?.title).slice(0, 200);
+  const body = brut?.body === undefined || brut?.body === null ? '' : String(brut.body);
+  if (!channel && !title && !body.trim()) return null;
+
+  let sentAt = null;
+  if (brut?.sentAt) {
+    const date = new Date(brut.sentAt);
+    if (Number.isNaN(date.getTime())) {
+      throw ApiError.badRequest(
+        'PANEL_PROSPECT_MESSAGE_DATE_INVALID',
+        'La date d’envoi doit être une date valide.',
+      );
+    }
+    sentAt = date;
+  }
+
+  return {
+    id: texte(brut?.id) || identifiant(),
+    channel,
+    title,
+    body: body.slice(0, 20000),
+    sentAt,
+    createdAt: brut?.createdAt ? new Date(brut.createdAt) : new Date(),
+    createdBy: texte(brut?.createdBy) || null,
+  };
+}
+
+function normaliserMessages(liste) {
+  if (!Array.isArray(liste)) return [];
+  return liste.map(normaliserMessage).filter(Boolean).slice(0, 200);
+}
+
 function normaliserStatut(valeur) {
   if (!PROSPECT_STATUS_VALUES.includes(valeur)) {
     throw ApiError.badRequest(
@@ -156,6 +221,8 @@ export async function createProspect(data = {}, actor = {}) {
     notes: data.notes === undefined ? '' : String(data.notes),
     links: normaliserLiens(data.links),
     images: normaliserImages(data.images),
+    infoFields: normaliserChampsInfo(data.infoFields),
+    messages: normaliserMessages(data.messages),
     status,
     type,
     // Même la création est datée dans l'historique : sans cette première
@@ -207,6 +274,8 @@ export async function updateProspect(prospectId, data = {}, actor = {}) {
   if (data.notes !== undefined) prospect.notes = String(data.notes);
   if (data.links !== undefined) prospect.links = normaliserLiens(data.links);
   if (data.images !== undefined) prospect.images = normaliserImages(data.images);
+  if (data.infoFields !== undefined) prospect.infoFields = normaliserChampsInfo(data.infoFields);
+  if (data.messages !== undefined) prospect.messages = normaliserMessages(data.messages);
   /**
    * LE TYPE PASSE PAR ICI, ET NON PAR UNE ROUTE À LUI.
    *

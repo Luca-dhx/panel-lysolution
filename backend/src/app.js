@@ -25,6 +25,7 @@ import executionRoutes from './routes/execution.routes.js';
 import companyRoutes from './routes/company.routes.js';
 import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
 import prospectsRoutes from './routes/prospects.routes.js';
+import tasksRoutes from './routes/tasks.routes.js';
 import legalTemplatesRoutes, { hostCompaniesRouter } from './routes/legalTemplates.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
 import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
@@ -209,6 +210,21 @@ export function createApp() {
    * elle exige exactement le même jeton.
    */
   app.use('/api/prospects', prospectsRoutes);
+  /**
+   * LES TACHES — ce qu'il reste a faire, et a quoi ca se rattache.
+   *
+   * Une collection A PART, et pas un champ sur chaque fiche : une tache
+   * traverse le Panel. « Relancer Dupont avant vendredi » touche un prospect ;
+   * « verifier la commission de juillet » touche une transaction ; « preparer
+   * la reprise du site » touche un projet ET l'entreprise qui le paie. La
+   * ranger dans l'une des quatre fiches aurait oblige a choisir un
+   * proprietaire arbitraire, puis a interroger quatre collections pour
+   * repondre a « qu'est-ce que j'ai a faire cette semaine ? ».
+   *
+   * Comme la prospection, elle ne sort jamais par le pont : une tache nomme des
+   * prospects, des montants et des clients.
+   */
+  app.use('/api/tasks', tasksRoutes);
   /**
    * LES DOCUMENTS LÉGAUX — le référentiel des textes que les sites publient.
    *

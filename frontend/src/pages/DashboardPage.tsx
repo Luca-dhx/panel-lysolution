@@ -12,8 +12,23 @@
  * une remontée métier qui n'existe pas encore : les inventer donnerait un
  * tableau de bord faux, ce qui est pire qu'un tableau de bord incomplet.
  */
+import { Suspense, lazy } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, EmptyState } from '@/components/ui';
+/**
+ * LE PANNEAU DES TÂCHES EST CHARGÉ À LA DEMANDE, ET CE N'EST PAS UN DÉTAIL.
+ *
+ * Le tableau de bord est la SEULE page non fractionnée : c'est la première
+ * qu'on ouvre, et la faire attendre un fragment se verrait. Mais ce panneau
+ * tire le kit maison, qui tire Radix — 400 ko de feuille de style. Importé
+ * d'emblée, il ramenait Radix DANS le paquet principal, que les quinze écrans
+ * sans graphique ni tâche téléchargeaient alors pour rien.
+ *
+ * Mesuré : CSS principale 286 → 761 ko, paquet principal 856 → 1 200 ko.
+ * Le `lazy` rend les deux à leur taille.
+ */
+const UpcomingTasksPanel = lazy(() => import('@/components/tasks/UpcomingTasksPanel')
+  .then((m) => ({ default: m.UpcomingTasksPanel })));
 import { useProjects } from '@/lib/useProjects';
 import { useMeetings, usePendingEvents } from '@/lib/useEvents';
 import { EventConfirmation } from '@/components/EventConfirmation';
@@ -76,6 +91,17 @@ export function DashboardPage() {
           <span className="stat-label">À vérifier</span>
         </Card>
       </div>
+
+      {/*
+        LES TACHES AVANT L'AGENDA, et ce n'est pas un detail : l'agenda dit ce
+        qui est DEJA cale — un rendez-vous a une heure, et on s'y rend. Les
+        taches disent ce qui appelle une decision aujourd'hui, y compris ce
+        qu'on a laisse passer. C'est la premiere question qu'on se pose en
+        ouvrant le Panel le matin.
+      */}
+      <Suspense fallback={<Card title="Prochaines tâches"><p className="muted">Chargement…</p></Card>}>
+        <UpcomingTasksPanel />
+      </Suspense>
 
       <AgendaDuJour />
 

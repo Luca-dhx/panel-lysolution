@@ -183,8 +183,24 @@ section('3. Icônes : le jeu Bootstrap, sans bibliothèque ni couleur propre');
   */
   const ATTENDUES = [
     '@base-ui/react',
+    /*
+      LES DEUX ARRIVEES AVEC LE SELECTEUR D'ECHEANCE DES TACHES.
+
+      `@internationalized/date` porte `CalendarDate` — une date CIVILE, sans
+      heure ni fuseau. C'est exactement ce qu'il faut pour une grille de jours :
+      l'heure vit dans son propre champ, et les deux ne se recomposent qu'au
+      moment d'ecrire la valeur.
+
+      `@react-stately/utils` fournit `useControlledState`, la mecanique qui
+      permet a un champ d'etre pilote OU autonome sans dupliquer son etat.
+
+      Toutes deux sont des dependances du calendrier React Aria repris de la
+      librairie ; aucune n'a ete ajoutee a la main.
+    */
+    '@internationalized/date',
     '@number-flow/react',
     '@radix-ui/themes',
+    '@react-stately/utils',
     '@untitledui/icons',
     '@visx/curve', '@visx/event', '@visx/gradient', '@visx/grid', '@visx/group',
     '@visx/pattern', '@visx/responsive', '@visx/scale', '@visx/shape',

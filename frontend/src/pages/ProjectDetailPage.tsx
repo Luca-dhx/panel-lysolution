@@ -29,6 +29,7 @@ import { TYPE_LABELS, eventStatusState } from '@/components/eventLabels';
 import { Icon } from '@/components/Icon';
 import { FreshnessBanner } from '@/components/FreshnessBanner';
 import { PageHeader, SmoothTabs } from '@/components/ui-kit';
+import { LinkedTasksPanel } from '@/components/tasks/LinkedTasksPanel';
 import { Avatar } from '@/components/base/avatar/avatar';
 import { ProjectClientCompanyCard } from '@/components/company/ProjectClientCompanyCard';
 import { ProjectLegalSection } from '@/components/legal/ProjectLegalSection';
@@ -69,7 +70,7 @@ import {
   toneBadgeClass,
 } from '@/lib/projectPresentation';
 
-type Tab = 'overview' | 'events' | 'finances' | 'dev';
+type Tab = 'overview' | 'events' | 'tasks' | 'finances' | 'dev';
 
 /** Les onglets atteignables par l'URL — la garde DEV reste séparée. */
 const TABS: Tab[] = ['overview', 'events', 'finances', 'dev'];
@@ -251,6 +252,7 @@ export function ProjectDetailPage() {
         tabs={[
           { value: 'overview' as const, label: 'Vue d’ensemble' },
           { value: 'events' as const, label: 'Événements' },
+          { value: 'tasks' as const, label: 'Tâches' },
           { value: 'finances' as const, label: 'Finances' },
           ...(isDev ? [{ value: 'dev' as const, label: 'Développeur' }] : []),
         ]}
@@ -264,6 +266,18 @@ export function ProjectDetailPage() {
           onClientCompanyChanged={reload} />
       ) : null}
       {tab === 'events' ? <EventsTab project={project} /> : null}
+      {/*
+        LES TACHES DU PROJET, filtrees par le SERVEUR : la fiche ne veut pas des
+        huit cents taches du parc pour en garder trois. Le bouton de creation
+        arrive deja rattache — c'est tout l'interet du raccourci.
+      */}
+      {tab === 'tasks' ? (
+        <LinkedTasksPanel
+          filtre={{ projectId: project.projectId }}
+          liensInitiaux={{ projectIds: [project.projectId] }}
+          titre={`Tâches — ${projectDisplayName(project)}`}
+        />
+      ) : null}
       {/*
         LE MÊME MOTEUR QUE LA PAGE GLOBALE, avec le rattachement VERROUILLÉ.
         Rien n'est recopié : un second calcul de bénéfice aurait fini par

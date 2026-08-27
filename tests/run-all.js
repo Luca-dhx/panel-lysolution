@@ -145,6 +145,7 @@ const TESTS = [
   // suite fabrique donc un document « à l'ancienne » et vérifie qu'il reste
   // visible.
   'prospection.test.js',
+  'tasks.test.js',
   // LA REFONTE D'INTERFACE — quatre écosystèmes, une seule identité visuelle.
   //
   // Contrôles STATIQUES, et c'est délibéré : les défauts qu'ils ferment ne se

@@ -91,8 +91,16 @@ section('1. Deux espaces, et le menu reflète la règle');
   // des CONTENUS métier, publiés sous la responsabilité juridique d'un client.
   // Leur ÉCRITURE reste réservée aux comptes DEV, mais côté backend — la
   // barrière n'est pas dans ce menu.
+  //
+  // « Tâches » suit « Prospection », et sa place tient au même raisonnement : une
+  // tâche naît le plus souvent d'un démarchage ou d'un projet, et elle se lit
+  // avant d'aller voir le client. Elle traverse tout le Panel — un projet, un
+  // prospect, une entreprise, un mouvement — mais elle reste du QUOTIDIEN, pas
+  // de l'administration : la ranger en section technique l'aurait rendue
+  // invisible à ceux qui s'en servent.
   const GESTION_ATTENDUE = [
     'Tableau de bord', 'Projets clients', 'Agenda et événements', 'Prospection',
+    'Tâches',
     'Clients', 'Finances', 'Mon entreprise', 'Documents legaux', 'Entreprise hebergeuse',
   ];
   check(`Gestion = ${GESTION_ATTENDUE.join(', ')} — ${gestionLabels.join(', ')}`,
@@ -151,6 +159,13 @@ section('2. Les routes techniques sont INTERDITES, pas seulement masquées');
   const BUSINESS = ['/', '/projects', '/projects/:projectId', '/agenda', '/finances', '/company',
     '/clients', '/clients/:clientCompanyId', '/panel',
     '/prospection', '/prospection/:prospectId',
+    /*
+      LES TACHES SONT UN ECRAN METIER, pas un outil d'administration. Une tache
+      nomme un projet, un prospect, une entreprise ou un mouvement : c'est le
+      quotidien de l'equipe, au meme titre que l'agenda. La ranger derriere la
+      garde DEV l'aurait rendue invisible a ceux qui s'en servent.
+    */
+    '/taches',
     '/documents-legaux', '/hebergeur'];
 
   /**

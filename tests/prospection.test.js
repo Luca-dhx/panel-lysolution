@@ -479,6 +479,87 @@ section('7. Les images — la même chaîne que les médias de marque, une autre
   check('l’import exige une session', anonyme.status === 401);
 }
 
+/* ────────────────────────────────────────────────────────────────────────── */
+section('Champs libres et messages — le carnet du prospect');
+{
+  /**
+   * -- CE QUE CES DEUX TABLEAUX AJOUTENT ------------------------------------
+   *
+   * `infoFields` : on ne sait pas d'avance ce qu'on notera. « Budget annonce »,
+   * « hebergeur actuel », « qui decide » -- chaque affaire apporte ses
+   * questions, et figer des colonnes aurait oblige a migrer le modele a chaque
+   * question nouvelle.
+   *
+   * `messages` : un CARNET, pas une messagerie. Rien n'est envoye d'ici ; on
+   * note ce qu'on a dit et ce qu'on prevoit de dire.
+   */
+  const cree = await call('POST', '/api/prospects', {
+    headers: AUTH,
+    body: {
+      name: 'Garage Central',
+      infoFields: [
+        { label: 'Budget annoncé', value: '3 000 €' },
+        { label: 'Qui décide', value: '' },
+        { label: '', value: 'orpheline' },
+      ],
+      messages: [
+        { channel: 'E-mail', title: 'Premier contact', body: 'Bonjour…' },
+        { channel: '', title: '', body: '   ' },
+      ],
+    },
+  });
+  const prospect = cree.json.data.prospect;
+
+  check('les champs libres sont conservés', prospect.infoFields.length === 2);
+  /* Une VALEUR vide est normale : on cree l'etiquette avant d'avoir la reponse. */
+  check('…une valeur vide est acceptée', prospect.infoFields[1].value === '');
+  /* Un champ SANS NOM n'a aucun sens pour celui qui relit la fiche. */
+  check('…un champ sans nom est écarté',
+    prospect.infoFields.every((f) => f.label.trim().length > 0));
+  check('…chacun reçoit un identifiant',
+    prospect.infoFields.every((f) => typeof f.id === 'string' && f.id.length > 0));
+  check('…et l’ordre de saisie est gardé', prospect.infoFields[0].label === 'Budget annoncé');
+
+  check('les messages sont conservés', prospect.messages.length === 1);
+  /* Un message sans canal NI titre NI contenu n'est rien : il occuperait une
+     ligne vide dans la liste. */
+  check('…un message entièrement vide est écarté',
+    prospect.messages[0].title === 'Premier contact');
+  /**
+   * `sentAt` PORTE L'ETAT A LUI SEUL : `null` = prevu, une date = envoye. Un
+   * booleen a cote d'une date aurait permis « envoye sans date » et « date
+   * sans etre envoye », et il aurait fallu decider laquelle croire.
+   */
+  check('…un message naît « à envoyer »', prospect.messages[0].sentAt === null);
+
+  const envoye = await call('PATCH', `/api/prospects/${prospect._id}`, {
+    headers: AUTH,
+    body: {
+      messages: [{ ...prospect.messages[0], sentAt: '2026-08-20T10:00:00.000Z' }],
+    },
+  });
+  check('…et il devient « envoyé » par sa seule date',
+    envoye.json.data.prospect.messages[0].sentAt.startsWith('2026-08-20'));
+
+  const casse = await call('PATCH', `/api/prospects/${prospect._id}`, {
+    headers: AUTH,
+    body: { messages: [{ channel: 'E-mail', title: 'X', body: 'Y', sentAt: 'hier' }] },
+  });
+  check('une date d’envoi illisible est REFUSÉE, pas ignorée',
+    casse.status === 400 && casse.json.code === 'PANEL_PROSPECT_MESSAGE_DATE_INVALID');
+
+  /* Les anciennes fiches n'ont ni l'un ni l'autre : elles doivent lire vide,
+     jamais `undefined`. */
+  const ancienne = await call('POST', '/api/prospects', {
+    headers: AUTH, body: { name: 'Sans carnet' },
+  });
+  check('une fiche sans carnet rend deux listes vides',
+    Array.isArray(ancienne.json.data.prospect.infoFields)
+    && ancienne.json.data.prospect.infoFields.length === 0
+    && Array.isArray(ancienne.json.data.prospect.messages)
+    && ancienne.json.data.prospect.messages.length === 0);
+}
+
 await close();
 await stopMemoryMongo();
 gardeUploads.cleanup();

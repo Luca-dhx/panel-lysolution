@@ -24,6 +24,7 @@ import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '
 import type {
   Prospect, ProspectInput, ProspectListResult, ProspectStatus,
 } from '@/types.prospection';
+import type { Task, TaskInput, TaskListResult, TaskStatus } from '@/types.tasks';
 import type { PanelTheme } from '@/lib/useTheme';
 import type { EmailSenderScreen, EmailSenderTestReport } from '@/types.emailSender';
 import type {
@@ -1087,6 +1088,48 @@ export const api = {
 
   updateProspect: (prospectId: string, body: ProspectInput) =>
     request<{ prospect: Prospect }>(`/api/prospects/${prospectId}`, { method: 'PATCH', body }),
+
+  /* ── LES TÂCHES ────────────────────────────────────────────────────────
+     Le filtre de rattachement est passé au SERVEUR plutôt que d'être appliqué
+     après coup : la fiche d'un projet ne veut pas des huit cents tâches du
+     parc pour en garder trois. */
+  listTasks: (filtre: {
+    status?: TaskStatus;
+    projectId?: string;
+    prospectId?: string;
+    transactionId?: string;
+    clientCompanyId?: string;
+  } = {}) => {
+    const params = new URLSearchParams();
+    for (const [clef, valeur] of Object.entries(filtre)) {
+      if (valeur) params.set(clef, String(valeur));
+    }
+    const suffixe = params.toString();
+    return request<TaskListResult>(`/api/tasks${suffixe ? `?${suffixe}` : ''}`);
+  },
+
+  getTask: (taskId: string) => request<{ task: Task }>(`/api/tasks/${taskId}`),
+
+  createTask: (body: TaskInput) =>
+    request<{ task: Task }>('/api/tasks', { method: 'POST', body }),
+
+  updateTask: (taskId: string, body: TaskInput) =>
+    request<{ task: Task }>(`/api/tasks/${taskId}`, { method: 'PATCH', body }),
+
+  completeTask: (taskId: string) =>
+    request<{ task: Task }>(`/api/tasks/${taskId}/complete`, { method: 'POST' }),
+
+  reopenTask: (taskId: string) =>
+    request<{ task: Task }>(`/api/tasks/${taskId}/reopen`, { method: 'POST' }),
+
+  /* REPORTER n'est pas CORRIGER : ce geste-ci laisse une trace, `updateTask`
+     n'en laisse pas. Une tâche reportée quatre fois raconte quelque chose que
+     la nouvelle date, seule, ne raconte pas. */
+  postponeTask: (taskId: string, dueAt: string) =>
+    request<{ task: Task }>(`/api/tasks/${taskId}/postpone`, { method: 'POST', body: { dueAt } }),
+
+  deleteTask: (taskId: string) =>
+    request<{ deleted: boolean; taskId: string }>(`/api/tasks/${taskId}`, { method: 'DELETE' }),
 
   /**
    * Le STATUT a sa propre route : il se pilote depuis une liste déroulante

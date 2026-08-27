@@ -31,6 +31,15 @@ export const NAV_ITEMS: NavItem[] = [
    * pas une opération technique.
    */
   { to: '/prospection', label: 'Prospection', section: 'GESTION' },
+  /**
+   * LES TACHES — juste apres la prospection, et avant les clients.
+   *
+   * Elles traversent tout le Panel : une tache nomme un projet, un prospect,
+   * une entreprise ou un mouvement. Les ranger dans une section technique
+   * aurait laisse croire a un outil d'administration ; elles sont le quotidien
+   * de l'equipe, comme l'agenda et la prospection.
+   */
+  { to: '/taches', label: 'Tâches', section: 'GESTION' },
   { to: '/clients', label: 'Clients', section: 'GESTION' },
   { to: '/finances', label: 'Finances', section: 'GESTION' },
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },

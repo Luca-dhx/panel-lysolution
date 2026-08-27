@@ -1,23 +1,38 @@
 /**
  * LA FICHE D'UN PROSPECT.
  *
- * ══ DEUX ONGLETS, ET LA COUPURE N'EST PAS COSMÉTIQUE ════════════════════════
+ * ══ QUATRE ONGLETS, ET CHACUN RÉPOND À UNE QUESTION ═════════════════════════
  *
- * « Fiche » répond à « qui est-ce » : coordonnées, liens, images, notes.
- * « Suivi » répond à « où en est-on » : rendez-vous à venir, confirmations en
- * attente, histoire de ce qui s'est passé.
+ *   Fiche          « qui est-ce » — coordonnées, informations libres, liens,
+ *                  images, notes.
+ *   Communication  « qu'est-ce qu'on lui a dit » — les messages envoyés, et
+ *                  ceux qu'on compte envoyer.
+ *   Tâches         « qu'est-ce qu'il reste à faire » — chronologie, avec un
+ *                  raccourci de création déjà rattaché à ce prospect.
+ *   Suivi          « où en est-on » — rendez-vous, confirmations, histoire.
  *
- * Tout empiler sur une seule page aurait noyé la seule chose qu'on vient
- * vraiment chercher avant un appel — le compte rendu de la dernière fois —
- * sous une galerie de photos de devanture.
+ * Tout empiler sur une page aurait noyé la seule chose qu'on vient vraiment
+ * chercher avant un appel — le compte rendu de la dernière fois — sous une
+ * galerie de photos de devanture.
+ *
+ * ══ LA REFONTE : DEUX ANCIENS BLOCS ONT DISPARU ════════════════════════════
+ *
+ * L'en-tête maison (`page-header` + `prospect-title`) et la barre d'onglets
+ * `aria-pressed` sont remplacés par le gabarit commun aux écrans refondus :
+ * `PageHeader` et `SmoothTabs`. Ce n'est pas cosmétique — les onglets passent
+ * de quatre boutons à un vrai `tablist`, avec un seul arrêt de tabulation pour
+ * le groupe et la navigation aux flèches.
+ *
+ * Le formulaire d'édition passe en DIALOGUE. Il s'insérait auparavant entre la
+ * barre d'actions et les onglets, poussant tout le contenu vers le bas : on
+ * cliquait « Modifier », et la fiche qu'on voulait comparer disparaissait sous
+ * la ligne de flottaison.
  *
  * ══ LE SUIVI EST CELUI DU PANEL, PAS UN SECOND SYSTÈME ══════════════════════
  *
  * Les réunions et les événements affichés ici sont les MÊMES objets que ceux
  * des projets, avec les mêmes formulaires et la même machine à états. Ce qui
- * change est leur sujet (`subjectType: 'PROSPECT'`). Fabriquer un agenda
- * parallèle pour la prospection aurait dupliqué l'ordonnanceur, la conversion
- * à l'échéance et trois écrans — pour finir avec deux agendas qui divergent.
+ * change est leur sujet (`subjectType: 'PROSPECT'`).
  *
  * ══ TOUTES LES LECTURES SONT BORNÉES À CE PROSPECT ══════════════════════════
  *
@@ -25,9 +40,10 @@
  * serait une fuite : ces notes sont internes, mais elles nomment des tiers.
  */
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Card, EmptyState } from '@/components/ui';
-import { Icon } from '@/components/Icon';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Button } from '@/components/base/buttons/button';
+import { Dialog, Modal, ModalOverlay } from '@/components/application/modals/modal';
+import { EmptyPanel, PageHeader, Panel, SkeletonRows, SmoothTabs } from '@/components/ui-kit';
 import { Modale } from '@/components/Modale';
 import { EventConfirmation } from '@/components/EventConfirmation';
 import { EventTimeline } from '@/components/EventTimeline';
@@ -35,16 +51,20 @@ import { MeetingRow } from '@/components/EventLists';
 import { MeetingForm, PastEventForm } from '@/components/EventForms';
 import { LinkRow, lienTelephone, sansProtocole } from '@/components/Links';
 import { ProspectForm } from '@/components/prospection/ProspectForm';
+import { ProspectInfoFieldsView } from '@/components/prospection/ProspectInfoFields';
+import { ProspectMessages } from '@/components/prospection/ProspectMessages';
 import { ProspectStatusSelect } from '@/components/prospection/ProspectStatusSelect';
 import { ProspectTypeSelect } from '@/components/prospection/ProspectTypeSelect';
 import { prospectStatusLabel } from '@/components/prospection/prospectStatus';
+import { LinkedTasksPanel } from '@/components/tasks/LinkedTasksPanel';
 import { api, errorMessage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
 import { useProspect } from '@/lib/useProspects';
 import { formatDateTime } from '@/lib/format';
 import type { Meeting, ProjectEvent } from '@/types.events';
+import type { ProspectMessage } from '@/types.prospection';
 
-type Onglet = 'fiche' | 'suivi';
+type Onglet = 'fiche' | 'communication' | 'taches' | 'suivi';
 
 export function ProspectDetailPage() {
   const { prospectId } = useParams<{ prospectId: string }>();
@@ -60,12 +80,13 @@ export function ProspectDetailPage() {
   const [evenementEdite, setEvenementEdite] = useState<ProjectEvent | null>(null);
   const [confirmerSuppression, setConfirmerSuppression] = useState(false);
   const [suppressionEnCours, setSuppressionEnCours] = useState(false);
+  const [enregistrementMessages, setEnregistrementMessages] = useState(false);
   const [apercu, setApercu] = useState<string | null>(null);
 
   if (isInitialLoading) {
     return (
       <div className="page">
-        <Card title="Prospect"><p className="muted">Chargement…</p></Card>
+        <Panel title="Prospect"><SkeletonRows rows={4} /></Panel>
       </div>
     );
   }
@@ -74,15 +95,11 @@ export function ProspectDetailPage() {
     return (
       <div className="page">
         {error ? <div className="alert alert-error">{error}</div> : null}
-        <EmptyState
+        <PageHeader
           title="Prospect introuvable"
-          hint="Il a peut-être été supprimé depuis un autre poste."
+          backTo={{ to: '/prospection', label: 'Prospection' }}
+          description="Il a peut-être été supprimé depuis un autre poste."
         />
-        <div className="contract-actions">
-          <Link className="btn btn-secondary btn-small" to="/prospection">
-            Retour à la prospection
-          </Link>
-        </div>
       </div>
     );
   }
@@ -112,87 +129,91 @@ export function ProspectDetailPage() {
     }
   };
 
+  /**
+   * LES MESSAGES S'ÉCRIVENT PAR UNE MISE À JOUR DE LA FICHE.
+   *
+   * Pas de route dédiée : ils vivent DANS le prospect, comme les liens et les
+   * images. Une sous-ressource aurait ajouté quatre routes et un contrôleur
+   * pour un tableau qu'on remplace en entier à chaque geste.
+   */
+  const enregistrerMessages = async (messages: ProspectMessage[]) => {
+    setEnregistrementMessages(true);
+    try {
+      await api.updateProspect(prospect._id, { messages });
+      toutRecharger();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Ce message n’a pas pu être enregistré.'));
+    } finally {
+      setEnregistrementMessages(false);
+    }
+  };
+
+  const messages = prospect.messages ?? [];
+  const infoFields = prospect.infoFields ?? [];
+  const aEnvoyer = messages.filter((m) => !m.sentAt).length;
+
   return (
     <div className="page">
-      <header className="page-header">
-        <Link className="link-back" to="/prospection">
-          <Icon name="chevron-down" size={14} />
-          Prospection
-        </Link>
-        <div className="prospect-title">
-          <h1>{prospect.name}</h1>
-          {/*
-            Les deux axes côte à côte, et manipulables ici : « où en est-on »
+      <PageHeader
+        title={prospect.name}
+        backTo={{ to: '/prospection', label: 'Prospection' }}
+        description="Fiche interne. Rien de ce qui est écrit ici ne sort du Panel."
+        badges={(
+          /*
+            LES DEUX AXES CÔTE À CÔTE, ET MANIPULABLES ICI : « où en est-on »
             et « que fait-on ». C'est la première chose qu'on vient lire avant
             un appel, et la seule qu'on vient parfois corriger.
-          */}
-          <ProspectStatusSelect
-            prospectId={prospect._id}
-            status={prospect.status}
-            onChanged={toutRecharger}
-            size="md"
-          />
-          <ProspectTypeSelect
-            prospectId={prospect._id}
-            type={prospect.type}
-            onChanged={toutRecharger}
-            size="md"
-          />
-        </div>
-        <p className="page-description">
-          Fiche interne. Rien de ce qui est écrit ici ne sort du Panel.
-        </p>
-      </header>
+          */
+          <>
+            <ProspectStatusSelect
+              prospectId={prospect._id}
+              status={prospect.status}
+              onChanged={toutRecharger}
+              size="md"
+            />
+            <ProspectTypeSelect
+              prospectId={prospect._id}
+              type={prospect.type}
+              onChanged={toutRecharger}
+              size="md"
+            />
+          </>
+        )}
+        actions={(
+          <>
+            <Button size="md" color="secondary" onClick={() => setConfirmerSuppression(true)}>
+              Supprimer
+            </Button>
+            <Button size="md" color="primary" onClick={() => setEnEdition(true)}>
+              Modifier la fiche
+            </Button>
+          </>
+        )}
+      />
 
       {error ? <div className="alert alert-error">{error}</div> : null}
 
-      <div className="contract-actions">
-        <button
-          type="button"
-          className="btn btn-secondary btn-small"
-          onClick={() => setEnEdition(true)}
-        >
-          Modifier la fiche
-        </button>
-        <button
-          type="button"
-          className="btn btn-danger btn-small"
-          onClick={() => setConfirmerSuppression(true)}
-        >
-          Supprimer
-        </button>
-      </div>
-
-      {enEdition ? (
-        <ProspectForm
-          prospect={prospect}
-          onSaved={() => { setEnEdition(false); toutRecharger(); }}
-          onCancel={() => setEnEdition(false)}
-        />
-      ) : null}
-
-      <div className="tabs" role="group" aria-label="Sections de la fiche">
-        <button
-          type="button"
-          className={onglet === 'fiche' ? 'tab tab-active' : 'tab'}
-          aria-pressed={onglet === 'fiche'}
-          onClick={() => setOnglet('fiche')}
-        >
-          Fiche
-        </button>
-        <button
-          type="button"
-          className={onglet === 'suivi' ? 'tab tab-active' : 'tab'}
-          aria-pressed={onglet === 'suivi'}
-          onClick={() => setOnglet('suivi')}
-        >
-          Suivi{enAttente.length > 0 ? ` (${enAttente.length})` : ''}
-        </button>
-      </div>
+      <SmoothTabs
+        tabs={[
+          { value: 'fiche' as const, label: 'Fiche' },
+          {
+            value: 'communication' as const,
+            label: aEnvoyer > 0 ? `Communication (${aEnvoyer})` : 'Communication',
+          },
+          { value: 'taches' as const, label: 'Tâches' },
+          {
+            value: 'suivi' as const,
+            label: enAttente.length > 0 ? `Suivi (${enAttente.length})` : 'Suivi',
+          },
+        ]}
+        value={onglet}
+        onChange={setOnglet}
+        layoutId="prospect-detail-tabs"
+      />
 
       {onglet === 'fiche' ? (
-        <>
-          <Card title="Coordonnées">
+        <div className="flex flex-col gap-4">
+          <Panel title="Coordonnées">
             {prospect.email || prospect.phone ? (
               <div className="link-list">
                 {prospect.email ? (
@@ -213,15 +234,31 @@ export function ProspectDetailPage() {
                 ) : null}
               </div>
             ) : (
-              <p className="muted">
+              <p className="text-sm text-tertiary">
                 Aucune coordonnée. « Modifier la fiche » pour en ajouter.
               </p>
             )}
-          </Card>
+          </Panel>
 
-          <Card title={`Liens (${prospect.links.length})`}>
+          {/*
+            LES INFORMATIONS LIBRES JUSTE APRÈS LES COORDONNÉES.
+
+            C'est là qu'on note ce qui décide d'une affaire — budget annoncé,
+            hébergeur actuel, qui signe. Les reléguer sous la galerie d'images
+            les aurait rendues invisibles au moment où l'on décroche le
+            téléphone.
+          */}
+          <Panel
+            title="Informations"
+            badge={infoFields.length ? String(infoFields.length) : undefined}
+            description="Des champs libres : un nom, un contenu, autant qu’il en faut."
+          >
+            <ProspectInfoFieldsView fields={infoFields} />
+          </Panel>
+
+          <Panel title="Liens" badge={prospect.links.length ? String(prospect.links.length) : undefined}>
             {prospect.links.length === 0 ? (
-              <p className="muted">Aucun lien enregistré.</p>
+              <p className="text-sm text-tertiary">Aucun lien enregistré.</p>
             ) : (
               <div className="link-list">
                 {prospect.links.map((lien) => (
@@ -237,11 +274,11 @@ export function ProspectDetailPage() {
                 ))}
               </div>
             )}
-          </Card>
+          </Panel>
 
-          <Card title={`Images (${prospect.images.length})`}>
+          <Panel title="Images" badge={prospect.images.length ? String(prospect.images.length) : undefined}>
             {prospect.images.length === 0 ? (
-              <p className="muted">Aucune image.</p>
+              <p className="text-sm text-tertiary">Aucune image.</p>
             ) : (
               <ul className="prospect-gallery">
                 {prospect.images.map((image) => (
@@ -265,19 +302,19 @@ export function ProspectDetailPage() {
                 ))}
               </ul>
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Notes internes">
+          <Panel title="Notes internes">
             {prospect.notes.trim() ? (
-              <p className="prospect-notes">{prospect.notes}</p>
+              <p className="text-sm whitespace-pre-wrap text-secondary">{prospect.notes}</p>
             ) : (
-              <p className="muted">Rien n’a encore été noté.</p>
+              <p className="text-sm text-tertiary">Rien n’a encore été noté.</p>
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Historique du statut">
+          <Panel title="Historique du statut">
             {prospect.statusHistory.length === 0 ? (
-              <p className="muted">Aucun changement consigné.</p>
+              <p className="text-sm text-tertiary">Aucun changement consigné.</p>
             ) : (
               <ul className="prospect-history">
                 {[...prospect.statusHistory].reverse().map((ligne, index) => (
@@ -293,25 +330,41 @@ export function ProspectDetailPage() {
                 ))}
               </ul>
             )}
-          </Card>
-        </>
-      ) : (
-        <>
-          <div className="contract-actions">
-            <button
-              type="button"
-              className="btn btn-primary btn-small"
-              onClick={() => setVolet('reunion')}
-            >
+          </Panel>
+        </div>
+      ) : null}
+
+      {onglet === 'communication' ? (
+        <Panel
+          title="Messages"
+          badge={messages.length ? String(messages.length) : undefined}
+          description="Ce qu’on a envoyé, et ce qu’on compte envoyer."
+        >
+          <ProspectMessages
+            messages={messages}
+            onChange={enregistrerMessages}
+            enregistrement={enregistrementMessages}
+          />
+        </Panel>
+      ) : null}
+
+      {onglet === 'taches' ? (
+        <LinkedTasksPanel
+          filtre={{ prospectId: prospect._id }}
+          liensInitiaux={{ prospectIds: [prospect._id] }}
+          titre={`Tâches — ${prospect.name}`}
+        />
+      ) : null}
+
+      {onglet === 'suivi' ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" color="primary" onClick={() => setVolet('reunion')}>
               Planifier une réunion
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary btn-small"
-              onClick={() => setVolet('evenement')}
-            >
+            </Button>
+            <Button size="sm" color="secondary" onClick={() => setVolet('evenement')}>
               Ajouter un événement passé
-            </button>
+            </Button>
           </div>
 
           {volet === 'reunion' || reunionEditee ? (
@@ -336,16 +389,19 @@ export function ProspectDetailPage() {
           ) : null}
 
           {enAttente.length > 0 ? (
-            <Card title={`À confirmer (${enAttente.length})`}>
+            <Panel title="À confirmer" badge={String(enAttente.length)}>
               {enAttente.map((e) => (
                 <EventConfirmation key={e._id} event={e} onResolved={toutRecharger} />
               ))}
-            </Card>
+            </Panel>
           ) : null}
 
-          <Card title="Réunions à venir">
+          <Panel title="Réunions à venir">
             {aVenir.length === 0 ? (
-              <p className="muted">Aucune réunion prévue avec ce prospect.</p>
+              <EmptyPanel
+                title="Aucune réunion prévue"
+                hint="« Planifier une réunion » en pose une, avec ce prospect pour sujet."
+              />
             ) : (
               <ul className="event-list">
                 {aVenir.map((m) => (
@@ -359,17 +415,38 @@ export function ProspectDetailPage() {
                 ))}
               </ul>
             )}
-          </Card>
+          </Panel>
 
-          <Card title="Historique">
+          <Panel title="Historique">
             {historique.length === 0 ? (
-              <p className="muted">Rien n’a encore été consigné pour ce prospect.</p>
+              <p className="text-sm text-tertiary">
+                Rien n’a encore été consigné pour ce prospect.
+              </p>
             ) : (
               <EventTimeline events={historique} onEdit={setEvenementEdite} />
             )}
-          </Card>
-        </>
-      )}
+          </Panel>
+        </div>
+      ) : null}
+
+      {/*
+        LE FORMULAIRE EST UN DIALOGUE, PAS UN BLOC INSÉRÉ DANS LA PAGE.
+        Inséré, il poussait la fiche entière sous la ligne de flottaison au
+        moment précis où l'on voulait comparer ce qu'on tape à ce qui existe.
+      */}
+      <ModalOverlay isOpen={enEdition} onOpenChange={(v) => { if (!v) setEnEdition(false); }} isDismissable>
+        <Modal className="w-full max-w-3xl">
+          <Dialog>
+            <div className="p-4 sm:p-5">
+              <ProspectForm
+                prospect={prospect}
+                onSaved={() => { setEnEdition(false); toutRecharger(); }}
+                onCancel={() => setEnEdition(false)}
+              />
+            </div>
+          </Dialog>
+        </Modal>
+      </ModalOverlay>
 
       {apercu ? (
         <Modale titre="Image" onClose={() => setApercu(null)}>
@@ -402,6 +479,7 @@ export function ProspectDetailPage() {
           </div>
         </Modale>
       ) : null}
+
     </div>
   );
 }

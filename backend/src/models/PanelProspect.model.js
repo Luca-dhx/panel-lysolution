@@ -147,6 +147,66 @@ const imageSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/**
+ * UN CHAMP D'INFORMATION LIBRE — un nom, un contenu.
+ *
+ * ══ POURQUOI PAS DES COLONNES EN DUR ═══════════════════════════════════════
+ *
+ * Parce qu'on ne sait pas d'avance ce qu'on notera. « Budget annoncé »,
+ * « hébergeur actuel », « qui décide », « rendez-vous pris par » : chaque
+ * affaire apporte ses propres questions, et figer une liste obligerait à
+ * migrer le modèle chaque fois qu'une nouvelle apparaît. Le prix payé est
+ * qu'aucun de ces champs n'est interrogeable finement — ce sont des NOTES
+ * structurées, pas des critères de recherche.
+ *
+ * L'ordre est celui du tableau, comme pour les liens : réordonner, c'est
+ * renvoyer la liste dans le nouvel ordre.
+ */
+const infoFieldSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    label: { type: String, required: true, trim: true },
+    value: { type: String, default: '', trim: true },
+  },
+  { _id: false },
+);
+
+/**
+ * UN MESSAGE — envoyé, ou à envoyer.
+ *
+ * ══ LE CANAL EST DU TEXTE LIBRE, ET C'EST VOULU ════════════════════════════
+ *
+ * On écrit « e-mail », « LinkedIn », « SMS », « au téléphone », « via son
+ * associé ». Une liste fermée aurait forcé à choisir « Autre » dans la moitié
+ * des cas, et « Autre » ne dit rien à celui qui relit six mois plus tard.
+ *
+ * ══ LE TITRE EST INTERNE ═══════════════════════════════════════════════════
+ *
+ * « Premier contact », « relance 1 », « après le rendez-vous » : il sert à
+ * retrouver le message dans la liste, jamais à être envoyé. Le contenu, lui,
+ * est ce qui part vraiment.
+ *
+ * ══ `sentAt` PORTE L'ÉTAT, ET AUCUN AUTRE CHAMP NE LE DOUBLE ═══════════════
+ *
+ * `null` = prévu, une date = envoyé. Un booléen `sent` à côté d'une date aurait
+ * permis les deux incohérences classiques — envoyé sans date, daté sans être
+ * envoyé — et il aurait fallu décider laquelle des deux croire.
+ *
+ * Rien ici n'ENVOIE quoi que ce soit : le Panel note ce qui a été fait ailleurs.
+ */
+const messageSchema = new mongoose.Schema(
+  {
+    id: { type: String, required: true },
+    channel: { type: String, default: '', trim: true },
+    title: { type: String, default: '', trim: true },
+    body: { type: String, default: '' },
+    sentAt: { type: Date, default: null },
+    createdAt: { type: Date, default: Date.now },
+    createdBy: { type: String, default: null },
+  },
+  { _id: false },
+);
+
 const prospectSchema = new mongoose.Schema(
   {
     /** Le seul champ vraiment obligatoire : un prospect sans nom n'est rien. */
@@ -168,6 +228,8 @@ const prospectSchema = new mongoose.Schema(
 
     links: { type: [linkSchema], default: [] },
     images: { type: [imageSchema], default: [] },
+    infoFields: { type: [infoFieldSchema], default: [] },
+    messages: { type: [messageSchema], default: [] },
 
     status: {
       type: String,

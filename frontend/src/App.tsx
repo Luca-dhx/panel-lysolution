@@ -28,8 +28,6 @@ import { LoginPage } from '@/pages/LoginPage';
 import { MyProfilePage } from '@/pages/MyProfilePage';
 import { PanelUsersPage } from '@/pages/PanelUsersPage';
 import { PairingsPage } from '@/pages/PairingsPage';
-import { ProspectionPage } from '@/pages/ProspectionPage';
-import { ProspectDetailPage } from '@/pages/ProspectDetailPage';
 import { AgendaPage } from '@/pages/AgendaPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
 import { ThemePage } from '@/pages/ThemePage';
@@ -57,6 +55,21 @@ const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
 const ClientCompaniesPage = lazy(() => import('@/pages/ClientCompaniesPage'));
 const ClientCompanyDetailPage = lazy(() => import('@/pages/ClientCompanyDetailPage'));
+/* La page des taches tire le calendrier, le formulaire et le selecteur de date :
+   les quinze ecrans qui ne les affichent pas n'ont pas a les telecharger. */
+const TasksPage = lazy(() => import('@/pages/TasksPage'));
+/*
+  LA PROSPECTION REJOINT LES ÉCRANS FRACTIONNÉS.
+
+  Sa fiche est passée au kit maison, qui tire Radix — 400 ko de feuille de
+  style. Chargée d'emblée, elle ramenait Radix DANS le paquet principal, que
+  les écrans sans kit téléchargeaient alors pour rien. Mesuré : CSS principale
+  286 → 761 ko.
+*/
+const ProspectionPage = lazy(() => import('@/pages/ProspectionPage')
+  .then((m) => ({ default: m.ProspectionPage })));
+const ProspectDetailPage = lazy(() => import('@/pages/ProspectDetailPage')
+  .then((m) => ({ default: m.ProspectDetailPage })));
 
 import { useThemeLoader } from '@/lib/useTheme';
 import { useFaviconLoader } from '@/lib/useFavicon';
@@ -142,6 +155,7 @@ export default function App() {
         */}
         <Route path="/prospection" element={<ProspectionPage />} />
         <Route path="/prospection/:prospectId" element={<ProspectDetailPage />} />
+        <Route path="/taches" element={<TasksPage />} />
         <Route path="/clients" element={<ClientCompaniesPage />} />
         <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
         {/*
