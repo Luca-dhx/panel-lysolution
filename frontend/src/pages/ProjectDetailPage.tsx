@@ -73,7 +73,7 @@ import {
 type Tab = 'overview' | 'events' | 'tasks' | 'finances' | 'dev';
 
 /** Les onglets atteignables par l'URL — la garde DEV reste séparée. */
-const TABS: Tab[] = ['overview', 'events', 'finances', 'dev'];
+const TABS: Tab[] = ['overview', 'events', 'tasks', 'finances', 'dev'];
 
 export function ProjectDetailPage() {
   const { projectId } = useParams<{ projectId: string }>();

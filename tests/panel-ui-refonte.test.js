@@ -424,4 +424,43 @@ section('11. Les graphiques parlent français, comme le reste du Panel');
     && !/<table className="sr-only">/.test(graphique));
 }
 
+section('12. Un onglet déclaré est un onglet ATTEIGNABLE');
+{
+  /**
+   * -- LE DEFAUT QUE CE CONTROLE FERME --------------------------------------
+   *
+   * L'onglet de la fiche projet vit dans l'URL, et sa valeur est VALIDEE
+   * contre une liste close avant d'etre acceptee : une valeur inconnue retombe
+   * sur « Vue d'ensemble », ce qui est la bonne facon de traiter une URL
+   * bricolee a la main.
+   *
+   * La contrepartie est qu'un onglet ajoute a la barre SANS etre ajoute a la
+   * liste devient inatteignable -- et en silence. Constate sur l'instance
+   * deployee : l'onglet « Taches » s'affichait, se cliquait, et ne se
+   * selectionnait jamais.
+   *
+   * Le controle compare donc les DEUX sources : ce que la barre propose, et ce
+   * que l'URL accepte.
+   */
+  const fiche = lire('frontend/src/pages/ProjectDetailPage.tsx');
+
+  const declares = [...fiche.matchAll(/\{ value: '([a-z]+)' as const, label:/g)].map((m) => m[1]);
+  const acceptes = (fiche.match(/const TABS: Tab\[\] = \[([^\]]+)\]/) || [, ''])[1]
+    .split(',').map((v) => v.trim().replace(/'/g, '')).filter(Boolean);
+
+  check('la barre déclare au moins cinq onglets', declares.length >= 5);
+  const manquants = declares.filter((v) => !acceptes.includes(v));
+  check(`chaque onglet déclaré est accepté par l’URL${manquants.length ? ` — absents : ${manquants.join(', ')}` : ''}`,
+    manquants.length === 0);
+
+  const orphelins = acceptes.filter((v) => !declares.includes(v));
+  /*
+    L'INVERSE COMPTE AUSSI : une valeur acceptee que la barre ne propose plus
+    laisse une URL vivante vers un onglet qui n'existe pas, et l'ecran rend
+    alors une page vide sans rien dire.
+  */
+  check(`…et chaque valeur acceptée est proposée${orphelins.length ? ` — orphelines : ${orphelins.join(', ')}` : ''}`,
+    orphelins.length === 0);
+}
+
 finish();
