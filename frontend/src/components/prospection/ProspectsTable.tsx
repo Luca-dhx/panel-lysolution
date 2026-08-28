@@ -45,9 +45,7 @@
 import { useMemo, useState } from 'react';
 import type { SortDescriptor } from 'react-aria-components';
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  Image01, Link01, Mail01, Phone, Trash01, Edit01, ArrowRight,
-} from '@untitledui/icons';
+import { ArrowRight, Edit01, FolderCheck, Image01, Link01, Mail01, Phone, Trash01 } from '@untitledui/icons';
 import { Table, TableCard } from '@/components/application/table/table';
 import { Avatar } from '@/components/base/avatar/avatar';
 import { Dropdown } from '@/components/base/dropdown/dropdown';
@@ -79,6 +77,18 @@ const dateHeure = (iso: string) =>
 
 export interface ProspectsTableProps {
   prospects: Prospect[];
+  /**
+   * LA SÉLECTION EST TENUE PAR LA PAGE, pas par le tableau.
+   *
+   * C'est elle qui porte la barre d'actions groupées, et qui doit vider la
+   * sélection après un déplacement ou une suppression. Un état interne
+   * l'aurait obligée à demander au tableau de se vider, par une référence ou
+   * une clef de remontage.
+   */
+  selectedKeys?: 'all' | Set<string>;
+  onSelectionChange?: (keys: 'all' | Set<string>) => void;
+  /** Déplacer une seule fiche, depuis son menu de fin de ligne. */
+  onMove?: (prospect: Prospect) => void;
   /** Les réunions à venir, tous prospects confondus — indexées ici. */
   upcomingMeetings?: Meeting[];
   onEdit: (prospect: Prospect) => void;
@@ -91,6 +101,9 @@ export interface ProspectsTableProps {
 
 export function ProspectsTable({
   prospects,
+  selectedKeys,
+  onSelectionChange,
+  onMove,
   upcomingMeetings = [],
   onEdit,
   onDelete,
@@ -149,7 +162,27 @@ export function ProspectsTable({
   }, [prospects, sortDescriptor]);
 
   return (
-    <div className="uui">
+    /*
+      ── @container : LES PALIERS SUIVENT LA PLACE RÉELLE ────────────────────
+
+      Les colonnes sortaient à `xl:` et `2xl:` — des paliers de FENÊTRE. Or ce
+      tableau ne dispose jamais de la fenêtre : la barre latérale du Panel en
+      prend 250 px, et l'arbre des dossiers 224 de plus. Mesuré sur l'instance
+      déployée, arbre ouvert :
+
+          fenêtre 1920   place 1128   tableau 1241   →  il défilait
+          fenêtre 1536   place  928   tableau 1241   →  il défilait
+          fenêtre 1280   place  678   tableau  938   →  il défilait
+
+      À TOUTES les largeurs de bureau. Un tableau qu'il faut faire défiler
+      latéralement pour lire une colonne est un tableau dont la moitié n'existe
+      pas : on ne défile pas horizontalement par réflexe, on ne le voit pas.
+
+      Une container query mesure ce dont on dispose VRAIMENT. Replier l'arbre
+      rend 224 px, et les colonnes reviennent d'elles-mêmes — sans que rien ici
+      n'ait à connaître l'existence de l'arbre.
+    */
+    <div className="uui @container">
       <TableCard.Root>
         {/*
           L'en-tête de la librairie passe en ligne dès 768 px. À cette largeur,
@@ -163,17 +196,28 @@ export function ProspectsTable({
           badge={String(prospects.length)}
           description={description}
           contentTrailing={contentTrailing}
-          className="md:flex-col lg:flex-row lg:items-center"
+          className="md:flex-col @3xl:flex-row @3xl:items-center"
         />
 
         <Table
           aria-label="Prospects"
-          selectionMode="none"
+          /*
+            LA CASE À COCHER EST CELLE DE LA LIBRAIRIE : `selectionMode` suffit,
+            et React Aria pose la colonne, la case d'en-tête « tout cocher »,
+            `aria-selected` sur chaque ligne et la sélection au clavier —
+            Espace pour cocher, Maj+flèches pour étendre. Une colonne maison
+            aurait tout laissé à faire.
+          */
+          selectionMode={onSelectionChange ? 'multiple' : 'none'}
+          selectedKeys={selectedKeys}
+          onSelectionChange={(k) => onSelectionChange?.(
+            k === 'all' ? 'all' : new Set([...k].map(String)),
+          )}
           sortDescriptor={sortDescriptor}
           onSortChange={setSortDescriptor}
         >
           {/*
-            `px-3 md:px-6` sur chaque colonne : le rembourrage d'origine (24 px
+            `px-3 @3xl:px-6` sur chaque colonne : le rembourrage d'origine (24 px
             de chaque côté, trois fois) mangeait 144 px des 390 px d'un
             téléphone. La pastille de statut sortait de l'écran — donc le
             contrôle le plus utilisé de la page devenait inatteignable sans
@@ -182,9 +226,9 @@ export function ProspectsTable({
           <Table.Header>
             <Table.Head
               id="name" label="Prospect" isRowHeader allowsSorting
-              className="min-w-0 px-3 md:px-6 lg:min-w-56"
+              className="min-w-0 px-3 @3xl:min-w-56 @3xl:px-6"
             />
-            <Table.Head id="status" label="Statut" allowsSorting className="px-3 md:px-6" />
+            <Table.Head id="status" label="Statut" allowsSorting className="px-3 @3xl:px-6" />
             {/*
               LE TYPE SORT AVANT LE TÉLÉPHONE, à 640 px et non 768 : savoir si
               une affaire est une refonte ou une conception change le devis et
@@ -196,25 +240,25 @@ export function ProspectsTable({
             */}
             <Table.Head
               id="type" label="Type" allowsSorting
-              className="hidden px-3 sm:table-cell sm:px-6"
+              className="hidden px-3 @3xl:table-cell @3xl:px-6"
             />
             <Table.Head
               id="next" label="Rendez-vous"
-              className="hidden px-3 xl:table-cell xl:px-6"
+              className="hidden px-3 @5xl:table-cell @5xl:px-6"
             />
             <Table.Head
               id="updatedAt" label="Activité" allowsSorting
-              className="hidden px-3 xl:table-cell xl:px-6"
+              className="hidden px-3 @5xl:table-cell @5xl:px-6"
             />
             <Table.Head
               id="phone" label="Téléphone" allowsSorting
-              className="hidden px-3 2xl:table-cell 2xl:px-6"
+              className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6"
             />
             <Table.Head
               id="attachments" label="Joint"
-              className="hidden px-3 2xl:table-cell 2xl:px-6"
+              className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6"
             />
-            <Table.Head id="actions" className="px-2 md:px-4" />
+            <Table.Head id="actions" className="px-2 @3xl:px-4" />
           </Table.Header>
 
           <Table.Body
@@ -245,7 +289,7 @@ export function ProspectsTable({
 
               return (
                 <Table.Row id={prospect._id}>
-                  <Table.Cell className="px-3 md:px-6">
+                  <Table.Cell className="px-3 @3xl:px-6">
                     <div className="flex items-center gap-3">
                       {/*
                         L'illustration DISPARAÎT sous 640 px. Elle décore, elle
@@ -257,7 +301,7 @@ export function ProspectsTable({
                         alt={prospect.name}
                         initials={initiales(prospect.name)}
                         size="md"
-                        className="hidden sm:flex"
+                        className="hidden @3xl:flex"
                       />
                       <div className="min-w-0">
                         {/*
@@ -290,14 +334,14 @@ export function ProspectsTable({
                           aurait ajouté un troisième contrôle sur une ligne qui
                           en porte déjà deux, à portée du pouce.
                         */}
-                        <span className="mt-1 flex sm:hidden">
+                        <span className="mt-1 flex @3xl:hidden">
                           <ProspectTypeBadge type={prospect.type} />
                         </span>
                       </div>
                     </div>
                   </Table.Cell>
 
-                  <Table.Cell className="px-3 md:px-6">
+                  <Table.Cell className="px-3 @3xl:px-6">
                     <ProspectStatusSelect
                       prospectId={prospect._id}
                       status={prospect.status}
@@ -305,7 +349,7 @@ export function ProspectsTable({
                     />
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 sm:table-cell sm:px-6">
+                  <Table.Cell className="hidden px-3 @3xl:table-cell @3xl:px-6">
                     <ProspectTypeSelect
                       prospectId={prospect._id}
                       type={prospect.type}
@@ -313,7 +357,7 @@ export function ProspectsTable({
                     />
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 xl:table-cell xl:px-6">
+                  <Table.Cell className="hidden px-3 @5xl:table-cell @5xl:px-6">
                     {reunion ? (
                       <div className="whitespace-nowrap">
                         <p className="text-sm font-medium text-primary">
@@ -326,11 +370,11 @@ export function ProspectsTable({
                     )}
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 whitespace-nowrap xl:table-cell xl:px-6">
+                  <Table.Cell className="hidden px-3 whitespace-nowrap @5xl:table-cell @5xl:px-6">
                     {dateCourte(prospect.updatedAt)}
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 2xl:table-cell 2xl:px-6">
+                  <Table.Cell className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6">
                     {prospect.phone ? (
                       <a
                         href={`tel:${prospect.phone.replace(/\s+/g, '')}`}
@@ -344,7 +388,7 @@ export function ProspectsTable({
                     )}
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 2xl:table-cell 2xl:px-6">
+                  <Table.Cell className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6">
                     <div className="flex items-center gap-3 text-sm text-tertiary">
                       <span
                         className="flex items-center gap-1"
@@ -363,7 +407,7 @@ export function ProspectsTable({
                     </div>
                   </Table.Cell>
 
-                  <Table.Cell className="px-2 md:px-4">
+                  <Table.Cell className="px-2 @3xl:px-4">
                     <div className="flex items-center justify-end">
                       <Dropdown.Root>
                         <Dropdown.DotsButton />
@@ -390,6 +434,21 @@ export function ProspectsTable({
                             >
                               <span className="pr-4">Modifier</span>
                             </Dropdown.Item>
+                            {onMove ? (
+                              /*
+                                DÉPLACER EST UN RANGEMENT, pas une modification :
+                                il a son entrée propre. Passer par « Modifier »
+                                aurait obligé à ouvrir un formulaire de huit
+                                champs pour changer un dossier.
+                              */
+                              <Dropdown.Item
+                                icon={FolderCheck}
+                                onAction={() => onMove(prospect)}
+                                textValue="Déplacer"
+                              >
+                                <span className="pr-4">Déplacer</span>
+                              </Dropdown.Item>
+                            ) : null}
                             <Dropdown.Item
                               icon={Trash01}
                               onAction={() => onDelete(prospect)}

@@ -27,17 +27,19 @@
  *
  * Rien. Ni les fiches, ni les dossiers, ni les modèles ne passent par le pont.
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/base/buttons/button';
 import { Dialog, Modal, ModalOverlay } from '@/components/application/modals/modal';
 import { Modale } from '@/components/Modale';
 import { PageHeader, Panel, SkeletonRows, SmoothTabs } from '@/components/ui-kit';
 import { SearchField } from '@/components/SearchField';
+import { FolderCheck, Trash01 } from '@untitledui/icons';
 import { Icon } from '@/components/Icon';
 import { FolderSidebar } from '@/components/prospection/FolderSidebar';
 import { buildFolderTree, idsCouverts } from '@/components/prospection/FolderTree';
 import { ProspectForm } from '@/components/prospection/ProspectForm';
 import { ProspectsTable } from '@/components/prospection/ProspectsTable';
+import { MoveDialog } from '@/components/prospection/MoveDialog';
 import { TemplatesPanel } from '@/components/prospection/TemplatesPanel';
 import {
   PROSPECT_STATUS_DEFS,
@@ -91,12 +93,36 @@ export function ProspectionPage() {
   const [edite, setEdite] = useState<Prospect | null>(null);
   const [aSupprimer, setASupprimer] = useState<Prospect | null>(null);
   const [suppressionEnCours, setSuppressionEnCours] = useState(false);
+  /*
+    LA SÉLECTION EST TENUE ICI, pas dans le tableau : c'est cette page qui porte
+    la barre d'actions groupées, et qui doit vider la sélection après un
+    déplacement ou une suppression.
+  */
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [aDeplacer, setADeplacer] = useState<Prospect | 'SELECTION' | null>(null);
+  const [suppressionGroupee, setSuppressionGroupee] = useState(false);
+  /*
+    L'ARBRE SE REPLIE, et le choix survit à la session : il rend 224 px au
+    tableau, ce qui fait revenir deux colonnes. Le stockage peut lever —
+    navigation privée, site data bloqué — et une préférence d'affichage ne doit
+    jamais empêcher l'écran de s'ouvrir.
+  */
+  const [arbreOuvert, setArbreOuvert] = useState(() => {
+    try { return sessionStorage.getItem('panel.prospection.arbre') !== 'ferme'; }
+    catch { return true; }
+  });
 
   const { prospects, summary, isInitialLoading, error, reload } = useProspects();
   const { meetings, reload: rechargerAgenda } = useMeetings('upcoming');
   const dossiersProspects = useProspectFolders('PROSPECT');
   const dossiersModeles = useProspectFolders('TEMPLATE');
   const { templates, reload: rechargerModeles } = useProspectTemplates();
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('panel.prospection.arbre', arbreOuvert ? 'ouvert' : 'ferme');
+    } catch { /* sans conséquence */ }
+  }, [arbreOuvert]);
 
   const toutRecharger = () => { void reload(); void rechargerAgenda(); };
 
@@ -179,6 +205,51 @@ export function ProspectionPage() {
     },
   });
 
+  /** Les fiches cochées, dans l'ordre où la liste les montre. */
+  const selectionnes = useMemo(
+    () => filtres.filter((p) => selection.has(p._id)),
+    [filtres, selection],
+  );
+
+  /**
+   * DÉPLACER — une fiche, ou toutes celles qui sont cochées.
+   *
+   * Les écritures partent EN SÉRIE plutôt qu'en parallèle : vingt `PATCH`
+   * simultanés sur la même collection n'iraient pas plus vite qu'en file, et
+   * une erreur au milieu laisserait un état dont on ne saurait pas dire ce qui
+   * est passé.
+   */
+  const deplacer = async (folderId: string | null) => {
+    const cibles = aDeplacer === 'SELECTION' ? selectionnes : (aDeplacer ? [aDeplacer] : []);
+    for (const p of cibles) {
+      // eslint-disable-next-line no-await-in-loop
+      await api.updateProspect(p._id, { folderId });
+    }
+    setSelection(new Set());
+    toutRecharger();
+    toast.success(cibles.length > 1
+      ? `${cibles.length} prospects déplacés.`
+      : 'Prospect déplacé.');
+  };
+
+  const supprimerSelection = async () => {
+    setSuppressionEnCours(true);
+    try {
+      for (const p of selectionnes) {
+        // eslint-disable-next-line no-await-in-loop
+        await api.deleteProspect(p._id);
+      }
+      toast.success(`${selectionnes.length} prospect${selectionnes.length > 1 ? 's supprimés' : ' supprimé'}.`);
+      setSelection(new Set());
+      setSuppressionGroupee(false);
+      toutRecharger();
+    } catch (err) {
+      toast.error(errorMessage(err, 'La suppression n’a pas abouti.'));
+    } finally {
+      setSuppressionEnCours(false);
+    }
+  };
+
   const supprimer = async () => {
     if (!aSupprimer) return;
     setSuppressionEnCours(true);
@@ -246,7 +317,30 @@ export function ProspectionPage() {
         contenu — la largeur d'un nom de prospect tronqué.
       */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-        {onglet === 'prospects' ? (
+        {/*
+          ── L'ARBRE SE REPLIE, ET CE N'EST PAS UN CONFORT ─────────────────────
+
+          Il occupe 224 px que le tableau n'a pas. Replié, deux colonnes
+          reviennent — le tableau suit désormais la place RÉELLE par une
+          container query, sans rien savoir de l'arbre.
+
+          Le bouton reste visible dans les deux états : un panneau qu'on ferme
+          sans voir comment le rouvrir est un panneau qu'on a perdu.
+        */}
+        {!arbreOuvert ? (
+          <Button
+            size="sm"
+            color="secondary"
+            className="self-start lg:sticky lg:top-4"
+            iconLeading={() => <Icon name="stack" />}
+            onClick={() => setArbreOuvert(true)}
+            aria-expanded={false}
+          >
+            Dossiers
+          </Button>
+        ) : null}
+
+        {arbreOuvert && onglet === 'prospects' ? (
           <FolderSidebar
             racines={arbreProspects.racines}
             total={arbreProspects.total}
@@ -254,9 +348,12 @@ export function ProspectionPage() {
             selection={selProspects}
             onSelectionChange={setSelProspects}
             labelTout="Tous les prospects"
+            onReplier={() => setArbreOuvert(false)}
             {...gestesDossiers('PROSPECT', () => void dossiersProspects.reload())}
           />
-        ) : (
+        ) : null}
+
+        {arbreOuvert && onglet === 'modeles' ? (
           <FolderSidebar
             racines={arbreModeles.racines}
             total={arbreModeles.total}
@@ -264,9 +361,10 @@ export function ProspectionPage() {
             selection={selModeles}
             onSelectionChange={setSelModeles}
             labelTout="Tous les modèles"
+            onReplier={() => setArbreOuvert(false)}
             {...gestesDossiers('TEMPLATE', () => void dossiersModeles.reload())}
           />
-        )}
+        ) : null}
 
         <div className="flex min-w-0 flex-1 flex-col gap-4">
           {onglet === 'prospects' ? (
@@ -306,6 +404,54 @@ export function ProspectionPage() {
                 ))}
               </div>
 
+              {/*
+                ── LA BARRE D'ACTIONS GROUPÉES ────────────────────────────────
+
+                Elle n'existe QUE lorsqu'au moins une case est cochée. Présente
+                en permanence et grisée, elle occuperait une ligne à ne rien
+                dire, et l'œil apprendrait à ne plus la lire.
+
+                Elle est `sticky` : sur vingt lignes, on coche en haut, on
+                descend, et le bouton doit rester sous la main.
+              */}
+              {selectionnes.length > 0 ? (
+                <div
+                  role="group"
+                  aria-label="Actions sur la sélection"
+                  className="uui sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-xl border border-brand bg-primary p-3 shadow-sm"
+                >
+                  <span className="text-sm font-medium text-primary">
+                    {selectionnes.length} sélectionné{selectionnes.length > 1 ? 's' : ''}
+                  </span>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      color="secondary"
+                      iconLeading={FolderCheck}
+                      onClick={() => setADeplacer('SELECTION')}
+                    >
+                      Déplacer
+                    </Button>
+                    {/*
+                      SUPPRIMER PASSE TOUJOURS PAR UNE CONFIRMATION — ici comme
+                      partout ailleurs. Vingt fiches d'un clic est exactement le
+                      geste qu'on ne veut pas voir aboutir par accident.
+                    */}
+                    <Button
+                      size="sm"
+                      color="primary-destructive"
+                      iconLeading={Trash01}
+                      onClick={() => setSuppressionGroupee(true)}
+                    >
+                      Supprimer
+                    </Button>
+                    <Button size="sm" color="link-gray" onClick={() => setSelection(new Set())}>
+                      Tout décocher
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
               {isInitialLoading ? (
                 <Panel title="Prospects"><SkeletonRows rows={4} /></Panel>
               ) : (
@@ -324,6 +470,15 @@ export function ProspectionPage() {
                   }
                   prospects={filtres}
                   upcomingMeetings={meetings}
+                  selectedKeys={selection}
+                  onSelectionChange={(k) => setSelection(
+                    /* « all » veut dire « toutes celles que le filtre montre »,
+                       jamais tout le registre : cocher l'en-tête d'une liste
+                       filtrée ne doit pas armer une action sur des fiches qu'on
+                       ne voit pas. */
+                    k === 'all' ? new Set(filtres.map((p) => p._id)) : k,
+                  )}
+                  onMove={setADeplacer}
                   onEdit={(p) => { setVolet(false); setEdite(p); }}
                   onDelete={setASupprimer}
                   onStatusChanged={toutRecharger}
@@ -394,6 +549,59 @@ export function ProspectionPage() {
           </Dialog>
         </Modal>
       </ModalOverlay>
+
+      <MoveDialog
+        open={aDeplacer !== null}
+        onClose={() => setADeplacer(null)}
+        onConfirm={deplacer}
+        racines={arbreProspects.racines}
+        nombre={aDeplacer === 'SELECTION' ? selectionnes.length : 1}
+        nomUnique={aDeplacer && aDeplacer !== 'SELECTION' ? aDeplacer.name : null}
+        destinationActuelle={
+          aDeplacer && aDeplacer !== 'SELECTION' ? aDeplacer.folderId : undefined
+        }
+      />
+
+      {/*
+        LA CONFIRMATION DE SUPPRESSION GROUPÉE NOMME LES FICHES.
+        « 12 prospects » ne permet pas de vérifier qu'on a coché ce qu'on croit ;
+        au-delà de huit, on compte le reste plutôt que d'allonger la liste
+        au-delà de l'écran.
+      */}
+      {suppressionGroupee ? (
+        <Modale
+          titre={`Supprimer ${selectionnes.length} prospect${selectionnes.length > 1 ? 's' : ''} ?`}
+          onClose={() => setSuppressionGroupee(false)}
+        >
+          <ul className="prospect-history">
+            {selectionnes.slice(0, 8).map((p) => <li key={p._id}><strong>{p.name}</strong></li>)}
+          </ul>
+          {selectionnes.length > 8 ? (
+            <p className="muted">…et {selectionnes.length - 8} autre{selectionnes.length - 8 > 1 ? 's' : ''}.</p>
+          ) : null}
+          <p className="muted">
+            Les rendez-vous et les événements consignés pour eux disparaissent
+            aussi. Un prospect n’est pas une pièce comptable : rien n’est archivé.
+          </p>
+          <div className="contract-actions">
+            <button
+              type="button"
+              className="btn btn-danger btn-small"
+              disabled={suppressionEnCours}
+              onClick={() => void supprimerSelection()}
+            >
+              {suppressionEnCours ? 'Suppression…' : 'Supprimer'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-small"
+              onClick={() => setSuppressionGroupee(false)}
+            >
+              Annuler
+            </button>
+          </div>
+        </Modale>
+      ) : null}
 
       {aSupprimer ? (
         <Modale titre="Supprimer ce prospect ?" onClose={() => setASupprimer(null)}>

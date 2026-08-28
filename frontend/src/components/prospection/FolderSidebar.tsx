@@ -33,7 +33,7 @@ type Volet =
 
 export function FolderSidebar({
   racines, total, sansDossier, selection, onSelectionChange,
-  onCreer, onRenommer, onSupprimer, labelTout, titre = 'Dossiers',
+  onCreer, onRenommer, onSupprimer, onReplier, labelTout, titre = 'Dossiers',
 }: {
   racines: FolderNode[];
   total: number;
@@ -43,6 +43,8 @@ export function FolderSidebar({
   onCreer: (nom: string, parentId: string | null) => Promise<void>;
   onRenommer: (id: string, nom: string) => Promise<void>;
   onSupprimer: (id: string) => Promise<void>;
+  /** Replier la colonne : elle rend 224 px au tableau, qui les reprend seul. */
+  onReplier?: () => void;
   labelTout?: string;
   titre?: string;
 }) {
@@ -79,17 +81,30 @@ export function FolderSidebar({
 
   return (
     <>
-      <aside className="uui flex flex-col gap-2 rounded-xl border border-secondary bg-primary p-3 lg:w-64 lg:shrink-0">
+      <aside className="uui flex flex-col gap-2 rounded-xl border border-secondary bg-primary p-3 lg:w-56 lg:shrink-0">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-xs font-semibold tracking-wide text-tertiary uppercase">{titre}</h3>
-          <Button
-            size="sm"
-            color="link-gray"
-            iconLeading={() => <Icon name="plus-lg" size={12} />}
-            onClick={() => ouvrir({ mode: 'creer', parentId: null, parentNom: null })}
-          >
-            Nouveau
-          </Button>
+          <div className="flex items-center gap-0.5">
+            <Button
+              size="sm"
+              color="link-gray"
+              iconLeading={() => <Icon name="plus-lg" size={12} />}
+              onClick={() => ouvrir({ mode: 'creer', parentId: null, parentNom: null })}
+            >
+              Nouveau
+            </Button>
+            {onReplier ? (
+              <button
+                type="button"
+                aria-label="Replier les dossiers"
+                aria-expanded
+                className="rounded-sm p-1 text-tertiary hover:text-primary"
+                onClick={onReplier}
+              >
+                <Icon name="chevron-right" size={12} className="rotate-180" />
+              </button>
+            ) : null}
+          </div>
         </div>
 
         {/* L'arbre défile DANS la colonne : quarante dossiers ne doivent pas
