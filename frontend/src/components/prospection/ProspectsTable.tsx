@@ -16,10 +16,22 @@
  * illisibles. Les colonnes sortent donc PAR PALIERS, de la moins utile à la
  * plus utile, et trois restent toujours là :
  *
- *   toujours    le prospect (nom + adresse e-mail), le statut, les actions
- *   ≥ 640 px    la nature de l'affaire (conception / refonte)
- *   ≥ 1280 px   le prochain rendez-vous et la dernière activité
- *   ≥ 1536 px   le téléphone et ce qui est attaché (liens, images)
+ *   toujours     la case à cocher, le prospect (nom, e-mail, téléphone), le
+ *                statut, les actions
+ *   ≥ 768 px     la nature de l'affaire (conception / refonte)
+ *   ≥ 1024 px    le prochain rendez-vous et la dernière activité
+ *   ≥ 1120 px    ce qui est attaché (liens, images)
+ *
+ * Ces paliers sont ceux du CONTENEUR, pas de la fenêtre — voir plus bas.
+ *
+ * ── LE TÉLÉPHONE N'A PLUS DE COLONNE ───────────────────────────────────────
+ *
+ * Il vit sous le nom, avec l'adresse e-mail. La page du Panel est bornée à
+ * 1200 px : avec la barre latérale et l'arbre des dossiers, ce tableau ne
+ * dispose jamais de plus de 1160 px, et sept colonnes n'y tiennent pas. Le
+ * numéro est de l'identité, comme l'adresse juste au-dessus ; ce que sa colonne
+ * apportait en propre — le TRI par numéro — n'a aucun usage : on ne classe pas
+ * des affaires par indicatif.
  *
  * ── LES PALIERS SONT CALÉS SUR LA LARGEUR DU CONTENU, PAS DE LA FENÊTRE ─────
  *
@@ -251,12 +263,8 @@ export function ProspectsTable({
               className="hidden px-3 @5xl:table-cell @5xl:px-6"
             />
             <Table.Head
-              id="phone" label="Téléphone" allowsSorting
-              className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6"
-            />
-            <Table.Head
               id="attachments" label="Joint"
-              className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6"
+              className="hidden px-3 @min-[70rem]:table-cell @min-[70rem]:px-6"
             />
             <Table.Head id="actions" className="px-2 @3xl:px-4" />
           </Table.Header>
@@ -328,6 +336,31 @@ export function ProspectsTable({
                           <span className="text-sm text-quaternary">Pas d’adresse e-mail</span>
                         )}
                         {/*
+                          ── LE TÉLÉPHONE VIT SOUS LE NOM, PAS DANS SA COLONNE ──
+
+                          La page du Panel est bornée à 1200 px de large : avec
+                          la barre latérale et l'arbre des dossiers, le tableau
+                          n'a jamais plus de 1160 px. Sept colonnes, une case à
+                          cocher et un menu n'y tiennent pas — et c'est ce qui
+                          le faisait défiler latéralement.
+
+                          Le numéro n'a pas besoin d'une colonne : c'est de
+                          l'identité, comme l'adresse e-mail juste au-dessus, et
+                          il se lit aussi bien sur deux lignes qu'à travers un
+                          alignement vertical dont personne ne se sert. Ce que
+                          la colonne apportait — le TRI par numéro — n'a aucun
+                          usage : on ne classe pas des affaires par indicatif.
+                        */}
+                        {prospect.phone ? (
+                          <a
+                            href={`tel:${prospect.phone.replace(/\s+/g, '')}`}
+                            className="flex items-center gap-1 truncate text-sm text-tertiary hover:underline"
+                          >
+                            <Phone className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{prospect.phone}</span>
+                          </a>
+                        ) : null}
+                        {/*
                           Sous 640 px, la colonne « Type » n'existe plus : la
                           pastille se replie ici plutôt que de disparaître. Elle
                           est en LECTURE SEULE à cette largeur — le sélecteur
@@ -374,21 +407,7 @@ export function ProspectsTable({
                     {dateCourte(prospect.updatedAt)}
                   </Table.Cell>
 
-                  <Table.Cell className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6">
-                    {prospect.phone ? (
-                      <a
-                        href={`tel:${prospect.phone.replace(/\s+/g, '')}`}
-                        className="flex items-center gap-1.5 whitespace-nowrap text-sm text-tertiary hover:underline"
-                      >
-                        <Phone className="size-3.5 shrink-0" aria-hidden="true" />
-                        {prospect.phone}
-                      </a>
-                    ) : (
-                      <span className="text-sm text-quaternary">—</span>
-                    )}
-                  </Table.Cell>
-
-                  <Table.Cell className="hidden px-3 @min-[82rem]:table-cell @min-[82rem]:px-6">
+                  <Table.Cell className="hidden px-3 @min-[70rem]:table-cell @min-[70rem]:px-6">
                     <div className="flex items-center gap-3 text-sm text-tertiary">
                       <span
                         className="flex items-center gap-1"
