@@ -537,4 +537,72 @@ section('13. Les tâches : deux décisions, deux couleurs, et un choix multiple'
   check('…ce qui est coché remonte en tête', /listes\.coches\.map\(ligne\)/.test(picker));
 }
 
+section('14. La liste des prospects : sélection, rangement, et aucune surprise');
+{
+  const tableau = lire('frontend/src/components/prospection/ProspectsTable.tsx');
+  const page = lire('frontend/src/pages/ProspectionPage.tsx');
+  const move = lire('frontend/src/components/prospection/MoveDialog.tsx');
+
+  /**
+   * -- LE DEFAUT QUE CE CONTROLE FERME --------------------------------------
+   *
+   * Les colonnes sortaient a `xl:` et `2xl:` -- des paliers de FENETRE. Or ce
+   * tableau ne dispose jamais de la fenetre : la page du Panel est bornee a
+   * 1200 px, la barre laterale en prend 250 et l'arbre des dossiers 224.
+   *
+   * Mesure sur l'instance deployee, arbre ouvert : 1241 px de tableau pour
+   * 1128 px de place a 1920 de fenetre. Il defilait lateralement A TOUTES les
+   * largeurs de bureau -- et un tableau qu'il faut faire defiler pour lire une
+   * colonne est un tableau dont la moitie n'existe pas.
+   */
+  check('les paliers du tableau suivent le CONTENEUR',
+    /className="uui @container"/.test(tableau));
+  const paliersFenetre = tableau.match(/(?<![@\w-])(sm|md|lg|xl|2xl):(table-cell|hidden)/g) || [];
+  check(`aucun palier de FENÊTRE ne masque une colonne${paliersFenetre.length ? ` — ${paliersFenetre.join(', ')}` : ''}`,
+    paliersFenetre.length === 0);
+
+  /**
+   * LA CASE A COCHER EST CELLE DE LA LIBRAIRIE : `selectionMode` suffit, et
+   * React Aria pose la colonne, la case « tout cocher », `aria-selected` et la
+   * selection au clavier. Une colonne maison aurait tout laisse a faire.
+   */
+  check('les lignes se cochent', /selectionMode=\{onSelectionChange \? 'multiple' : 'none'\}/.test(tableau));
+  /*
+    « TOUT COCHER » NE COCHE QUE CE QUE LE FILTRE MONTRE. Armer une suppression
+    sur des fiches qu'on ne voit pas serait le pire des pieges.
+  */
+  check('…et « tout cocher » ne dépasse jamais le filtre',
+    /k === 'all' \? new Set\(filtres\.map\(\(p\) => p\._id\)\) : k/.test(page));
+
+  /**
+   * LA BARRE N'EXISTE QUE LORSQU'UNE CASE EST COCHEE. Presente en permanence et
+   * grisee, elle occuperait une ligne a ne rien dire, et l'oeil apprendrait a
+   * ne plus la lire.
+   */
+  check('la barre d’actions n’apparaît qu’avec une sélection',
+    /\{selectionnes\.length > 0 \? \(/.test(page));
+  check('…et ses deux actions portent leur icône',
+    /iconLeading=\{FolderCheck\}/.test(page) && /iconLeading=\{Trash01\}/.test(page));
+
+  /** DEPLACER EST UN RANGEMENT, pas une modification : entree propre. */
+  check('le menu de ligne propose « Déplacer »',
+    /icon=\{FolderCheck\}/.test(tableau) && /textValue="Déplacer"/.test(tableau));
+  /* « SANS DOSSIER » EST UNE DESTINATION : sortir une fiche d'un dossier est un
+     geste courant, et sans elle il faudrait supprimer le dossier. */
+  check('…et « Sans dossier » est une destination',
+    /ligne\(null, 'Sans dossier'/.test(move));
+
+  /**
+   * AUCUNE SUPPRESSION SANS CONFIRMATION. Celle du groupe NOMME les fiches :
+   * « 12 prospects » ne permet pas de verifier qu'on a coche ce qu'on croit.
+   */
+  check('la suppression groupée passe par une confirmation',
+    /\{suppressionGroupee \? \(/.test(page) && /Supprimer \$\{selectionnes\.length\}/.test(page));
+  check('…qui NOMME les fiches concernées',
+    /selectionnes\.slice\(0, 8\)\.map/.test(page));
+  /* Le bouton de la barre OUVRE la confirmation ; il ne supprime jamais. */
+  check('…et le bouton de la barre ne supprime pas directement',
+    /onClick=\{\(\) => setSuppressionGroupee\(true\)\}/.test(page));
+}
+
 finish();
