@@ -698,4 +698,61 @@ section('15. La rangée d’actions d’un message : trois boutons, un seul syst
     && !/#[0-9a-fA-F]{3,8}/.test(famille));
 }
 
+section('16. La communication : deux sous-onglets, pas deux listes empilées');
+{
+  const msg = lire('frontend/src/components/prospection/ProspectMessages.tsx');
+
+  /**
+   * -- POURQUOI DEUX ONGLETS PLUTOT QU'UN EMPILEMENT -------------------------
+   *
+   * Preparer la prochaine relance et relire ce qu'on a deja dit sont deux
+   * intentions, et on n'est jamais dans les deux a la fois. Empilees, les deux
+   * listes se poussaient l'une l'autre : sur un prospect suivi depuis trois
+   * mois, relire la derniere accroche envoyee demandait de faire defiler
+   * quatre brouillons -- dont chacun occupe la hauteur de son texte, puisqu'un
+   * message se lit en entier ou ne sert a rien.
+   */
+  check('les deux groupes sont des ONGLETS', /<SmoothTabs/.test(msg));
+  check('…« À envoyer » et « Envoyé(s) »',
+    /label: 'À envoyer'/.test(msg) && /envoyes\.length > 1 \? 'Envoyés' : 'Envoyé'/.test(msg));
+  /* LE COMPTE EST DANS L'ONGLET : c'est ce qui permet de savoir qu'il reste
+     trois brouillons SANS y aller. */
+  check('…et chacun porte son compte',
+    /badge: String\(prevus\.length\)/.test(msg) && /badge: String\(envoyes\.length\)/.test(msg));
+
+  /**
+   * L'INDICATEUR NE DOIT PAS VOLER D'UN JEU D'ONGLETS A L'AUTRE : la fiche
+   * porte deja les siens, et `motion` croit qu'il s'agit du meme quand ils
+   * partagent un identifiant.
+   */
+  check('…sous un identifiant d’animation qui leur est propre',
+    /layoutId="prospect-messages-tabs"/.test(msg));
+
+  /**
+   * L'ONGLET D'ARRIVEE EST CELUI QUI A QUELQUE CHOSE A FAIRE, et il n'est
+   * choisi QU'UNE FOIS. Le recalculer a chaque rendu ferait sauter l'ecran sous
+   * les doigts : marquer le dernier brouillon comme envoye viderait
+   * « A envoyer », et l'on serait projete dans « Envoyes » a l'instant du clic.
+   */
+  check('l’onglet d’arrivée est celui qui appelle une action',
+    /useState<'a-envoyer' \| 'envoyes'>\(\s*\(\) => \(messages\.some\(\(m\) => !m\.sentAt\) \? 'a-envoyer' : 'envoyes'\)/.test(msg));
+
+  /* CHAQUE ONGLET A SON PROPRE ETAT VIDE : « aucun message » ne dit pas la
+     meme chose que « tout est parti ». */
+  check('…et chaque onglet dit son propre vide',
+    /Rien en attente/.test(msg) && /Rien n’a encore été envoyé/.test(msg));
+
+  /**
+   * LES ENVOYES SE LISENT DU PLUS RECENT AU PLUS ANCIEN -- c'est l'ordre dans
+   * lequel on les cherche. Les brouillons gardent leur ordre de saisie : c'est
+   * celui dans lequel on prevoit de les envoyer.
+   */
+  check('les envoyés remontent le temps, les brouillons non',
+    /new Date\(b\.sentAt \?\? 0\)\.getTime\(\) - new Date\(a\.sentAt \?\? 0\)\.getTime\(\)/.test(msg)
+    && /const prevus = messages\.filter\(\(m\) => !m\.sentAt\);/.test(msg));
+  /* LE TRI SE FAIT SUR UNE COPIE : `sort` mute, et muter la propriete recue
+     ferait diverger l'ordre du parent de celui qu'il croit avoir passe. */
+  check('…et le tri ne mute pas la liste reçue', /\.filter\(\(m\) => m\.sentAt\)\s*\n\s*\.slice\(\)/.test(msg));
+}
+
 finish();

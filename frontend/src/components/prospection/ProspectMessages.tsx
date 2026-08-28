@@ -8,10 +8,20 @@
  * a dit, et ce qu'on prévoit de dire. La différence compte, parce qu'un écran
  * qui ressemble à une boîte d'envoi laisse croire que le bouton envoie.
  *
- * ══ DEUX GROUPES, ET LE PRÉVU PASSE DEVANT ═════════════════════════════════
+ * ══ DEUX SOUS-ONGLETS, ET NON DEUX LISTES EMPILÉES ═════════════════════════
  *
  * Ce qui reste à envoyer appelle une action ; ce qui est parti est de la
- * mémoire. L'ordre suit l'attention, comme partout ailleurs dans le Panel.
+ * mémoire. Ce sont deux intentions, et on n'est jamais dans les deux à la fois :
+ * ou l'on prépare la prochaine relance, ou l'on relit ce qu'on a déjà dit.
+ *
+ * Empilées, les deux listes se poussaient l'une l'autre. Sur un prospect suivi
+ * depuis trois mois, relire la dernière accroche envoyée demandait de faire
+ * défiler quatre brouillons — dont chacun occupe la hauteur de son texte,
+ * puisqu'un message se lit en entier ou ne sert à rien.
+ *
+ * L'onglet d'arrivée est celui qui a quelque chose à faire : « À envoyer » s'il
+ * reste des brouillons, « Envoyés » sinon. Ouvrir sur un onglet vide quand
+ * l'autre est plein oblige à un clic pour rien, à chaque visite.
  *
  * ══ LE CANAL EST DU TEXTE LIBRE ════════════════════════════════════════════
  *
@@ -26,6 +36,7 @@ import { Dialog, Modal, ModalOverlay } from '@/components/application/modals/mod
 import { Input } from '@/components/base/input/input';
 import { TextArea } from '@/components/base/textarea/textarea';
 import { Icon } from '@/components/Icon';
+import { SmoothTabs } from '@/components/ui-kit';
 import { formatDateTime } from '@/lib/format';
 import type { ProspectMessage } from '@/types.prospection';
 
@@ -148,6 +159,15 @@ export function ProspectMessages({
 }) {
   const [edite, setEdite] = useState<ProspectMessage | null>(null);
   const [ouvert, setOuvert] = useState(false);
+  /*
+    L'ONGLET N'EST CHOISI QU'UNE FOIS, à l'ouverture de la fiche. Le recalculer
+    à chaque rendu ferait sauter l'écran sous les doigts : marquer le dernier
+    brouillon comme envoyé viderait « À envoyer », et l'on se retrouverait
+    projeté dans « Envoyés » à l'instant même du clic.
+  */
+  const [groupe, setGroupe] = useState<'a-envoyer' | 'envoyes'>(
+    () => (messages.some((m) => !m.sentAt) ? 'a-envoyer' : 'envoyes'),
+  );
 
   /**
    * LA PULSATION EST TENUE PAR LE PARENT, ET C'EST UNE CORRECTION.
@@ -174,7 +194,17 @@ export function ProspectMessages({
   }, [pulse]);
 
   const prevus = messages.filter((m) => !m.sentAt);
-  const envoyes = messages.filter((m) => m.sentAt);
+  /*
+    LES ENVOYÉS SE LISENT DU PLUS RÉCENT AU PLUS ANCIEN.
+    C'est l'ordre dans lequel on les cherche : « qu'est-ce que je lui ai dit la
+    dernière fois ? » se pose avant « par quoi avais-je commencé ? ». Les
+    brouillons, eux, gardent leur ordre de saisie — c'est celui dans lequel on
+    prévoit de les envoyer.
+  */
+  const envoyes = messages
+    .filter((m) => m.sentAt)
+    .slice()
+    .sort((a, b) => new Date(b.sentAt ?? 0).getTime() - new Date(a.sentAt ?? 0).getTime());
 
   const ouvrir = (message: ProspectMessage | null) => {
     setEdite(message ?? { ...VIDE, id: identifiant() });
@@ -214,49 +244,77 @@ export function ProspectMessages({
           comptez envoyer — le canal, un titre pour vous y retrouver, et le
           texte.
         </p>
-      ) : null}
+      ) : (
+        <>
+          {/*
+            LE COMPTE EST DANS L'ONGLET, pas au-dessus de la liste : c'est ce
+            qui permet de savoir qu'il reste trois brouillons SANS y aller.
+            Un onglet vide reste affiché — le masquer ferait croire que la
+            notion n'existe pas, et le ferait réapparaître sans prévenir.
+          */}
+          <SmoothTabs
+            tabs={[
+              { value: 'a-envoyer' as const, label: 'À envoyer', badge: String(prevus.length) },
+              {
+                value: 'envoyes' as const,
+                label: envoyes.length > 1 ? 'Envoyés' : 'Envoyé',
+                badge: String(envoyes.length),
+              },
+            ]}
+            value={groupe}
+            onChange={setGroupe}
+            /* Cet écran porte déjà les onglets de la FICHE. Deux indicateurs
+               partageant un identifiant se voleraient l'un l'autre. */
+            layoutId="prospect-messages-tabs"
+          />
 
-      {prevus.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h3 className="text-xs font-semibold tracking-wide text-tertiary uppercase">
-            À envoyer ({prevus.length})
-          </h3>
-          {prevus.map((m) => (
-            <MessageCard
-              key={m.id}
-              message={m}
-              onEdit={() => ouvrir(m)}
-              onDelete={() => onChange(messages.filter((x) => x.id !== m.id))}
-              onToggleSent={() => onChange(messages.map((x) => (
-                x.id === m.id ? { ...x, sentAt: new Date().toISOString() } : x
-              )))}
-              pulse={pulse === m.id}
-              onPulse={setPulse}
-            />
-          ))}
-        </section>
-      ) : null}
-
-      {envoyes.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h3 className="text-xs font-semibold tracking-wide text-tertiary uppercase">
-            Envoyés ({envoyes.length})
-          </h3>
-          {envoyes.map((m) => (
-            <MessageCard
-              key={m.id}
-              message={m}
-              onEdit={() => ouvrir(m)}
-              onDelete={() => onChange(messages.filter((x) => x.id !== m.id))}
-              onToggleSent={() => onChange(messages.map((x) => (
-                x.id === m.id ? { ...x, sentAt: null } : x
-              )))}
-              pulse={pulse === m.id}
-              onPulse={setPulse}
-            />
-          ))}
-        </section>
-      ) : null}
+          {groupe === 'a-envoyer' ? (
+            prevus.length === 0 ? (
+              <p className="text-sm text-tertiary">
+                Rien en attente. Tout ce qui est écrit est parti.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {prevus.map((m) => (
+                  <MessageCard
+                    key={m.id}
+                    message={m}
+                    onEdit={() => ouvrir(m)}
+                    onDelete={() => onChange(messages.filter((x) => x.id !== m.id))}
+                    onToggleSent={() => onChange(messages.map((x) => (
+                      x.id === m.id ? { ...x, sentAt: new Date().toISOString() } : x
+                    )))}
+                    pulse={pulse === m.id}
+                    onPulse={setPulse}
+                  />
+                ))}
+              </div>
+            )
+          ) : (
+            envoyes.length === 0 ? (
+              <p className="text-sm text-tertiary">
+                Rien n’a encore été envoyé à ce prospect.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {envoyes.map((m) => (
+                  <MessageCard
+                    key={m.id}
+                    message={m}
+                    onEdit={() => ouvrir(m)}
+                    onDelete={() => onChange(messages.filter((x) => x.id !== m.id))}
+                    onToggleSent={() => onChange(messages.map((x) => (
+                      x.id === m.id ? { ...x, sentAt: null } : x
+                    )))}
+                    pulse={pulse === m.id}
+                    onPulse={setPulse}
+                  />
+                ))}
+              </div>
+            )
+          )}
+        </>
+      )}
 
       <ModalOverlay isOpen={ouvert} onOpenChange={(v) => { if (!v) { setOuvert(false); setEdite(null); } }} isDismissable>
         <Modal className="w-full max-w-xl">
