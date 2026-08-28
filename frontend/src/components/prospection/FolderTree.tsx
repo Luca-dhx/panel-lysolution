@@ -32,6 +32,7 @@
 import { useMemo } from 'react';
 import {
   Button as AriaButton,
+  Collection as AriaCollection,
   Tree as AriaTree,
   TreeItem as AriaTreeItem,
   TreeItemContent as AriaTreeItemContent,
@@ -126,88 +127,33 @@ const LIGNE = [
   'selected:bg-secondary selected:font-medium',
 ].join(' ');
 
-function Noeud({
-  noeud, onRenommer, onSupprimer, onAjouterEnfant,
-}: {
-  noeud: FolderNode;
-  onRenommer?: (n: FolderNode) => void;
-  onSupprimer?: (n: FolderNode) => void;
-  onAjouterEnfant?: (n: FolderNode) => void;
-}) {
-  const aDesEnfants = noeud.children.length > 0;
+/**
+ * UNE ENTRÉE DE L'ARBRE — dossier, ou raccourci.
+ *
+ * « Tout » et « Sans dossier » ne sont pas des dossiers, mais ils vivent dans
+ * la MÊME collection : ce sont trois réponses à la même question — « qu'est-ce
+ * que je regarde ? » — et les séparer en deux listes obligerait à chercher à
+ * deux endroits, et à gérer deux sélections qui doivent n'en faire qu'une.
+ */
+interface Entree {
+  id: string;
+  name: string;
+  compteBranche: number;
+  children: Entree[];
+  /** VRAI pour « Tout » et « Sans dossier » : ni renommables, ni supprimables. */
+  raccourci: boolean;
+  icone: 'stack' | 'journal-text' | 'archive';
+}
 
-  return (
-    <AriaTreeItem id={noeud.id} textValue={noeud.name} className={LIGNE}>
-      <AriaTreeItemContent>
-        {/*
-          LE CHEVRON EST UN BOUTON `slot="chevron"` : React Aria lui câble le
-          dépliage, l'état `aria-expanded` et la touche Entrée. Un `<span>` avec
-          un `onClick` aurait tout laissé au clavier sans réponse.
-
-          Une feuille garde son emplacement, vide : sans lui, les noms des
-          feuilles et ceux des dossiers ne s'aligneraient pas, et l'œil lirait
-          deux niveaux là où il n'y en a qu'un.
-        */}
-        {aDesEnfants ? (
-          <AriaButton
-            slot="chevron"
-            className="flex size-5 shrink-0 items-center justify-center rounded-sm text-tertiary outline-hidden hover:text-primary"
-          >
-            <Icon name="chevron-right" size={12} className="transition-transform group-expanded:rotate-90" />
-          </AriaButton>
-        ) : (
-          <span aria-hidden="true" className="size-5 shrink-0" />
-        )}
-
-        <Icon name={aDesEnfants ? 'stack' : 'journal-text'} size={14} className="shrink-0 text-tertiary" />
-        <span className="min-w-0 flex-1 truncate text-secondary group-selected:text-primary">
-          {noeud.name}
-        </span>
-        <span className="shrink-0 text-xs text-quaternary">{noeud.compteBranche}</span>
-
-        {/*
-          LES ACTIONS N'APPARAISSENT QU'AU SURVOL ET AU FOCUS.
-          `focus-within` est la moitié qui compte : sans elle, un utilisateur au
-          clavier atteindrait des boutons invisibles.
-        */}
-        {(onAjouterEnfant || onRenommer || onSupprimer) ? (
-          <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            {onAjouterEnfant ? (
-              <button
-                type="button" aria-label={`Ajouter un sous-dossier à ${noeud.name}`}
-                className="rounded-sm p-0.5 text-tertiary hover:text-primary"
-                onClick={(e) => { e.stopPropagation(); onAjouterEnfant(noeud); }}
-              ><Icon name="plus-lg" size={12} /></button>
-            ) : null}
-            {onRenommer ? (
-              <button
-                type="button" aria-label={`Renommer ${noeud.name}`}
-                className="rounded-sm p-0.5 text-tertiary hover:text-primary"
-                onClick={(e) => { e.stopPropagation(); onRenommer(noeud); }}
-              ><Icon name="pencil" size={12} /></button>
-            ) : null}
-            {onSupprimer ? (
-              <button
-                type="button" aria-label={`Supprimer ${noeud.name}`}
-                className="rounded-sm p-0.5 text-tertiary hover:text-primary"
-                onClick={(e) => { e.stopPropagation(); onSupprimer(noeud); }}
-              ><Icon name="trash" size={12} /></button>
-            ) : null}
-          </span>
-        ) : null}
-      </AriaTreeItemContent>
-
-      {noeud.children.map((enfant) => (
-        <Noeud
-          key={enfant.id}
-          noeud={enfant}
-          onRenommer={onRenommer}
-          onSupprimer={onSupprimer}
-          onAjouterEnfant={onAjouterEnfant}
-        />
-      ))}
-    </AriaTreeItem>
-  );
+function versEntree(n: FolderNode): Entree {
+  return {
+    id: n.id,
+    name: n.name,
+    compteBranche: n.compteBranche,
+    children: n.children.map(versEntree),
+    raccourci: false,
+    icone: n.children.length > 0 ? 'stack' : 'journal-text',
+  };
 }
 
 export function FolderTree({
@@ -226,49 +172,119 @@ export function FolderTree({
 }) {
   const cles = useMemo(() => new Set([selection]), [selection]);
 
+  const entrees = useMemo<Entree[]>(() => [
+    { id: 'ALL', name: labelTout, compteBranche: total, children: [], raccourci: true, icone: 'stack' },
+    { id: 'NONE', name: 'Sans dossier', compteBranche: sansDossier, children: [], raccourci: true, icone: 'archive' },
+    ...racines.map(versEntree),
+  ], [racines, total, sansDossier, labelTout]);
+
+  /** Retrouver le nœud d'origine : les rappels parlent en `FolderNode`. */
+  const parId = useMemo(() => {
+    const index = new Map<string, FolderNode>();
+    const visiter = (liste: FolderNode[]) => {
+      for (const n of liste) { index.set(n.id, n); visiter(n.children); }
+    };
+    visiter(racines);
+    return index;
+  }, [racines]);
+
+  /**
+   * ── LE RENDU EST UNE FONCTION, ET CE N'EST PAS UN DÉTAIL ──────────────────
+   *
+   * Une première version enveloppait chaque nœud dans un composant maison.
+   * L'arbre ne rendait alors RIEN : le constructeur de collection de React Aria
+   * ne voit pas à travers un composant arbitraire — il ne connaît que ses
+   * propres primitives (`TreeItem`, `Collection`). Constaté sur l'instance
+   * déployée : `role="tree"` introuvable, aucune erreur en console.
+   *
+   * La récursion passe donc par `<Collection items>`, qui est la seule façon
+   * supportée d'imbriquer.
+   */
+  const rendre = (entree: Entree) => {
+    const aDesEnfants = entree.children.length > 0;
+    const noeud = parId.get(entree.id) ?? null;
+    const gerable = !entree.raccourci && noeud !== null;
+
+    return (
+      <AriaTreeItem id={entree.id} textValue={entree.name} className={LIGNE}>
+        <AriaTreeItemContent>
+          {/*
+            LE CHEVRON EST UN BOUTON `slot="chevron"` : React Aria lui câble le
+            dépliage, l'état `aria-expanded` et la touche Entrée. Un `<span>`
+            avec un `onClick` aurait tout laissé au clavier sans réponse.
+
+            Une feuille garde son emplacement, vide : sans lui, les noms des
+            feuilles et ceux des dossiers ne s'aligneraient pas, et l'œil lirait
+            deux niveaux là où il n'y en a qu'un.
+          */}
+          {aDesEnfants ? (
+            <AriaButton
+              slot="chevron"
+              className="flex size-5 shrink-0 items-center justify-center rounded-sm text-tertiary outline-hidden hover:text-primary"
+            >
+              <Icon name="chevron-right" size={12} className="transition-transform group-expanded:rotate-90" />
+            </AriaButton>
+          ) : (
+            <span aria-hidden="true" className="size-5 shrink-0" />
+          )}
+
+          <Icon name={entree.icone} size={14} className="shrink-0 text-tertiary" />
+          <span className="min-w-0 flex-1 truncate text-secondary group-selected:text-primary">
+            {entree.name}
+          </span>
+          <span className="shrink-0 text-xs text-quaternary">{entree.compteBranche}</span>
+
+          {/*
+            LES ACTIONS N'APPARAISSENT QU'AU SURVOL ET AU FOCUS.
+            `focus-within` est la moitié qui compte : sans elle, un utilisateur
+            au clavier atteindrait des boutons invisibles.
+          */}
+          {gerable && (onAjouterEnfant || onRenommer || onSupprimer) ? (
+            <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              {onAjouterEnfant ? (
+                <button
+                  type="button" aria-label={`Ajouter un sous-dossier à ${entree.name}`}
+                  className="rounded-sm p-0.5 text-tertiary hover:text-primary"
+                  onClick={(e) => { e.stopPropagation(); onAjouterEnfant(noeud); }}
+                ><Icon name="plus-lg" size={12} /></button>
+              ) : null}
+              {onRenommer ? (
+                <button
+                  type="button" aria-label={`Renommer ${entree.name}`}
+                  className="rounded-sm p-0.5 text-tertiary hover:text-primary"
+                  onClick={(e) => { e.stopPropagation(); onRenommer(noeud); }}
+                ><Icon name="pencil" size={12} /></button>
+              ) : null}
+              {onSupprimer ? (
+                <button
+                  type="button" aria-label={`Supprimer ${entree.name}`}
+                  className="rounded-sm p-0.5 text-tertiary hover:text-primary"
+                  onClick={(e) => { e.stopPropagation(); onSupprimer(noeud); }}
+                ><Icon name="trash" size={12} /></button>
+              ) : null}
+            </span>
+          ) : null}
+        </AriaTreeItemContent>
+
+        <AriaCollection items={entree.children}>{rendre}</AriaCollection>
+      </AriaTreeItem>
+    );
+  };
+
   return (
     <AriaTree
       aria-label="Dossiers"
       selectionMode="single"
       selectedKeys={cles}
       disallowEmptySelection
+      items={entrees}
       onSelectionChange={(k) => {
         const premier = [...k][0];
         if (typeof premier === 'string') onSelectionChange(premier as FolderSelection);
       }}
       className="uui flex flex-col gap-0.5 outline-hidden"
     >
-      <AriaTreeItem id="ALL" textValue={labelTout} className={LIGNE}>
-        <AriaTreeItemContent>
-          <span aria-hidden="true" className="size-5 shrink-0" />
-          <Icon name="stack" size={14} className="shrink-0 text-tertiary" />
-          <span className="min-w-0 flex-1 truncate text-secondary group-selected:text-primary">
-            {labelTout}
-          </span>
-          <span className="shrink-0 text-xs text-quaternary">{total}</span>
-        </AriaTreeItemContent>
-      </AriaTreeItem>
-
-      <AriaTreeItem id="NONE" textValue="Sans dossier" className={LIGNE}>
-        <AriaTreeItemContent>
-          <span aria-hidden="true" className="size-5 shrink-0" />
-          <Icon name="archive" size={14} className="shrink-0 text-tertiary" />
-          <span className="min-w-0 flex-1 truncate text-secondary group-selected:text-primary">
-            Sans dossier
-          </span>
-          <span className="shrink-0 text-xs text-quaternary">{sansDossier}</span>
-        </AriaTreeItemContent>
-      </AriaTreeItem>
-
-      {racines.map((n) => (
-        <Noeud
-          key={n.id}
-          noeud={n}
-          onRenommer={onRenommer}
-          onSupprimer={onSupprimer}
-          onAjouterEnfant={onAjouterEnfant}
-        />
-      ))}
+      {rendre}
     </AriaTree>
   );
 }
