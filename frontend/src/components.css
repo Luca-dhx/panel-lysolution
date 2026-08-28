@@ -4811,38 +4811,112 @@ body {
   gap: var(--p-space-2, 0.5rem);
 }
 
-/* ── LES DEUX DÉCISIONS D'UNE TÂCHE ÉCHUE ─────────────────────────────────
-   Une échéance passée pose exactement deux questions — « c'est fait ? » ou
-   « on repousse ? » — et ce sont deux réponses OPPOSÉES. Les peindre du même
-   gris obligeait à lire les deux libellés avant de cliquer, à chaque fois.
+/* ── LES ACTIONS PLEINES : UNE FAMILLE, QUATRE RÔLES ──────────────────────
+
+   Une action qui engage quelque chose se peint ; une action neutre ne se peint
+   pas. Quatre rôles, et chacun répond à « qu'est-ce qui se passe si je clique »
+   avant même qu'on lise le libellé :
+
+     act-ok       ça avance et c'est bon      « Fait », « Marquer envoyé »
+     act-warn     ça décale, ça temporise     « Reporter », « À envoyer »
+     act-danger   ça retire, sans retour      « Supprimer »
+     act-neutral  ça ouvre, ça ne décide pas  « Modifier »
 
    POURQUOI DES CLASSES PLUTÔT QUE DES UTILITAIRES TAILWIND : la teinte de
    survol (`hover:bg-utility-green-600`) n'était pas ÉMISE — vérifié dans les
    feuilles produites, la règle n'existait nulle part. Un bouton dont le survol
    ne répond pas se lit comme un bouton mort.
 
-   Les couleurs sont celles du Panel : `--p-ok` et `--p-warn`. Pas un code
-   hexadécimal — changer le thème repeint ces deux boutons comme le reste.
-   `--p-background` pour le texte : c'est le fond du Panel, donc toujours le
-   contraste maximal avec un aplat de couleur, sur thème clair comme sombre. */
-/* LE SÉLECTEUR PORTE LA BALISE, ET C'EST LA MOITIÉ QUI COMPTE.
+   LE SÉLECTEUR PORTE LA BALISE, et c'est l'autre moitié. `.act-ok` seul
+   PERDAIT : les utilitaires Tailwind sont importés APRÈS cette feuille, et à
+   spécificité égale — une classe contre une classe — c'est l'ordre qui tranche.
+   Le bouton sortait bleu, la couleur de `primary` ; constaté sur l'instance,
+   `rgb(59, 130, 246)`. `button.act-ok` vaut (0,1,1) et bat un utilitaire à
+   (0,1,0), sans recourir à `!important` — qui aurait aussi écrasé les états de
+   focus et de désactivation que le composant gère très bien.
 
-   `.task-btn-done` seul PERDAIT : les utilitaires Tailwind sont importés APRÈS
-   cette feuille, et à spécificité égale — une classe contre une classe — c'est
-   l'ordre qui tranche. Le bouton sortait bleu, la couleur de `primary`.
-   Vérifié sur l'instance : `rgb(59, 130, 246)` sur les deux.
-
-   `button.task-btn-done` vaut (0,1,1) et bat un utilitaire à (0,1,0), sans
-   recourir à `!important` — qui aurait aussi écrasé les états de focus et de
-   désactivation que le composant gère très bien. */
-button.task-btn-done,
-button.task-btn-postpone {
+   Les couleurs sont celles du Panel : `--p-ok`, `--p-warn`, `--p-danger`. Pas
+   un code hexadécimal — changer le thème les repeint comme le reste.
+   `--p-background` pour le texte : c'est le fond du Panel, donc le contraste
+   maximal avec un aplat, sur thème clair comme sombre. */
+button.act-ok,
+button.act-warn,
+button.act-danger {
   color: var(--p-background);
   border-color: transparent;
 }
 
-button.task-btn-done { background-color: var(--p-ok); }
-button.task-btn-done:hover { background-color: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground)); }
+button.act-ok { background-color: var(--p-ok); }
+button.act-ok:hover { background-color: color-mix(in srgb, var(--p-ok) 82%, var(--p-foreground)); }
 
-button.task-btn-postpone { background-color: var(--p-warn); }
-button.task-btn-postpone:hover { background-color: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground)); }
+button.act-warn { background-color: var(--p-warn); }
+button.act-warn:hover { background-color: color-mix(in srgb, var(--p-warn) 82%, var(--p-foreground)); }
+
+button.act-danger { background-color: var(--p-danger); }
+button.act-danger:hover { background-color: color-mix(in srgb, var(--p-danger) 82%, var(--p-foreground)); }
+
+/* LE NEUTRE N'EST PAS PEINT, et c'est le point : trois aplats côte à côte se
+   valent visuellement, et l'œil ne sait plus lequel est la décision. Il garde
+   la même HAUTEUR et le même rembourrage que les trois autres — c'est ce qui
+   les fait lire comme une rangée, et non comme deux boutons plus un lien. */
+button.act-neutral {
+  background-color: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+}
+button.act-neutral:hover { background-color: var(--p-surface-raised, var(--bg-input)); border-color: var(--accent); }
+
+/* ── LE RETOUR AU CLIC ─────────────────────────────────────────────────────
+
+   L'enfoncement est immédiat et minuscule : 2 % suffisent à faire sentir que le
+   clic a porté, là où une animation d'une demi-seconde donnerait l'impression
+   d'attendre quelque chose.
+
+   `transform` et `filter` seulement : ni la géométrie ni la mise en page ne
+   changent, donc rien ne se recalcule et la rangée ne bouge pas. */
+button.act-ok,
+button.act-warn,
+button.act-danger,
+button.act-neutral {
+  transition: background-color 120ms ease, border-color 120ms ease, transform 90ms ease;
+}
+
+button.act-ok:active,
+button.act-warn:active,
+button.act-danger:active,
+button.act-neutral:active { transform: scale(0.97); }
+
+/* ── LA CONFIRMATION QUI SUIT L'ACTION ─────────────────────────────────────
+
+   Marquer un message envoyé ne change qu'un mot et une pastille : sans un
+   signe, on ne sait pas si le clic est passé, et on reclique. La pulsation dure
+   le temps de le voir et pas plus — une animation qu'on attend est une
+   animation de trop.
+
+   Elle est portée par une CLASSE retirée après coup, et non par une transition
+   d'état : rejouer une animation sur un même élément demande de la retirer puis
+   de la remettre, ce que React fait proprement avec un état et un délai. */
+@keyframes act-pulse {
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--p-ok) 55%, transparent); }
+  35%  { transform: scale(1.06); box-shadow: 0 0 0 6px color-mix(in srgb, var(--p-ok) 22%, transparent); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--p-ok) 0%, transparent); }
+}
+
+button.act-pulse { animation: act-pulse 520ms ease-out; }
+
+/* CE QUI EST DÉCORATIF S'EFFACE QUAND ON DEMANDE MOINS DE MOUVEMENT. Le
+   changement de couleur et de libellé, lui, RESTE : il porte l'information, et
+   la couper laisserait l'utilisateur sans retour du tout. */
+@media (prefers-reduced-motion: reduce) {
+  button.act-ok,
+  button.act-warn,
+  button.act-danger,
+  button.act-neutral { transition: background-color 120ms ease, border-color 120ms ease; }
+
+  button.act-ok:active,
+  button.act-warn:active,
+  button.act-danger:active,
+  button.act-neutral:active { transform: none; }
+
+  button.act-pulse { animation: none; }
+}

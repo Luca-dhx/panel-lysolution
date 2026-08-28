@@ -53,8 +53,8 @@ import type { TaskTargetResolver } from '@/lib/useTaskTargets';
  * Un bouton dont le survol ne répond pas se lit comme un bouton mort. Les deux
  * règles vivent donc dans `components.css`, sur `--p-ok` et `--p-warn`.
  */
-const VERT = 'task-btn-done';
-const ORANGE = 'task-btn-postpone';
+const VERT = 'act-ok';
+const ORANGE = 'act-warn';
 
 export interface TaskCardProps {
   task: Task;

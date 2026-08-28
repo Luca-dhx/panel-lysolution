@@ -19,7 +19,7 @@
  * liste fermée aurait forcé « Autre » dans la moitié des cas, et « Autre » ne
  * dit rien à celui qui relit six mois plus tard.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Badge } from '@/components/base/badges/badges';
 import { Button } from '@/components/base/buttons/button';
 import { Dialog, Modal, ModalOverlay } from '@/components/application/modals/modal';
@@ -48,6 +48,32 @@ function MessageCard({
   onToggleSent: () => void;
 }) {
   const envoye = Boolean(message.sentAt);
+
+  /**
+   * LA PULSATION EST UN ÉTAT, PAS UNE TRANSITION.
+   *
+   * Rejouer une animation CSS sur un même élément demande de retirer la classe
+   * puis de la remettre — un `key` qui change, ou un état et un délai. Le second
+   * est le seul qui ne démonte rien : remonter la carte lui ferait perdre son
+   * défilement et le focus du bouton qu'on vient de cliquer.
+   *
+   * Le minuteur est ANNULÉ au démontage : sans cela, changer d'onglet pendant
+   * la demi-seconde d'animation ferait écrire dans un composant disparu.
+   */
+  const [pulse, setPulse] = useState(false);
+  useEffect(() => {
+    if (!pulse) return undefined;
+    const t = setTimeout(() => setPulse(false), 600);
+    return () => clearTimeout(t);
+  }, [pulse]);
+
+  const basculer = () => {
+    /* La pulsation ne se joue QUE dans le sens « c'est fait ». Repasser en
+       « à envoyer » est une correction, pas un accomplissement : la fêter
+       apprendrait à ignorer la fête. */
+    if (!envoye) setPulse(true);
+    onToggleSent();
+  };
   return (
     <article className="rounded-xl border border-secondary bg-primary p-4">
       <header className="flex flex-wrap items-start justify-between gap-2">
@@ -81,12 +107,48 @@ function MessageCard({
         <p className="mt-3 text-sm text-quaternary">Contenu non rédigé.</p>
       )}
 
-      <footer className="mt-3 flex flex-wrap gap-2 border-t border-secondary pt-3">
-        <Button size="sm" color="secondary" onClick={onToggleSent}>
+      {/*
+        ── TROIS BOUTONS, UNE RANGÉE ─────────────────────────────────────────
+
+        Même taille, même rembourrage, même hauteur : c'est ce qui les fait lire
+        comme un ensemble de choix, et non comme un bouton suivi de deux liens.
+        Chacun porte son icône — on reconnaît une coche, un crayon et une
+        corbeille avant d'avoir lu le libellé.
+
+        Les couleurs disent ce qui se passe : vert on avance, orange on revient
+        en arrière, rouge on retire, et « Modifier » reste NEUTRE. Trois aplats
+        côte à côte se vaudraient visuellement, et l'œil ne saurait plus lequel
+        est la décision.
+
+        `flex-wrap` : à 320 px, trois boutons ne tiennent pas sur une ligne, et
+        les comprimer rendrait leurs libellés illisibles. Ils passent à la ligne
+        en gardant leur alignement à gauche.
+      */}
+      <footer className="mt-3 flex flex-wrap items-center gap-2 border-t border-secondary pt-3">
+        <Button
+          size="sm"
+          className={`${envoye ? 'act-warn' : 'act-ok'}${pulse ? ' act-pulse' : ''}`}
+          iconLeading={() => <Icon name={envoye ? 'arrow-clockwise' : 'check2'} />}
+          onClick={basculer}
+        >
           {envoye ? 'Marquer « à envoyer »' : 'Marquer envoyé'}
         </Button>
-        <Button size="sm" color="link-gray" onClick={onEdit}>Modifier</Button>
-        <Button size="sm" color="link-destructive" onClick={onDelete}>Supprimer</Button>
+        <Button
+          size="sm"
+          className="act-neutral"
+          iconLeading={() => <Icon name="pencil" />}
+          onClick={onEdit}
+        >
+          Modifier
+        </Button>
+        <Button
+          size="sm"
+          className="act-danger"
+          iconLeading={() => <Icon name="trash" />}
+          onClick={onDelete}
+        >
+          Supprimer
+        </Button>
       </footer>
     </article>
   );

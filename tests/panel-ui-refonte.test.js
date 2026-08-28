@@ -488,8 +488,8 @@ section('13. Les tâches : deux décisions, deux couleurs, et un choix multiple'
    * `hover:bg-utility-green-600`, qui n'etait emis dans AUCUNE des feuilles.
    */
   check('les deux styles sont de vraies règles, pas des utilitaires absents',
-    /button\.task-btn-done\s*\{/.test(css) && /button\.task-btn-postpone\s*\{/.test(css)
-    && /button\.task-btn-done:hover/.test(css) && /button\.task-btn-postpone:hover/.test(css));
+    /button\.act-ok\s*\{/.test(css) && /button\.act-warn\s*\{/.test(css)
+    && /button\.act-ok:hover/.test(css) && /button\.act-warn:hover/.test(css));
   /**
    * LE SELECTEUR PORTE LA BALISE, ET C'EST LA MOITIE QUI COMPTE.
    *
@@ -500,10 +500,10 @@ section('13. Les tâches : deux décisions, deux couleurs, et un choix multiple'
    * deux boutons, alors que les regles etaient bien emises.
    */
   check('…et leur sélecteur porte la balise, sinon Tailwind l’emporte',
-    !/(^|[^n])\.task-btn-done\s*[,{]/m.test(css.replace(/button\.task-btn-done/g, 'BTNDONE')));
+    !/(^|[^n])\.act-ok\s*[,{]/m.test(css.replace(/button\.act-ok/g, 'ACTOK')));
   /* ET DANS LE VOCABULAIRE DU PANEL : sinon les boutons ne suivraient pas le
      theme, et seuls eux resteraient de la couleur d'hier. */
-  const regles = (css.match(/\.task-btn-[\s\S]*?$/) || [''])[0];
+  const regles = css.slice(css.indexOf('button.act-ok,'));
   check('…sans une seule couleur en dur',
     /var\(--p-ok\)/.test(regles) && /var\(--p-warn\)/.test(regles)
     && !/#[0-9a-fA-F]{3,8}/.test(regles));
@@ -603,6 +603,73 @@ section('14. La liste des prospects : sélection, rangement, et aucune surprise'
   /* Le bouton de la barre OUVRE la confirmation ; il ne supprime jamais. */
   check('…et le bouton de la barre ne supprime pas directement',
     /onClick=\{\(\) => setSuppressionGroupee\(true\)\}/.test(page));
+}
+
+section('15. La rangée d’actions d’un message : trois boutons, un seul système');
+{
+  const msg = lire('frontend/src/components/prospection/ProspectMessages.tsx');
+  const css = lire('frontend/src/components.css');
+
+  /**
+   * -- QUATRE ROLES, ET CHACUN REPOND AVANT QU'ON LISE LE LIBELLE -----------
+   *
+   *   act-ok       ca avance et c'est bon      « Marquer envoye »
+   *   act-warn     ca revient en arriere       « Marquer a envoyer »
+   *   act-danger   ca retire, sans retour      « Supprimer »
+   *   act-neutral  ca ouvre, ca ne decide pas  « Modifier »
+   *
+   * « Modifier » reste NEUTRE : trois aplats cote a cote se vaudraient
+   * visuellement, et l'oeil ne saurait plus lequel est la decision.
+   */
+  for (const role of ['act-ok', 'act-warn', 'act-danger', 'act-neutral']) {
+    check(`« ${role} » est une vraie règle, portée par la balise`,
+      /*
+        PAS DE REGEX ICI. Un littéral gabarit avale les échappements inconnus :
+        `button\.${role}[,\s]` arrivait à RegExp sous la forme
+        `button.act-ok[,s]` — le point devenait un joker et `\s` la lettre « s ».
+        Le contrôle passait pour trois rôles sur quatre, par accident.
+      */
+      css.includes(`button.${role} `) || css.includes(`button.${role},`));
+  }
+  check('les trois boutons du message emploient la famille',
+    /act-warn' : 'act-ok'/.test(msg)
+    && /className="act-neutral"/.test(msg)
+    && /className="act-danger"/.test(msg));
+  check('…et chacun porte son icône',
+    /name=\{envoye \? 'arrow-clockwise' : 'check2'\}/.test(msg)
+    && /name="pencil"/.test(msg)
+    && /name="trash"/.test(msg));
+  /* MEME RANGEE : meme taille, meme rembourrage. C'est ce qui les fait lire
+     comme un ensemble de choix, et non comme un bouton suivi de deux liens. */
+  check('…à la même taille, dans une seule rangée',
+    (msg.match(/size="sm"\s+className="act-|size="sm"\s+className=\{`\$\{envoye/g) || []).length >= 3
+    || (msg.match(/size="sm"/g) || []).length >= 4);
+
+  /**
+   * L'ANIMATION SE JOUE DANS UN SEUL SENS. Repasser en « a envoyer » est une
+   * correction, pas un accomplissement : la feter apprendrait a ignorer la
+   * fete.
+   */
+  check('la pulsation ne salue que « c’est fait »', /if \(!envoye\) setPulse\(true\)/.test(msg));
+  /* LE MINUTEUR EST ANNULE AU DEMONTAGE : changer d'onglet pendant la
+     demi-seconde d'animation ecrirait sinon dans un composant disparu. */
+  check('…et son minuteur est annulé au démontage', /return \(\) => clearTimeout\(t\)/.test(msg));
+
+  /**
+   * CE QUI EST DECORATIF S'EFFACE quand on demande moins de mouvement. Le
+   * changement de couleur et de libelle, lui, RESTE : il porte l'information.
+   */
+  const reduit = (css.match(/@media \(prefers-reduced-motion: reduce\)\s*\{[\s\S]*?\n\}/g) || []).join('\n');
+  check('le mouvement réduit est respecté',
+    /button\.act-pulse \{ animation: none; \}/.test(reduit)
+    && /transform: none/.test(reduit));
+
+  /* ET DANS LE VOCABULAIRE DU PANEL : sinon la rangée ne suivrait pas le
+     thème, et elle seule resterait de la couleur d'hier. */
+  const famille = css.slice(css.indexOf('button.act-ok,'));
+  check('…sans une seule couleur en dur',
+    /var\(--p-ok\)/.test(famille) && /var\(--p-danger\)/.test(famille)
+    && !/#[0-9a-fA-F]{3,8}/.test(famille));
 }
 
 finish();
