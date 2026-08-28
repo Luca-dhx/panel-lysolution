@@ -4862,9 +4862,23 @@ button.act-danger:hover { background-color: color-mix(in srgb, var(--p-danger) 8
 button.act-neutral {
   background-color: var(--bg-input);
   color: var(--text);
-  border: 1px solid var(--border-strong);
+  /*
+    LE FILET EST UNE OMBRE INTERNE, PAS UNE BORDURE.
+
+    `border: 1px` ajoute deux pixels à la HAUTEUR de la boîte. Mesuré sur
+    l'instance : « Modifier » faisait 38 px quand ses deux voisins en faisaient
+    36, et il flottait un pixel plus haut. Trois boutons qui ne s'alignent pas
+    se lisent comme trois éléments sans rapport — exactement ce que la rangée
+    cherche à éviter.
+
+    Une ombre interne peint le même trait sans occuper de place.
+  */
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
-button.act-neutral:hover { background-color: var(--p-surface-raised, var(--bg-input)); border-color: var(--accent); }
+button.act-neutral:hover {
+  background-color: var(--p-surface-raised, var(--bg-input));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 
 /* ── LE RETOUR AU CLIC ─────────────────────────────────────────────────────
 

@@ -650,10 +650,36 @@ section('15. La rangée d’actions d’un message : trois boutons, un seul syst
    * correction, pas un accomplissement : la feter apprendrait a ignorer la
    * fete.
    */
-  check('la pulsation ne salue que « c’est fait »', /if \(!envoye\) setPulse\(true\)/.test(msg));
+  check('la pulsation ne salue que « c’est fait »', /if \(!envoye\) onPulse\(message\.id\)/.test(msg));
+  /**
+   * LA PULSATION EST TENUE PAR LE PARENT, ET C'EST UNE CORRECTION.
+   *
+   * Une premiere version la gardait dans la carte. Elle ne se jouait JAMAIS :
+   * marquer un message envoye le fait passer du groupe « a envoyer » au groupe
+   * « envoyes » -- il change de position dans l'arbre React, qui demonte la
+   * carte et la remonte ailleurs. L'etat partait avec.
+   *
+   * Constate sur l'instance deployee : `act-pulse` absent 120 ms apres le clic,
+   * aucune animation, aucune erreur.
+   */
+  check('…et elle est tenue par le PARENT, qui survit au changement de groupe',
+    /const \[pulse, setPulse\] = useState<string \| null>\(null\)/.test(msg)
+    && /pulse=\{pulse === m\.id\}/.test(msg));
   /* LE MINUTEUR EST ANNULE AU DEMONTAGE : changer d'onglet pendant la
      demi-seconde d'animation ecrirait sinon dans un composant disparu. */
   check('…et son minuteur est annulé au démontage', /return \(\) => clearTimeout\(t\)/.test(msg));
+
+  /**
+   * LE FILET DU BOUTON NEUTRE EST UNE OMBRE, PAS UNE BORDURE.
+   *
+   * `border: 1px` ajoute deux pixels a la HAUTEUR. Mesure sur l'instance :
+   * « Modifier » faisait 38 px quand ses voisins en faisaient 36, et il
+   * flottait un pixel plus haut. Trois boutons qui ne s'alignent pas se lisent
+   * comme trois elements sans rapport.
+   */
+  check('le bouton neutre garde la hauteur des trois autres',
+    /button\.act-neutral \{[^}]*box-shadow: inset 0 0 0 1px/.test(css)
+    && !/button\.act-neutral \{[^}]*border: 1px/.test(css));
 
   /**
    * CE QUI EST DECORATIF S'EFFACE quand on demande moins de mouvement. Le

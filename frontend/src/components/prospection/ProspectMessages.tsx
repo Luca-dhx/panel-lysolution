@@ -40,38 +40,23 @@ const VIDE: ProspectMessage = {
 };
 
 function MessageCard({
-  message, onEdit, onDelete, onToggleSent,
+  message, onEdit, onDelete, onToggleSent, pulse, onPulse,
 }: {
   message: ProspectMessage;
   onEdit: () => void;
   onDelete: () => void;
   onToggleSent: () => void;
+  /** VRAI le temps de l'animation de confirmation. Décidé par le parent. */
+  pulse: boolean;
+  onPulse: (id: string) => void;
 }) {
   const envoye = Boolean(message.sentAt);
-
-  /**
-   * LA PULSATION EST UN ÉTAT, PAS UNE TRANSITION.
-   *
-   * Rejouer une animation CSS sur un même élément demande de retirer la classe
-   * puis de la remettre — un `key` qui change, ou un état et un délai. Le second
-   * est le seul qui ne démonte rien : remonter la carte lui ferait perdre son
-   * défilement et le focus du bouton qu'on vient de cliquer.
-   *
-   * Le minuteur est ANNULÉ au démontage : sans cela, changer d'onglet pendant
-   * la demi-seconde d'animation ferait écrire dans un composant disparu.
-   */
-  const [pulse, setPulse] = useState(false);
-  useEffect(() => {
-    if (!pulse) return undefined;
-    const t = setTimeout(() => setPulse(false), 600);
-    return () => clearTimeout(t);
-  }, [pulse]);
 
   const basculer = () => {
     /* La pulsation ne se joue QUE dans le sens « c'est fait ». Repasser en
        « à envoyer » est une correction, pas un accomplissement : la fêter
        apprendrait à ignorer la fête. */
-    if (!envoye) setPulse(true);
+    if (!envoye) onPulse(message.id);
     onToggleSent();
   };
   return (
@@ -164,6 +149,30 @@ export function ProspectMessages({
   const [edite, setEdite] = useState<ProspectMessage | null>(null);
   const [ouvert, setOuvert] = useState(false);
 
+  /**
+   * LA PULSATION EST TENUE PAR LE PARENT, ET C'EST UNE CORRECTION.
+   *
+   * Une première version la gardait dans la carte. Elle ne se jouait jamais :
+   * marquer un message envoyé le fait passer du groupe « à envoyer » au groupe
+   * « envoyés » — il change donc de position dans l'arbre React, qui démonte la
+   * carte et la remonte ailleurs. L'état partait avec.
+   *
+   * Constaté sur l'instance déployée : `act-pulse` absent 120 ms après le clic,
+   * aucune animation, aucune erreur.
+   *
+   * Le parent, lui, survit au déplacement. Il retient l'IDENTIFIANT du message
+   * qui vient d'être envoyé, et la carte — où qu'elle soit — se reconnaît.
+   *
+   * Le minuteur est annulé au démontage : sans cela, changer d'onglet pendant
+   * la demi-seconde d'animation ferait écrire dans un composant disparu.
+   */
+  const [pulse, setPulse] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pulse) return undefined;
+    const t = setTimeout(() => setPulse(null), 600);
+    return () => clearTimeout(t);
+  }, [pulse]);
+
   const prevus = messages.filter((m) => !m.sentAt);
   const envoyes = messages.filter((m) => m.sentAt);
 
@@ -221,6 +230,8 @@ export function ProspectMessages({
               onToggleSent={() => onChange(messages.map((x) => (
                 x.id === m.id ? { ...x, sentAt: new Date().toISOString() } : x
               )))}
+              pulse={pulse === m.id}
+              onPulse={setPulse}
             />
           ))}
         </section>
@@ -240,6 +251,8 @@ export function ProspectMessages({
               onToggleSent={() => onChange(messages.map((x) => (
                 x.id === m.id ? { ...x, sentAt: null } : x
               )))}
+              pulse={pulse === m.id}
+              onPulse={setPulse}
             />
           ))}
         </section>
