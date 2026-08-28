@@ -19,6 +19,7 @@ import {
   PROSPECT_TYPE_VALUES,
   PanelProspect,
 } from '../../models/PanelProspect.model.js';
+import { verifierDossierDeProspect } from './prospectLibrary.service.js';
 import { PanelMeeting } from '../../models/PanelMeeting.model.js';
 import { PanelProjectEvent } from '../../models/PanelProjectEvent.model.js';
 
@@ -221,6 +222,7 @@ export async function createProspect(data = {}, actor = {}) {
     notes: data.notes === undefined ? '' : String(data.notes),
     links: normaliserLiens(data.links),
     images: normaliserImages(data.images),
+    folderId: await verifierDossierDeProspect(data.folderId),
     infoFields: normaliserChampsInfo(data.infoFields),
     messages: normaliserMessages(data.messages),
     status,
@@ -274,6 +276,7 @@ export async function updateProspect(prospectId, data = {}, actor = {}) {
   if (data.notes !== undefined) prospect.notes = String(data.notes);
   if (data.links !== undefined) prospect.links = normaliserLiens(data.links);
   if (data.images !== undefined) prospect.images = normaliserImages(data.images);
+  if (data.folderId !== undefined) prospect.folderId = await verifierDossierDeProspect(data.folderId);
   if (data.infoFields !== undefined) prospect.infoFields = normaliserChampsInfo(data.infoFields);
   if (data.messages !== undefined) prospect.messages = normaliserMessages(data.messages);
   /**

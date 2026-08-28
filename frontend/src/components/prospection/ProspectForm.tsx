@@ -30,6 +30,7 @@ import { TextArea } from '@/components/base/textarea/textarea';
 import { Icon } from '@/components/Icon';
 import { ThemedSelect } from '@/components/ThemedSelect';
 import { ProspectInfoFieldsEditor } from '@/components/prospection/ProspectInfoFields';
+import type { FolderNode } from '@/components/prospection/FolderTree';
 import { api, errorMessage, uploadImage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
 import {
@@ -62,15 +63,29 @@ function liensPrets(liens: ProspectLink[]): ProspectLink[] {
     .filter((l) => l.url);
 }
 
+/** Les dossiers, à plat et indentés — ce qu'un menu déroulant peut montrer. */
+function aplatirDossiers(noeuds: FolderNode[], profondeur = 0): { id: string; label: string }[] {
+  return noeuds.flatMap((n) => [
+    { id: n.id, label: `${'— '.repeat(profondeur)}${n.name}` },
+    ...aplatirDossiers(n.children, profondeur + 1),
+  ]);
+}
+
 export function ProspectForm({
   prospect,
   onSaved,
   onCancel,
+  dossiers = [],
+  dossierParDefaut = null,
 }: {
   /** Présent = CORRECTION ; absent = création. */
   prospect?: Prospect;
   onSaved: () => void;
   onCancel: () => void;
+  /** L'arbre des dossiers de prospects — pour le menu de rangement. */
+  dossiers?: FolderNode[];
+  /** Le dossier sélectionné dans l'arbre : proposé à la CRÉATION seulement. */
+  dossierParDefaut?: string | null;
 }) {
   const toast = useToast();
   const champFichier = useRef<HTMLInputElement>(null);
@@ -92,6 +107,13 @@ export function ProspectForm({
   const [links, setLinks] = useState<ProspectLink[]>(prospect?.links ?? []);
   const [images, setImages] = useState<ProspectImage[]>(prospect?.images ?? []);
   const [infoFields, setInfoFields] = useState<ProspectInfoField[]>(prospect?.infoFields ?? []);
+  /* À la CRÉATION, le dossier sélectionné dans l'arbre est proposé : on vient
+     d'y cliquer, c'est là qu'on veut ranger. Sur une fiche existante, c'est le
+     sien qui fait foi — sans quoi ouvrir « Modifier » depuis un autre dossier
+     le déplacerait sans qu'on l'ait demandé. */
+  const [folderId, setFolderId] = useState<string | null>(
+    prospect ? (prospect.folderId ?? null) : dossierParDefaut,
+  );
 
   const [importEnCours, setImportEnCours] = useState(false);
   const [enCours, setEnCours] = useState(false);
@@ -156,6 +178,7 @@ export function ProspectForm({
       /* Une information SANS NOM n'a aucun sens pour celui qui relit la fiche :
          elle est écartée ici plutôt que refusée, parce qu'une ligne ajoutée
          puis laissée vide est un geste abandonné, pas une erreur. */
+      folderId,
       infoFields: infoFields.filter((f) => f.label.trim()),
       type,
       ...(prospect ? {} : { status }),
@@ -211,6 +234,30 @@ export function ProspectForm({
               label: `${PROSPECT_TYPE_DEFS[t].label} — ${PROSPECT_TYPE_DEFS[t].hint}`,
             }))}
           />
+        </div>
+        {/*
+          LE RANGEMENT, à côté de la nature : ce sont les deux classements de la
+          fiche, et les séparer aurait obligé à chercher à deux endroits.
+        */}
+        <div className="field">
+          <span className="field-label">Dossier</span>
+          {/*
+            UN `<select>` NATIF, ET C'EST VOULU. La hiérarchie est rendue par
+            l'indentation des intitulés ; un arbre déroulant complet dans un
+            formulaire déjà long aurait coûté plus qu'il n'apporte, et le natif
+            se manipule au clavier partout.
+          */}
+          <select
+            className="input"
+            aria-label="Dossier du prospect"
+            value={folderId ?? ''}
+            onChange={(e) => setFolderId(e.target.value || null)}
+          >
+            <option value="">Sans dossier</option>
+            {aplatirDossiers(dossiers).map((d) => (
+              <option key={d.id} value={d.id}>{d.label}</option>
+            ))}
+          </select>
         </div>
         {/*
           Le statut de DÉPART, à la création seulement. Sur une fiche existante,

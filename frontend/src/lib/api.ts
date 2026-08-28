@@ -23,6 +23,7 @@ import type { FleetDiagnostic, ProjectDiagnostic } from '@/types.diagnostic';
 import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '@/types.events';
 import type {
   Prospect, ProspectInput, ProspectListResult, ProspectStatus,
+  FolderKind, ProspectFolder, ProspectTemplate, ProspectTemplateInput,
 } from '@/types.prospection';
 import type { Task, TaskInput, TaskListResult, TaskStatus } from '@/types.tasks';
 import type { PanelTheme } from '@/lib/useTheme';
@@ -1088,6 +1089,40 @@ export const api = {
 
   updateProspect: (prospectId: string, body: ProspectInput) =>
     request<{ prospect: Prospect }>(`/api/prospects/${prospectId}`, { method: 'PATCH', body }),
+
+  /* ── LES DOSSIERS ET LES MODÈLES D'ACCROCHE ────────────────────────────
+     L'arbre se lit EN ENTIER, par famille : quelques dizaines de nœuds, une
+     seule requête, et l'écran plie la hiérarchie lui-même. Le demander niveau
+     par niveau aurait coûté un aller-retour à chaque dossier déplié. */
+  listProspectFolders: (kind: FolderKind) =>
+    request<{ folders: ProspectFolder[] }>(`/api/prospect-folders?kind=${kind}`),
+
+  createProspectFolder: (body: { name: string; kind: FolderKind; parentId?: string | null }) =>
+    request<{ folder: ProspectFolder }>('/api/prospect-folders', { method: 'POST', body }),
+
+  updateProspectFolder: (folderId: string, body: { name?: string; parentId?: string | null }) =>
+    request<{ folder: ProspectFolder }>(`/api/prospect-folders/${folderId}`, { method: 'PATCH', body }),
+
+  /* SUPPRIMER NE SUPPRIME QUE LE DOSSIER : le serveur fait remonter d'un cran
+     ses sous-dossiers et son contenu, et le dit dans `movedTo`. */
+  deleteProspectFolder: (folderId: string) =>
+    request<{ deleted: boolean; folderId: string; movedTo: string | null }>(
+      `/api/prospect-folders/${folderId}`, { method: 'DELETE' },
+    ),
+
+  listProspectTemplates: () =>
+    request<{ templates: ProspectTemplate[] }>('/api/prospect-templates'),
+
+  createProspectTemplate: (body: ProspectTemplateInput) =>
+    request<{ template: ProspectTemplate }>('/api/prospect-templates', { method: 'POST', body }),
+
+  updateProspectTemplate: (templateId: string, body: ProspectTemplateInput) =>
+    request<{ template: ProspectTemplate }>(`/api/prospect-templates/${templateId}`, { method: 'PATCH', body }),
+
+  deleteProspectTemplate: (templateId: string) =>
+    request<{ deleted: boolean; templateId: string }>(
+      `/api/prospect-templates/${templateId}`, { method: 'DELETE' },
+    ),
 
   /* ── LES TÂCHES ────────────────────────────────────────────────────────
      Le filtre de rattachement est passé au SERVEUR plutôt que d'être appliqué

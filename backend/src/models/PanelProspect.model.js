@@ -228,6 +228,15 @@ const prospectSchema = new mongoose.Schema(
 
     links: { type: [linkSchema], default: [] },
     images: { type: [imageSchema], default: [] },
+    /**
+     * LE DOSSIER OÙ CE PROSPECT EST RANGÉ.
+     *
+     * `null` = à la racine, et c'est un état de plein droit : un prospect noté
+     * en trois secondes pendant un appel n'a pas à être classé pour exister.
+     * L'écran le montre alors dans « Sans dossier », pas dans un dossier
+     * « Divers » qu'il aurait fallu inventer.
+     */
+    folderId: { type: String, default: null, index: true },
     infoFields: { type: [infoFieldSchema], default: [] },
     messages: { type: [messageSchema], default: [] },
 

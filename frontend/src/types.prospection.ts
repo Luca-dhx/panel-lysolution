@@ -87,6 +87,59 @@ export interface ProspectMessage {
   createdBy?: string | null;
 }
 
+/**
+ * UN DOSSIER — un rangement, et rien d'autre.
+ *
+ * `parentId: null` = à la racine de son arbre. Deux arbres SÉPARÉS :
+ * « Restaurants » range des prospects, « Accroches froides » range des modèles.
+ * Les mélanger aurait obligé à filtrer partout, puis à expliquer un jour
+ * pourquoi un modèle est apparu dans le dossier d'un client.
+ *
+ * Supprimer un dossier ne supprime RIEN d'autre : ses sous-dossiers et son
+ * contenu remontent d'un cran. Un rangement n'est pas une corbeille.
+ */
+export type FolderKind = 'PROSPECT' | 'TEMPLATE';
+
+export interface ProspectFolder {
+  _id: string;
+  name: string;
+  parentId: string | null;
+  kind: FolderKind;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * UN MODÈLE D'ACCROCHE — ce qu'on écrit AVANT de connaître le destinataire.
+ *
+ * Ce n'est pas un message : un message est adressé à quelqu'un, à une date, sur
+ * un canal donné. Un modèle n'est adressé à personne. La `description` est ce
+ * qui les sépare vraiment — elle répond à « quand s'en sert-on ? », question
+ * qu'un message envoyé ne pose pas.
+ */
+export interface ProspectTemplate {
+  _id: string;
+  title: string;
+  channel: string;
+  description: string;
+  body: string;
+  folderId: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProspectTemplateInput {
+  title?: string;
+  channel?: string;
+  description?: string;
+  body?: string;
+  folderId?: string | null;
+}
+
 export interface Prospect {
   _id: string;
   name: string;
@@ -95,6 +148,9 @@ export interface Prospect {
   notes: string;
   links: ProspectLink[];
   images: ProspectImage[];
+  /** `null` = à la racine. Un prospect noté pendant un appel n'a pas à être
+   *  classé pour exister ; l'écran le montre dans « Sans dossier ». */
+  folderId: string | null;
   infoFields: ProspectInfoField[];
   messages: ProspectMessage[];
   status: ProspectStatus;
@@ -114,6 +170,7 @@ export interface ProspectInput {
   notes?: string;
   links?: ProspectLink[];
   images?: ProspectImage[];
+  folderId?: string | null;
   infoFields?: ProspectInfoField[];
   messages?: ProspectMessage[];
   status?: ProspectStatus;

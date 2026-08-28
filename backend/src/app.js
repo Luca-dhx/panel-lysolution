@@ -26,6 +26,7 @@ import companyRoutes from './routes/company.routes.js';
 import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
 import prospectsRoutes from './routes/prospects.routes.js';
 import tasksRoutes from './routes/tasks.routes.js';
+import { foldersRouter, templatesRouter } from './routes/prospectLibrary.routes.js';
 import legalTemplatesRoutes, { hostCompaniesRouter } from './routes/legalTemplates.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
 import webhookControlPlaneRoutes from './routes/webhookControlPlane.routes.js';
@@ -224,6 +225,19 @@ export function createApp() {
    * Comme la prospection, elle ne sort jamais par le pont : une tache nomme des
    * prospects, des montants et des clients.
    */
+  /**
+   * LES DOSSIERS ET LES MODELES D'ACCROCHE.
+   *
+   * Deux arbres SEPARES : « Restaurants » range des prospects, « Accroches
+   * froides » range des modeles. Les melanger obligerait a filtrer partout,
+   * puis a expliquer un jour pourquoi un modele est apparu dans le dossier
+   * d'un client.
+   *
+   * Ils vivent aux cotes de la prospection, et sous la meme garde : ce sont
+   * ses notes de travail, et aucun ne sort par le pont.
+   */
+  app.use('/api/prospect-folders', foldersRouter);
+  app.use('/api/prospect-templates', templatesRouter);
   app.use('/api/tasks', tasksRoutes);
   /**
    * LES DOCUMENTS LÉGAUX — le référentiel des textes que les sites publient.
