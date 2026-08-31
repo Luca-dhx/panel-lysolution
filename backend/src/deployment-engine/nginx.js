@@ -116,15 +116,21 @@ function backendProxy(backendPort) {
     location = /health { proxy_pass http://127.0.0.1:${backendPort}; }`;
 }
 
-/** Bloc proxy PUR (tout `/`) vers le backend — pour le domaine API dédié. */
-function apiProxyAll(backendPort) {
-  return `    location / {
+/**
+ * Bloc proxy PUR (tout `/`) vers le backend — pour le domaine API dédié.
+ *
+ * `noindex` : un hôte d'API n'a rien à faire dans un moteur de recherche. Ses
+ * réponses sont du JSON, mais ses pages d'erreur ne le sont pas toujours, et
+ * une adresse d'API indexée est une invitation à la sonder.
+ */
+function apiProxyAll(backendPort, { noindex = false } = {}) {
+  return `${noindex ? `${robotsInterdit()}\n` : ''}    location / {
         proxy_pass http://127.0.0.1:${backendPort};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $scheme;${noindex ? '\n        add_header X-Robots-Tag "noindex, nofollow" always;' : ''}
     }`;
 }
 
@@ -143,11 +149,12 @@ function apiProxyAll(backendPort) {
  *  - `/assets/*` (nom = hash du contenu) → `immutable`, cache 1 an, et `=404` si
  *    absent (ne PAS retomber sur index.html : évite de servir du HTML pour un .js).
  */
-function staticSiteLocations() {
-  return `    location = /index.html { add_header Cache-Control "no-cache"; }
+function staticSiteLocations({ noindex = false, backendPort = null } = {}) {
+  const entete = noindex ? '\n        add_header X-Robots-Tag "noindex, nofollow" always;' : '';
+  return `    location = /index.html { add_header Cache-Control "no-cache";${entete} }
     location = /version.json { add_header Cache-Control "no-cache"; }
     location = /build-manifest.json { add_header Cache-Control "no-cache"; }
-
+${noindex ? `\n${robotsInterdit()}\n` : ''}${backendPort !== null ? `\n${sitemapLocation(backendPort)}\n` : ''}
 ${moduleScriptLocation()}
 
     location /assets/ {
@@ -157,7 +164,72 @@ ${moduleScriptLocation()}
     }
 
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ /index.html;${entete}
+    }`;
+}
+
+/**
+ * LE PLAN DU SITE — un `location` EXACT, sinon le repli d'application le mange.
+ *
+ * ══ L'INCIDENT QUI A PRODUIT CE BLOC ════════════════════════════════════════
+ *
+ * Google Search Console a refusé le plan du site de la vitrine :
+ *
+ *     « Le sitemap peut être lu, mais contient des erreurs.
+ *       Le sitemap est un fichier HTML. »
+ *
+ * Le plan existait, mais sous `/api/public/sitemap.xml`. À `/sitemap.xml` —
+ * l'adresse que tout moteur essaie, et la seule qu'on pense à soumettre —
+ * aucun fichier ne correspondait dans la racine statique, donc `try_files …
+ * /index.html` rendait la page d'accueil en `text/html`, avec un code 200.
+ *
+ * C'est exactement le défaut déjà rencontré sur `/bridge/` : un chemin sans
+ * bloc dédié retombe dans le repli d'application à page unique. La leçon vaut
+ * pour toute adresse de PROTOCOLE servie par le backend.
+ *
+ * ══ POURQUOI UN 200 EST PIRE QU'UN 404 ══════════════════════════════════════
+ *
+ * Un 404 dit au moteur « réessaie plus tard ». Un 200 porteur de HTML lui dit
+ * « voici ton plan », et il conclut que le plan est invalide. L'erreur ne se
+ * voit alors que dans sa console, des jours après la mise en ligne.
+ *
+ * ══ POURQUOI CE BLOC EST GÉNÉRIQUE ═════════════════════════════════════════
+ *
+ * Il est posé sur TOUT site public dont le backend est branché, sans condition
+ * sur le projet. Un projet dont le backend n'expose pas la route rendra un 404
+ * honnête, ce qui est le comportement correct : mieux vaut « pas de plan » que
+ * « un plan qui est du HTML ».
+ */
+function sitemapLocation(backendPort) {
+  return `    location = /sitemap.xml {
+        proxy_pass http://127.0.0.1:${backendPort}/sitemap.xml;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }`;
+}
+
+/**
+ * UN `robots.txt` QUI INTERDIT TOUT — pour les hôtes qui ne sont pas la vitrine.
+ *
+ * ══ CE QUE L'ABSENCE DU SITEMAP NE PROTÈGE PAS ══════════════════════════════
+ *
+ * Le Manager, le Panel et l'hôte d'API ne figurent dans aucun plan de site, et
+ * l'on pourrait croire cela suffisant. Ce n'est pas le cas : un moteur indexe
+ * ce qu'il DÉCOUVRE, et il découvre par les liens, les certificats — les
+ * journaux de transparence publient chaque nom émis —, les barres d'adresse et
+ * les référents. Le plan du site ne fait qu'ACCÉLÉRER, il n'autorise rien.
+ *
+ * Il faut donc une interdiction EXPLICITE, et elle est double : ce `robots.txt`
+ * pour la découverte, et l'en-tête `X-Robots-Tag` pour ce qui serait tout de
+ * même exploré. Aucun des deux ne change le fonctionnement de l'application :
+ * ce sont des directives destinées aux robots, que les navigateurs ignorent.
+ */
+function robotsInterdit() {
+  return `    location = /robots.txt {
+        add_header Content-Type "text/plain; charset=utf-8";
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        return 200 "User-agent: *\\nDisallow: /\\n";
     }`;
 }
 
@@ -272,6 +344,9 @@ export function planSites(target, opts = {}) {
         kind: 'static',
         root: roots[app.id] ?? null,
         withBackendProxy: app.backendProxy !== false,
+        // LE SEUL HÔTE PUBLIC du projet : c'est lui, et lui seul, qui doit
+        // être indexé. Tous les autres reçoivent une interdiction explicite.
+        public: true,
         cert: certPaths(target),
       });
     } else if (role === 'web-subdomain') {
@@ -282,6 +357,7 @@ export function planSites(target, opts = {}) {
         kind: 'static',
         root: roots[app.id] ?? null,
         withBackendProxy: app.backendProxy !== false,
+        public: false,
         // Un hôte dérivé n'est jamais couvert par un wildcard à un niveau.
         cert: dedicatedCertPaths(subHost),
       });
@@ -293,13 +369,16 @@ export function planSites(target, opts = {}) {
         kind: 'static',
         root: roots[app.id] ?? null,
         withBackendProxy: false,
+        // Un site statique auxiliaire (démonstration, page d'attente) n'est
+        // public que s'il occupe l'hôte principal du projet.
+        public: subHost === host,
         cert: subHost === host ? certPaths(target) : dedicatedCertPaths(subHost),
       });
     } else if (role === 'proxy') {
       const subHost = (explicitHost ?? `${app.subdomain}.${host}`).toLowerCase();
       sites.push({
         id: app.id, host: subHost, kind: 'proxy', root: null,
-        withBackendProxy: true, cert: dedicatedCertPaths(subHost),
+        withBackendProxy: true, public: false, cert: dedicatedCertPaths(subHost),
       });
     }
   }
@@ -357,7 +436,7 @@ export function renderNginxConfig(target, opts) {
       return `# --- ${site.id} (reverse proxy pur vers le backend interne) ---
 ${header}
 
-${apiProxyAll(backendPort)}
+${apiProxyAll(backendPort, { noindex: site.public !== true })}
 }`;
     }
     // Les blocs PROXY sont écrits AVANT le repli SPA. nginx choisit le préfixe
@@ -365,13 +444,22 @@ ${apiProxyAll(backendPort)}
     // décide en revanche de ce qu'on lit — voir d'abord ce qui part au backend,
     // puis le repli, est la seule lecture qui ne laisse pas croire que `/`
     // capture tout.
-    return `# --- ${site.id} ---
+    /*
+      LE PLAN DU SITE N'EST POSÉ QUE SUR L'HÔTE PUBLIC, et seulement s'il a un
+      backend pour le produire. Le Manager n'a pas de plan à publier ; lui en
+      servir un ferait apparaître dans son domaine des adresses qui n'y sont
+      pas, et l'inviterait à l'indexation qu'on lui refuse par ailleurs.
+    */
+    return `# --- ${site.id}${site.public ? ' (hôte PUBLIC : indexable)' : ' (non indexable)'} ---
 ${header}
 
     root ${site.root};
     index index.html;
 ${site.withBackendProxy ? `\n${proxy}\n` : ''}
-${staticSiteLocations()}
+${staticSiteLocations({
+    noindex: site.public !== true,
+    backendPort: site.public === true && site.withBackendProxy ? backendPort : null,
+  })}
 }`;
   });
 

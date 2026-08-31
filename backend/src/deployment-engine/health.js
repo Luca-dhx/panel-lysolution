@@ -345,6 +345,94 @@ export async function checkModuleMimeType(transport, host, { maxModules = 3 } = 
   return { ok: modules.every((m) => m.ok), probed: true, host, modules };
 }
 
+/**
+ * LE PLAN DU SITE ET LE FICHIER ROBOTS — vérifiés SUR L'HÔTE PUBLIC, en ligne.
+ *
+ * ══ L'INCIDENT QUI A PRODUIT CE CONTRÔLE ════════════════════════════════════
+ *
+ * Google Search Console a refusé le plan du site d'une vitrine déployée :
+ *
+ *     « Le sitemap peut être lu, mais contient des erreurs.
+ *       Le sitemap est un fichier HTML. »
+ *
+ * Le plan existait dans le code, la route répondait, les tests passaient. Mais
+ * à l'adresse `/sitemap.xml` — la seule qu'on soumette à un moteur — nginx ne
+ * trouvait pas de fichier et appliquait le repli d'application à page unique :
+ * il rendait `index.html` en `text/html`, avec un code 200.
+ *
+ * Aucun test de code ne pouvait le voir : le défaut n'existe QU'UNE FOIS
+ * ASSEMBLÉ, entre une configuration de serveur et une route d'application.
+ *
+ * ══ POURQUOI IL BLOQUE LE DÉPLOIEMENT ══════════════════════════════════════
+ *
+ * Un plan de site cassé ne se remarque pas. Le site fonctionne, les pages
+ * s'affichent, rien n'est en erreur — la seule trace est un message dans une
+ * console que personne n'ouvre avant des semaines. C'est exactement le genre
+ * de défaut qu'il faut refuser à la porte plutôt que découvrir en production.
+ *
+ * ══ CE QU'IL VÉRIFIE, ET CE QU'IL NE VÉRIFIE PAS ═══════════════════════════
+ *
+ * Il vérifie la FORME — code, type de contenu, racine XML — et pas le contenu :
+ * quelles adresses figurent au plan est une décision du projet, pas du moteur
+ * de déploiement. Un projet sans plan du tout n'est pas en faute : c'est un
+ * plan qui MENT sur sa nature qui l'est.
+ */
+export async function checkSeoEndpoints(transport, host) {
+  const sonder = async (chemin) => {
+    const res = await sonde(
+      transport,
+      'health.seo',
+      `curl -sS -m 10 -o /tmp/ly-seo-probe -w '%{http_code} %{content_type}' 'https://${host}${chemin}' || echo '000 __ERR__'; echo; head -c 200 /tmp/ly-seo-probe 2>/dev/null || true`,
+      { timeoutMs: TIMEOUTS.HEALTH },
+    );
+    const lignes = (res.stdout || '').split('\n');
+    const [statut, ...reste] = (lignes[0] || '').trim().split(/\s+/);
+    return {
+      path: chemin,
+      status: Number(statut) || 0,
+      contentType: reste.join(' ') || null,
+      head: lignes.slice(1).join('\n'),
+    };
+  };
+
+  const sitemap = await sonder('/sitemap.xml');
+  const robots = await sonder('/robots.txt');
+
+  /**
+   * UN PLAN ABSENT EST TOLÉRÉ, UN PLAN EN HTML NE L'EST PAS.
+   *
+   * Tous les projets du parc n'exposent pas de plan du site. En refuser le
+   * déploiement les bloquerait tous pour une exigence qu'ils n'ont pas prise.
+   * En revanche, dès qu'une adresse RÉPOND 200, elle doit répondre du XML :
+   * c'est précisément l'état intermédiaire — 200 porteur de HTML — qui trompe
+   * les moteurs et qu'aucun projet ne doit pouvoir mettre en ligne.
+   */
+  const sitemapHtml = sitemap.status === 200
+    && (/text\/html/i.test(sitemap.contentType || '') || /<!doctype html|<html/i.test(sitemap.head || ''));
+  const sitemapXml = sitemap.status === 200
+    && /xml/i.test(sitemap.contentType || '')
+    && /<\?xml|<urlset|<sitemapindex/i.test(sitemap.head || '');
+
+  const robotsHtml = robots.status === 200
+    && (/text\/html/i.test(robots.contentType || '') || /<!doctype html|<html/i.test(robots.head || ''));
+
+  const problemes = [];
+  if (sitemapHtml) problemes.push('/sitemap.xml répond 200 avec du HTML : un moteur de recherche le refusera.');
+  if (sitemap.status === 200 && !sitemapXml && !sitemapHtml) {
+    problemes.push(`/sitemap.xml répond 200 mais n'est pas du XML (type « ${sitemap.contentType} »).`);
+  }
+  if (robotsHtml) problemes.push('/robots.txt répond 200 avec du HTML au lieu de texte brut.');
+
+  return {
+    ok: problemes.length === 0,
+    probed: true,
+    host,
+    sitemap: { ...sitemap, head: undefined, isXml: sitemapXml, isHtml: sitemapHtml },
+    robots: { ...robots, head: undefined, isHtml: robotsHtml },
+    problems: problemes,
+  };
+}
+
 function sleep(ms) {
   return new Promise((r) => {
     const t = setTimeout(r, ms);
@@ -355,4 +443,5 @@ function sleep(ms) {
 export default {
   checkLocalHealth, checkPublicHealth, collectBackendDiagnostics,
   checkPublicMedia, checkApiHealth, checkWebsiteArtifact, checkModuleMimeType,
+  checkSeoEndpoints,
 };

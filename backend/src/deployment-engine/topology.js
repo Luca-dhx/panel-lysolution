@@ -148,6 +148,23 @@ export function planTopology({ host, remoteRoot = DEFAULT_REMOTE_ROOT, profile, 
       remoteRoot: `${siteRoot}/${dir}`,
       remoteDir: dir,
       isPrimaryHost: appHost === siteHost,
+      /**
+       * L'HÔTE EST-IL DESTINÉ AU PUBLIC ? — une seule application l'est.
+       *
+       * Le rôle `web` désigne la vitrine, servie sur l'hôte principal : c'est
+       * la seule surface qu'un moteur de recherche doit connaître. Le Manager,
+       * le Panel, l'API et les sites auxiliaires ne le sont pas.
+       *
+       * Cet attribut décide de deux choses, et c'est pour cela qu'il vit ici
+       * plutôt que dans chacune d'elles : la génération nginx (interdiction
+       * d'indexation, bloc du plan du site) et le contrôle de santé, qui ne
+       * réclame un plan qu'à ceux qui doivent en publier un.
+       *
+       * Un site `static` posé sur l'hôte principal — page d'attente, vitrine
+       * pré-construite — est public au même titre : c'est l'hôte qui décide,
+       * pas le nom du rôle.
+       */
+      public: role === 'web' || (role === 'static' && appHost === siteHost),
       publishable: role === 'web' || role === 'web-sub' || role === 'static',
       buildable: (role === 'web' || role === 'web-sub' || role === 'static') && app.prebuilt !== true,
       label: app.label ?? app.id,

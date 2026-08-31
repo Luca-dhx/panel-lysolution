@@ -15,7 +15,7 @@
 import { applyNginxConfig, applyNginxHttpOnly, deriveApiHost } from './nginx.js';
 import { ensureCertificate } from './certbot.js';
 import { pm2AppName, restartBackend } from './pm2.js';
-import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact, checkModuleMimeType } from './health.js';
+import { checkLocalHealth, checkPublicHealth, collectBackendDiagnostics, checkPublicMedia, checkApiHealth, checkWebsiteArtifact, checkModuleMimeType, checkSeoEndpoints } from './health.js';
 import { deriveNetworkUrls, describeRuntimeConfig } from './runtimeConfig.js';
 import { migrateUploads } from './uploads.js';
 import { planTopology } from './topology.js';
@@ -624,6 +624,46 @@ export async function runPipeline({ transport, target, artifact, options, versio
           );
         }
       }
+      /**
+       * LE PLAN DU SITE ET LE FICHIER ROBOTS — sur l'hôte PUBLIC, en ligne.
+       *
+       * ══ POURQUOI CETTE ÉTAPE EXISTE ══════════════════════════════════════
+       *
+       * Google Search Console a refusé le plan du site d'une vitrine pourtant
+       * déployée avec succès : « Le sitemap est un fichier HTML. » La route
+       * existait, les tests passaient, et `/sitemap.xml` rendait quand même la
+       * page d'accueil, parce que nginx n'avait pas de bloc pour cette adresse
+       * et appliquait le repli d'application à page unique.
+       *
+       * C'est le MÊME genre de défaut que le type MIME des modules, quelques
+       * lignes plus haut : il n'existe qu'une fois la configuration serveur et
+       * l'application assemblées, et aucune suite de tests de code ne peut le
+       * voir. Il faut donc interroger la réponse HTTP réelle.
+       *
+       * Un plan de site cassé ne se remarque pas : le site fonctionne, rien
+       * n'est en erreur, et la seule trace vit dans une console que personne
+       * n'ouvre avant des semaines. On le refuse donc à la porte.
+       *
+       * Le contrôle ne porte que sur les hôtes PUBLICS : le Manager n'a aucun
+       * plan à publier, et lui en réclamer un ferait échouer chaque
+       * déploiement pour une exigence qui ne le concerne pas.
+       */
+      health.seo = {};
+      for (const app of topo.publishable.filter((a) => a.public !== false)) {
+        // eslint-disable-next-line no-await-in-loop
+        const seo = await checkSeoEndpoints(transport, app.host);
+        health.seo[app.id] = seo;
+        if (!seo.ok) {
+          const { DeploymentError } = await import('./errors.js');
+          throw new DeploymentError(
+            'SEO_ENDPOINT_INVALID',
+            `Référencement : ${seo.problems.join(' · ')} `
+            + 'Un moteur de recherche recevrait un document invalide sans qu’aucune page ne soit en erreur.',
+            { step: 'validate', details: { host: app.host, sitemap: seo.sitemap, robots: seo.robots } },
+          );
+        }
+      }
+
       // Healthcheck du domaine API dédié. Un 502/504 (proxy cassé) ou un ENV
       // divergent est bloquant ; simplement injoignable (DNS/cert pas encore
       // propagés) est NON bloquant — le site fonctionne en même origine.
