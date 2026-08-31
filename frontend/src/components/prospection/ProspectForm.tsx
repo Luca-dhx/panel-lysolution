@@ -30,6 +30,7 @@ import { TextArea } from '@/components/base/textarea/textarea';
 import { Icon } from '@/components/Icon';
 import { ThemedSelect } from '@/components/ThemedSelect';
 import { ProspectInfoFieldsEditor } from '@/components/prospection/ProspectInfoFields';
+import { ProspectImportDialog } from '@/components/prospection/ProspectImportDialog';
 import type { FolderNode } from '@/components/prospection/FolderTree';
 import { api, errorMessage, uploadImage } from '@/lib/api';
 import { useToast } from '@/components/ToastProvider';
@@ -116,6 +117,10 @@ export function ProspectForm({
   );
 
   const [importEnCours, setImportEnCours] = useState(false);
+  /* L'IMPORT JSON est un DIALOGUE au-dessus du formulaire, et non un
+     dépliant dedans : il montre un aperçu section par section, qui ne
+     tiendrait pas entre deux champs sans repousser le reste hors de vue. */
+  const [importJson, setImportJson] = useState(false);
   const [enCours, setEnCours] = useState(false);
   const [erreur, setErreur] = useState<string | null>(null);
 
@@ -198,6 +203,32 @@ export function ProspectForm({
   return (
     <Card title={prospect ? 'Modifier le prospect' : 'Nouveau prospect'}>
       {erreur ? <div className="alert alert-error">{erreur}</div> : null}
+
+      {/*
+        ── IMPORTER UN JSON, EN HAUT ET AVANT TOUT ────────────────────────────
+
+        C'est le premier geste d'une saisie qui commence par un rapport de
+        qualification : on importe, puis on corrige à la main ce que le fichier
+        n'avait pas. Le placer en bas aurait fait remplir le formulaire pour
+        rien avant qu'on découvre le bouton.
+
+        L'import ÉCRIT — il ne pré-remplit pas ces champs. C'est dit ici, parce
+        que la surprise coûterait une saisie : une fiche ouverte en correction,
+        modifiée sans enregistrer, puis importée, perdrait ce qui n'était pas
+        enregistré. Voir l'en-tête de `ProspectImportDialog`.
+      */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-secondary bg-secondary p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-primary">Rapport de qualification</p>
+          <p className="text-xs text-tertiary">
+            Coordonnées, liens, informations, notes, messages, tâches et
+            rendez-vous — d’un seul fichier, avec un aperçu avant écriture.
+          </p>
+        </div>
+        <Button size="sm" color="secondary" onClick={() => setImportJson(true)}>
+          Importer un JSON
+        </Button>
+      </div>
 
       <div className="event-form">
         <Input
@@ -421,6 +452,29 @@ export function ProspectForm({
           {prospect ? 'Enregistrer' : 'Ajouter le prospect'}
         </Button>
       </div>
+
+      {/*
+        L'IMPORT A DÉJÀ ÉCRIT quand ce retour arrive : la fiche existe, ses
+        messages, ses tâches et ses rendez-vous aussi. On ferme donc le
+        formulaire et on laisse l'écran se recharger, plutôt que de recopier le
+        résultat dans des champs qu'il faudrait ensuite réenregistrer — un
+        second enregistrement aurait écrasé ce que l'import venait de poser.
+      */}
+      <ProspectImportDialog
+        open={importJson}
+        onClose={() => setImportJson(false)}
+        prospect={prospect}
+        nomPropose={name}
+        onImported={(fiche, plan) => {
+          setImportJson(false);
+          toast.success(
+            plan.target.action === 'CREATE'
+              ? `« ${fiche.name} » créé par import.`
+              : `« ${fiche.name} » mis à jour : ${plan.counts.added} ajout(s), ${plan.counts.changed} modification(s).`,
+          );
+          onSaved();
+        }}
+      />
     </Card>
   );
 }

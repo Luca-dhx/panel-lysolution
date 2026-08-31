@@ -11,6 +11,10 @@ import {
   summarizeProspects,
   updateProspect,
 } from '../services/prospection/prospects.service.js';
+import {
+  appliquerImport,
+  planifierImport,
+} from '../services/prospection/prospectImport.service.js';
 
 /** L'auteur d'une décision. Jamais anonyme. */
 const actorOf = (req) => ({
@@ -55,4 +59,30 @@ export async function changeStatus(req, res) {
 
 export async function remove(req, res) {
   return ok(res, await deleteProspect(req.params.prospectId));
+}
+
+/**
+ * L'APERÇU D'UN IMPORT — ce qui changerait, si l'on validait.
+ *
+ * ── POURQUOI C'EST UN `POST` ────────────────────────────────────────────────
+ * Rien n'est écrit, mais le document à examiner ne tient pas dans une adresse :
+ * il porte des messages entiers, parfois des milliers de caractères. Un `GET`
+ * aurait demandé de le hacher dans la requête, et les journaux d'accès
+ * auraient conservé le texte des accroches commerciales.
+ */
+export async function previewImport(req, res) {
+  const { document = null, prospectId = null, mode = null } = req.body ?? {};
+  return ok(res, { plan: await planifierImport({ document, prospectId, mode }, actorOf(req)) });
+}
+
+/**
+ * L'IMPORT — la seule route de cette surface qui écrit dans TROIS collections.
+ *
+ * Le plan renvoyé est RECALCULÉ ici : celui qu'a vu l'écran n'est jamais
+ * réutilisé. Une confirmation ne transporte pas une écriture, elle l'autorise.
+ */
+export async function applyImport(req, res) {
+  const { document = null, prospectId = null, mode = null } = req.body ?? {};
+  const { prospect, plan } = await appliquerImport({ document, prospectId, mode }, actorOf(req));
+  return ok(res, { prospect, plan });
 }

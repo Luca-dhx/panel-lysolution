@@ -24,6 +24,7 @@ import type { Meeting, MeetingScope, ProjectEvent, ProjectEventsSummary } from '
 import type {
   Prospect, ProspectInput, ProspectListResult, ProspectStatus,
   FolderKind, ProspectFolder, ProspectTemplate, ProspectTemplateInput,
+  ProspectImportMode, ProspectImportPlan,
 } from '@/types.prospection';
 import type { Task, TaskInput, TaskListResult, TaskStatus } from '@/types.tasks';
 import type { PanelTheme } from '@/lib/useTheme';
@@ -1089,6 +1090,23 @@ export const api = {
 
   updateProspect: (prospectId: string, body: ProspectInput) =>
     request<{ prospect: Prospect }>(`/api/prospects/${prospectId}`, { method: 'PATCH', body }),
+
+  /* ── L'IMPORT JSON ────────────────────────────────────────────────────────
+     DEUX adresses, et non un drapeau `dryRun` : l'aperçu et l'écriture ne
+     doivent pas pouvoir se confondre à une lettre près. Le plan que rend
+     l'aperçu n'est jamais renvoyé au serveur — il est RECALCULÉ à l'écriture,
+     contre l'état réel de la fiche au moment où l'on écrit. */
+  previewProspectImport: (
+    body: { document: unknown; prospectId?: string | null; mode?: ProspectImportMode },
+  ) => request<{ plan: ProspectImportPlan }>('/api/prospects/import/preview', {
+    method: 'POST', body,
+  }),
+
+  applyProspectImport: (
+    body: { document: unknown; prospectId?: string | null; mode?: ProspectImportMode },
+  ) => request<{ prospect: Prospect; plan: ProspectImportPlan }>('/api/prospects/import', {
+    method: 'POST', body,
+  }),
 
   /* ── LES DOSSIERS ET LES MODÈLES D'ACCROCHE ────────────────────────────
      L'arbre se lit EN ENTIER, par famille : quelques dizaines de nœuds, une

@@ -147,6 +147,19 @@ const TESTS = [
   'prospection.test.js',
   'tasks.test.js',
   'prospect-library.test.js',
+  // L'IMPORT JSON D'UN PROSPECT — un rapport de qualification devient une fiche.
+  //
+  // Placée juste après la prospection et les tâches, parce qu'elle traverse les
+  // deux : un seul fichier pose la fiche, ses messages, ses tâches planifiées
+  // et ses rendez-vous.
+  //
+  // Ce qu'elle garde surtout, c'est l'IDEMPOTENCE. Un rapport corrigé est
+  // réimporté ; sans rapprochement par clef naturelle, la fiche finirait avec
+  // deux « Fiche Google » et deux accroches — et la seconde partirait chez le
+  // prospect. Elle garde aussi qu'un import ne VIDE jamais l'échéancier ni
+  // l'agenda, quel que soit le mode : une tâche notée à la main la veille ne
+  // doit pas disparaître parce qu'un fichier ne la mentionne pas.
+  'prospect-import.test.js',
   // LA REFONTE D'INTERFACE — quatre écosystèmes, une seule identité visuelle.
   //
   // Contrôles STATIQUES, et c'est délibéré : les défauts qu'ils ferment ne se

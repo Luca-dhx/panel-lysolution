@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "source": "Qualification — tournée Marseille 13002",
+  "generatedAt": "2026-08-31",
+  "prospects": [
+    {
+      "name": "Garage Leblanc",
+      "email": "contact@garage-leblanc.fr",
+      "phone": "04 91 00 00 00",
+      "status": "en cours",
+      "type": "refonte",
+      "folderPath": "Garages / Marseille",
+      "notes": "Vu depuis la route. Devanture refaite en 2025, site à l'abandon depuis 2019. Le gérant est joignable le matin.",
+
+      "websiteUrl": "garage-leblanc.fr",
+      "googleUrl": "https://g.page/garage-leblanc",
+      "instagram": "instagram.com/garageleblanc",
+      "pagesJaunes": "pagesjaunes.fr/pros/garage-leblanc",
+
+      "links": {
+        "Dossier partagé": "https://drive.exemple.fr/garage-leblanc"
+      },
+
+      "competitors": [
+        { "name": "Auto Sud", "url": "autosud.fr", "note": "Site refait en 2024, propre, prise de rendez-vous en ligne." },
+        { "name": "Méca 13", "url": "meca13.fr", "note": "Page Facebook seulement." }
+      ],
+
+      "infoFields": {
+        "Budget annoncé": "3 000 €",
+        "Qui décide": "M. Leblanc, gérant",
+        "Hébergeur actuel": "OVH",
+        "Avis Google": "4,6 sur 128 avis",
+        "Origine du contact": "prospection terrain, 28/08"
+      },
+
+      "messages": [
+        {
+          "channel": "E-mail",
+          "title": "Accroche",
+          "body": "Bonjour M. Leblanc,\n\nJe suis passé devant votre garage la semaine dernière — la devanture est superbe.\n\nEn cherchant vos horaires en ligne, je suis tombé sur un site qui ne semble plus à jour depuis quelques années, alors que vos concurrents directs (Auto Sud, notamment) prennent des rendez-vous en ligne.\n\nSeriez-vous disponible dix minutes cette semaine ?\n\nBien à vous,",
+          "sentAt": "2026-08-28T09:12:00+02:00"
+        },
+        {
+          "channel": "E-mail",
+          "title": "Relance 1",
+          "body": "Bonjour M. Leblanc,\n\nJe me permets de revenir vers vous concernant mon message de mercredi.\n\nJe vous joins un aperçu de ce que donnerait une page de prise de rendez-vous pour votre garage.\n\nBien à vous,",
+          "sent": false
+        },
+        {
+          "channel": "au téléphone",
+          "title": "Relance 2 — appel",
+          "body": "Rappeler en fin de semaine si pas de réponse à la relance 1. Demander M. Leblanc directement, pas l'accueil.",
+          "sent": false
+        }
+      ],
+
+      "tasks": [
+        {
+          "name": "Rappeler le gérant",
+          "description": "Joignable le matin, avant 10 h.",
+          "dueInDays": 3,
+          "subtasks": [
+            { "name": "Préparer une estimation à 3 000 €" },
+            { "name": "Vérifier si le domaine est encore à eux" }
+          ]
+        },
+        {
+          "name": "Envoyer la proposition écrite",
+          "dueAt": "2026-09-15T09:00:00+02:00"
+        }
+      ],
+
+      "meetings": [
+        {
+          "title": "Visite du garage",
+          "description": "Voir l'atelier, photographier la devanture, comprendre le flux de rendez-vous actuel.",
+          "scheduledAt": "2026-09-12T10:00:00+02:00",
+          "durationMinutes": 45,
+          "mode": "onsite",
+          "address": "1 rue du Port, 13002 Marseille",
+          "participants": [
+            { "name": "M. Leblanc", "type": "external", "phone": "04 91 00 00 00" }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "Boulangerie Martin",
+      "email": "contact@boulangerie-martin.fr",
+      "phone": "06 12 34 56 78",
+      "status": "à contacter",
+      "type": "conception",
+      "folderPath": "Restaurants / Marseille",
+      "notes": "Aucun site. Très bonne fiche Google, 4,8 sur 340 avis.",
+
+      "googleUrl": "https://g.page/boulangerie-martin",
+      "instagram": "instagram.com/boulangeriemartin",
+
+      "infoFields": {
+        "Qui décide": "Mme Martin",
+        "Avis Google": "4,8 sur 340 avis",
+        "Origine du contact": "recommandation"
+      },
+
+      "messages": [
+        {
+          "channel": "Instagram",
+          "title": "Accroche",
+          "body": "Bonjour,\n\nVos photos donnent faim — et votre fiche Google est excellente (4,8 !).\n\nEn revanche, quand on cherche « boulangerie Martin » sur Google, il n'y a pas de site : vos clients ne trouvent ni vos horaires de fermeture, ni vos commandes de gâteaux.\n\nÇa se règle en une page. Seriez-vous partante pour en parler ?",
+          "sent": false
+        }
+      ],
+
+      "tasks": [
+        { "name": "Écrire l'accroche Instagram", "dueInDays": 1 }
+      ]
+    }
+  ]
+}

@@ -222,3 +222,16 @@ frontend/src/styles/                              uui.css, theme.css, bridge.css
 
 tests/prospection.test.js
 ```
+
+---
+
+## L'import JSON
+
+Une fiche entière — coordonnées, liens, informations, notes, messages,
+**tâches planifiées** et **rendez-vous** — entre d'un seul fichier, avec un
+aperçu section par section avant écriture. C'est ce qui supprime la resaisie
+manuelle des rapports de qualification.
+
+La structure du fichier, les synonymes acceptés, les deux modes d'application et
+ce qu'un import ne détruit jamais : **[26_PROSPECT_IMPORT.md](26_PROSPECT_IMPORT.md)**.
+Ce document est écrit pour être envoyé tel quel à qui remplit les fichiers.

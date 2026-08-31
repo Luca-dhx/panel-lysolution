@@ -187,3 +187,60 @@ export interface ProspectListResult {
   prospects: Prospect[];
   summary: ProspectSummary;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L'IMPORT JSON — le miroir de `prospectImport.contract.js`
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * COMPLÉTER ou REMPLACER — voir `prospectImport.contract.js` pour le pourquoi.
+ *
+ * `MERGE` est le défaut : un rapport de qualification complète un carnet, il ne
+ * le refait pas. `REPLACE` ne touche que les sections PRÉSENTES dans le
+ * document, et jamais les tâches ni les rendez-vous : un import ne vide pas un
+ * échéancier.
+ */
+export type ProspectImportMode = 'MERGE' | 'REPLACE';
+
+/** Une ligne d'aperçu : ce qui est ajouté, retiré, ou ce qui change. */
+export interface ProspectImportItem {
+  label: string;
+  detail?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface ProspectImportSection {
+  key: string;
+  label: string;
+  added: ProspectImportItem[];
+  changed: ProspectImportItem[];
+  removed: ProspectImportItem[];
+  /** Ce que le document confirme sans le modifier. Compté, jamais listé. */
+  kept: number;
+}
+
+/**
+ * CE QUE LE PANEL N'A PAS SU PLACER — et pourquoi.
+ *
+ * Le montrer AVANT la validation est ce qui rend l'import utilisable : celui
+ * qui produit le fichier corrige la source, plutôt que de découvrir six
+ * semaines plus tard qu'une colonne n'entrait nulle part.
+ */
+export interface ProspectImportIgnored {
+  path: string;
+  reason: string;
+}
+
+export interface ProspectImportPlan {
+  mode: ProspectImportMode;
+  version: number;
+  target: {
+    action: 'CREATE' | 'UPDATE';
+    prospectId: string | null;
+    name: string;
+  };
+  sections: ProspectImportSection[];
+  ignored: ProspectImportIgnored[];
+  counts: { added: number; changed: number; removed: number };
+}

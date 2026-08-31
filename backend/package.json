@@ -92,7 +92,8 @@
     "migrate:ly-legal": "node src/scripts/migrations/2026-08-26-ly-solution-legal-templates.js",
     "migrate:restaurant-privacy": "node src/scripts/migrations/2026-08-26-restaurant-privacy-template.js",
     "test:tasks": "node ../tests/tasks.test.js",
-    "test:prospect-library": "node ../tests/prospect-library.test.js"
+    "test:prospect-library": "node ../tests/prospect-library.test.js",
+    "test:prospect-import": "node ../tests/prospect-import.test.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -30,10 +30,12 @@ import {
   translateUploadErrors,
 } from '../services/upload/imageEndpoint.js';
 import {
+  applyImport,
   changeStatus,
   create,
   detail,
   list,
+  previewImport,
   remove,
   update,
 } from '../controllers/prospects.controller.js';
@@ -73,6 +75,23 @@ router.post(
   translateUploadErrors,
   receiveImage({ relayPath: '/api/prospects/images' }),
 );
+
+/**
+ * L'IMPORT JSON — avant les routes à paramètre, comme l'import d'image.
+ *
+ * ── POURQUOI DEUX ADRESSES ET NON UNE AVEC UN DRAPEAU ───────────────────────
+ * `dryRun: true` dans le corps aurait fait tenir l'écriture et sa simulation
+ * sur la MÊME adresse : une faute de frappe dans le corps, un client qui oublie
+ * le drapeau, et l'aperçu écrit. Deux adresses rendent la distinction visible
+ * dans le journal d'accès, et impossible à franchir par accident.
+ *
+ * `prospectId` est dans le CORPS, pas dans le chemin : la même route sert la
+ * création (aucune fiche) et la correction (une fiche). Deux chemins auraient
+ * dupliqué la validation du document — et c'est toujours celle de la création
+ * qu'on oublie de mettre à jour.
+ */
+router.post('/import/preview', asyncHandler(previewImport));
+router.post('/import', asyncHandler(applyImport));
 
 router.get('/:prospectId', asyncHandler(detail));
 router.patch('/:prospectId', asyncHandler(update));
