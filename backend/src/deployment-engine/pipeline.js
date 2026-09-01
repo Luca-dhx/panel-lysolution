@@ -753,7 +753,10 @@ export async function runPipeline({ transport, target, artifact, options, versio
       const journal = [];
       for (const app of publics) {
         // eslint-disable-next-line no-await-in-loop
-        const seo = await checkSeoEndpoints(transport, app.host);
+        // Mêmes budgets que les autres contrôles publics : le service vient
+        // d'être relancé, et une destination lente ne doit pas être confondue
+        // avec une destination fautive.
+        const seo = await checkSeoEndpoints(transport, app.host, healthPublicOpts);
         health.seo[app.id] = seo;
         journal.push(`[${app.id}] ${app.host}`, ...(seo.lines ?? []).map((l) => `  ${l}`));
         if (!seo.ok) {
@@ -776,7 +779,7 @@ export async function runPipeline({ transport, target, artifact, options, versio
             },
           );
         }
-        journal.push('  ✓ plan du site et fichier robots conformes');
+        journal.push(`  ✓ ${seo.verdict}`);
       }
 
       return {

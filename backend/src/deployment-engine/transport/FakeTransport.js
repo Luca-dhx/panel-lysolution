@@ -25,6 +25,25 @@ export class FakeTransport extends Transport {
     this.defaultResponse = opts.defaultResponse || { code: 0, stdout: '', stderr: '' };
     /** Nom de process PM2 → chemin du script réellement enregistré. */
     this.pm2 = new Map(opts.pm2 ? Object.entries(opts.pm2) : []);
+    /**
+     * ══ UN SERVEUR SIMULÉ RÉPOND AUX SONDES QU'IL CONNAÎT ═════════════════
+     *
+     * Le contrôle SEO interroge `/sitemap.xml` et `/robots.txt`, et RÉESSAIE
+     * tant que la réponse ressemble à un service qui démarre (5xx, ou pas de
+     * réponse du tout). Sans règle ici, le double rendait une sortie VIDE —
+     * lue comme « aucune réponse » —, le contrôle réessayait, et la temporisation
+     * de l'attente ne retient pas la boucle d'évènements : le processus de test
+     * sortait au milieu, avec le code 0 et sans avoir rien affiché. Une suite
+     * qui se tait n'échoue pas, et c'est pire qu'un échec.
+     *
+     * Ces règles sont donc posées EN PREMIER, ce qui les rend surchargeables :
+     * `_resolve` retient la DERNIÈRE règle qui matche, donc tout `.on()` ajouté
+     * par un test — pour simuler un plan en HTML, par exemple — l'emporte.
+     */
+    this.responses.unshift(
+      { match: /ly-seo-probe[\s\S]*sitemap\.xml/, code: 0, stdout: '200 application/xml; charset=utf-8\n<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">', stderr: '' },
+      { match: /ly-seo-probe[\s\S]*robots\.txt/, code: 0, stdout: '200 text/plain; charset=utf-8\nUser-agent: *\nAllow: /', stderr: '' },
+    );
     this.commands = []; // historique des commandes exécutées
     this.files = new Map(); // FS virtuel : remotePath -> content
     this.uploads = []; // historique des uploads

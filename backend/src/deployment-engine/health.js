@@ -377,8 +377,8 @@ export async function checkModuleMimeType(transport, host, { maxModules = 3 } = 
  * de déploiement. Un projet sans plan du tout n'est pas en faute : c'est un
  * plan qui MENT sur sa nature qui l'est.
  */
-export async function checkSeoEndpoints(transport, host) {
-  const sonder = async (chemin) => {
+export async function checkSeoEndpoints(transport, host, { retries = 5, delayMs = 3000 } = {}) {
+  const uneFois = async (chemin) => {
     const res = await sonde(
       transport,
       'health.seo',
@@ -394,6 +394,45 @@ export async function checkSeoEndpoints(transport, host) {
       contentType: reste.join(' ') || null,
       head: lignes.slice(1).join('\n'),
     };
+  };
+
+  /**
+   * ══ ON RÉESSAIE TANT QUE LE SERVICE DÉMARRE ═══════════════════════════════
+   *
+   * ── LE DÉFAUT QUE CECI FERME ──────────────────────────────────────────────
+   *
+   * Une première version ne sondait qu'une fois. Sur un déploiement réel, le
+   * backend venait d'être relancé et son garde de disponibilité répondait :
+   *
+   *     HTTP 503 · {"success":false,"message":"Le service démarre…"}
+   *
+   * Le contrôle n'a rien refusé — un code autre que 200 était traité comme
+   * « aucun plan publié », cas légitime — et le rapport a imprimé « ✓ plan du
+   * site et fichier robots conformes ». Il certifiait une réponse qu'il
+   * n'avait jamais lue.
+   *
+   * Un contrôle qui rassure sans avoir vérifié est pire qu'un contrôle absent :
+   * il fait croire que la question a été posée.
+   *
+   * ── LA DISTINCTION QUI MANQUAIT ───────────────────────────────────────────
+   *
+   * « Ce projet ne publie pas de plan » (404) et « le service n'a pas pu
+   * répondre » (5xx, connexion perdue) ne sont pas la même chose. La première
+   * est une décision de projet, la seconde est un échec de mesure. On réessaie
+   * donc sur la seconde, et si elle persiste, on refuse.
+   */
+  const sonder = async (chemin) => {
+    let derniere = null;
+    for (let essai = 0; essai <= retries; essai += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      derniere = await uneFois(chemin);
+      derniere.attempts = essai + 1;
+      const transitoire = derniere.status === 0 || derniere.status >= 500;
+      if (!transitoire) return derniere;
+      // eslint-disable-next-line no-await-in-loop
+      if (essai < retries) await sleep(delayMs);
+    }
+    return derniere;
   };
 
   const sitemap = await sonder('/sitemap.xml');
@@ -425,6 +464,35 @@ export async function checkSeoEndpoints(transport, host) {
   if (robotsHtml) problemes.push('/robots.txt répond 200 avec du HTML au lieu de texte brut.');
 
   /**
+   * UNE RÉPONSE QU'ON N'A PAS PU LIRE N'EST PAS UNE RÉPONSE CONFORME.
+   *
+   * Après les réessais, un 5xx ou une connexion perdue signifie que le service
+   * ne sert pas ces adresses — pas qu'il a choisi de ne pas les publier. Le
+   * dire est le minimum ; le taire ferait imprimer « conforme » sur une mesure
+   * qui n'a pas eu lieu.
+   */
+  for (const p of [sitemap, robots]) {
+    if (p.status === 0) {
+      problemes.push(`${p.path} : aucune réponse après ${p.attempts} tentative(s) — l'hôte est injoignable.`);
+    } else if (p.status >= 500) {
+      problemes.push(`${p.path} répond ${p.status} après ${p.attempts} tentative(s) : le service ne sert pas cette adresse.`);
+    }
+  }
+
+  /**
+   * CE QUE LE CONTRÔLE A CONSTATÉ, EN TOUTES LETTRES.
+   *
+   * « conformes » ne doit se lire que lorsqu'un plan a RÉELLEMENT été servi et
+   * validé. Un projet qui n'en publie pas est en règle, et son rapport doit le
+   * dire autrement — sans quoi la même phrase couvrirait deux réalités.
+   */
+  const verdict = problemes.length > 0
+    ? 'contrôle en échec'
+    : sitemapXml
+      ? 'plan du site et fichier robots conformes'
+      : `aucun plan du site publié (HTTP ${sitemap.status}) — toléré ; fichier robots conforme`;
+
+  /**
    * ══ LE DÉBUT DU CORPS EST CONSERVÉ, ET C'EST DÉLIBÉRÉ ═══════════════════
    *
    * Une version antérieure le jetait (`head: undefined`) : le contrôle rendait
@@ -443,6 +511,7 @@ export async function checkSeoEndpoints(transport, host) {
     sitemap: { ...sitemap, isXml: sitemapXml, isHtml: sitemapHtml },
     robots: { ...robots, isHtml: robotsHtml },
     problems: problemes,
+    verdict,
     /**
      * Une ligne par sonde, prête à lire. Le rapport n'a ainsi rien à
      * recomposer, et le journal du déploiement dit la même chose que lui.
