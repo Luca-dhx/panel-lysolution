@@ -225,9 +225,28 @@ function sitemapLocation(backendPort) {
  * même exploré. Aucun des deux ne change le fonctionnement de l'application :
  * ce sont des directives destinées aux robots, que les navigateurs ignorent.
  */
+/**
+ * ROBOTS.TXT D'UN HOTE PRIVE — interdiction totale, servie en texte brut.
+ *
+ * Deux precisions valent d'etre ecrites, parce que l'une a deja mordu :
+ *
+ * 1. `default_type`, PAS `add_header Content-Type`. Un `return 200 "..."` pose
+ *    deja un type sur la reponse ; un `add_header` ne le REMPLACE pas, il en
+ *    AJOUTE un second. nginx emettait alors, mesure en production :
+ *
+ *        Content-Type: text/plain, text/plain; charset=utf-8
+ *
+ *    Deux valeurs jointes par une virgule ne sont pas un type de contenu.
+ *
+ * 2. Ce bloc et l'en-tete `X-Robots-Tag` sont COMPLEMENTAIRES, pas redondants.
+ *    Ce fichier demande de ne pas EXPLORER, ce qui n'empeche pas d'indexer une
+ *    adresse connue par ailleurs ; l'en-tete interdit d'INDEXER, mais n'est lu
+ *    que si la page est exploree. Retirer l'un ouvre une porte.
+ */
 function robotsInterdit() {
   return `    location = /robots.txt {
-        add_header Content-Type "text/plain; charset=utf-8";
+        default_type text/plain;
+        charset utf-8;
         add_header X-Robots-Tag "noindex, nofollow" always;
         return 200 "User-agent: *\\nDisallow: /\\n";
     }`;
