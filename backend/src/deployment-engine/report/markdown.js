@@ -196,6 +196,34 @@ export function renderMarkdown(report) {
   section(L, 'Services (PM2)', report.services);
   section(L, 'Tests publics', report.publicTests);
 
+  /**
+   * ══ CONTRÔLE SEO — le journal, pas seulement le verdict ═══════════════════
+   *
+   * Cette section existe parce qu'un rapport qui se contenterait d'annoncer
+   * « SEO : ok » ne prouverait rien : il faudrait rouvrir un terminal et
+   * refaire les requêtes pour savoir ce que le moteur a lu. On reproduit donc
+   * les sondes telles quelles — adresse, code, type de contenu, début du
+   * corps —, et les problèmes s'il y en a.
+   *
+   * Le rendu est un bloc de texte, pas une liste clé/valeur : c'est un
+   * JOURNAL, et il se lit dans l'ordre où il a été écrit.
+   */
+  const seo = report.seo;
+  if (seo && Object.keys(seo).length) {
+    L.push('## Contrôle SEO');
+    if (seo.skipped) {
+      L.push(`- ⊘ Non applicable — ${seo.reason || 'aucun hôte public'}`);
+    } else {
+      L.push(kv({
+        hôtesContrôlés: (seo.hosts ?? []).join(', '),
+        nombre: seo.checked,
+      }));
+      if (seo.log?.length) L.push(codeBlock(seo.log.join('\n')));
+      if (seo.problems?.length) seo.problems.forEach((p) => L.push(`- ✗ ${p}`));
+    }
+    L.push('');
+  }
+
   // État distant / rollback
   const rs = report.remoteState || {};
   if ((rs.created?.length || rs.modified?.length || rs.started?.length || rs.rollback || rs.notes?.length)) {

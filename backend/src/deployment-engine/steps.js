@@ -405,6 +405,43 @@ export const CANONICAL_STEPS = Object.freeze([
     visible: true,
   },
   {
+    /**
+     * ══ CONTRÔLE SEO — une étape À PART ENTIÈRE, et pas un détail de santé ══
+     *
+     * Elle est née d'un refus de Google Search Console : « Le sitemap est un
+     * fichier HTML. » Le site fonctionnait, aucune page n'était en erreur, le
+     * déploiement s'était terminé sans une alerte — `/sitemap.xml` tombait
+     * simplement dans le repli d'application à page unique et rendait la page
+     * d'accueil, en `text/html`, avec un code 200.
+     *
+     * ── POURQUOI ELLE NE RESTE PAS DANS « Vérification publique finale » ───
+     *
+     * Parce qu'une étape invisible ne se lit pas. Fondu dans un contrôle plus
+     * large, ce test n'apparaissait ni dans la liste des étapes, ni dans le
+     * rapport : il ne pouvait ni rassurer quand il passait, ni se faire
+     * remarquer quand il refusait. Un contrôle dont personne ne voit le
+     * résultat protège sur le papier seulement.
+     *
+     * ── POURQUOI ELLE EST BLOQUANTE ───────────────────────────────────────
+     *
+     * Un plan de site cassé ne se remarque pas : sa seule trace vit dans une
+     * console que personne n'ouvre avant des semaines. C'est le genre de
+     * défaut qu'il faut refuser à la porte. Un plan ABSENT reste toléré — tous
+     * les projets n'en publient pas ; c'est le 200 qui MENT sur sa nature qui
+     * est interdit.
+     */
+    id: 'seo.verify',
+    order: 215,
+    label: 'Contrôle SEO',
+    icon: 'Search',
+    group: G.HEALTH,
+    modes: DEPLOIEMENT_SEUL,
+    critical: true,
+    required: true,
+    blocking: true,
+    visible: true,
+  },
+  {
     id: 'runtime.sync',
     order: 220,
     label: 'Synchronisation de la configuration réseau',
@@ -535,6 +572,7 @@ export const RAW_TO_CANONICAL = {
   pm2: 'services.start',
   health: 'services.verify',
   validate: 'public.healthcheck',
+  seo: 'seo.verify',
   finalize: 'deployment.finalize',
 };
 

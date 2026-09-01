@@ -389,6 +389,7 @@ export async function checkSeoEndpoints(transport, host) {
     const [statut, ...reste] = (lignes[0] || '').trim().split(/\s+/);
     return {
       path: chemin,
+      url: `https://${host}${chemin}`,
       status: Number(statut) || 0,
       contentType: reste.join(' ') || null,
       head: lignes.slice(1).join('\n'),
@@ -423,13 +424,33 @@ export async function checkSeoEndpoints(transport, host) {
   }
   if (robotsHtml) problemes.push('/robots.txt répond 200 avec du HTML au lieu de texte brut.');
 
+  /**
+   * ══ LE DÉBUT DU CORPS EST CONSERVÉ, ET C'EST DÉLIBÉRÉ ═══════════════════
+   *
+   * Une version antérieure le jetait (`head: undefined`) : le contrôle rendait
+   * un verdict sans jamais montrer CE QU'IL AVAIT LU. En cas de refus, il
+   * fallait rouvrir un terminal et refaire la requête à la main pour savoir si
+   * l'on avait reçu une page d'accueil, une page d'erreur ou autre chose.
+   *
+   * Les 200 premiers octets tiennent dans un rapport, ne peuvent pas contenir
+   * de secret (ce sont deux documents publics par nature), et transforment le
+   * verdict en PREUVE : le rapport de déploiement montre la réponse.
+   */
   return {
     ok: problemes.length === 0,
     probed: true,
     host,
-    sitemap: { ...sitemap, head: undefined, isXml: sitemapXml, isHtml: sitemapHtml },
-    robots: { ...robots, head: undefined, isHtml: robotsHtml },
+    sitemap: { ...sitemap, isXml: sitemapXml, isHtml: sitemapHtml },
+    robots: { ...robots, isHtml: robotsHtml },
     problems: problemes,
+    /**
+     * Une ligne par sonde, prête à lire. Le rapport n'a ainsi rien à
+     * recomposer, et le journal du déploiement dit la même chose que lui.
+     */
+    lines: [sitemap, robots].map((p) => {
+      const corps = String(p.head ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+      return `${p.url} → HTTP ${p.status} · ${p.contentType || 'type inconnu'}${corps ? ` · « ${corps} »` : ''}`;
+    }),
   };
 }
 

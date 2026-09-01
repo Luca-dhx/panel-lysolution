@@ -843,6 +843,9 @@ export class DeploymentEngine {
               emitStep(canon, 'ok', { durationMs: raw.durationMs, technicalMessage: raw.detail ? JSON.stringify(raw.detail).slice(0, 500) : null });
             }
           } else if (raw.status === 'error') {
+            // Le détail d'une étape en ÉCHEC vaut au moins celui d'une étape
+            // réussie : c'est là qu'on cherche ce que le contrôle a lu.
+            this._captureSection(recorder, raw);
             emitStep(canon, 'error', { durationMs: raw.durationMs, errorCode: raw.error?.code, technicalMessage: raw.error?.message });
             finalStepId = canon;
           }
@@ -935,6 +938,7 @@ export class DeploymentEngine {
     if (raw.step === 'pm2') recorder.setServices(d);
     if (raw.step === 'health') recorder.setPublicTests(d);
     if (raw.step === 'validate') recorder.setPublicTests({ ...(recorder.sections.publicTests || {}), ...d });
+    if (raw.step === 'seo') recorder.setSeo(d);
   }
 
   /** Diagnostic structuré sur échec. */

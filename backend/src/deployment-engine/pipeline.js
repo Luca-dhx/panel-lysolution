@@ -41,6 +41,11 @@ export const PIPELINE_STEPS = [
   // et l'historique. `runtime_config` publie, `validate` constate — publier ne
   // peut pas précéder constater, ici comme dans le corps du pipeline.
   'validate',
+  // Le contrôle SEO suit la validation publique — il interroge des adresses
+  // que la bascule vient de rendre servables — et précède la synchronisation
+  // réseau, qui est un acte de publication : on ne publie pas une destination
+  // dont un moteur de recherche recevrait un document invalide.
+  'seo',
   'runtime_config',
 ];
 
@@ -147,6 +152,16 @@ export async function runPipeline({ transport, target, artifact, options, versio
         status: 'error',
         durationMs,
         error: { code: err.code || 'ERROR', message: err.message },
+        /**
+         * LE DÉTAIL STRUCTURÉ SURVIT À L'ÉCHEC.
+         *
+         * Une étape qui réussit transmet son `detail` au rapport ; une étape
+         * qui échouait ne transmettait que son code et son message. C'est
+         * l'inverse du besoin : c'est quand un contrôle REFUSE qu'on veut
+         * voir ce qu'il a lu. Le contrôle SEO, notamment, porte ici le
+         * journal complet de ses sondes.
+         */
+        detail: err.details ?? null,
       };
       steps.push(failed);
       onStep({ ...failed });
@@ -624,46 +639,6 @@ export async function runPipeline({ transport, target, artifact, options, versio
           );
         }
       }
-      /**
-       * LE PLAN DU SITE ET LE FICHIER ROBOTS — sur l'hôte PUBLIC, en ligne.
-       *
-       * ══ POURQUOI CETTE ÉTAPE EXISTE ══════════════════════════════════════
-       *
-       * Google Search Console a refusé le plan du site d'une vitrine pourtant
-       * déployée avec succès : « Le sitemap est un fichier HTML. » La route
-       * existait, les tests passaient, et `/sitemap.xml` rendait quand même la
-       * page d'accueil, parce que nginx n'avait pas de bloc pour cette adresse
-       * et appliquait le repli d'application à page unique.
-       *
-       * C'est le MÊME genre de défaut que le type MIME des modules, quelques
-       * lignes plus haut : il n'existe qu'une fois la configuration serveur et
-       * l'application assemblées, et aucune suite de tests de code ne peut le
-       * voir. Il faut donc interroger la réponse HTTP réelle.
-       *
-       * Un plan de site cassé ne se remarque pas : le site fonctionne, rien
-       * n'est en erreur, et la seule trace vit dans une console que personne
-       * n'ouvre avant des semaines. On le refuse donc à la porte.
-       *
-       * Le contrôle ne porte que sur les hôtes PUBLICS : le Manager n'a aucun
-       * plan à publier, et lui en réclamer un ferait échouer chaque
-       * déploiement pour une exigence qui ne le concerne pas.
-       */
-      health.seo = {};
-      for (const app of topo.publishable.filter((a) => a.public !== false)) {
-        // eslint-disable-next-line no-await-in-loop
-        const seo = await checkSeoEndpoints(transport, app.host);
-        health.seo[app.id] = seo;
-        if (!seo.ok) {
-          const { DeploymentError } = await import('./errors.js');
-          throw new DeploymentError(
-            'SEO_ENDPOINT_INVALID',
-            `Référencement : ${seo.problems.join(' · ')} `
-            + 'Un moteur de recherche recevrait un document invalide sans qu’aucune page ne soit en erreur.',
-            { step: 'validate', details: { host: app.host, sitemap: seo.sitemap, robots: seo.robots } },
-          );
-        }
-      }
-
       // Healthcheck du domaine API dédié. Un 502/504 (proxy cassé) ou un ENV
       // divergent est bloquant ; simplement injoignable (DNS/cert pas encore
       // propagés) est NON bloquant — le site fonctionne en même origine.
@@ -727,6 +702,94 @@ export async function runPipeline({ transport, target, artifact, options, versio
         mediaProbe: !media.probed ? 'aucune sonde déclarée au profil' : (media.reachable ? 'vérifiée' : 'sonde injoignable'),
         apiReachable: api.reachable,
         apiHttp: api.code,
+      };
+    });
+
+
+    /**
+     * ══ 9.bis. CONTRÔLE SEO — une étape visible, nommée, et bloquante ═══════
+     *
+     * ── CE QUI L'A RENDUE NÉCESSAIRE ──────────────────────────────────────
+     *
+     * Google Search Console a refusé le plan du site d'une vitrine pourtant
+     * déployée sans la moindre erreur : « Le sitemap est un fichier HTML. »
+     * La route existait, les tests passaient, et `/sitemap.xml` rendait quand
+     * même la page d'accueil — nginx n'avait pas de bloc pour cette adresse et
+     * appliquait le repli d'application à page unique.
+     *
+     * C'est la même famille que le type MIME des modules : un défaut qui
+     * n'existe qu'une fois la configuration serveur et l'application
+     * assemblées, et qu'aucune suite de tests de code ne peut voir. Il faut
+     * interroger la RÉPONSE HTTP RÉELLE.
+     *
+     * ── POURQUOI ELLE N'EST PLUS FONDUE DANS `validate` ───────────────────
+     *
+     * Elle y était, et personne ne la voyait : ni dans la liste des étapes, ni
+     * dans le rapport. Un contrôle dont le résultat ne s'affiche nulle part ne
+     * rassure pas quand il passe et n'alerte pas quand il refuse — il protège
+     * sur le papier seulement. Une étape nommée se lit, se copie, se discute.
+     *
+     * ── CE QU'ELLE RETOURNE ───────────────────────────────────────────────
+     *
+     * Le détail complet de chaque sonde — adresse interrogée, code, type de
+     * contenu, début du corps —, que le rapport de déploiement reproduit tel
+     * quel. Le verdict devient une PREUVE : on lit ce que le moteur a lu.
+     *
+     * ── CE QU'ELLE N'EXIGE PAS ────────────────────────────────────────────
+     *
+     * Elle ne porte que sur les hôtes PUBLICS : le Manager n'a aucun plan à
+     * publier. Et un plan ABSENT (404) reste toléré — tous les projets n'en
+     * publient pas, et les bloquer tous pour une exigence qu'ils n'ont jamais
+     * prise serait absurde. C'est le 200 qui MENT sur sa nature qui est
+     * interdit.
+     */
+    await step('seo', 'Contrôle SEO', async () => {
+      const publics = topo.publishable.filter((a) => a.public !== false);
+      if (publics.length === 0) {
+        return { skipped: true, reason: 'aucun hôte public dans le profil de ce projet' };
+      }
+
+      health.seo = {};
+      const journal = [];
+      for (const app of publics) {
+        // eslint-disable-next-line no-await-in-loop
+        const seo = await checkSeoEndpoints(transport, app.host);
+        health.seo[app.id] = seo;
+        journal.push(`[${app.id}] ${app.host}`, ...(seo.lines ?? []).map((l) => `  ${l}`));
+        if (!seo.ok) {
+          journal.push(...seo.problems.map((p) => `  ✗ ${p}`));
+          const { DeploymentError } = await import('./errors.js');
+          throw new DeploymentError(
+            'SEO_ENDPOINT_INVALID',
+            `Référencement : ${seo.problems.join(' · ')} `
+            + 'Un moteur de recherche recevrait un document invalide sans qu’aucune page ne soit en erreur.',
+            {
+              step: 'seo',
+              details: {
+                hosts: [app.host],
+                checked: publics.length,
+                sitemap: seo.sitemap,
+                robots: seo.robots,
+                problems: seo.problems,
+                log: journal,
+              },
+            },
+          );
+        }
+        journal.push('  ✓ plan du site et fichier robots conformes');
+      }
+
+      return {
+        hosts: publics.map((a) => a.host),
+        checked: publics.length,
+        probes: Object.fromEntries(
+          Object.entries(health.seo).map(([id, s]) => [id, {
+            host: s.host,
+            sitemap: `HTTP ${s.sitemap.status} · ${s.sitemap.contentType || '—'} · XML=${s.sitemap.isXml}`,
+            robots: `HTTP ${s.robots.status} · ${s.robots.contentType || '—'}`,
+          }]),
+        ),
+        log: journal,
       };
     });
 

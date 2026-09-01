@@ -47,6 +47,8 @@ export class RunRecorder {
       https: {},
       services: {},
       publicTests: {},
+      // Contrôle SEO : sa propre section, parce que c'est sa propre étape.
+      seo: null,
       remoteState: { created: [], modified: [], started: [], rollback: null, notes: [] },
       diagnosis: {},
     };
@@ -165,6 +167,17 @@ export class RunRecorder {
   setPublicTests(info) {
     this.sections.publicTests = this.redactor.redactValue(info);
   }
+  /**
+   * Section « Contrôle SEO ».
+   *
+   * Elle ne se contente pas d'un verdict : elle porte le JOURNAL des sondes —
+   * adresse interrogée, code, type de contenu, début du corps. Un rapport qui
+   * dirait seulement « SEO : ok » obligerait à refaire les requêtes à la main
+   * pour savoir ce qui a été lu ; celui-ci le montre.
+   */
+  setSeo(info) {
+    this.sections.seo = this.redactor.redactValue(info);
+  }
   noteRemote(kind, value) {
     if (this.sections.remoteState[kind]) this.sections.remoteState[kind].push(this.redactor.redactString(String(value)));
   }
@@ -234,6 +247,7 @@ export class RunRecorder {
       https: this.sections.https,
       services: this.sections.services,
       publicTests: this.sections.publicTests,
+      seo: this.sections.seo,
       remoteState: this.sections.remoteState,
       warnings: this.warnings,
       diagnosis: this.sections.diagnosis,
