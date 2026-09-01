@@ -124,7 +124,7 @@ function backendProxy(backendPort) {
  * une adresse d'API indexée est une invitation à la sonder.
  */
 function apiProxyAll(backendPort, { noindex = false } = {}) {
-  return `${noindex ? `${robotsInterdit()}\n` : ''}    location / {
+  return `${noindex ? `${sitemapAbsent()}\n${robotsInterdit()}\n` : ''}    location / {
         proxy_pass http://127.0.0.1:${backendPort};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -154,7 +154,7 @@ function staticSiteLocations({ noindex = false, backendPort = null } = {}) {
   return `    location = /index.html { add_header Cache-Control "no-cache";${entete} }
     location = /version.json { add_header Cache-Control "no-cache"; }
     location = /build-manifest.json { add_header Cache-Control "no-cache"; }
-${noindex ? `\n${robotsInterdit()}\n` : ''}${backendPort !== null ? `\n${sitemapLocation(backendPort)}\n` : ''}
+${noindex ? `\n${sitemapAbsent()}\n${robotsInterdit()}\n` : ''}${backendPort !== null ? `\n${sitemapLocation(backendPort)}\n` : ''}
 ${moduleScriptLocation()}
 
     location /assets/ {
@@ -243,6 +243,33 @@ function sitemapLocation(backendPort) {
  *    adresse connue par ailleurs ; l'en-tete interdit d'INDEXER, mais n'est lu
  *    que si la page est exploree. Retirer l'un ouvre une porte.
  */
+/**
+ * UN HÔTE PRIVÉ NE PUBLIE AUCUN PLAN DU SITE — 404, franchement.
+ *
+ * ══ CE QUI ÉTAIT SERVI AVANT, ET MESURÉ EN PRODUCTION ══════════════════════
+ *
+ *   api.ly-solution.com/sitemap.xml       200 · application/xml   ← le VRAI plan
+ *   manager.ly-solution.com/sitemap.xml   200 · text/html         ← la page du Manager
+ *
+ * Deux causes, un seul symptôme. L'hôte API proxifie TOUT vers le backend, qui
+ * sert désormais `/sitemap.xml` à sa racine : le plan du site public se
+ * retrouvait donc publié sous un second domaine, non canonique. Et l'hôte du
+ * Manager appliquait son repli d'application à page unique — le « 200 qui
+ * ment » que ce moteur existe précisément pour interdire.
+ *
+ * Ni l'un ni l'autre n'était indexable (les deux portent `noindex` et un
+ * robots.txt fermé), et ce n'est pas une raison de les laisser : une défense
+ * ne dispense pas d'être exact. Un plan du site appartient à UN hôte, le
+ * public. Partout ailleurs, l'adresse n'existe pas — et le dire est plus
+ * honnête que de rendre autre chose.
+ */
+function sitemapAbsent() {
+  return `    location = /sitemap.xml {
+        add_header X-Robots-Tag "noindex, nofollow" always;
+        return 404;
+    }`;
+}
+
 function robotsInterdit() {
   return `    location = /robots.txt {
         default_type text/plain;
