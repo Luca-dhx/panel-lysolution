@@ -41,6 +41,23 @@ export const APPS = Object.freeze([
     dir: 'frontend',
     role: 'web',
     nginxRole: 'web',
+    /**
+     * LE PANEL NE S'INDEXE PAS — et son rôle ne le disait pas.
+     *
+     * « web » décrit une FORME : une application front servie sur l'hôte
+     * principal de la destination. Le frontend du Panel a exactement cette
+     * forme. Il n'a pas la destination : c'est un plan de contrôle, il pilote
+     * le parc, et il n'a rien à faire dans un moteur de recherche.
+     *
+     * Sans cette ligne, le moteur en aurait déduit un hôte public :
+     * panel.ly-solution.com aurait reçu un bloc de plan du site et AUCUNE
+     * interdiction d'indexation — l'inverse exact de ce qu'il faut.
+     *
+     * Le moteur pose alors sur cet hôte « X-Robots-Tag: noindex, nofollow »
+     * et un robots.txt en « Disallow: / ». Rien d'autre ne change : ni
+     * l'authentification, ni le routage, ni le fonctionnement du Panel.
+     */
+    public: false,
     remoteDir: 'frontend',
     installPhase: 'install_frontend',
     buildPhase: 'build_frontend',

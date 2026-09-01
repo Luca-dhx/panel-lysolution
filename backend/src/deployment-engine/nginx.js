@@ -344,9 +344,26 @@ export function planSites(target, opts = {}) {
         kind: 'static',
         root: roots[app.id] ?? null,
         withBackendProxy: app.backendProxy !== false,
-        // LE SEUL HÔTE PUBLIC du projet : c'est lui, et lui seul, qui doit
-        // être indexé. Tous les autres reçoivent une interdiction explicite.
-        public: true,
+        /**
+         * L'HÔTE PUBLIC du projet — celui que les moteurs doivent indexer, et
+         * le seul. Tous les autres reçoivent une interdiction explicite.
+         *
+         * ══ POURQUOI LE PROFIL PEUT DIRE NON ═══════════════════════════════
+         *
+         * Le rôle « web » décrit une FORME — une application front servie sur
+         * l'hôte principal — pas une DESTINATION. Le Panel a exactement cette
+         * forme : son frontend est un « web » posé sur panel.ly-solution.com.
+         * Il ne doit pourtant jamais paraître dans un moteur de recherche.
+         *
+         * Déduire la publicité du seul rôle rendrait donc indexable tout plan
+         * de contrôle, tout espace interne, toute console d'exploitation bâtis
+         * sur cette forme — en silence, et sans que personne ne l'ait demandé.
+         *
+         * Le défaut reste « public » : c'est le cas de toute vitrine, et un
+         * projet vitrine qui oublierait de se déclarer resterait indexable,
+         * ce qui est l'erreur la moins grave des deux.
+         */
+        public: app.public !== false,
         cert: certPaths(target),
       });
     } else if (role === 'web-subdomain') {
@@ -370,8 +387,9 @@ export function planSites(target, opts = {}) {
         root: roots[app.id] ?? null,
         withBackendProxy: false,
         // Un site statique auxiliaire (démonstration, page d'attente) n'est
-        // public que s'il occupe l'hôte principal du projet.
-        public: subHost === host,
+        // public que s'il occupe l'hôte principal du projet — et que si son
+        // profil ne s'y oppose pas.
+        public: app.public !== false && subHost === host,
         cert: subHost === host ? certPaths(target) : dedicatedCertPaths(subHost),
       });
     } else if (role === 'proxy') {

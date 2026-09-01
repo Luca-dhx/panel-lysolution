@@ -163,8 +163,15 @@ export function planTopology({ host, remoteRoot = DEFAULT_REMOTE_ROOT, profile, 
        * Un site `static` posé sur l'hôte principal — page d'attente, vitrine
        * pré-construite — est public au même titre : c'est l'hôte qui décide,
        * pas le nom du rôle.
+       *
+       * Et le PROFIL garde le dernier mot. Le rôle « web » décrit une forme,
+       * pas une destination : le frontend du Panel a cette forme et ne doit
+       * jamais être indexé. Un profil peut donc déclarer `public: false` sur
+       * son application. Le défaut reste « public », parce qu'une vitrine qui
+       * oublie de se déclarer doit rester trouvable.
        */
-      public: role === 'web' || (role === 'static' && appHost === siteHost),
+      public: app.public !== false
+        && (role === 'web' || (role === 'static' && appHost === siteHost)),
       publishable: role === 'web' || role === 'web-sub' || role === 'static',
       buildable: (role === 'web' || role === 'web-sub' || role === 'static') && app.prebuilt !== true,
       label: app.label ?? app.id,
