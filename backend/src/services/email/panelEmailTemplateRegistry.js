@@ -342,6 +342,415 @@ ${button('Ouvrir dans le Manager', '{{manager.contactSubmissionUrl}}')}`,
   },
 
   // ───────────────────────────────────────────────────────────────────────────
+  CUSTOMER_EMAIL_VERIFICATION: {
+    templateId: 'CUSTOMER_EMAIL_VERIFICATION',
+    defaultName: 'Client - verification e-mail',
+    defaultDescription: "Envoie au client un code a 6 chiffres pour verifier son adresse avant achat.",
+    defaultSubject: 'Votre code de verification - {{clientFirstName}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'verificationCode', label: 'Code de verification', description: 'Code a 6 chiffres.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'expiresAt', label: 'Expiration', description: 'Date limite de validite du code.', type: VARIABLE_TYPE.DATETIME, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      verificationCode: '123456',
+      expiresAt: '2026-09-20T18:00:00.000Z',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre code de verification client.',
+        heading: 'Verification de votre e-mail',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Entrez ce code dans votre espace client pour verifier votre adresse et finaliser vos achats.</p>
+            <p style="margin:20px 0;padding:16px;border:1px solid ${BORDER};border-radius:8px;text-align:center;font-size:28px;letter-spacing:6px;font-weight:700;color:${BRAND};">{{verificationCode}}</p>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">Ce code expire le {{expiresAt}}.</p>`,
+      });
+    },
+  },
+
+  CUSTOMER_PASSWORD_RESET: {
+    templateId: 'CUSTOMER_PASSWORD_RESET',
+    defaultName: 'Client - mot de passe oublie',
+    defaultDescription: 'Envoie au client un lien de reinitialisation de mot de passe.',
+    defaultSubject: 'Reinitialisation de votre mot de passe',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'actionUrl', label: 'Lien de reinitialisation', description: 'Lien tokenise de reinitialisation.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'expiresAt', label: 'Expiration', description: 'Date limite de validite du lien.', type: VARIABLE_TYPE.DATETIME, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      actionUrl: 'https://exemple.fr/espace-client/mot-de-passe?token=demo',
+      expiresAt: '2026-09-20T18:00:00.000Z',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Choisissez un nouveau mot de passe.',
+        heading: 'Mot de passe oublie',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe.</p>
+${button('Reinitialiser mon mot de passe', '{{actionUrl}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">Ce lien expire le {{expiresAt}}. Ignorez cet e-mail si vous n'etes pas a l'origine de la demande.</p>`,
+      });
+    },
+  },
+
+  COMMERCE_SALE_CONFIRMATION_CLIENT: {
+    templateId: 'COMMERCE_SALE_CONFIRMATION_CLIENT',
+    defaultName: 'Commerce - confirmation de commande',
+    defaultDescription: 'Confirme une vente payee au client et donne le lien de facture si disponible.',
+    defaultSubject: 'Confirmation de commande {{saleNumber}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'saleId', label: 'ID vente', description: 'Identifiant technique de la vente.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'saleNumber', label: 'Numero de commande', description: 'Reference lisible de la commande.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'itemsHtml', label: 'Articles', description: 'Liste HTML des articles vendus.', type: VARIABLE_TYPE.SAFE_HTML, required: true },
+      { key: 'totalAmount', label: 'Total', description: 'Montant total paye.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'invoiceUrl', label: 'Facture', description: 'Lien vers la facture PDF.', type: VARIABLE_TYPE.URL, required: false },
+      { key: 'paymentStatus', label: 'Statut paiement', description: 'Statut paiement affiche.', type: VARIABLE_TYPE.TEXT, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      saleId: 'sale_demo',
+      saleNumber: 'BS-20260920-ABC123',
+      itemsHtml: '<ul><li>Formation demo x 1</li></ul>',
+      totalAmount: { amount: 12900, currency: 'EUR' },
+      invoiceUrl: 'https://exemple.fr/factures/demo.pdf',
+      paymentStatus: 'Payee',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre commande est confirmee.',
+        heading: 'Commande confirmee',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre commande {{saleNumber}} est confirmee.</p>
+            <div style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{itemsHtml}}</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Total', '{{totalAmount}}')}
+${row('Paiement', '{{paymentStatus}}')}
+            </table>
+${button('Voir ma facture', '{{invoiceUrl}}')}`,
+      });
+    },
+  },
+
+  COMMERCE_GIFT_CARD_CLIENT: {
+    templateId: 'COMMERCE_GIFT_CARD_CLIENT',
+    defaultName: 'Commerce - carte cadeau emise',
+    defaultDescription: 'Informe le client qu une carte cadeau a ete emise apres paiement.',
+    defaultSubject: 'Votre carte cadeau est prete',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'saleId', label: 'ID vente', description: 'Identifiant technique de la vente.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'saleNumber', label: 'Numero de commande', description: 'Reference lisible de la commande.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'giftCardCodeMasked', label: 'Code masque', description: 'Code de carte cadeau masque.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'recipientName', label: 'Beneficiaire', description: 'Nom du beneficiaire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'amount', label: 'Montant', description: 'Montant initial.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'balance', label: 'Solde', description: 'Solde disponible.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'giftCardPdfUrl', label: 'PDF carte cadeau', description: 'Lien vers le PDF.', type: VARIABLE_TYPE.URL, required: false },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      saleId: 'sale_demo',
+      saleNumber: 'BS-20260920-ABC123',
+      giftCardCodeMasked: 'BS-***-123',
+      recipientName: 'Camille',
+      amount: { amount: 5000, currency: 'EUR' },
+      balance: { amount: 5000, currency: 'EUR' },
+      giftCardPdfUrl: 'https://exemple.fr/cartes-cadeaux/demo.pdf',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre carte cadeau est prete.',
+        heading: 'Carte cadeau emise',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre carte cadeau pour {{recipientName}} est prete.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Code', '{{giftCardCodeMasked}}')}
+${row('Montant', '{{amount}}')}
+${row('Solde', '{{balance}}')}
+            </table>
+${button('Telecharger le PDF', '{{giftCardPdfUrl}}')}`,
+      });
+    },
+  },
+
+  APPOINTMENT_CANCELLED_CLIENT: {
+    templateId: 'APPOINTMENT_CANCELLED_CLIENT',
+    defaultName: 'Rendez-vous - annulation client',
+    defaultDescription: 'Previent un client qu un rendez-vous ou une session a ete annule.',
+    defaultSubject: 'Annulation de votre rendez-vous',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'serviceName', label: 'Prestation', description: 'Nom du rendez-vous.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'appointmentStart', label: 'Debut', description: 'Date et heure de debut.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'appointmentEnd', label: 'Fin', description: 'Date et heure de fin.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'refundAmount', label: 'Montant rembourse', description: 'Montant rembourse ou prevu.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'reason', label: 'Motif', description: 'Motif d annulation.', type: VARIABLE_TYPE.TEXT, required: false },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      serviceName: 'Soin visage',
+      appointmentStart: '2026-09-21T09:00:00.000Z',
+      appointmentEnd: '2026-09-21T10:00:00.000Z',
+      refundAmount: { amount: 3000, currency: 'EUR' },
+      reason: 'Indisponibilite institut',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre rendez-vous a ete annule.',
+        heading: 'Rendez-vous annule',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre rendez-vous {{serviceName}} a ete annule.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Debut', '{{appointmentStart}}')}
+${row('Fin', '{{appointmentEnd}}')}
+${row('Montant rembourse', '{{refundAmount}}')}
+${row('Motif', '{{reason}}')}
+            </table>`,
+      });
+    },
+  },
+
+  APPOINTMENT_CONFIRMED_CLIENT: {
+    templateId: 'APPOINTMENT_CONFIRMED_CLIENT',
+    defaultName: 'Rendez-vous - confirmation client',
+    defaultDescription: 'Confirme a un client son rendez-vous, pris en ligne ou saisi par l institut.',
+    defaultSubject: 'Votre rendez-vous {{serviceName}} est confirme',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'serviceName', label: 'Prestation', description: 'Nom du rendez-vous.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'appointmentStart', label: 'Debut', description: 'Date et heure de debut.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'appointmentEnd', label: 'Fin', description: 'Date et heure de fin.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'paidAmount', label: 'Deja regle', description: 'Montant deja paye (acompte ou total).', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'balanceDueAmount', label: 'Reste a regler', description: 'Solde a regler a l institut.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'accountUrl', label: 'Espace client', description: 'Lien vers l espace client.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      serviceName: 'Pose cils a cils',
+      appointmentStart: '2026-09-21T09:00:00.000Z',
+      appointmentEnd: '2026-09-21T11:00:00.000Z',
+      paidAmount: { amount: 2000, currency: 'EUR' },
+      balanceDueAmount: { amount: 5000, currency: 'EUR' },
+      accountUrl: 'https://exemple.fr/espace-client',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre rendez-vous est confirme.',
+        heading: 'Rendez-vous confirme',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre rendez-vous {{serviceName}} est confirme.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Debut', '{{appointmentStart}}')}
+${row('Fin', '{{appointmentEnd}}')}
+${row('Deja regle', '{{paidAmount}}')}
+${row('Reste a regler sur place', '{{balanceDueAmount}}')}
+            </table>
+${button('Voir mon espace client', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
+  CUSTOMER_ACCOUNT_CREATED: {
+    templateId: 'CUSTOMER_ACCOUNT_CREATED',
+    defaultName: 'Client - compte cree par l institut',
+    defaultDescription: 'Remet au client dont l institut a cree le compte le lien pour choisir son mot de passe.',
+    defaultSubject: 'Votre espace client est pret',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du compte cree.', type: VARIABLE_TYPE.EMAIL, required: true },
+      { key: 'actionUrl', label: 'Choisir mon mot de passe', description: 'Lien a usage unique pour definir le mot de passe.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'expiresAt', label: 'Expiration', description: 'Date limite de validite du lien.', type: VARIABLE_TYPE.DATETIME, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      actionUrl: 'https://exemple.fr/espace-client/mot-de-passe?token=demo',
+      expiresAt: '2026-09-27T18:00:00.000Z',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Choisissez votre mot de passe pour acceder a votre espace client.',
+        heading: 'Votre espace client est pret',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Nous avons cree votre espace client ({{clientEmail}}) lors de votre reservation. Choisissez votre mot de passe pour y retrouver vos rendez-vous, vos factures et vos formations.</p>
+${button('Choisir mon mot de passe', '{{actionUrl}}')}
+            <p style="margin:24px 0 0;font-size:13px;line-height:1.6;color:${MUTED};">Ce lien expire le {{expiresAt}}. Passe ce delai, utilisez « Mot de passe oublie » depuis la page de connexion.</p>`,
+      });
+    },
+  },
+
+  COMMERCE_SALE_ADMIN_NOTIFICATION: {
+    templateId: 'COMMERCE_SALE_ADMIN_NOTIFICATION',
+    defaultName: 'Commerce - nouvelle vente (institut)',
+    defaultDescription: 'Previent les administrateurs de l institut d une vente payee sur la vitrine.',
+    defaultSubject: 'Nouvelle vente {{saleNumber}} - {{totalAmount}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'saleNumber', label: 'Numero de commande', description: 'Reference lisible de la commande.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientName', label: 'Client', description: 'Nom du client acheteur.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client acheteur.', type: VARIABLE_TYPE.EMAIL, required: true },
+      { key: 'itemsHtml', label: 'Articles', description: 'Liste HTML des articles vendus.', type: VARIABLE_TYPE.SAFE_HTML, required: true },
+      { key: 'totalAmount', label: 'Total', description: 'Montant total de la vente.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'managerSaleUrl', label: 'Lien Manager', description: 'Fiche de la vente dans le Manager.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      saleNumber: 'BS-20260920-ABC123',
+      clientName: 'Marie Martin',
+      clientEmail: 'marie.martin@example.fr',
+      itemsHtml: '<ul><li>Pose cils a cils x 1</li></ul>',
+      totalAmount: { amount: 7000, currency: 'EUR' },
+      managerSaleUrl: 'https://manager.exemple.fr/commerce/ventes/demo',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Une nouvelle vente vient d etre payee.',
+        heading: 'Nouvelle vente',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{clientName}} ({{clientEmail}}) vient de regler la commande {{saleNumber}}.</p>
+            <div style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{itemsHtml}}</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Total', '{{totalAmount}}')}
+            </table>
+${button('Ouvrir dans le Manager', '{{managerSaleUrl}}')}`,
+      });
+    },
+  },
+
+  TRAINING_SUBMISSION_ADMIN_NOTIFICATION: {
+    templateId: 'TRAINING_SUBMISSION_ADMIN_NOTIFICATION',
+    defaultName: 'Formation - dossier final a corriger (institut)',
+    defaultDescription: 'Previent les administrateurs de l institut qu un dossier final de formation attend une correction.',
+    defaultSubject: 'Dossier a corriger : {{trainingTitle}} - {{clientName}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientName', label: 'Cliente', description: 'Nom de la cliente.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientEmail', label: 'E-mail cliente', description: 'Adresse de la cliente.', type: VARIABLE_TYPE.EMAIL, required: true },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'attemptLabel', label: 'Tentative', description: 'Numero de la tentative.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'scoreLabel', label: 'Score', description: 'Score calcule du questionnaire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'managerSubmissionUrl', label: 'Lien Manager', description: 'Fiche de correction dans le Manager.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientName: 'Marie Martin',
+      clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Formation Extension de cils',
+      attemptLabel: 'Tentative n°1',
+      scoreLabel: '86 %',
+      managerSubmissionUrl: 'https://manager.exemple.fr/commerce/validation-formations/demo',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Un dossier final attend votre correction.',
+        heading: 'Dossier final a corriger',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{clientName}} ({{clientEmail}}) a envoye son dossier final.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Formation', '{{trainingTitle}}')}
+${row('Tentative', '{{attemptLabel}}')}
+${row('Score questionnaire', '{{scoreLabel}}')}
+            </table>
+${button('Corriger le dossier', '{{managerSubmissionUrl}}')}`,
+      });
+    },
+  },
+
+  TRAINING_VALIDATED_CLIENT: {
+    templateId: 'TRAINING_VALIDATED_CLIENT',
+    defaultName: 'Formation - validation client',
+    defaultDescription: 'Annonce a la cliente que sa formation est validee.',
+    defaultSubject: 'Felicitations, votre formation {{trainingTitle}} est validee',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'comment', label: 'Commentaire', description: 'Mot de la formatrice (facultatif).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'accountUrl', label: 'Mes formations', description: 'Lien vers l espace formations.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Formation Extension de cils',
+      comment: 'Tres beau travail sur les finitions.',
+      accountUrl: 'https://exemple.fr/espace-client/formations',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre formation est validee.',
+        heading: 'Formation validee',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, felicitations : votre formation {{trainingTitle}} est validee.</p>
+            <p style="margin:0 0 16px;padding:16px;background:#f4f4f5;border-radius:6px;font-size:14px;line-height:1.6;color:${BRAND};white-space:pre-line;">{{comment}}</p>
+${button('Voir mes formations', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
+  TRAINING_REJECTED_CLIENT: {
+    templateId: 'TRAINING_REJECTED_CLIENT',
+    defaultName: 'Formation - dossier a reprendre (client)',
+    defaultDescription: 'Transmet a la cliente le commentaire de correction et l invite a renvoyer son dossier.',
+    defaultSubject: 'Votre dossier {{trainingTitle}} est a reprendre',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'comment', label: 'Commentaire de correction', description: 'Ce qu il faut reprendre.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'accountUrl', label: 'Mes formations', description: 'Lien vers l espace formations.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Formation Extension de cils',
+      comment: 'Ajoutez des photos plus nettes et reprenez la question sur la preparation.',
+      accountUrl: 'https://exemple.fr/espace-client/formations',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre dossier final est a reprendre.',
+        heading: 'Dossier a reprendre',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre dossier final pour {{trainingTitle}} n a pas encore pu etre valide.</p>
+            <p style="margin:0 0 16px;padding:16px;background:#f4f4f5;border-radius:6px;font-size:14px;line-height:1.6;color:${BRAND};white-space:pre-line;">{{comment}}</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Ajustez votre dossier puis renvoyez-le depuis votre espace formations.</p>
+${button('Reprendre mon dossier', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
   CONTRACT_CANCELLATION_ADMIN_CONFIRMATION: {
     templateId: 'CONTRACT_CANCELLATION_ADMIN_CONFIRMATION',
     defaultName: 'Résiliation — confirmation au client',

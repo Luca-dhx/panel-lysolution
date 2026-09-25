@@ -133,6 +133,94 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-contact-submitted'],
   },
 
+  CUSTOMER_EMAIL_VERIFICATION: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.AUTH,
+    provisionForProjects: true,
+    reason: 'Le projet envoie un code de verification a son propre client avant achat.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-email-verification-code'],
+  },
+
+  CUSTOMER_PASSWORD_RESET: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.AUTH,
+    provisionForProjects: true,
+    reason: 'Le projet envoie a son propre client un lien de reinitialisation de mot de passe.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-password-reset'],
+  },
+
+  COMMERCE_SALE_CONFIRMATION_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: true,
+    reason: 'Le projet confirme une commande a son propre client, sous son branding.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-sale-confirmation'],
+  },
+
+  COMMERCE_GIFT_CARD_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: true,
+    reason: 'Le projet remet a son propre client les informations de carte cadeau emise.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-gift-card-issued'],
+  },
+
+  APPOINTMENT_CANCELLED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent son propre client quand un rendez-vous est annule.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-appointment-cancelled'],
+  },
+
+  APPOINTMENT_CONFIRMED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet confirme a son propre client un rendez-vous pris en ligne ou saisi par l institut.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-appointment-confirmed'],
+  },
+
+  CUSTOMER_ACCOUNT_CREATED: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.AUTH,
+    provisionForProjects: true,
+    reason: 'L institut a cree le compte de son client lors d une reservation ; le client choisit son mot de passe.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-account-created'],
+  },
+
+  COMMERCE_SALE_ADMIN_NOTIFICATION: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: true,
+    reason: 'Le projet previent ses propres administrateurs d une vente payee sur sa vitrine.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-sale-paid'],
+  },
+
+  TRAINING_SUBMISSION_ADMIN_NOTIFICATION: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent ses propres administrateurs qu un dossier final de formation attend une correction.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-training-submission'],
+  },
+
+  TRAINING_VALIDATED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet annonce a son propre client la validation de sa formation.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-training-validated'],
+  },
+
+  TRAINING_REJECTED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet transmet a son propre client la correction de son dossier final et l invite a le renvoyer.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-training-rejected'],
+  },
+
   CONTRACT_CANCELLATION_ADMIN_CONFIRMATION: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.CONTRACT,
