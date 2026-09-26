@@ -717,6 +717,88 @@ ${button('Voir mes formations', '{{accountUrl}}')}`,
     },
   },
 
+  FORMATION_SESSION_RESCHEDULED_CLIENT: {
+    templateId: 'FORMATION_SESSION_RESCHEDULED_CLIENT',
+    defaultName: 'Formation - session deplacee (client)',
+    defaultDescription: 'Previent une inscrite que sa session de formation presentielle change de date.',
+    defaultSubject: 'Nouvelle date pour votre formation {{trainingTitle}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'previousStart', label: 'Ancienne date', description: 'Debut initialement prevu.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'newStart', label: 'Nouveau debut', description: 'Nouvelle date et heure de debut.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'newEnd', label: 'Nouvelle fin', description: 'Nouvelle date et heure de fin.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'location', label: 'Lieu', description: 'Lieu de la session.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'message', label: 'Message', description: 'Mot de l institut.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'accountUrl', label: 'Mes formations', description: 'Lien vers l espace formations.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie', clientLastName: 'Martin', clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Prothesie ongulaire - presentiel',
+      previousStart: '2026-10-07T07:30:00.000Z', newStart: '2026-10-14T07:30:00.000Z', newEnd: '2026-10-14T14:30:00.000Z',
+      location: 'Institut - Nice',
+      message: 'Votre place est conservee a la nouvelle date.',
+      accountUrl: 'https://exemple.fr/espace-client/formations',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre session de formation change de date.',
+        heading: 'Nouvelle date de formation',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, votre session {{trainingTitle}} a ete deplacee.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Date initiale', '{{previousStart}}')}
+${row('Nouveau debut', '{{newStart}}')}
+${row('Nouvelle fin', '{{newEnd}}')}
+${row('Lieu', '{{location}}')}
+            </table>
+            <p style="margin:16px 0;padding:16px;background:#f4f4f5;border-radius:6px;font-size:14px;line-height:1.6;color:${BRAND};white-space:pre-line;">{{message}}</p>
+${button('Voir mes formations', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
+  FORMATION_SESSION_CANCELLED_CLIENT: {
+    templateId: 'FORMATION_SESSION_CANCELLED_CLIENT',
+    defaultName: 'Formation - session annulee (client)',
+    defaultDescription: 'Previent une inscrite de l annulation de sa session de formation et de son remboursement.',
+    defaultSubject: 'Annulation de votre session {{trainingTitle}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'sessionStart', label: 'Date de la session', description: 'Debut de la session annulee.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'reason', label: 'Motif', description: 'Motif d annulation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'refundAmount', label: 'Montant rembourse', description: 'Montant rembourse (0 si aucun).', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'accountUrl', label: 'Espace client', description: 'Lien vers l espace client.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie', clientLastName: 'Martin', clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Prothesie ongulaire - presentiel',
+      sessionStart: '2026-10-07T07:30:00.000Z',
+      reason: 'Formatrice indisponible',
+      refundAmount: { amount: 99000, currency: 'EUR' },
+      accountUrl: 'https://exemple.fr/espace-client',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre session de formation est annulee.',
+        heading: 'Session annulee',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, nous sommes desoles : la session {{trainingTitle}} est annulee.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Session', '{{sessionStart}}')}
+${row('Motif', '{{reason}}')}
+${row('Montant rembourse', '{{refundAmount}}')}
+            </table>
+${button('Voir mon espace client', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
   TRAINING_REJECTED_CLIENT: {
     templateId: 'TRAINING_REJECTED_CLIENT',
     defaultName: 'Formation - dossier a reprendre (client)',

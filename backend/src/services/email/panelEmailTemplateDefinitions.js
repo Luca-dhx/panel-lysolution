@@ -213,6 +213,22 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-training-validated'],
   },
 
+  FORMATION_SESSION_RESCHEDULED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent son propre client du deplacement de sa session de formation.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-session-rescheduled'],
+  },
+
+  FORMATION_SESSION_CANCELLED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent son propre client de l annulation de sa session et de son remboursement.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-session-cancelled'],
+  },
+
   TRAINING_REJECTED_CLIENT: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.LIFECYCLE,
