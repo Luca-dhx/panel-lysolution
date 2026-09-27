@@ -29,6 +29,7 @@ import { resolveFrontendUrl } from '../network/networkConfig.service.js';
 import { isPubliclyReachableUrl } from '../../utils/normalizeAppUrl.js';
 import { validateManifest } from '../manifest/manifest.schema.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
+import { projectKeyMatches } from '../registry/projectKeyMatch.js';
 
 // Alphabet sans ambiguïté (pas de 0/O, 1/I/L) : le code est fait pour être
 // recopié à la main entre deux écrans.
@@ -252,7 +253,9 @@ export async function bootstrap(dto) {
    * peuvent pas la partager. Anti-collision pur : cette clé ne détermine
    * aucun périmètre métier.
    */
-  if (announcedKey.length > 0 && announcedKey !== record.projectKey) {
+  // Fiche « sœur » d'un autre environnement (`<clé>-prod`) : la clé nue
+  // annoncée lui correspond, rien à réconcilier (voir projectKeyMatch.js).
+  if (announcedKey.length > 0 && !projectKeyMatches(announcedKey, record)) {
     const collision = await registryStore.getByKey(announcedKey);
     if (collision && collision.projectId !== record.projectId) {
       throw new BridgeError(
@@ -283,7 +286,7 @@ export async function bootstrap(dto) {
     }
     // La cohérence reste EXIGÉE, mais contre la clé que le projet vient
     // d'annoncer : un Manifest qui se contredit lui-même est un vrai défaut.
-    if (validation.manifest.project.key !== record.projectKey) {
+    if (!projectKeyMatches(validation.manifest.project.key, record)) {
       throw new BridgeError(
         BRIDGE_ERROR_CODES.INVALID_PAYLOAD,
         'Le Manifest joint ne correspond pas au projet appairé (project.key).',

@@ -325,11 +325,102 @@ export class SshTransport extends Transport {
   }
 
   /**
-   * Envoie un dossier local vers le VPS via `tar | ssh` n'est pas disponible
-   * ici : on s'appuie sur SFTP récursif. Pour de gros volumes, préférer un
-   * artefact `.tar.gz` uploadé puis détendu (voir pipeline.build).
+   * ENVOIE UN DOSSIER — en UNE archive, plus fichier par fichier.
+   *
+   * ══ CE QUE COÛTAIT LA VERSION FICHIER PAR FICHIER ═══════════════════════════
+   *
+   * Chaque fichier était un aller-retour SFTP complet (ouverture, écriture,
+   * fermeture) : 3 à 5 secondes chacun vers le VPS, mesurés en production le
+   * 2026-09-27. Un backend de ~620 fichiers prenait donc 30 à 50 minutes, pour
+   * une douzaine de mégaoctets.
+   *
+   * Le dossier est désormais empaqueté localement (tar + gzip, en mémoire de
+   * flux), envoyé en UN transfert, puis détendu sur le serveur par `tar -xzf`.
+   * Même sémantique qu'avant : les fichiers existants sont écrasés, rien n'est
+   * supprimé (le pipeline vide lui-même les dossiers `.next`).
+   *
+   * Repli : si l'empaquetage ou la détente échoue (module absent, `tar`
+   * indisponible à distance…), on retombe sur l'envoi fichier par fichier —
+   * lent, mais le déploiement aboutit.
    */
   async uploadDir(localPath, remotePath) {
+    try {
+      return await this._uploadDirArchive(localPath, remotePath);
+    } catch (err) {
+      this._emettre?.('UPLOAD_ARCHIVE_FALLBACK', { localPath, remotePath, reason: String(err?.message || err).slice(0, 300) });
+      return this._uploadDirFiles(localPath, remotePath);
+    }
+  }
+
+  async _uploadDirArchive(localPath, remotePath) {
+    const fs = await import('node:fs');
+    const fsp = await import('node:fs/promises');
+    const path = await import('node:path');
+    const os = await import('node:os');
+    const zlib = await import('node:zlib');
+    const { default: tarStream } = await import('tar-stream');
+
+    const quote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const localArchive = path.join(os.tmpdir(), `ly-upload-${stamp}.tgz`);
+    const remoteArchive = `/tmp/ly-upload-${stamp}.tgz`;
+
+    let files = 0;
+    let bytes = 0;
+    const pack = tarStream.pack();
+    const out = fs.createWriteStream(localArchive);
+    const written = new Promise((resolve, reject) => {
+      out.on('finish', resolve);
+      out.on('error', reject);
+      pack.on('error', reject);
+    });
+    pack.pipe(zlib.createGzip({ level: 6 })).pipe(out);
+
+    const addEntry = (header, content) => new Promise((resolve, reject) => {
+      pack.entry(header, content, (err) => (err ? reject(err) : resolve()));
+    });
+    const walk = async (dir, rel) => {
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        const name = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          await addEntry({ name, type: 'directory', mode: 0o755 });
+          await walk(full, name);
+        } else if (entry.isFile()) {
+          const stat = await fsp.stat(full);
+          const content = await fsp.readFile(full);
+          await addEntry({ name, size: content.length, mode: stat.mode & 0o777, mtime: stat.mtime }, content);
+          files += 1;
+          bytes += content.length;
+        }
+      }
+    };
+    try {
+      await walk(localPath, '');
+      pack.finalize();
+      await written;
+
+      const sftp = await this._getSftp();
+      await new Promise((resolve, reject) => {
+        sftp.fastPut(localArchive, remoteArchive, (err) => (err ? reject(err) : resolve()));
+      });
+      const res = await this.exec(
+        `mkdir -p ${quote(remotePath)} && tar -xzf ${remoteArchive} -C ${quote(remotePath)} --no-same-owner && rm -f ${remoteArchive}`,
+        { timeoutMs: 300_000 },
+      );
+      if (res.code !== 0) {
+        await this.exec(`rm -f ${remoteArchive}`).catch(() => {});
+        throw new Error(`détente distante en échec (code ${res.code}) : ${String(res.stderr || '').slice(0, 300)}`);
+      }
+      return { files, bytes, archive: true };
+    } finally {
+      await fsp.unlink(localArchive).catch(() => {});
+    }
+  }
+
+  /** L'envoi historique, fichier par fichier (repli). */
+  async _uploadDirFiles(localPath, remotePath) {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
     const sftp = await this._getSftp();

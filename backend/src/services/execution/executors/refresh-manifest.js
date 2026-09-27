@@ -7,6 +7,7 @@
 // la base du PANEL, jamais chez le projet. La distinction est essentielle :
 // piloter, ce n'est pas encore modifier le projet.
 import { PHASE } from '../execution-log.service.js';
+import { projectKeyMatches } from '../../registry/projectKeyMatch.js';
 
 export const id = 'refresh-manifest';
 
@@ -32,7 +33,7 @@ export async function execute({ record, client, log, services }) {
     const detail = validation.errors.map((e) => `${e.path}: ${e.message}`).join(' · ');
     throw new Error(`Manifest non conforme au schéma officiel : ${detail}`);
   }
-  if (validation.manifest.project.key !== record.projectKey) {
+  if (!projectKeyMatches(validation.manifest.project.key, record)) {
     throw new Error(
       `Le Manifest déclare project.key « ${validation.manifest.project.key} » alors que la fiche est « ${record.projectKey} ».`,
     );

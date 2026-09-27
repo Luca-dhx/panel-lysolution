@@ -335,5 +335,41 @@ section('DEUX INSTANCES D’UN MÊME PROJET, SUR LE MÊME PANEL');
   check('…depuis une seule et même instance de Panel', config.env === 'TEST');
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+section('LA PRODUCTION D’UN PROJET DÉJÀ APPAIRÉ EN RECETTE — même nom, même clé annoncée');
+{
+  await registryStore.clear();
+  /**
+   * Le projet annonce TOUJOURS la clé dérivée de son nom. Sa recette détient
+   * la clé nue ; la fiche de production reçoit `<clé>-prod` à la déclaration.
+   * L'instance de production doit pouvoir s'appairer à SA fiche sans voler la
+   * clé de la recette, et son Manifest (clé nue) doit être jugé cohérent.
+   */
+  const recette = await ficheAvecCode('https://api.jumeau-test.fr', 'Jumeau', 'TEST');
+  await pairing.bootstrap({ ...dto(recette.pairingCode, 'TEST'), projectKey: 'jumeau', projectName: 'Jumeau' });
+  const prod = await ficheAvecCode('https://api.jumeau.fr', 'Jumeau', 'PROD');
+  check('la fiche de production reçoit la clé qualifiée', prod.record.projectKey === 'jumeau-prod');
+  const manifest = {
+    manifestVersion: '1.0.0',
+    project: { key: 'jumeau', name: 'Jumeau', environment: 'PROD', softwareVersion: '1.0.0' },
+    bridge: { contractVersion: CONTRACT_VERSION, projectBridgeBasePath: '/api/project-bridge/v1' },
+    contracts: { panelBridge: CONTRACT_VERSION, projectBridge: CONTRACT_VERSION },
+  };
+  let erreur = null;
+  const res = await Promise.resolve(pairing.bootstrap({ ...dto(prod.pairingCode, 'PROD'), projectKey: 'jumeau', projectName: 'Jumeau', publicBackendUrl: 'https://api.jumeau.fr' }))
+    .catch((err) => { erreur = err; return null; });
+  check('la production s’appaire à sa fiche', Boolean(res?.bridgeToken), erreur?.message);
+  const fiches = await registryStore.list();
+  const fp = fiches.find((f) => f.projectKey === 'jumeau-prod');
+  const ft = fiches.find((f) => f.projectKey === 'jumeau');
+  check('…la fiche de production garde sa clé qualifiée', fp?.pairing.status === 'PAIRED');
+  check('…la recette garde la clé nue, intacte', ft?.pairing.status === 'PAIRED');
+  check('…et le Manifest à clé nue est cohérent pour la fiche qualifiée',
+    registre.describeConformity({ ...fp, manifest }).identityConsistent === true);
+  const { projectKeyMatches } = await import('../backend/src/services/registry/projectKeyMatch.js');
+  check('…aucune autre clé n’est admise', !projectKeyMatches('jumeau', { projectKey: 'jumeau-test', declaredEnvironment: 'PROD' })
+    && !projectKeyMatches('autre', fp));
+}
+
 await stopMemoryMongo();
 finish();

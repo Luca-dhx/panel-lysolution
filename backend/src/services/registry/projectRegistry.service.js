@@ -23,6 +23,7 @@ import { validateManifest } from '../manifest/manifest.schema.js';
 import { interpretCapabilities } from '../manifest/capabilities.service.js';
 import { recordEvent, EVENT_TYPES } from '../supervision/timeline.service.js';
 import { currentGeneration, generationsDiverge } from '../sync/projectGeneration.js';
+import { projectKeyMatches } from './projectKeyMatch.js';
 import {
   generateProjectKey,
   normalizeBackendUrl,
@@ -377,7 +378,7 @@ export async function updateManifest(projectId, manifestInput) {
 // Une identité de Manifest qui ne correspond pas à la fiche est une erreur —
 // jamais un écrasement silencieux.
 function assertManifestIdentityMatches(record, manifest) {
-  if (manifest.project.key !== record.projectKey) {
+  if (!projectKeyMatches(manifest.project.key, record)) {
     throw ApiError.badRequest(
       'PANEL_MANIFEST_IDENTITY_MISMATCH',
       `Le Manifest déclare project.key « ${manifest.project.key} » mais la fiche est « ${record.projectKey} ».`,
@@ -1194,7 +1195,7 @@ export function projectHealth(record, context = {}) {
 export function describeConformity(record) {
   const manifestValid = record.manifest !== null;
   const identityConsistent =
-    !manifestValid || record.manifest.project.key === record.projectKey;
+    !manifestValid || projectKeyMatches(record.manifest.project.key, record);
   return {
     declared: true,
     hasManifest: manifestValid,
