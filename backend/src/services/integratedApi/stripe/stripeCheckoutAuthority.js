@@ -65,6 +65,8 @@ export const CHECKOUT_REFUSALS = Object.freeze({
    * l'exploitant la lit, et où le projet ne la lit pas.
    */
   SERVICE_NOT_PAYABLE: 'SERVICE_NOT_PAYABLE',
+  /** Une ligne de commission ne vaut pas base × taux, ou le contrat n'a pas de TVA. */
+  COMMISSION_INVALID: 'COMMISSION_INVALID',
   /**
    * AUCUNE IDENTITÉ LÉGALE DE CLIENT — la garde absolue du chantier.
    *
@@ -249,6 +251,10 @@ export async function resolveCheckoutIntent({
 
   const reference = projection.reference ?? null;
   const metadata = buildMetadata({ projectId, environment, contractId, input });
+
+  if (input.paymentType === 'COMMISSION') {
+    return resolveCommissionIntent({ input, projection, contractId, reference, metadata });
+  }
 
   /**
    * ── L'ABONNEMENT : LES TERMES SONT DÉJÀ FIGÉS DANS UN PRICE ───────────────
@@ -576,6 +582,78 @@ async function resolveServiceIntent({ projectId, environment, input, lookupPayme
  * consommateur de webhook du projet les lit sous ces noms depuis toujours et
  * que ce lot ne touche pas aux webhooks.
  */
+/**
+ * LES COMMISSIONS DU MOIS — une session de paiement, une ligne par vente.
+ *
+ * Chaque montant est recalculé (base × taux, arrondi au centime, une tolérance
+ * d'un centime pour l'arrondi) ; le total est la somme des lignes VÉRIFIÉES.
+ * La TVA est celle du contrat, appliquée comme aux frais de lancement :
+ * `unit_amount` hors taxe et `tax_rates` exclusif. Stripe émet la facture
+ * APRÈS le paiement (`invoice_creation`), ses metadata disent au projet quelle
+ * commission elle solde.
+ */
+function resolveCommissionIntent({ input, projection, contractId, reference, metadata }) {
+  const { commissionRef, periodKey, ratePercent, lines } = input.commission;
+  const refus = (message) => new CheckoutAuthorityError(CHECKOUT_REFUSALS.COMMISSION_INVALID, message);
+  const seen = new Set();
+  for (const line of lines) {
+    if (seen.has(line.saleRef)) throw refus(`Vente ${line.saleNumber} présente deux fois.`);
+    seen.add(line.saleRef);
+    const taux = line.ratePercent ?? ratePercent;
+    const attendu = Math.round((line.basisCents * taux) / 100);
+    if (Math.abs(attendu - line.amountCents) > 1) {
+      throw refus(`Vente ${line.saleNumber} : ${line.amountCents} c annoncés, ${attendu} c attendus (${taux} % de ${line.basisCents} c).`);
+    }
+  }
+  // Un taux absent (`null`) n'est pas un taux nul : Number(null) vaudrait 0 et
+  // facturerait sans TVA. Il est refusé, comme un taux hors bornes.
+  const taxRate = projection.taxRate === null || projection.taxRate === undefined || projection.taxRate === ''
+    ? Number.NaN
+    : Number(projection.taxRate);
+  if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
+    throw refus('Le contrat ne porte pas de taux de TVA exploitable pour facturer les commissions.');
+  }
+  const netCents = lines.reduce((sum, line) => sum + line.amountCents, 0);
+  const metadataCommission = { ...metadata, commissionId: commissionRef, periodKey };
+  return {
+    contractId,
+    reference,
+    amountIncludingTax: Math.round(netCents * (1 + taxRate / 100)),
+    currency: 'EUR',
+    fiscal: { taxRate, netCents, currency: 'EUR' },
+    paramsFor: ({ taxRateId }) => ({
+      mode: 'payment',
+      line_items: lines.map((line) => ({
+        price_data: {
+          currency: 'eur',
+          product_data: {
+            name: `Commission vente ${line.saleNumber}`,
+            description: `Période ${periodKey} · ${line.ratePercent ?? ratePercent} % de ${(line.basisCents / 100).toFixed(2)} € · réf. ${line.saleRef}`,
+          },
+          unit_amount: line.amountCents,
+        },
+        quantity: 1,
+        ...(taxRateId ? { tax_rates: [taxRateId] } : {}),
+      })),
+      success_url: input.successUrl,
+      cancel_url: input.cancelUrl,
+      metadata: metadataCommission,
+      payment_intent_data: { metadata: metadataCommission },
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          metadata: metadataCommission,
+          description: `Commissions sur ventes — ${periodKey}`,
+          custom_fields: [
+            { name: 'Période', value: periodKey },
+            ...(reference ? [{ name: 'Contrat', value: String(reference).slice(0, 30) }] : []),
+          ],
+        },
+      },
+    }),
+  };
+}
+
 function buildMetadata({ projectId, environment, contractId, input }) {
   const paymentRef = input.correlation?.paymentRef ?? null;
   return {

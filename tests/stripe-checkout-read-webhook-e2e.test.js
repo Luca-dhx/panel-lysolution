@@ -372,9 +372,11 @@ section('4. A lit SA session');
    * HUIT depuis L6.2E : `subscriptionId` s'ajoute pour la même raison que
    * `paymentIntentId` en L6.2C — sans lui, la réconciliation d'un abonnement
    * marquerait un contrat actif sans savoir quel abonnement le porte.
+   * NEUF avec `invoiceId` : un paiement de commissions émet sa facture après
+   * paiement, et le projet doit pouvoir la retrouver sans attendre le webhook.
    */
-  const attendus = ['checkoutSessionId', 'status', 'paymentStatus', 'url', 'expiresAt', 'paymentIntentId', 'customerId', 'subscriptionId'].sort();
-  check('le DTO porte EXACTEMENT les huit champs contractés',
+  const attendus = ['checkoutSessionId', 'status', 'paymentStatus', 'url', 'expiresAt', 'paymentIntentId', 'customerId', 'subscriptionId', 'invoiceId'].sort();
+  check('le DTO porte EXACTEMENT les neuf champs contractés',
     JSON.stringify(Object.keys(lu.data.result).sort()) === JSON.stringify(attendus));
   check('…l’identifiant de session', lu.data.result.checkoutSessionId === sessionA);
   check('…son état', lu.data.result.status === 'open');

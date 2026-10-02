@@ -411,6 +411,7 @@ const TESTS = [
   // d'appartenance qui la débloque. Aucune capacité n'est encore servie ; ces
   // deux suites gardent les contrats et l'index qui rend le vol impossible.
   'stripe-control-plane.test.js',
+  'stripe-commission-checkout.test.js',
   'stripe-resource-ownership.test.js',
   // L6.2B — LE CUTOVER : un vrai projet demande un paiement, le Panel ouvre la
   // session avec SA clé, et la lie. Les sections qui comptent sont les

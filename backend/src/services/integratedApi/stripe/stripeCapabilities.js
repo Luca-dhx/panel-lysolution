@@ -189,7 +189,34 @@ const checkoutCreateInput = z.object({
    * à un objet qui n'est pas un contrat.
    */
   paymentRequestId: z.string().trim().uuid().optional(),
-  paymentType: z.enum(['LAUNCH_FEE', 'SUBSCRIPTION', 'SERVICE']),
+  paymentType: z.enum(['LAUNCH_FEE', 'SUBSCRIPTION', 'SERVICE', 'COMMISSION']),
+  /**
+   * LES COMMISSIONS DU MOIS — la seule exception à « aucun montant du projet ».
+   *
+   * ══ POURQUOI L'EXCEPTION, ET CE QUI LA BORNE ══════════════════════════════
+   *
+   * Une commission est un pourcentage des VENTES de l'institut, que seul le
+   * projet connaît : le Panel n'a aucune copie dont il pourrait la tirer. Le
+   * projet décrit donc chaque ligne (une vente, sa base, son montant). Le
+   * Panel ne lui fait pas confiance pour autant :
+   *   - chaque montant est RECALCULÉ (base × taux) et refusé s'il diverge ;
+   *   - le taux est plafonné, le nombre de lignes aussi ;
+   *   - le TOTAL n'est jamais lu : il est la somme des lignes vérifiées ;
+   *   - le contrat doit appartenir au projet (même garde que les autres types).
+   */
+  commission: z.object({
+    commissionRef: z.string().trim().min(1).max(64),
+    periodKey: z.string().trim().regex(/^\d{4}-\d{2}$/),
+    ratePercent: z.number().min(0).max(50),
+    lines: z.array(z.object({
+      saleRef: z.string().trim().min(1).max(64),
+      saleNumber: z.string().trim().min(1).max(40),
+      basisCents: z.number().int().min(0).max(100_000_000),
+      amountCents: z.number().int().min(1).max(10_000_000),
+      /** Le taux de CETTE vente, quand la règle a changé en cours de mois (sinon celui du mois). */
+      ratePercent: z.number().min(0).max(50).optional(),
+    }).strict()).min(1).max(500),
+  }).strict().optional(),
   successUrl: z.string().trim().url().max(2048),
   cancelUrl: z.string().trim().url().max(2048),
   /**
@@ -223,6 +250,13 @@ const checkoutCreateInput = z.object({
    * chose qu'on chercherait à retourner contre elle.
    */
   const service = valeur.paymentType === 'SERVICE';
+  const commission = valeur.paymentType === 'COMMISSION';
+  if (commission && !valeur.commission) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['commission'], message: 'Un paiement de commissions doit décrire ses lignes.' });
+  }
+  if (!commission && valeur.commission) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['commission'], message: 'Seul un paiement de commissions porte des lignes de commission.' });
+  }
   if (service && !valeur.paymentRequestId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -767,6 +801,8 @@ const checkoutView = z.object({
   customerId: z.string().nullable(),
   /** L'abonnement ouvert par cette session, quand elle en a ouvert un (L6.2E). */
   subscriptionId: z.string().nullable(),
+  /** La facture émise après paiement (`invoice_creation`), quand il y en a une. */
+  invoiceId: z.string().nullable().optional(),
 }).strict();
 
 const checkoutCreateOutput = z.object({

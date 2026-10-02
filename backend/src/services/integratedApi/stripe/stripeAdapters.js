@@ -668,6 +668,7 @@ function describeSessionView(session) {
     paymentIntentId: idOf(session.payment_intent),
     customerId: idOf(session.customer),
     subscriptionId: idOf(session.subscription),
+    invoiceId: idOf(session.invoice),
   };
 }
 
