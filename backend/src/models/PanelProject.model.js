@@ -211,6 +211,20 @@ const panelProjectSchema = new mongoose.Schema(
      * détermine ni périmètre métier, ni destination.
      */
     declaredEnvironment: { type: String, enum: ['TEST', 'PROD', null], default: null },
+    /**
+     * LE MONDE PANEL DE CE PROJET — distinct de celui où il TOURNE.
+     *
+     * Une production peut rester rattachée au monde de RECETTE du Panel : elle
+     * sert ses vrais visiteurs (domaine, base PROD), mais ses comptes Stripe et
+     * Brevo plateforme, son entreprise cliente, ses mentions légales et ses
+     * contrats sont ceux du monde TEST. C'est le cas de BeautySavage tant que
+     * les comptes de production ne sont pas ouverts.
+     *
+     * Posé par un opérateur, jamais par le projet (aucun chemin du pont ne
+     * l'écrit). `null` = le monde de la fiche (`authoritativeEnvironmentOf`).
+     * Voir `panelWorldOf`.
+     */
+    panelWorld: { type: String, enum: ['TEST', 'PROD', null], default: null },
     projectName: { type: String, required: true },
     createdAt: { type: String, required: true },
     updatedAt: { type: String, required: true },

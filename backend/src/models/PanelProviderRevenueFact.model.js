@@ -143,6 +143,8 @@ const providerRevenueFactSchema = new mongoose.Schema(
        * reste prouvée par le registre de liens (L6.2A).
        */
       paymentRequestId: { type: String, default: null },
+      /** Le mois de commissions qu'un paiement COMMISSION solde (metadata apposées par le Panel). */
+      commissionPeriodKey: { type: String, default: null },
     },
 
     /**

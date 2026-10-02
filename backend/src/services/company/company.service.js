@@ -443,6 +443,7 @@ export async function describeCompanyDistribution(company) {
   const { listProjects, deriveLiveness, declaredEnvironmentOf } = await import(
     '../registry/projectRegistry.service.js'
   );
+  const { panelWorldOf } = await import('../registry/projectEnvironment.js');
   const expectedVersion = company.publishedVersion;
   const projets = await listProjects();
   const maintenant = Date.now();
@@ -458,7 +459,7 @@ export async function describeCompanyDistribution(company) {
      * annonce. Une instance d'un autre monde que ce Panel ne reçoit pas ses
      * données métier, et n'a donc aucune version à appliquer.
      */
-    const monde = declaredEnvironmentOf(p);
+    const monde = panelWorldOf(p) ?? declaredEnvironmentOf(p);
 
     let state;
     if (!paired) state = 'NOT_PAIRED';

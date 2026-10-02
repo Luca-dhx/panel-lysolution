@@ -43,6 +43,7 @@ import { registryStore } from '../registry/registryStore.js';
 import { getOutboundBridgeToken } from '../pairing/pairing.service.js';
 import { outboundBaseUrl } from '../registry/projectDestination.service.js';
 import { declaredEnvironmentOf } from '../registry/projectRegistry.service.js';
+import { panelWorldOf } from '../registry/projectEnvironment.js';
 import config from '../../config/env.js';
 import logger from '../../utils/logger.js';
 
@@ -223,7 +224,8 @@ export async function deliverToProject(record, changes) {
    * l'opérateur sait exactement ce qu'il fait. On garde donc le refus — au mot
    * près le même — et on cesse de le présenter comme un incident.
    */
-  const environnement = declaredEnvironmentOf(record);
+  // Le monde PANEL de l'instance : une production rattachée à la recette reçoit les fiches de recette.
+  const environnement = panelWorldOf(record);
   if (environnement && environnement !== config.env) {
     const trace = {
       ...base, outcome: DELIVERY_OUTCOME.ENVIRONMENT_MISMATCH,

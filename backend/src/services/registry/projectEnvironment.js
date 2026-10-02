@@ -61,6 +61,21 @@ export function authoritativeEnvironmentOf(record) {
     ?? normalizeEnvironment(record?.runtime?.environment);
 }
 
+/**
+ * LE MONDE PANEL D'UNE FICHE — celui dont elle reçoit les identifiants
+ * fournisseur (Stripe, Brevo, signature) et les données métier (entreprise
+ * cliente, mentions légales, contrat).
+ *
+ * C'est le monde où elle tourne, sauf si un opérateur l'a rattachée à un autre
+ * (`panelWorld`) : une production encore branchée sur les comptes de recette.
+ * La reconnaissance de clé (`<clé>-prod`) et la fédération continuent de lire
+ * l'environnement d'exécution — ce réglage ne change pas QUI est le projet,
+ * seulement AVEC QUELS COMPTES il travaille.
+ */
+export function panelWorldOf(record) {
+  return normalizeEnvironment(record?.panelWorld) ?? authoritativeEnvironmentOf(record);
+}
+
 /** Ce que le projet a annoncé en dernier. Un constat, sans pouvoir. */
 export function observedEnvironmentOf(record) {
   return normalizeEnvironment(record?.runtime?.environment);

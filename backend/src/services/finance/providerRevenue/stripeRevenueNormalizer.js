@@ -402,6 +402,8 @@ function normalizeInvoice({ objet, payload, environment }) {
         paymentType: chaine(meta.paymentType),
         /** L10.5 — la prestation réglée, si ce paiement en règle une. */
         paymentRequestId: chaine(meta.paymentRequestId),
+        /** Le mois de commissions réglé, si c'est un paiement de commissions. */
+        commissionPeriodKey: chaine(meta.periodKey),
       },
 
       /** Ce que Stripe expose du document — voir la doctrine des justificatifs. */
@@ -504,6 +506,8 @@ function normalizeSession({ objet, payload, environment, eventType }) {
         paymentType: chaine(meta.paymentType),
         /** L10.5 — la prestation réglée, si ce paiement en règle une. */
         paymentRequestId: chaine(meta.paymentRequestId),
+        /** Le mois de commissions réglé, si c'est un paiement de commissions. */
+        commissionPeriodKey: chaine(meta.periodKey),
       },
 
       /** Une session sans facture n'a aucun document à proposer. */

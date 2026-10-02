@@ -28,7 +28,7 @@
 import crypto from 'node:crypto';
 
 import { runtimeEnvironment } from '../integratedApi/environment.js';
-import { authoritativeEnvironmentOf } from '../registry/projectEnvironment.js';
+import { panelWorldOf } from '../registry/projectEnvironment.js';
 import {
   CAPABILITY_ERROR_CODES,
   CapabilityError,
@@ -212,7 +212,8 @@ export function assertProjectScope(authenticatedProjectId, payload = {}) {
  */
 export function resolveInstanceEnvironment(panelProject) {
   const served = runtimeEnvironment();
-  return authoritativeEnvironmentOf(panelProject) ?? served;
+  // Le monde PANEL de la fiche : celui où elle tourne, sauf rattachement explicite (`panelWorld`).
+  return panelWorldOf(panelProject) ?? served;
 }
 
 /**

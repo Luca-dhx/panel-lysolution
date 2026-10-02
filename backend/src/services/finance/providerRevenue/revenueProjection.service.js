@@ -1351,6 +1351,15 @@ async function upsertTransaction({ fait, projectId }) {
  * détails, où quelqu'un le cherche vraiment.
  */
 export function labelOf(fait) {
+  /**
+   * LES COMMISSIONS — une facture d'un mois porte UNE LIGNE PAR VENTE : la
+   * première (« Commission vente BS-001 ») nommerait tout le mois d'après une
+   * seule vente. Le mois réglé est le seul nom juste.
+   */
+  if (fait.corroboration?.paymentType === 'COMMISSION') {
+    const mois = fait.corroboration?.commissionPeriodKey;
+    return mois ? `Commissions ${mois}` : 'Commissions';
+  }
   const ligne = typeof fait.label === 'string' ? fait.label.trim() : '';
   if (ligne) return ligne.slice(0, 160);
 
