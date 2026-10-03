@@ -81,6 +81,11 @@ section('CALCUL ET PLAFONDS');
   check('…mais sans son taux, la même ligne est refusée', mixteFaux?.reason === 'COMMISSION_INVALID');
   check('taux de ligne > 50 % → refusé par le schéma', !schema.safeParse(entree({ commission: { ...entree().commission, lines: [{ saleRef: 's', saleNumber: 'n', basisCents: 100, amountCents: 60, ratePercent: 60 }] } })).success);
 
+  const plafonnee = await resoudre(entree({ commission: { ...entree().commission, lines: [{ saleRef: 's9', saleNumber: 'BS-009', basisCents: 10000, amountCents: 300, capped: true }] } }));
+  check('ligne plafonnée (moins que base × taux) acceptée', plafonnee?.fiscal.netCents === 300);
+  const plafonneeTrop = await refuse(() => resoudre(entree({ commission: { ...entree().commission, lines: [{ saleRef: 's9', saleNumber: 'BS-009', basisCents: 10000, amountCents: 1500, capped: true }] } })));
+  check('…mais jamais plus que base × taux', plafonneeTrop?.reason === 'COMMISSION_INVALID');
+
   const doublon = await refuse(() => resoudre(entree({ commission: { ...entree().commission, lines: [entree().commission.lines[0], entree().commission.lines[0]] } })));
   check('même vente deux fois → refus', doublon?.reason === 'COMMISSION_INVALID');
 }

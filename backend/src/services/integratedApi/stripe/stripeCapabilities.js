@@ -215,6 +215,8 @@ const checkoutCreateInput = z.object({
       amountCents: z.number().int().min(1).max(10_000_000),
       /** Le taux de CETTE vente, quand la règle a changé en cours de mois (sinon celui du mois). */
       ratePercent: z.number().min(0).max(50).optional(),
+      /** Ligne écrêtée par le plafond de commission du contrat : elle vaut au plus base × taux. */
+      capped: z.boolean().optional(),
     }).strict()).min(1).max(500),
   }).strict().optional(),
   successUrl: z.string().trim().url().max(2048),

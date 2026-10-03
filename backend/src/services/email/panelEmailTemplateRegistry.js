@@ -2134,6 +2134,89 @@ ${button('Ouvrir la supervision', '{{bridge.url}}')}`,
       });
     },
   },
+
+  /* ═══════════════════════════════════════════════════════════════════════════
+     LES COMMISSIONS DU MOIS — payables dès le mois terminé.
+
+     ══ POURQUOI LE BOUTON NE PORTE PAS LE LIEN STRIPE BRUT ═══════════════════
+
+     Une page de paiement Stripe expire au plus tard 24 h après sa création ;
+     un e-mail se relit des jours plus tard. Le lien du bouton est donc un lien
+     STABLE du projet qui ouvre (ou reprend) la page Stripe du mois et y
+     redirige aussitôt — un clic, on arrive sur Stripe, et il marche encore la
+     semaine suivante. Déjà payé, il ramène au Manager, qui affiche « payée ».
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  COMMISSION_PAYMENT_DUE_ADMIN: {
+    templateId: 'COMMISSION_PAYMENT_DUE_ADMIN',
+    defaultName: 'Commissions du mois — à payer',
+    defaultDescription:
+      "Annonce au client d'un projet que le mois est terminé et que ses commissions sont payables : montant, nombre de ventes, bouton de paiement direct, lien de secours et lien vers le détail dans le Manager.",
+    defaultSubject: 'Vos commissions de {{commission.period}} sont disponibles au paiement',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'company.name', label: "Nom de l'entreprise", description: 'Identité du client.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'commission.period', label: 'Mois', description: 'Le mois terminé, en toutes lettres (« septembre 2026 »).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'commission.amountExcludingTax', label: 'Montant HT', description: 'Commissions du mois hors taxe, en centimes.', type: VARIABLE_TYPE.MONEY, required: true },
+      { key: 'commission.salesCount', label: 'Ventes', description: 'Nombre de ventes concernées, en toutes lettres (« 3 ventes »).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'commission.rule', label: 'Règle', description: 'La règle appliquée (« 10 % TTC »).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'commission.payUrl', label: 'Lien de paiement', description: 'Lien stable qui ouvre la page de paiement Stripe du mois.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'manager.commissionsUrl', label: 'Lien détail', description: 'Page des commissions dans le Manager.', type: VARIABLE_TYPE.URL, required: true },
+      { key: 'developer.companyName', label: 'Prestataire', description: 'Nom du prestataire.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'developer.supportEmail', label: 'Support', description: 'Adresse de support du prestataire.', type: VARIABLE_TYPE.EMAIL, required: true },
+    ],
+    sampleVariables: {
+      'company.name': 'Entreprise Démonstration',
+      'commission.period': 'septembre 2026',
+      'commission.amountExcludingTax': { amount: 4250, currency: 'EUR' },
+      'commission.salesCount': '3 ventes',
+      'commission.rule': '10 % TTC',
+      'commission.payUrl': 'https://api.exemple.fr/api/public/commissions/payer/exemple',
+      'manager.commissionsUrl': 'https://manager.exemple.fr/commerce/commissions',
+      'developer.companyName': 'Studio Démonstration',
+      'developer.supportEmail': 'support@exemple.fr',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Le mois est terminé : vos commissions sont disponibles au paiement.',
+        heading: 'Vos commissions de {{commission.period}}',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Bonjour {{company.name}},
+            </p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">
+              Le mois de {{commission.period}} est terminé. Les commissions sur vos ventes
+              sont maintenant disponibles au paiement.
+            </p>
+            <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px;border:1px solid ${BORDER};border-radius:6px;">
+              <tr>
+                <td style="padding:16px;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;">
+${row('Mois', '{{commission.period}}')}
+${row('Ventes concernées', '{{commission.salesCount}}')}
+${row('Règle', '{{commission.rule}}')}
+${row('Montant HT', '{{commission.amountExcludingTax}}')}
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:${MUTED};">
+              La TVA s'ajoute sur la facture, émise automatiquement après le paiement.
+            </p>
+${button('Payer', '{{commission.payUrl}}')}
+            <p style="margin:20px 0 6px;font-size:13px;line-height:1.6;color:${MUTED};">
+              Le bouton ne fonctionne pas ? Copiez ce lien dans votre navigateur :
+            </p>
+            <p style="margin:0 0 16px;font-size:12px;line-height:1.5;word-break:break-all;color:${BRAND};">
+              {{commission.payUrl}}
+            </p>
+            <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+              Le détail des commissions du mois, vente par vente, est consultable dans
+              <a href="{{manager.commissionsUrl}}" style="color:${BRAND};">votre Manager</a>.
+            </p>`,
+        footerHtml: '            {{developer.companyName}} — une question ? Écrivez à {{developer.supportEmail}}.',
+      });
+    },
+  },
 });
 
 

@@ -601,7 +601,9 @@ function resolveCommissionIntent({ input, projection, contractId, reference, met
     seen.add(line.saleRef);
     const taux = line.ratePercent ?? ratePercent;
     const attendu = Math.round((line.basisCents * taux) / 100);
-    if (Math.abs(attendu - line.amountCents) > 1) {
+    // Une ligne PLAFONNÉE peut valoir moins (jamais plus) ; les autres valent base × taux.
+    const horsTolerance = line.capped ? line.amountCents > attendu + 1 : Math.abs(attendu - line.amountCents) > 1;
+    if (horsTolerance) {
       throw refus(`Vente ${line.saleNumber} : ${line.amountCents} c annoncés, ${attendu} c attendus (${taux} % de ${line.basisCents} c).`);
     }
   }

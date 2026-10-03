@@ -529,6 +529,25 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
       + 'conservé par un exploitant resterait une panne déjà réparée.',
     callers: ['Panel/services/supervision/bridgeAlerting.service.js'],
   },
+
+  /**
+   * LES COMMISSIONS D'UN MOIS TERMINÉ SONT PAYABLES.
+   *
+   * Portée PROJECT, comme toute la facturation du prestataire vers son client
+   * (`PAYMENT_CONFIRMED_ADMIN`, les impayés) : le destinataire est
+   * l'administrateur DU projet, le message parle DE ses ventes. Il part par la
+   * chaîne du parc — `From` global, clé Brevo du Panel — jamais par une clé de
+   * l'institut.
+   */
+  COMMISSION_PAYMENT_DUE_ADMIN: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.BILLING,
+    provisionForProjects: true,
+    reason:
+      'Le mois est terminé : le projet annonce à SON client le montant des commissions dues '
+      + 'sur ses ventes et lui donne le lien de paiement. Un message par mois, au plus.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-commission-payment-due'],
+  },
 });
 
 /**

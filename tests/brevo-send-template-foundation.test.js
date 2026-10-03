@@ -168,6 +168,9 @@ section('1 · Les codes de modèle sont canoniques et code-first');
      */
     'PROJECT_BRIDGE_DEGRADED_SUPER_ADMIN',
     'PROJECT_BRIDGE_RECOVERED_SUPER_ADMIN',
+    // Les commissions d'un mois terminé, payables : portée PROJET, provisionnée —
+    // c'est l'administrateur du projet qui la lit, et qui paie.
+    'COMMISSION_PAYMENT_DUE_ADMIN',
   ];
 
   const codes = templates.listTemplateCodes();
