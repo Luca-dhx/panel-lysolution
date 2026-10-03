@@ -821,7 +821,18 @@ export async function runPipeline({ transport, target, artifact, options, versio
       // dédié a été configuré, certifié ET validé plus haut.
       const urls = deriveNetworkUrls({ siteHost: host, apiHost, topology: topo });
       const res = await options.runtimeConfigSync({ mongoUri: remoteEnv?.MONGODB_URI, dbName, urls, requirePublic: true });
-      return describeRuntimeConfig(res);
+      /**
+       * LES ADRESSES ONT CHANGÉ (nouveau domaine) → le backend redémarre.
+       *
+       * Il a démarré à l'étape PM2 avec les adresses d'AVANT (elles ne sont
+       * écrites qu'ici, après validation), et c'est au démarrage qu'il publie
+       * sa présentation au Panel. Sans ce redémarrage, le Panel gardait
+       * l'ancien domaine jusqu'au redémarrage suivant.
+       */
+      if (res?.changed) {
+        await restartBackend(transport, { host, backendDir, port: backendPort, env, health: options.health });
+      }
+      return { ...describeRuntimeConfig(res), republished: Boolean(res?.changed) };
     });
 
     return { ok: true, steps, version, durationMs: clock() - pipelineStart, failedStep: null };

@@ -123,6 +123,9 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
     const stamp = now || new Date().toISOString();
     const existing = await coll.findOne({});
     let created = false;
+    // Les adresses changent-elles ? (nouveau domaine) — le pipeline redémarre
+    // alors le backend pour qu'il republie sa présentation au Panel.
+    const changed = !existing || Object.entries(urls).some(([k, v]) => existing.network?.[k] !== v);
     // On n'écrit QUE les clés produites par le profil de la destination.
     const set = { updatedAt: stamp };
     for (const [k, v] of Object.entries(urls)) set[`network.${k}`] = v;
@@ -145,7 +148,7 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
       }
     }
     validateNetworkUrls(got, { requirePublic }); // la relecture ne doit pas être locale
-    return { ok: true, urls: got, created };
+    return { ok: true, urls: got, created, changed };
   } catch (err) {
     if (err instanceof RuntimeConfigError) throw err;
     throw new RuntimeConfigError('RUNTIME_CONFIG_SYNC_FAILED', `Écriture de la configuration réseau impossible : ${err.message}.`);
@@ -156,7 +159,7 @@ export async function syncRuntimeNetworkConfiguration({ mongoUri, dbName, urls, 
 
 /** Résumé NON sensible pour le rapport : les clés réellement publiées. */
 export function describeRuntimeConfig(result) {
-  return { ...result.urls, created: result.created };
+  return { ...result.urls, created: result.created, changed: Boolean(result.changed) };
 }
 
 export default { syncRuntimeNetworkConfiguration, validateNetworkUrls, deriveNetworkUrls, describeRuntimeConfig, RuntimeConfigError };

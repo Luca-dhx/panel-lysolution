@@ -13,7 +13,8 @@
  *   - ENV          : environnement visé par ce déploiement (défaut PROD) ;
  *   - PORT         : port du backend sur le VPS (target.backendPort) ;
  *   - CORS_ORIGINS : chaque hôte servi du profil, en https ;
- *   - PUBLIC_URL   : URL publique de l'hôte principal.
+ *   - PUBLIC_URL   : URL publique de l'hôte principal ;
+ *   - PUBLIC_BACKEND_URL : URL publique de l'API de cette destination.
  * Tout le reste (MONGODB_URI, DB_TEST, DB_PROD, JWT_SECRET, JWT_EXPIRES_IN,
  * INTEGRATED_API_ENCRYPTION_KEY, et toute clé additionnelle) est repris VERBATIM.
  *
@@ -136,6 +137,9 @@ export function buildRemoteEnv(target, { env = 'PROD', sourceEnvPath = DEFAULT_S
   remoteEnv.PORT = String(target.backendPort ?? src.PORT ?? '');
   remoteEnv.CORS_ORIGINS = corsHosts.map((h) => `https://${h}`).join(',');
   remoteEnv.PUBLIC_URL = `https://${host}`;
+  // L'API publique de CETTE destination : la valeur du .env source est celle
+  // d'une autre instance (et devient fausse dès qu'un domaine change).
+  if (topo.apiHost) remoteEnv.PUBLIC_BACKEND_URL = `https://${topo.apiHost}`;
 
   return { remoteEnv, dbName: remoteEnv[dbKey], env: targetEnv, sourcePath: sourceEnvPath };
 }
