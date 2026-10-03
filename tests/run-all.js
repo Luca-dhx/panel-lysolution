@@ -146,6 +146,7 @@ const TESTS = [
   // visible.
   'prospection.test.js',
   'tasks.test.js',
+  'todo-lists.test.js',
   'prospect-library.test.js',
   // L'IMPORT JSON D'UN PROSPECT — un rapport de qualification devient une fiche.
   //

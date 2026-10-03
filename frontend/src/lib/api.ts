@@ -27,6 +27,7 @@ import type {
   ProspectImportMode, ProspectImportPlan,
 } from '@/types.prospection';
 import type { Task, TaskInput, TaskListResult, TaskStatus } from '@/types.tasks';
+import type { TodoList, TodoListInput } from '@/types.todoLists';
 import type { PanelTheme } from '@/lib/useTheme';
 import type { EmailSenderScreen, EmailSenderTestReport } from '@/types.emailSender';
 import type {
@@ -1183,6 +1184,36 @@ export const api = {
 
   deleteTask: (taskId: string) =>
     request<{ deleted: boolean; taskId: string }>(`/api/tasks/${taskId}`, { method: 'DELETE' }),
+
+  /* ── LES TO-DO LISTS ───────────────────────────────────────────────────
+     Cocher a sa propre route : une écriture par case, jamais le tableau
+     entier — deux coches rapides dont les réponses se croisent ne doivent pas
+     s'annuler. */
+  listTodoLists: (bornes: { from?: string; to?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (bornes.from) params.set('from', bornes.from);
+    if (bornes.to) params.set('to', bornes.to);
+    const suffixe = params.toString();
+    return request<{ todoLists: TodoList[] }>(`/api/todo-lists${suffixe ? `?${suffixe}` : ''}`);
+  },
+
+  getTodoList: (listId: string) =>
+    request<{ todoList: TodoList }>(`/api/todo-lists/${listId}`),
+
+  createTodoList: (body: TodoListInput) =>
+    request<{ todoList: TodoList }>('/api/todo-lists', { method: 'POST', body }),
+
+  updateTodoList: (listId: string, body: TodoListInput) =>
+    request<{ todoList: TodoList }>(`/api/todo-lists/${listId}`, { method: 'PATCH', body }),
+
+  toggleTodoItem: (listId: string, itemId: string, done: boolean) =>
+    request<{ todoList: TodoList }>(
+      `/api/todo-lists/${listId}/items/${encodeURIComponent(itemId)}`,
+      { method: 'PATCH', body: { done } },
+    ),
+
+  deleteTodoList: (listId: string) =>
+    request<{ deleted: boolean; listId: string }>(`/api/todo-lists/${listId}`, { method: 'DELETE' }),
 
   /**
    * Le STATUT a sa propre route : il se pilote depuis une liste déroulante

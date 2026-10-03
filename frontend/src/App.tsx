@@ -58,6 +58,9 @@ const ClientCompanyDetailPage = lazy(() => import('@/pages/ClientCompanyDetailPa
 /* La page des taches tire le calendrier, le formulaire et le selecteur de date :
    les quinze ecrans qui ne les affichent pas n'ont pas a les telecharger. */
 const TasksPage = lazy(() => import('@/pages/TasksPage'));
+/* Les to-do lists tirent le calendrier et motion : chargées à la demande, comme les tâches. */
+const TodoListsPage = lazy(() => import('@/pages/TodoListsPage'));
+const TodoListEditorPage = lazy(() => import('@/pages/TodoListEditorPage'));
 /*
   LA PROSPECTION REJOINT LES ÉCRANS FRACTIONNÉS.
 
@@ -156,6 +159,10 @@ export default function App() {
         <Route path="/prospection" element={<ProspectionPage />} />
         <Route path="/prospection/:prospectId" element={<ProspectDetailPage />} />
         <Route path="/taches" element={<TasksPage />} />
+        {/* TO-DO LIST — la vue par jour, et un écran dédié pour créer ou modifier une liste. */}
+        <Route path="/todo" element={<TodoListsPage />} />
+        <Route path="/todo/nouvelle" element={<TodoListEditorPage />} />
+        <Route path="/todo/:listId" element={<TodoListEditorPage />} />
         <Route path="/clients" element={<ClientCompaniesPage />} />
         <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
         {/*

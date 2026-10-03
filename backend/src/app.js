@@ -26,6 +26,7 @@ import companyRoutes from './routes/company.routes.js';
 import clientCompaniesRoutes from './routes/clientCompanies.routes.js';
 import prospectsRoutes from './routes/prospects.routes.js';
 import tasksRoutes from './routes/tasks.routes.js';
+import todoListsRoutes from './routes/todoLists.routes.js';
 import { foldersRouter, templatesRouter } from './routes/prospectLibrary.routes.js';
 import legalTemplatesRoutes, { hostCompaniesRouter } from './routes/legalTemplates.routes.js';
 import integratedApiRoutes from './routes/integratedApi.routes.js';
@@ -239,6 +240,7 @@ export function createApp() {
   app.use('/api/prospect-folders', foldersRouter);
   app.use('/api/prospect-templates', templatesRouter);
   app.use('/api/tasks', tasksRoutes);
+  app.use('/api/todo-lists', todoListsRoutes);
   /**
    * LES DOCUMENTS LÉGAUX — le référentiel des textes que les sites publient.
    *

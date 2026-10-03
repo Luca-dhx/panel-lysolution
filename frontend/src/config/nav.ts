@@ -40,6 +40,11 @@ export const NAV_ITEMS: NavItem[] = [
    * de l'equipe, comme l'agenda et la prospection.
    */
   { to: '/taches', label: 'Tâches', section: 'GESTION' },
+  /**
+   * TO-DO LIST — juste après les tâches : les deux disent « ce qu'il reste à
+   * faire », l'une par engagement daté, l'autre par journée de cases à cocher.
+   */
+  { to: '/todo', label: 'To-do list', section: 'GESTION' },
   { to: '/clients', label: 'Clients', section: 'GESTION' },
   { to: '/finances', label: 'Finances', section: 'GESTION' },
   { to: '/company', label: 'Mon entreprise', section: 'GESTION' },
