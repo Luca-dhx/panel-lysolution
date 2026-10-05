@@ -179,6 +179,8 @@ async function applyContract({ projectId, change, stamp }) {
          * facturation d'une prestation refuse alors explicitement.
          */
         taxRate: Number.isFinite(c.taxRate) ? c.taxRate : null,
+        // TVA des commissions — reflétée, jamais complétée (`null` = celle du contrat).
+        commissionVatRate: Number.isFinite(c.commissionVatRate) ? c.commissionVatRate : null,
         /**
          * LE DÉLAI DE GRÂCE (L10.6B-1) — reflété, jamais complété.
          *

@@ -261,6 +261,8 @@ const contractSchema = new mongoose.Schema(
      * voir `resolveTaxRate()` dans le service des prestations.
      */
     taxRate: { type: Number, default: null },
+    /** TVA facturée SUR les commissions ; `null` = celle du contrat (`taxRate`). */
+    commissionVatRate: { type: Number, default: null },
     /**
      * LE DÉLAI DE GRÂCE DU CONTRAT, EN JOURS (L10.6B-1).
      *

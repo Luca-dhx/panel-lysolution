@@ -609,9 +609,11 @@ function resolveCommissionIntent({ input, projection, contractId, reference, met
   }
   // Un taux absent (`null`) n'est pas un taux nul : Number(null) vaudrait 0 et
   // facturerait sans TVA. Il est refusé, comme un taux hors bornes.
-  const taxRate = projection.taxRate === null || projection.taxRate === undefined || projection.taxRate === ''
+  // La TVA des COMMISSIONS si le contrat en fixe une, sinon celle du contrat.
+  const rawRate = Number.isFinite(projection.commissionVatRate) ? projection.commissionVatRate : projection.taxRate;
+  const taxRate = rawRate === null || rawRate === undefined || rawRate === ''
     ? Number.NaN
-    : Number(projection.taxRate);
+    : Number(rawRate);
   if (!Number.isFinite(taxRate) || taxRate < 0 || taxRate > 100) {
     throw refus('Le contrat ne porte pas de taux de TVA exploitable pour facturer les commissions.');
   }

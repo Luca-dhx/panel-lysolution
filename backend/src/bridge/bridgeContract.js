@@ -1381,6 +1381,11 @@ export const contractPayloadSchema = z
      */
     taxRate: z.number().min(0).max(100).nullable().optional(),
     /**
+     * TVA FACTURÉE SUR LES COMMISSIONS (additif) — absente, celle du contrat
+     * (`taxRate`) s'applique. Un projet antérieur ne l'envoie pas.
+     */
+    commissionVatRate: z.number().min(0).max(100).nullable().optional(),
+    /**
      * LE DÉLAI DE GRÂCE, EN JOURS ENTIERS (L10.6B-1).
      *
      * `nullable` parce qu'un contrat peut légitimement n'avoir aucune politique,

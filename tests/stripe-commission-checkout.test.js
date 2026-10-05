@@ -63,6 +63,13 @@ section('CALCUL ET PLAFONDS');
   check('…et la TVA du contrat s’y applique (2 040 c TTC)', intention.amountIncludingTax === 2040);
   check('le taux de TVA vient du contrat', intention.fiscal.taxRate === 20);
 
+  // TVA PROPRE AUX COMMISSIONS : elle prime sur celle du contrat.
+  const tvaCommission = await authority.resolveCheckoutIntent({ projectId: 'p1', environment: 'TEST', input: entree(), lookupClientCompany: lookups.lookupClientCompany, lookupContract: async () => ({ sourceContractId: 'ct-a', reference: 'CTR', taxRate: 20, commissionVatRate: 10 }) });
+  check('TVA des commissions configurée (10 %) → appliquée au lieu de celle du contrat', tvaCommission.fiscal.taxRate === 10 && tvaCommission.amountIncludingTax === 1870);
+  // TAUX « TTC » : facturé à son HT effectif (10 % TTC = 8,333333 % HT), à 6 décimales.
+  const tauxTtc = await resoudre(entree({ commission: { ...entree().commission, ratePercent: 8.333333, lines: [{ saleRef: 's9', saleNumber: 'BS-009', basisCents: 100000, amountCents: 8333, ratePercent: 8.333333 }] } }));
+  check('taux HT effectif à 6 décimales accepté (8 333 c pour 1 000 €)', tauxTtc.fiscal.netCents === 8333);
+
   const faux = await refuse(() => resoudre(entree({ commission: { ...entree().commission, lines: [{ saleRef: 's1', saleNumber: 'BS-001', basisCents: 12000, amountCents: 120 }] } })));
   check('montant qui ne vaut pas base × taux → refus COMMISSION_INVALID', faux?.reason === 'COMMISSION_INVALID');
   check('…le message nomme la vente', /BS-001/.test(faux?.message ?? ''));
