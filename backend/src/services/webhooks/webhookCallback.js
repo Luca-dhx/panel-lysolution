@@ -112,6 +112,13 @@ export async function resolveWebhookCallback(provider, {
  * une action réelle, dont l'effet survit à la session.
  */
 export function assertCallbackEnvironment(requested, { runtime = runtimeEnvironment() } = {}) {
+  /**
+   * UNE SEULE INSTANCE SERT LES DEUX MONDES. Le Panel en ligne est l'unique
+   * plan de contrôle : un projet de PRODUCTION y consomme les comptes PROD
+   * (clés, et donc webhooks PROD). La callback PROD est la même adresse
+   * publique — la sienne. Seul un monde inconnu est refusé.
+   */
+  if (requested === 'TEST' || requested === 'PROD') return requested;
   if (requested !== runtime) {
     throw ApiError.conflict(
       WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_ENVIRONMENT_MISMATCH,

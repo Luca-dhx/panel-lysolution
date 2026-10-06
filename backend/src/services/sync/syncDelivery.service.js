@@ -225,8 +225,13 @@ export async function deliverToProject(record, changes) {
    * près le même — et on cesse de le présenter comme un incident.
    */
   // Le monde PANEL de l'instance : une production rattachée à la recette reçoit les fiches de recette.
+  /**
+   * Ce Panel est l'unique détenteur des fiches (entreprise, mentions légales,
+   * entreprise cliente) : un projet de PRODUCTION qui consomme les comptes
+   * PROD les reçoit quand même. Le refus ne vaut plus que pour un monde inconnu.
+   */
   const environnement = panelWorldOf(record);
-  if (environnement && environnement !== config.env) {
+  if (environnement && environnement !== 'TEST' && environnement !== 'PROD') {
     const trace = {
       ...base, outcome: DELIVERY_OUTCOME.ENVIRONMENT_MISMATCH,
       errorClass: 'SCOPE', durationMs: Date.now() - debut,

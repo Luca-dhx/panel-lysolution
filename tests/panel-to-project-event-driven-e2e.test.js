@@ -526,10 +526,9 @@ section('LA DONNÉE MÉTIER NE TRAVERSE PAS LES MONDES');
 
   const traces = await livraison.deliverEntry(change('env-write'));
 
-  check('AUCUNE requête n’est partie vers un projet d’un autre monde', requetes === 0);
-  check('…l’issue est nommée', traces[0]?.outcome === 'ENVIRONMENT_MISMATCH');
-  check('…et classée comme une FRONTIÈRE, non comme un incident',
-    traces[0]?.errorClass === 'SCOPE');
+  // Ce Panel détient les seules fiches : un projet PROD les reçoit aussi.
+  check('un projet en PRODUCTION reçoit la donnée métier de ce Panel', requetes === 1, String(requetes));
+  check('…sans être classé hors périmètre', traces[0]?.outcome !== 'ENVIRONMENT_MISMATCH', traces[0]?.outcome);
 
   /* ── 2. UNE ANNONCE NE SUFFIT PAS À DÉPLACER UNE FICHE ───────────────────── */
   /**

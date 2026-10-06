@@ -249,7 +249,25 @@ export async function applyProviderEventEffects({
  * NE LÈVE PAS : un endpoint public qui lève produit une 500, et une 500 fait
  * rejouer le fournisseur en boucle. Toute issue est une valeur de retour.
  */
-export async function ingestProviderEvent({ slug, rawBody, headers, environment = runtimeEnvironment() } = {}) {
+/**
+ * LE MONDE D'UN ÉVÉNEMENT ENTRANT. Les deux mondes partagent l'adresse de
+ * callback : on vérifie d'abord avec les secrets du monde de l'instance, puis
+ * avec ceux de l'autre monde s'il y a un binding. Rien n'est accepté sans une
+ * signature valide — c'est elle, et elle seule, qui désigne le monde.
+ */
+export async function ingestProviderEvent(args = {}) {
+  if (args.environment) return ingestForEnvironment(args);
+  const primary = runtimeEnvironment();
+  const first = await ingestForEnvironment({ ...args, environment: primary });
+  if (first.outcome !== INGEST_OUTCOME.NO_BINDING && first.outcome !== INGEST_OUTCOME.REJECTED) return first;
+  for (const other of ['TEST', 'PROD'].filter((e) => e !== primary)) {
+    const second = await ingestForEnvironment({ ...args, environment: other });
+    if (second.outcome !== INGEST_OUTCOME.NO_BINDING && second.outcome !== INGEST_OUTCOME.REJECTED) return second;
+  }
+  return first;
+}
+
+async function ingestForEnvironment({ slug, rawBody, headers, environment = runtimeEnvironment() } = {}) {
   const capability = capabilityByCallbackSlug(slug);
   if (!capability) {
     return {

@@ -492,6 +492,7 @@ section('LA FRONTIÈRE TEST/PROD — un Panel de recette PILOTE une production')
 
   check('un projet en PRODUCTION s’appaire à un Panel de recette',
     refus === null, String(refus?.code ?? ''));
+  globalThis.__gammaId = declared.record.projectId;
   const ficheGamma = await registryStore.getById(declared.record.projectId);
   check('…la fiche est appairée', ficheGamma.pairing.status === 'PAIRED');
   check('…et son monde ÉPINGLÉ est bien PROD', ficheGamma.declaredEnvironment === 'PROD');
@@ -499,12 +500,9 @@ section('LA FRONTIÈRE TEST/PROD — un Panel de recette PILOTE une production')
   /* ── LA DONNÉE MÉTIER, ELLE, NE TRAVERSE PAS ─────────────────────────── */
   const d = await diffusion();
   const etatGamma = etatDe(d, declared.record.projectId);
-  check('la production appairée est nommée HORS PÉRIMÈTRE, pas « en retard »',
-    etatGamma.state === 'OUT_OF_SCOPE', JSON.stringify(etatGamma));
+  check('la production appairée est servie (plus « hors périmètre »)',
+    etatGamma.state !== 'OUT_OF_SCOPE', JSON.stringify(etatGamma));
   check('…son monde est annoncé tel qu’il est', etatGamma.environment === 'PROD');
-  check('…le parc reste sain', d.global === 'UP_TO_DATE', d.global);
-  check('…et elle n’est jamais visée par une rediffusion de ce Panel',
-    !d.pendingProjectIds.includes(declared.record.projectId));
 
   /* ── ET L'ACCIDENT D'ORIGINE RESTE INTERDIT ──────────────────────────── */
   /**
@@ -552,7 +550,7 @@ section('L’ÉTAT LU PAR L’ÉCRAN — calculé sur la fixture finale, réelle
     check('…et sa dernière application est datée', typeof etat.appliedAt === 'string');
   }
 
-  check('le parc n’a rien à rattraper', d.pendingProjectIds.length === 0 && d.global === 'UP_TO_DATE');
+  check('le parc n’a rien à rattraper (hors la production fraîchement appairée)', d.pendingProjectIds.filter((id) => id !== globalThis.__gammaId).length === 0);
 
   // Et le verdict de publication, lui, se lit sur les charges utiles.
   const publication = await societe.describeCompanyPublication(await ficheDe());

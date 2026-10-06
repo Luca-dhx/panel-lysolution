@@ -246,20 +246,19 @@ section('SCÉNARIO B — deux instances du même monde, deux états indépendant
   await instance({ id: 'sb-production', environment: 'PROD' });
   d = await societe.describeCompanyDistribution(await PanelCompany.findOne({ companyId }).lean());
 
-  check('une instance PROD sur un Panel TEST est HORS PÉRIMÈTRE',
-    etatDe(d, 'sb-production').state === 'OUT_OF_SCOPE',
+  // Ce Panel est l'unique détenteur des fiches : une instance PROD (qui
+  // consomme les comptes PROD) reçoit quand même ses données métier.
+  check('une instance PROD est servie comme les autres (plus « hors périmètre »)',
+    etatDe(d, 'sb-production').state !== 'OUT_OF_SCOPE',
     JSON.stringify(etatDe(d, 'sb-production')));
   check('…son monde est annoncé tel qu’il est',
     etatDe(d, 'sb-production').environment === 'PROD');
-  check('…le parc reste À JOUR', d.global === 'UP_TO_DATE', d.global);
-  check('…et aucune rediffusion ne la vise',
-    !d.pendingProjectIds.includes('sb-production'));
 
   await PanelSyncJournalEntry.deleteMany({});
-  const horsMonde = await societe.republishCurrentConfiguration(companyId);
-  check('…une rediffusion n’a plus personne à servir', horsMonde.recipients === 0);
-  check('…et n’émet aucune écriture vers un autre monde',
-    (await PanelSyncJournalEntry.countDocuments({ audience: 'sb-production' })) === 0);
+  const servie = await societe.republishCurrentConfiguration(companyId);
+  check('…une rediffusion la sert aussi', servie.recipients >= 1, String(servie.recipients));
+  await registryStore.remove('sb-production');
+  await PanelSyncJournalEntry.deleteMany({});
 
   /* ── L'INVARIANT DE VERSION ──────────────────────────────────────────── */
   fiche = await PanelCompany.findOne({ companyId }).lean();

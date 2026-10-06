@@ -317,16 +317,13 @@ section('3-5 · La callback est canonique, et les deux mondes ne se croisent pas
     resolved.url === `${PANEL_URL}/webhooks/providers/stripe`);
   check('la source est nommée', resolved.source === 'SYSTEM_CONFIGURATION');
 
-  // FAIL CLOSED : une instance TEST ne fabrique JAMAIS une callback PROD.
-  let refus = null;
-  try { await resolveWebhookCallback('STRIPE', { environment: 'PROD' }); }
-  catch (err) { refus = err; }
-  check('demander la callback PROD depuis un Panel TEST est REFUSÉ',
-    refus?.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_ENVIRONMENT_MISMATCH && refus?.statusCode === 409);
-
+  // UNE SEULE INSTANCE SERT LES DEUX MONDES : la callback PROD est la sienne.
+  const prod = await resolveWebhookCallback('STRIPE', { environment: 'PROD' });
+  check('la callback PROD est l’adresse publique de ce Panel', prod.url === `${PANEL_URL}/webhooks/providers/stripe`);
+  check('…le monde PROD passe', assertCallbackEnvironment('PROD') === 'PROD');
   let refus2 = null;
-  try { assertCallbackEnvironment('PROD'); } catch (err) { refus2 = err; }
-  check('le garde-fou est direct, pas une conséquence', refus2 !== null);
+  try { assertCallbackEnvironment('STAGING'); } catch (err) { refus2 = err; }
+  check('un monde inconnu reste refusé', refus2?.code === WEBHOOK_DIAGNOSTIC.WEBHOOK_CALLBACK_ENVIRONMENT_MISMATCH);
   check('l’environnement servi, lui, passe', assertCallbackEnvironment('TEST') === 'TEST');
 
   // Aucun domaine deviné : sans configuration, on ne PUBLIE rien.

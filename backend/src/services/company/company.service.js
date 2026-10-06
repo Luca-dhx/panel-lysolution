@@ -463,7 +463,7 @@ export async function describeCompanyDistribution(company) {
 
     let state;
     if (!paired) state = 'NOT_PAIRED';
-    else if (monde && monde !== config.env) state = 'OUT_OF_SCOPE';
+    else if (monde && monde !== 'TEST' && monde !== 'PROD') state = 'OUT_OF_SCOPE';
     else if (appliedVersion === null) state = 'UNKNOWN';
     else if (expectedVersion !== null && appliedVersion >= expectedVersion) state = 'APPLIED';
     else if (liveness === 'ONLINE' || liveness === 'STALE') state = 'PENDING';
