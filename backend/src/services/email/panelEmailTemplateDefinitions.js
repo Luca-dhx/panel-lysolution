@@ -213,6 +213,14 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-training-validated'],
   },
 
+  REVIEW_REQUEST_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet invite son propre client a laisser un avis apres une prestation ou une formation terminee (premier envoi et relances).',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-review-request'],
+  },
+
   FORMATION_SESSION_RESCHEDULED_CLIENT: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.LIFECYCLE,

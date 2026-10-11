@@ -717,6 +717,47 @@ ${button('Voir mes formations', '{{accountUrl}}')}`,
     },
   },
 
+  REVIEW_REQUEST_CLIENT: {
+    templateId: 'REVIEW_REQUEST_CLIENT',
+    defaultName: 'Avis - demande au client',
+    defaultDescription: 'Invite la cliente a laisser son avis apres une prestation ou une formation terminee (premier envoi et relances).',
+    defaultSubject: '{{subjectLine}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'subjectLine', label: 'Objet', description: 'Objet compose (premier envoi ou relance).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'introText', label: 'Introduction', description: 'Phrase d introduction (une ou plusieurs prestations).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'serviceName', label: 'Prestation', description: 'Prestation concernee (vide si plusieurs).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'completedAt', label: 'Date', description: 'Date de la prestation (vide si plusieurs).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'servicesHtml', label: 'Prestations', description: 'Liste des prestations enchainees (HTML).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'reviewUrl', label: 'Lien avis', description: 'Page de depot de l avis (connexion requise).', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      subjectLine: 'Comment s est passee votre prestation Rehaussement de cils ?',
+      introText: 'Merci pour votre confiance ! Dites-nous ce que vous en avez pense.',
+      serviceName: 'Rehaussement de cils',
+      completedAt: '10 octobre 2026 a 14:00',
+      servicesHtml: '',
+      reviewUrl: 'https://exemple.fr/avis?demande=abc',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre avis compte beaucoup pour nous.',
+        heading: 'Votre avis compte',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{introText}}</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};"><strong>{{serviceName}}</strong> {{completedAt}}</p>
+            {{servicesHtml}}
+${button('Laisser mon avis', '{{reviewUrl}}')}`,
+      });
+    },
+  },
+
   FORMATION_SESSION_RESCHEDULED_CLIENT: {
     templateId: 'FORMATION_SESSION_RESCHEDULED_CLIENT',
     defaultName: 'Formation - session deplacee (client)',
