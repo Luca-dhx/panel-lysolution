@@ -717,6 +717,50 @@ ${button('Voir mes formations', '{{accountUrl}}')}`,
     },
   },
 
+  APPOINTMENT_REMINDER_CLIENT: {
+    templateId: 'APPOINTMENT_REMINDER_CLIENT',
+    defaultName: 'Rendez-vous - rappel au client',
+    defaultDescription: 'Rappelle a la cliente son rendez-vous a venir (delais regles sur la fiche prestation).',
+    defaultSubject: '{{subjectLine}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'subjectLine', label: 'Objet', description: 'Objet compose (prestation et echeance : demain, dans 2 heures).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'introText', label: 'Introduction', description: 'Phrase de rappel.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'serviceName', label: 'Prestation', description: 'Prestation reservee.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'appointmentStart', label: 'Debut', description: 'Debut du rendez-vous.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'appointmentEnd', label: 'Fin', description: 'Fin prevue du rendez-vous.', type: VARIABLE_TYPE.DATETIME, required: false },
+      { key: 'instituteAddress', label: 'Adresse', description: 'Adresse de l institut.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'balanceDueAmount', label: 'Reste a regler', description: 'Montant restant a regler sur place.', type: VARIABLE_TYPE.MONEY, required: false },
+      { key: 'accountUrl', label: 'Lien espace client', description: 'Espace client de la cliente.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      subjectLine: 'Rappel : votre rendez-vous Pose complete capsules gel demain',
+      introText: 'Petit rappel : votre rendez-vous « Pose complete capsules gel » a lieu demain. Nous avons hate de vous recevoir.',
+      serviceName: 'Pose complete capsules gel',
+      appointmentStart: '2026-10-20T09:00:00.000Z',
+      appointmentEnd: '2026-10-20T10:45:00.000Z',
+      instituteAddress: '192 avenue de la Californie, 06200 Nice',
+      balanceDueAmount: { amount: 3250, currency: 'EUR' },
+      accountUrl: 'https://exemple.fr/espace-client',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre rendez-vous approche.',
+        heading: 'A tres bientot',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{introText}}</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};"><strong>{{serviceName}}</strong><br />{{appointmentStart}}<br />{{instituteAddress}}</p>
+${button('Voir mon rendez-vous', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
   REVIEW_REQUEST_CLIENT: {
     templateId: 'REVIEW_REQUEST_CLIENT',
     defaultName: 'Avis - demande au client',
