@@ -354,6 +354,7 @@ ${button('Ouvrir dans le Manager', '{{manager.contactSubmissionUrl}}')}`,
       { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
       { key: 'verificationCode', label: 'Code de verification', description: 'Code a 6 chiffres.', type: VARIABLE_TYPE.TEXT, required: true },
       { key: 'expiresAt', label: 'Expiration', description: 'Date limite de validite du code.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'actionUrl', label: 'Lien de confirmation', description: 'Confirme l adresse en un clic (le code est deja dans le lien).', type: VARIABLE_TYPE.URL, required: false },
     ],
     sampleVariables: {
       clientFirstName: 'Marie',
@@ -361,13 +362,15 @@ ${button('Ouvrir dans le Manager', '{{manager.contactSubmissionUrl}}')}`,
       clientEmail: 'marie.martin@example.fr',
       verificationCode: '123456',
       expiresAt: '2026-09-20T18:00:00.000Z',
+      actionUrl: 'https://exemple.fr/verification-email?code=123456',
     },
     get defaultHtml() {
       return layout({
         preheader: 'Votre code de verification client.',
         heading: 'Verification de votre e-mail',
         bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
-            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Entrez ce code dans votre espace client pour verifier votre adresse et finaliser vos achats.</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Cliquez sur le bouton pour confirmer votre adresse, ou entrez ce code dans votre espace client.</p>
+${button('Confirmer mon adresse', '{{actionUrl}}')}
             <p style="margin:20px 0;padding:16px;border:1px solid ${BORDER};border-radius:8px;text-align:center;font-size:28px;letter-spacing:6px;font-weight:700;color:${BRAND};">{{verificationCode}}</p>
             <p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">Ce code expire le {{expiresAt}}.</p>`,
       });
