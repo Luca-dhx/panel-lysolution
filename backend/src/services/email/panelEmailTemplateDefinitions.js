@@ -205,6 +205,14 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-training-submission'],
   },
 
+  FORMATION_SLOT_ASSIGNED_ADMIN: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent ses propres administrateurs qu un creneau partage entre plusieurs formations vient d etre attribue (les autres sont retirees).',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#notify-admins-slot-group-assigned'],
+  },
+
   TRAINING_VALIDATED_CLIENT: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.LIFECYCLE,

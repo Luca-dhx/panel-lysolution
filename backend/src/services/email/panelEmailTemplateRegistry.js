@@ -687,6 +687,46 @@ ${button('Corriger le dossier', '{{managerSubmissionUrl}}')}`,
     },
   },
 
+  FORMATION_SLOT_ASSIGNED_ADMIN: {
+    templateId: 'FORMATION_SLOT_ASSIGNED_ADMIN',
+    defaultName: 'Formation - creneau partage attribue (institut)',
+    defaultDescription: 'Previent les administrateurs qu un creneau propose pour plusieurs formations est attribue a la premiere reservee.',
+    defaultSubject: 'Creneau attribue : {{winnerTitle}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientName', label: 'Cliente', description: 'Nom de la cliente qui a reserve.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientEmail', label: 'E-mail cliente', description: 'Adresse de la cliente.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'winnerTitle', label: 'Formation retenue', description: 'Formation qui a obtenu le creneau.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'withdrawnTitles', label: 'Formations retirees', description: 'Alternatives retirees de la vente a cette date.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'slotStart', label: 'Date', description: 'Debut du creneau.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'saleNumber', label: 'Commande', description: 'Numero de la vente.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'managerCalendarUrl', label: 'Planning', description: 'Lien vers le planning du Manager.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientName: 'Marie Martin',
+      clientEmail: 'marie.martin@example.fr',
+      winnerTitle: 'Brow Lift Signature',
+      withdrawnTitles: 'Lash Lift, Prothesie ongulaire',
+      slotStart: '2026-11-08T08:00:00.000Z',
+      saleNumber: 'BS-20261019-ABC123',
+      managerCalendarUrl: 'https://manager.exemple.fr/commerce/calendrier',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Un creneau partage vient d etre attribue.',
+        heading: 'Creneau attribue',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{clientName}} a reserve <strong>{{winnerTitle}}</strong> : ce creneau lui est attribue.</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Date', '{{slotStart}}')}
+${row('Formation retenue', '{{winnerTitle}}')}
+${row('Retirees de la vente', '{{withdrawnTitles}}')}
+${row('Commande', '{{saleNumber}}')}
+            </table>
+${button('Voir le planning', '{{managerCalendarUrl}}')}`,
+      });
+    },
+  },
+
   TRAINING_VALIDATED_CLIENT: {
     templateId: 'TRAINING_VALIDATED_CLIENT',
     defaultName: 'Formation - validation client',
