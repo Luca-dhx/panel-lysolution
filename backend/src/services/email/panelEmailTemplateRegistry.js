@@ -888,6 +888,47 @@ ${button('Voir mes formations', '{{accountUrl}}')}`,
     },
   },
 
+  FORMATION_PARTICIPANT_REGISTERED_CLIENT: {
+    templateId: 'FORMATION_PARTICIPANT_REGISTERED_CLIENT',
+    defaultName: 'Formation - participante inscrite (client)',
+    defaultDescription: 'Previent une participante qu une autre cliente l a inscrite a une formation en presentiel.',
+    defaultSubject: 'Vous etes inscrite a la formation {{trainingTitle}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom de la participante ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom de la participante.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse de la participante.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'bookedByName', label: 'Reservee par', description: 'Nom de la cliente qui a reserve.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'sessionStart', label: 'Debut', description: 'Debut de la session.', type: VARIABLE_TYPE.DATETIME, required: false },
+      { key: 'sessionEnd', label: 'Fin', description: 'Fin de la session.', type: VARIABLE_TYPE.DATETIME, required: false },
+      { key: 'accountText', label: 'Acces', description: 'Compte existant ou cree a la reservation (mot de passe a choisir).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'accountUrl', label: 'Mes formations', description: 'Lien vers l espace formations.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Lou', clientLastName: 'Martin', clientEmail: 'lou.martin@example.fr',
+      trainingTitle: 'Pose gel - presentiel',
+      bookedByName: 'Camille Durand',
+      sessionStart: '2026-12-07T08:30:00.000Z',
+      sessionEnd: '2026-12-07T16:30:00.000Z',
+      accountText: 'Un espace client a ete cree pour vous : choisissez votre mot de passe depuis l e-mail recu.',
+      accountUrl: 'https://exemple.fr/espace-client/formations',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: '{{bookedByName}} vous a inscrite a une formation.',
+        heading: 'Vous etes inscrite',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, {{bookedByName}} vous a inscrite a la formation <strong>{{trainingTitle}}</strong>. Votre place est reservee et reglee.</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{accountText}}</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Debut', '{{sessionStart}}')}
+${row('Fin', '{{sessionEnd}}')}
+            </table>
+${button('Voir ma formation', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
   FORMATION_SESSION_CANCELLED_CLIENT: {
     templateId: 'FORMATION_SESSION_CANCELLED_CLIENT',
     defaultName: 'Formation - session annulee (client)',
