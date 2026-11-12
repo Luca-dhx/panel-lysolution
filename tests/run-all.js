@@ -414,6 +414,8 @@ const TESTS = [
   'stripe-control-plane.test.js',
   'stripe-commission-checkout.test.js',
   'panel-world.test.js',
+  // Le secret de vérification suit le monde de la fiche, comme le provisionnement (BeautySavage PROD, 2026-11).
+  'webhook-verification-world.test.js',
   'stripe-resource-ownership.test.js',
   // L6.2B — LE CUTOVER : un vrai projet demande un paiement, le Panel ouvre la
   // session avec SA clé, et la lie. Les sections qui comptent sont les

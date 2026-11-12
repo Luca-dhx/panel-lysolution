@@ -32,6 +32,7 @@ import {
   markVerificationSecretDelivered,
 } from '../services/webhooks/projectWebhookSecrets.js';
 import { runtimeEnvironment } from '../services/integratedApi/environment.js';
+import { resolveInstanceEnvironment } from '../services/capabilities/invocationContext.js';
 import logger from '../utils/logger.js';
 
 /** Les fournisseurs dont un projet peut recevoir un secret de vérification. */
@@ -67,13 +68,21 @@ export async function fetchVerificationSecret(req, res) {
   }
 
   /**
-   * LE MONDE VIENT DU PANEL, pas de la demande.
+   * LE MONDE VIENT DE LA FICHE DU PROJET, jamais de la demande.
    *
    * Un projet TEST qui réclamerait le secret PROD obtiendrait de quoi vérifier
-   * des événements de production — donc de quoi les traiter. L'environnement
-   * est celui que CE Panel sert, et il n'est pas négociable.
+   * des événements de production — donc de quoi les traiter. Le monde est donc
+   * lu sur la fiche authentifiée par le jeton de pont (`resolveInstanceEnvironment`),
+   * EXACTEMENT comme pour le provisionnement de l'endpoint (contexte de capacité).
+   *
+   * ── LE DÉFAUT CORRIGÉ (2026-11-13) ─────────────────────────────────────────
+   * Cette ligne lisait l'environnement d'EXÉCUTION du Panel. Le Panel en ligne
+   * tourne en TEST et administre aussi les productions : l'endpoint d'une fiche
+   * PROD était créé chez Stripe live, son secret rangé sous PROD… et cherché
+   * sous TEST. BeautySavage PROD ne l'a jamais reçu ; Stripe a vu 28 refus 400
+   * à partir de la première facture d'abonnement (6 novembre 2026).
    */
-  const environment = runtimeEnvironment();
+  const environment = resolveInstanceEnvironment(req.bridgeProject) ?? runtimeEnvironment();
 
   const found = await readProjectVerificationSecret({ projectId, provider, environment });
   if (!found) {
