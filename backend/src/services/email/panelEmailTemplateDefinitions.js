@@ -229,6 +229,14 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-appointment-reminder'],
   },
 
+  TRAINING_ACCESS_GRANTED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet annonce a son propre client que l institut lui a ouvert l acces a une formation en ligne, sans achat sur le site.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-training-access-granted'],
+  },
+
   REVIEW_REQUEST_CLIENT: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.LIFECYCLE,

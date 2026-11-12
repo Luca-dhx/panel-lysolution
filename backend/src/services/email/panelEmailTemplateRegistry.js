@@ -760,6 +760,44 @@ ${button('Voir mes formations', '{{accountUrl}}')}`,
     },
   },
 
+  TRAINING_ACCESS_GRANTED_CLIENT: {
+    templateId: 'TRAINING_ACCESS_GRANTED_CLIENT',
+    defaultName: 'Formation en ligne - acces offert au client',
+    defaultDescription: 'Annonce a la cliente que l institut lui a ouvert l acces a une formation en ligne, sans achat.',
+    defaultSubject: 'Felicitations, vous avez acces a {{trainingTitle}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client (identifiant).', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'trainingTitle', label: 'Formation', description: 'Titre de la formation en ligne.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'instituteName', label: 'Institut', description: 'Nom de l institut.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'moduleCount', label: 'Modules', description: 'Nombre de modules (texte).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'accountPendingText', label: 'Premiere connexion', description: 'Consigne si le compte doit encore etre active.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'trainingUrl', label: 'Lien formation', description: 'Espace formation de la cliente.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      trainingTitle: 'Formation Extension de cils - en ligne',
+      instituteName: 'BeautySavage',
+      moduleCount: '3 modules',
+      accountPendingText: '',
+      trainingUrl: 'https://exemple.fr/espace-client/formations',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre formation en ligne vous attend.',
+        heading: 'Felicitations !',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}},</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonne nouvelle : {{instituteName}} vous a ouvert l'acces a la formation en ligne <strong>{{trainingTitle}}</strong> ({{moduleCount}}).</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">{{accountPendingText}}</p>
+${button('Acceder a ma formation', '{{trainingUrl}}')}`,
+      });
+    },
+  },
+
   APPOINTMENT_REMINDER_CLIENT: {
     templateId: 'APPOINTMENT_REMINDER_CLIENT',
     defaultName: 'Rendez-vous - rappel au client',
