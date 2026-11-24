@@ -173,6 +173,14 @@ export const TEMPLATE_OWNERSHIP = Object.freeze({
     callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-appointment-cancelled'],
   },
 
+  APPOINTMENT_UPDATED_CLIENT: {
+    scopes: [J],
+    category: TEMPLATE_CATEGORIES.LIFECYCLE,
+    provisionForProjects: true,
+    reason: 'Le projet previent son propre client quand l institut deplace un rendez-vous ou change sa prestation.',
+    callers: ['PROJECT/utils/domainEventActionRegistry.js#send-customer-appointment-updated'],
+  },
+
   APPOINTMENT_CONFIRMED_CLIENT: {
     scopes: [J],
     category: TEMPLATE_CATEGORIES.LIFECYCLE,

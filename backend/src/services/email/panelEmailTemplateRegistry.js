@@ -538,6 +538,55 @@ ${row('Motif', '{{reason}}')}
     },
   },
 
+  APPOINTMENT_UPDATED_CLIENT: {
+    templateId: 'APPOINTMENT_UPDATED_CLIENT',
+    defaultName: 'Rendez-vous - modification client',
+    defaultDescription: 'Previent un client que l institut a deplace son rendez-vous ou change sa prestation.',
+    defaultSubject: '{{subjectLine}}',
+    retentionClass: RETENTION_CLASS.OPERATIONAL,
+    variables: [
+      { key: 'clientFirstName', label: 'Prenom client', description: 'Prenom du client ou libelle de repli.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'clientLastName', label: 'Nom client', description: 'Nom du client.', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'clientEmail', label: 'E-mail client', description: 'Adresse du client.', type: VARIABLE_TYPE.EMAIL, required: false },
+      { key: 'subjectLine', label: 'Objet', description: 'Objet compose (deplace ou modifie, et la prestation).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'introText', label: 'Introduction', description: 'Ce qui a change (date, prestation, horaire).', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'serviceName', label: 'Prestation', description: 'Prestation du rendez-vous a jour.', type: VARIABLE_TYPE.TEXT, required: true },
+      { key: 'appointmentStart', label: 'Debut', description: 'Nouvelle date et heure de debut.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'appointmentEnd', label: 'Fin', description: 'Nouvelle date et heure de fin.', type: VARIABLE_TYPE.DATETIME, required: true },
+      { key: 'previousStart', label: 'Ancienne date', description: 'Debut initialement prevu (vide si la date ne change pas).', type: VARIABLE_TYPE.DATETIME, required: false },
+      { key: 'previousServiceName', label: 'Ancienne prestation', description: 'Prestation initiale (vide si elle ne change pas).', type: VARIABLE_TYPE.TEXT, required: false },
+      { key: 'accountUrl', label: 'Espace client', description: 'Lien vers l espace client.', type: VARIABLE_TYPE.URL, required: true },
+    ],
+    sampleVariables: {
+      clientFirstName: 'Marie',
+      clientLastName: 'Martin',
+      clientEmail: 'marie.martin@example.fr',
+      subjectLine: 'Votre rendez-vous Soin visage a ete deplace',
+      introText: 'L institut a deplace votre rendez-vous « Soin visage ». Voici la nouvelle date.',
+      serviceName: 'Soin visage',
+      appointmentStart: '2026-09-22T09:00:00.000Z',
+      appointmentEnd: '2026-09-22T10:00:00.000Z',
+      previousStart: '2026-09-21T09:00:00.000Z',
+      previousServiceName: '',
+      accountUrl: 'https://exemple.fr/espace-client',
+    },
+    get defaultHtml() {
+      return layout({
+        preheader: 'Votre rendez-vous a ete modifie.',
+        heading: 'Rendez-vous modifie',
+        bodyHtml: `            <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${BRAND};">Bonjour {{clientFirstName}}, {{introText}}</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${BORDER};">
+${row('Prestation', '{{serviceName}}')}
+${row('Debut', '{{appointmentStart}}')}
+${row('Fin', '{{appointmentEnd}}')}
+${row('Ancienne prestation', '{{previousServiceName}}')}
+${row('Ancienne date', '{{previousStart}}')}
+            </table>
+${button('Voir mon espace client', '{{accountUrl}}')}`,
+      });
+    },
+  },
+
   APPOINTMENT_CONFIRMED_CLIENT: {
     templateId: 'APPOINTMENT_CONFIRMED_CLIENT',
     defaultName: 'Rendez-vous - confirmation client',
