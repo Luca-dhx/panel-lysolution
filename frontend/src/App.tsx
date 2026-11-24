@@ -55,6 +55,7 @@ const ProjectsPage = lazy(() => import('@/pages/ProjectsPage'));
 const ProjectDetailPage = lazy(() => import('@/pages/ProjectDetailPage'));
 const ClientCompaniesPage = lazy(() => import('@/pages/ClientCompaniesPage'));
 const ClientCompanyDetailPage = lazy(() => import('@/pages/ClientCompanyDetailPage'));
+const ClientCredentialsPage = lazy(() => import('@/pages/ClientCredentialsPage'));
 /* La page des taches tire le calendrier, le formulaire et le selecteur de date :
    les quinze ecrans qui ne les affichent pas n'ont pas a les telecharger. */
 const TasksPage = lazy(() => import('@/pages/TasksPage'));
@@ -165,6 +166,7 @@ export default function App() {
         <Route path="/todo/:listId" element={<TodoListEditorPage />} />
         <Route path="/clients" element={<ClientCompaniesPage />} />
         <Route path="/clients/:clientCompanyId" element={<ClientCompanyDetailPage />} />
+        <Route path="/clients/:clientCompanyId/identifiants" element={dev(<ClientCredentialsPage />)} />
         {/*
           DOCUMENTS LÉGAUX — en GESTION, comme les clients et l'entreprise.
 

@@ -539,6 +539,10 @@ export function ClientCompanyDetailPage() {
                 SECONDAIRE, et « Modifier » — le geste quotidien — reste
                 l'action principale, donc la dernière du groupe.
               */}
+              <Link to={`/clients/${clientCompanyId}/identifiants`} className="btn btn-secondary btn-small">
+                <Icon name="shield-check" size={13} />
+                Identifiants
+              </Link>
               <button type="button" className="btn btn-secondary btn-small" onClick={basculerArchive}>
                 {fiche.status === 'ARCHIVED' ? 'Réactiver' : 'Archiver'}
               </button>

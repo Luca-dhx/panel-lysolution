@@ -65,6 +65,8 @@ import type {
   ClientCompanyLinkResult,
   ClientCompanyRow,
   ClientCompanySaveResult,
+  ClientCredential,
+  ClientCredentialInput,
 } from '@/types.clientCompany';
 import type {
   BulkDeleteResult, BulkScopePreview, FinanceCriteria, FinanceListResult, FinanceProjectLine,
@@ -1941,6 +1943,31 @@ export const clientCompanies = {
   removeClientDocument: (clientCompanyId: string, documentId: string) =>
     request<{ clientCompany: ClientCompanyDetail }>(
       `/api/client-companies/${encodeURIComponent(clientCompanyId)}/documents/${encodeURIComponent(documentId)}`,
+      { method: 'DELETE' },
+    ),
+
+  /* ── IDENTIFIANTS — comptes DEV uniquement, valeurs chiffrées au repos ── */
+
+  listCredentials: (clientCompanyId: string) =>
+    request<{ legalName: string; credentials: ClientCredential[] }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/credentials`,
+    ),
+
+  createCredential: (clientCompanyId: string, body: ClientCredentialInput) =>
+    request<{ credential: ClientCredential }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/credentials`,
+      { method: 'POST', body },
+    ),
+
+  updateCredential: (clientCompanyId: string, credentialId: string, body: ClientCredentialInput) =>
+    request<{ credential: ClientCredential }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/credentials/${encodeURIComponent(credentialId)}`,
+      { method: 'PUT', body },
+    ),
+
+  deleteCredential: (clientCompanyId: string, credentialId: string) =>
+    request<{ deleted: boolean }>(
+      `/api/client-companies/${encodeURIComponent(clientCompanyId)}/credentials/${encodeURIComponent(credentialId)}`,
       { method: 'DELETE' },
     ),
 };

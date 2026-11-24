@@ -30,7 +30,11 @@ import { MAX_INPUT_BYTES, humanBytes } from '../services/upload/mediaPolicy.js';
 import {
   archive,
   create,
+  createCredential,
+  deleteCredential,
   detail,
+  listCredentials,
+  updateCredential,
   downloadDocument,
   linkProject,
   list,
@@ -111,5 +115,14 @@ router.post(
   asyncHandler(uploadDocument),
 );
 router.delete('/:clientCompanyId/documents/:documentId', asyncHandler(removeDocument));
+
+/* ── Identifiants ─────────────────────────────────────────────────────────────
+ * LECTURE COMPRISE derrière `requirePanelDev` : contrairement au reste de la
+ * fiche, ce sont des secrets (mots de passe, clés). Un compte de gestion n'a
+ * pas à les lire. */
+router.get('/:clientCompanyId/credentials', asyncHandler(listCredentials));
+router.post('/:clientCompanyId/credentials', asyncHandler(createCredential));
+router.put('/:clientCompanyId/credentials/:credentialId', asyncHandler(updateCredential));
+router.delete('/:clientCompanyId/credentials/:credentialId', asyncHandler(deleteCredential));
 
 export default router;

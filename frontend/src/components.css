@@ -4934,3 +4934,57 @@ button.act-pulse { animation: act-pulse 520ms ease-out; }
 
   button.act-pulse { animation: none; }
 }
+
+/* ── IDENTIFIANTS D'UNE ENTREPRISE CLIENTE ────────────────────────────────── */
+
+.cred-search { max-width: 28rem; }
+
+.cred-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--p-space-2);
+}
+
+.cred-text {
+  font-family: var(--p-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  overflow-wrap: anywhere;
+}
+
+.cred-masked { letter-spacing: 0.1em; color: var(--p-text-muted); }
+
+.cred-value-actions { display: inline-flex; gap: var(--p-space-1); }
+
+.cred-unreadable { color: var(--p-danger); }
+
+.cred-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-4);
+}
+
+.cred-lines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--p-space-2);
+}
+
+.cred-line {
+  display: grid;
+  grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto;
+  gap: var(--p-space-2);
+  align-items: center;
+}
+
+.cred-line .input { width: 100%; min-width: 0; }
+
+.cred-line-head {
+  font-size: var(--p-text-xs);
+  color: var(--p-text-muted);
+}
+
+@media (max-width: 640px) {
+  .cred-line { grid-template-columns: minmax(0, 1fr) auto; }
+  .cred-line > input:first-child { grid-column: 1 / -1; }
+  .cred-line-head { display: none; }
+}

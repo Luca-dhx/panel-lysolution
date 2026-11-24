@@ -34,6 +34,12 @@ import {
   detachClientDocument,
   readClientDocument,
 } from '../services/clientCompany/clientDocuments.service.js';
+import {
+  createClientCredential,
+  deleteClientCredential,
+  listClientCredentials,
+  updateClientCredential,
+} from '../services/clientCompany/clientCredentials.service.js';
 import { relayToAuthority, resolveMediaAuthority } from '../services/upload/mediaAuthority.js';
 
 function actorOf(req) {
@@ -249,4 +255,38 @@ export async function removeDocument(req, res) {
 
   await detachClientDocument(clientCompanyId, documentId, actorOf(req));
   return ok(res, { clientCompany: await getClientCompanyDetail(clientCompanyId) });
+}
+
+/* -------------------------------------------------------------------------- */
+/*  IDENTIFIANTS — comptes DEV uniquement (la route l'impose)                 */
+/* -------------------------------------------------------------------------- */
+
+/** Des secrets en clair dans la réponse : aucun cache, nulle part. */
+function sansCache(res) {
+  res.setHeader('Cache-Control', 'private, no-store');
+}
+
+export async function listCredentials(req, res) {
+  sansCache(res);
+  return ok(res, await listClientCredentials(req.params.clientCompanyId));
+}
+
+export async function createCredential(req, res) {
+  sansCache(res);
+  const credential = await createClientCredential(req.params.clientCompanyId, req.body ?? {}, actorOf(req));
+  return created(res, { credential });
+}
+
+export async function updateCredential(req, res) {
+  sansCache(res);
+  const credential = await updateClientCredential(
+    req.params.clientCompanyId, req.params.credentialId, req.body ?? {}, actorOf(req),
+  );
+  return ok(res, { credential });
+}
+
+export async function deleteCredential(req, res) {
+  return ok(res, await deleteClientCredential(
+    req.params.clientCompanyId, req.params.credentialId, actorOf(req),
+  ));
 }

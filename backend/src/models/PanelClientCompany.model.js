@@ -143,6 +143,30 @@ const documentSchema = new mongoose.Schema(
   { _id: false },
 );
 
+/** Un champ d'identifiant : un nom en clair, une valeur toujours chiffrée. */
+const credentialFieldSchema = new mongoose.Schema(
+  {
+    fieldId: { type: String, required: true },
+    name: { type: String, required: true, trim: true },
+    /** Format « iv.tag.ciphertext » (hex), produit par `panelCrypto`. */
+    valueEncrypted: { type: String, required: true },
+  },
+  { _id: false },
+);
+
+/** Un identifiant nommé (« Stripe », « OVH »…) et ses champs. */
+const credentialSchema = new mongoose.Schema(
+  {
+    credentialId: { type: String, required: true },
+    name: { type: String, required: true, trim: true },
+    fields: { type: [credentialFieldSchema], default: [] },
+    createdAt: { type: String, required: true },
+    updatedAt: { type: String, required: true },
+    updatedBy: { type: String, default: null },
+  },
+  { _id: false },
+);
+
 /**
  * LES ÉTATS D'UNE ENTREPRISE CLIENTE.
  *
@@ -281,6 +305,22 @@ const clientCompanySchema = new mongoose.Schema(
     /* ── DOCUMENTS ───────────────────────────────────────────────────── */
 
     documents: { type: [documentSchema], default: [] },
+
+    /* ── IDENTIFIANTS ────────────────────────────────────────────────── */
+
+    /**
+     * LES IDENTIFIANTS DU CLIENT — Stripe, hébergeur, registrar, boîte mail…
+     *
+     * Rangés ICI plutôt que dans une collection à part : le cluster approche
+     * de sa limite de collections, et un identifiant n'a de sens que rattaché
+     * à sa fiche. Chaque VALEUR est chiffrée (AES-256-GCM, `panelCrypto`) ;
+     * seuls les noms sont en clair.
+     *
+     * JAMAIS exposés par `describeClientCompany` ni par `publishedProfile` :
+     * ils ne sortent que par `/credentials`, réservé aux comptes DEV, et ne
+     * partent jamais vers un projet.
+     */
+    credentials: { type: [credentialSchema], default: [] },
 
     /* ── EXPLOITATION ────────────────────────────────────────────────── */
 

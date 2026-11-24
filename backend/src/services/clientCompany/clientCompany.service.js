@@ -552,6 +552,14 @@ export async function deleteClientCompany(clientCompanyId, actor = {}) {
       { documentCount: fiche.documents.length },
     );
   }
+  if ((fiche.credentials ?? []).length > 0) {
+    throw ApiError.conflict(
+      'PANEL_CLIENT_COMPANY_HAS_CREDENTIALS',
+      `« ${fiche.legalName} » porte ${fiche.credentials.length} identifiant(s) : `
+      + 'supprimez-les d’abord, ou archivez la fiche.',
+      { credentialCount: fiche.credentials.length },
+    );
+  }
 
   await PanelClientCompany.deleteOne({ clientCompanyId });
   logger.warn(

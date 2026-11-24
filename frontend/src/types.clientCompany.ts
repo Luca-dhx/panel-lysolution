@@ -146,3 +146,27 @@ export interface ClientCompanyLinkResult {
    */
   pendingContract?: { sourceContractId: string; reference: string | null; status: string | null } | null;
 }
+
+/* ── IDENTIFIANTS D'UNE ENTREPRISE CLIENTE ─────────────────────────────────── */
+
+export interface ClientCredentialField {
+  fieldId: string;
+  name: string;
+  value: string;
+  /** La valeur n'a pas pu être déchiffrée (clé changée, donnée altérée). */
+  unreadable?: boolean;
+}
+
+export interface ClientCredential {
+  credentialId: string;
+  name: string;
+  fields: ClientCredentialField[];
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+export interface ClientCredentialInput {
+  name: string;
+  fields: { fieldId?: string; name: string; value: string }[];
+}
